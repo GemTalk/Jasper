@@ -1827,6 +1827,18 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.methodHistory",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.methodHistoryFromEditor",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -2193,6 +2205,14 @@
         {
           "command": "gemstone.explorer.classHistory",
           "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
@@ -2789,6 +2809,11 @@
           "group": "3_refactor@3"
         },
         {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@4"
+        },
+        {
           "command": "gemstone.explorer.pushUpMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
@@ -3056,6 +3081,11 @@
       ],
       "editor/title": [
         {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "navigation@0"
+        },
+        {
           "command": "gemstone.navigateBack",
           "when": "resourceScheme == gemstone",
           "group": "navigation@1"
@@ -3101,6 +3131,11 @@
           "command": "gemstone.implementorsOf",
           "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@1"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "2_navigation@2"
         },
         {
           "command": "gemstone.breakpoints.toggleAtCursor",

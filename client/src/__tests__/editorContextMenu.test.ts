@@ -36,6 +36,7 @@ describe('editor/context menu', () => {
       'gemstone.runInNewGem',
       'gemstone.sendersOf',
       'gemstone.implementorsOf',
+      'gemstone.methodHistoryFromEditor',
       'gemstone.breakpoints.toggleAtCursor',
       'gemstone.breakpoints.enableAtCursor',
       'gemstone.breakpoints.disableAtCursor',
@@ -124,5 +125,39 @@ describe('editor/context menu', () => {
     expect(binding.when).toBe(
       `editorTextFocus && resourceLangId == ${METHOD_LANGUAGE} && gemstone.hasActiveSession`,
     );
+  });
+
+  it('shows "Method History…" only when a method editor is active', () => {
+    expect(getMenuItem('gemstone.methodHistoryFromEditor')?.when).toBe(
+      'gemstone.methodEditorActive',
+    );
+  });
+});
+
+describe('Method History in-editor entry points', () => {
+  interface MenuItem {
+    command: string;
+    when: string;
+    group?: string;
+  }
+  const cmd = 'gemstone.methodHistoryFromEditor';
+
+  it('puts a history button in the editor title bar, gated to method editors', () => {
+    const titleItems: MenuItem[] = pkg.contributes.menus['editor/title'] ?? [];
+    const item = titleItems.find((i) => i.command === cmd);
+    expect(item?.when).toBe('gemstone.methodEditorActive');
+  });
+
+  it('carries the history icon so the title-bar entry renders as a button', () => {
+    const command = pkg.contributes.commands.find(
+      (c: { command: string; icon?: string }) => c.command === cmd,
+    );
+    expect(command?.icon).toBe('$(history)');
+  });
+
+  it('appears in the command palette only when a method editor is active', () => {
+    const palette: MenuItem[] = pkg.contributes.menus.commandPalette ?? [];
+    const item = palette.find((i) => i.command === cmd);
+    expect(item?.when).toBe('gemstone.methodEditorActive');
   });
 });

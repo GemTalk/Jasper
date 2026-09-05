@@ -102,6 +102,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
@@ -110,6 +111,7 @@ import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
+import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
@@ -820,6 +822,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Method-history side-by-side diff provider ───────────
+  // Serves the read-only virtual documents behind "Diff ⇄ current" in the method
+  // history viewer.
+  registerMethodHistoryDiff(context);
+
   // ── Workspace Symbol Provider (Cmd+T class search) ──────
   const symbolProvider = new GemStoneWorkspaceSymbolProvider(sessionManager);
   context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(symbolProvider));
@@ -1027,6 +1034,31 @@ export function activate(context: vscode.ExtensionContext) {
       void sunitTestController.ensureTestsForDocument(editor?.document.uri);
     }),
   );
+
+  // In-editor entry to Method History: a title-bar button + context-menu item on a
+  // gemstone method editor, so the history is reachable from the source being
+  // edited without hunting for the row in the Explorer. The context key gates the
+  // menus to method editors only (not class-definition/comment/workspace editors).
+  const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.methodEditorActive',
+      isMethodEditorUri(editor?.document.uri),
+    );
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),
+    vscode.commands.registerCommand('gemstone.methodHistoryFromEditor', () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) return;
+      void explorer.openMethodHistoryForUri(uri).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Method history failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+  );
+  updateMethodEditorContext(vscode.window.activeTextEditor);
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);

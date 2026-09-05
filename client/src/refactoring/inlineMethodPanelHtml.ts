@@ -11,7 +11,7 @@
  * Kept free of any `vscode` dependency so it unit-tests directly.
  */
 import { InlineChange, InlineOutOfScope, inlineChangeLabel } from './inlineMethodPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s

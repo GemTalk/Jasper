@@ -105,6 +105,13 @@ import {
 } from './refactoring/classHistoryModel';
 import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
+import {
+  showMethodHistoryPanel,
+  refreshMethodHistoryPanel,
+} from './methodHistory/methodHistoryPanel';
+import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
+import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { moveMethod } from './refactoring/moveMethodCommand';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -657,6 +664,17 @@ async function confirmDroppedMethods(labels: string[]): Promise<boolean> {
     DELETE,
   );
   return choice === DELETE;
+}
+
+// One open method-history viewer, tracked so a compile elsewhere can refresh it and
+// so a repeat request reveals the existing tab instead of opening a duplicate.
+interface MethodHistoryPanelEntry {
+  sessionId: number;
+  className: string;
+  selector: string;
+  isMeta: boolean;
+  panel: vscode.WebviewPanel;
+  refresh: () => void;
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -3660,6 +3678,177 @@ export class ExplorerController {
     });
   }
 
+  // Show one method's recorded source history (context menu on a method row). The
+  // history is captured in-stone as methods are edited in Jasper (the
+  // JasperMethodHistory helper, installed at login; no server plugin required);
+  // this only reads and, on restore, recompiles a chosen version.
+  async methodHistory(node: MethodItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const className = this.state.className;
+    if (className === undefined) return;
+    await this.openMethodHistory(
+      session,
+      className,
+      node.info.selector,
+      node.isMeta,
+      this.state.dictIndex ?? this.state.dictName,
+    );
+  }
+
+  // Open (or reveal) the method-history viewer for one method. Shared by the
+  // Explorer method-row command and the in-editor entry point.
+  async openMethodHistory(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+    dict: number | string | undefined,
+  ): Promise<void> {
+    // One tab per method: if a viewer for this exact method is already open, reveal
+    // it instead of opening a duplicate.
+    const already = this.methodHistoryPanels.find(
+      (e) =>
+        e.sessionId === session.id &&
+        e.className === className &&
+        e.selector === selector &&
+        e.isMeta === isMeta,
+    );
+    if (already) {
+      already.panel.reveal();
+      return;
+    }
+
+    // The method-history helper is installed at login (SessionTemps, no plugin).
+    // Ensure it once more here in case that login install was skipped or failed;
+    // it is idempotent and cheap.
+    installMethodHistory(session);
+
+    const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
+
+    let versions: MethodVersion[];
+    try {
+      versions = parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+      return;
+    }
+    if (versions.length === 0) {
+      void vscode.window.showInformationMessage(
+        `No recorded history for ${label} yet. History is captured in this stone as you edit ` +
+          'methods in Jasper.',
+      );
+      return;
+    }
+
+    // The latest list drives index→source lookup for restore/diff; a restore
+    // appends a new version, so refresh this on every restore.
+    let current = versions;
+    const sourceOf = (index: number): { source: string; category: string } | undefined => {
+      const v = current.find((x) => x.index === index);
+      return v ? { source: v.source, category: v.category } : undefined;
+    };
+    const currentSource = (): string => current.find((v) => v.isCurrent)?.source ?? '';
+
+    const panel = showMethodHistoryPanel(label, versions, {
+      restore: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return { versions: current, error: `version [${index}] is no longer available` };
+        try {
+          // Recompiling routes through the ordinary compile path, which records
+          // this as a new (current) version — so the restore is itself undoable.
+          queries.compileMethod(
+            session,
+            className,
+            isMeta,
+            v.category,
+            v.source,
+            EXPLORER_METHOD_ENVIRONMENT,
+            dict,
+          );
+        } catch (e: unknown) {
+          return { versions: current, error: e instanceof Error ? e.message : String(e) };
+        }
+        current = parseMethodHistory(
+          queries.getMethodHistory(session, className, selector, isMeta),
+        );
+        // The installed method changed — re-render the Methods pane so its
+        // session-method indicators reflect the recompiled source.
+        this.methodProvider.refresh();
+        return { versions: current };
+      },
+      diff: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return;
+        await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
+      },
+    });
+
+    // Keep the panel live: when this method is recompiled elsewhere (the editor is
+    // saved, the debugger commits an edit), re-fetch and re-render so the new
+    // current version appears — the webview preserves the diff being viewed. The
+    // entry is removed when the panel is closed.
+    const entry: MethodHistoryPanelEntry = {
+      sessionId: session.id,
+      className,
+      selector,
+      isMeta,
+      panel,
+      refresh: () => {
+        try {
+          current = parseMethodHistory(
+            queries.getMethodHistory(session, className, selector, isMeta),
+          );
+          refreshMethodHistoryPanel(panel, current);
+        } catch {
+          /* a closed/again-busy session just leaves the panel as-is */
+        }
+      },
+    };
+    this.methodHistoryPanels.push(entry);
+    panel.onDidDispose(() => {
+      this.methodHistoryPanels = this.methodHistoryPanels.filter((e) => e !== entry);
+    });
+  }
+
+  // Open the method-history viewer for the method a gemstone:// editor URI names —
+  // the in-editor entry point (title-bar button / context menu / palette). Resolves
+  // the method's own session by id (falling back to the selected one). A non-method
+  // URI gets a gentle note rather than silently doing nothing.
+  async openMethodHistoryForUri(uri: vscode.Uri): Promise<void> {
+    const parsed = parseUri(uri);
+    if (parsed.kind !== 'method') {
+      void vscode.window.showInformationMessage(
+        'Method History is available while editing a method.',
+      );
+      return;
+    }
+    const session = this.sessionManager.getSession(parsed.sessionId) ?? this.session();
+    if (!session) return;
+    await this.openMethodHistory(
+      session,
+      parsed.className,
+      parsed.selector,
+      parsed.isMeta,
+      parsed.dictIndex ?? parsed.dictName,
+    );
+  }
+
+  // Open method-history panels, so a compile elsewhere can refresh the matching
+  // one(s). Keyed by method identity; entries are removed on panel close.
+  private methodHistoryPanels: MethodHistoryPanelEntry[] = [];
+
+  // Refresh any open method-history panel for a just-(re)compiled method. Matched
+  // by session + class only (the compile event does not carry the selector); an
+  // unrelated method's panel simply re-fetches identical data, and the webview
+  // refresh is idempotent, so over-refreshing is harmless.
+  private refreshOpenMethodHistoryPanels(sessionId: number, className: string): void {
+    for (const entry of this.methodHistoryPanels) {
+      if (entry.sessionId === sessionId && entry.className === className) entry.refresh();
+    }
+  }
+
   // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
@@ -5868,6 +6057,10 @@ export class ExplorerController {
   // / class appears in the panels without a manual refresh.
 
   onExternalMethodCompiled(sessionId: number, className: string): void {
+    // Refresh any open method-history viewer for this method first — independent of
+    // what the explorer currently has selected (the panel outlives the selection).
+    this.refreshOpenMethodHistoryPanels(sessionId, className);
+
     const session = this.session();
     if (
       !session ||
@@ -6280,6 +6473,9 @@ export interface ExplorerHandle {
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
+  /** Open the method-history viewer for the method a gemstone:// editor URI names
+   *  — the in-editor entry point, so the user need not find the row in the tree. */
+  openMethodHistoryForUri(uri: vscode.Uri): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -6887,6 +7083,14 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Show one method's recorded source history (context menu on a method row).
+    vscode.commands.registerCommand('gemstone.explorer.methodHistory', (node?: MethodItem) => {
+      if (!(node instanceof MethodItem)) return;
+      void ctl.methodHistory(node).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+      });
+    }),
     // Insert an empty superclass above a class (context menu on a class row or hierarchy node).
     vscode.commands.registerCommand(
       'gemstone.explorer.insertSuperclass',
@@ -6999,5 +7203,6 @@ export function registerGemStoneExplorer(
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
+    openMethodHistoryForUri: (uri) => ctl.openMethodHistoryForUri(uri),
   };
 }
