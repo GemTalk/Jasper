@@ -9,6 +9,7 @@
   "devDependencies": {
     "@types/jsdom": "^28.0.3",
     "@types/vscode": "~1.101.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "css.escape": "^1.5.1",
     "dotenv": "^17.4.2",
     "jsdom": "^27.4.0",
@@ -18,6 +19,8 @@
   "scripts": {
     "//test": "Runs only the 'default' vitest project (see vitest.config.ts). The 'gci' project is on-demand (needs a live stone) and is excluded here on purpose; run it with `npm run test:gci`. Without --project, vitest would run both projects.",
     "test": "vitest run --project default",
+    "//test:coverage": "Line/branch coverage for the default project, v8 provider. Takes a path prefix to scope the report, e.g. `npm run test:coverage --workspace client -- src/undo`; with no argument it reports on everything the suite loaded. The whole suite runs either way — a file is only reported as uncovered if no test anywhere exercised it.",
+    "test:coverage": "vitest run --project default --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.exclude='**/__tests__/**' --coverage.exclude='**/__mocks__/**' --coverage.include",
     "test:server:start": "./bin/gs-test-server.sh --start",
     "test:server:stop": "./bin/gs-test-server.sh --stop",
     "test:server:list": "./bin/gs-test-server.sh --list"

@@ -72,6 +72,19 @@ import {
   RenameMethodScope,
 } from './refactoring/queries/previewRenameMethod';
 import {
+  refactoringUndoStatus as sharedRefactoringUndoStatus,
+  startUndoRefactoringPreview as sharedStartUndoRefactoringPreview,
+  pageUndoRefactoringPreview as sharedPageUndoRefactoringPreview,
+  applyUndoRefactoring as sharedApplyUndoRefactoring,
+  clearUndoRefactoringPreview as sharedClearUndoRefactoringPreview,
+  clearRefactoringUndo as sharedClearRefactoringUndo,
+  recordReverseRename as sharedRecordReverseRename,
+  captureClassHistory as sharedCaptureClassHistory,
+  discardPendingCapture as sharedDiscardPendingCapture,
+  commitHistoryRevert as sharedCommitHistoryRevert,
+  ReverseRenameKind,
+} from './refactoring/queries/previewUndoRefactoring';
+import {
   analyzeChangeSignature as sharedAnalyzeChangeSignature,
   startChangeSignaturePreview as sharedStartChangeSignaturePreview,
   pageChangeSignaturePreview as sharedPageChangeSignaturePreview,
@@ -237,6 +250,7 @@ import { recategorizeMethod as sharedRecategorizeMethod } from './queries/recate
 import { recategorizeClass as sharedRecategorizeClass } from './queries/recategorizeClass';
 import { copyMethodToClass as sharedCopyMethodToClass } from './queries/copyMethodToClass';
 import { renameCategory as sharedRenameCategory } from './queries/renameCategory';
+import { removeMethodCategory as sharedRemoveMethodCategory } from './queries/removeMethodCategory';
 import { removeCategory as sharedRemoveCategory } from './queries/removeCategory';
 import { deleteClass as sharedDeleteClass } from './queries/deleteClass';
 import { moveClass as sharedMoveClass } from './queries/moveClass';
@@ -911,7 +925,17 @@ export function applyRenameInstVar(
   token: string,
   deselectedIds: string[],
 ): string {
-  return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+  // Synchronous, so the invalidation is inline rather than through
+  // invalidatingRefactoringUndo -- same rule, same "runs even if the apply throws".
+  try {
+    return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+  } finally {
+    try {
+      clearRefactoringUndo(session);
+    } catch {
+      /* best-effort: never let the bookkeeping fail an apply */
+    }
+  }
 }
 
 export function clearRenameInstVarPreview(session: ActiveSession, token: string): string {
@@ -962,10 +986,11 @@ export function applyRenameMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameMethod(exec, token, deselectedIds);
+  return sharedApplyRenameMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearRenameMethodPreview(session: ActiveSession, token: string): string {
@@ -1035,10 +1060,11 @@ export function applyChangeSignature(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying signature change…');
-  return sharedApplyChangeSignature(exec, token, deselectedIds);
+  return sharedApplyChangeSignature(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
@@ -1102,10 +1128,11 @@ export function applyPushMethod(
   direction: PushDirection,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying push…');
-  return sharedApplyPushMethod(exec, direction, token, deselectedIds);
+  return sharedApplyPushMethod(exec, direction, token, deselectedIds, undoLabel);
 }
 
 export function clearPushMethodPreview(
@@ -1160,7 +1187,9 @@ export function applyRenameClass(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameClass(exec, token, deselectedIds);
+  return invalidatingRefactoringUndo(session, () =>
+    sharedApplyRenameClass(exec, token, deselectedIds),
+  );
 }
 
 export function clearRenameClassPreview(session: ActiveSession, token: string): string {
@@ -1199,7 +1228,7 @@ export function pageRenameClassVarPreview(
 export function applyRenameClassVar(session: ActiveSession, token: string): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameClassVar(exec, token);
+  return invalidatingRefactoringUndo(session, () => sharedApplyRenameClassVar(exec, token));
 }
 
 export function clearRenameClassVarPreview(session: ActiveSession, token: string): string {
@@ -1248,10 +1277,14 @@ export function pageRenameTemporaryPreview(
   return sharedPageRenameTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyRenameTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyRenameTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameTemporary(exec, token);
+  return sharedApplyRenameTemporary(exec, token, undoLabel);
 }
 
 export function clearRenameTemporaryPreview(session: ActiveSession, token: string): string {
@@ -1342,10 +1375,11 @@ export function applyExtractMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying extraction…');
-  return sharedApplyExtractMethod(exec, token, deselectedIds);
+  return sharedApplyExtractMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearExtractMethodPreview(session: ActiveSession, token: string): string {
@@ -1404,10 +1438,11 @@ export function applyInlineMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying inline…');
-  return sharedApplyInlineMethod(exec, token, deselectedIds);
+  return sharedApplyInlineMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
@@ -1473,10 +1508,11 @@ export function applyMoveMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying move…');
-  return sharedApplyMoveMethod(exec, token, deselectedIds);
+  return sharedApplyMoveMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
@@ -1536,7 +1572,9 @@ export function applyInstVar(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying…');
-  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory, accessors);
+  return invalidatingRefactoringUndo(session, () =>
+    sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory, accessors),
+  );
 }
 
 export function clearInstVarPreview(session: ActiveSession, token: string): string {
@@ -1601,10 +1639,14 @@ export function pageExtractTemporaryPreview(
   return sharedPageExtractTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyExtractTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyExtractTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying extraction…');
-  return sharedApplyExtractTemporary(exec, token);
+  return sharedApplyExtractTemporary(exec, token, undoLabel);
 }
 
 export function clearExtractTemporaryPreview(session: ActiveSession, token: string): string {
@@ -1662,10 +1704,14 @@ export function pageInlineTemporaryPreview(
   return sharedPageInlineTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyInlineTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyInlineTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying inline…');
-  return sharedApplyInlineTemporary(exec, token);
+  return sharedApplyInlineTemporary(exec, token, undoLabel);
 }
 
 export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
@@ -1746,7 +1792,9 @@ export function applyInstVarStructure(
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying change…');
-  return sharedApplyInstVarStructure(exec, token, migrateInstances, removeOldFromHistory);
+  return invalidatingRefactoringUndo(session, () =>
+    sharedApplyInstVarStructure(exec, token, migrateInstances, removeOldFromHistory),
+  );
 }
 
 export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {
@@ -1818,7 +1866,7 @@ export function pageExtractSuperclassPreview(
 export function applyExtractSuperclass(session: ActiveSession, token: string): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying change…');
-  return sharedApplyExtractSuperclass(exec, token);
+  return invalidatingRefactoringUndo(session, () => sharedApplyExtractSuperclass(exec, token));
 }
 
 export function clearExtractSuperclassPreview(session: ActiveSession, token: string): string {
@@ -1887,7 +1935,7 @@ export function pageSplitClassPreview(
 export function applySplitClass(session: ActiveSession, token: string): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying change…');
-  return sharedApplySplitClass(exec, token);
+  return invalidatingRefactoringUndo(session, () => sharedApplySplitClass(exec, token));
 }
 
 export function clearSplitClassPreview(session: ActiveSession, token: string): string {
@@ -2177,6 +2225,22 @@ export function recategorizeMethod(
   );
 }
 
+export function removeMethodCategory(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  category: string,
+  dict?: number | string,
+): string {
+  return sharedRemoveMethodCategory(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    category,
+    dict,
+  );
+}
+
 export function renameCategory(
   session: ActiveSession,
   className: string,
@@ -2325,6 +2389,154 @@ export function clearAllBreaks(
     selector,
     environmentId,
     dict,
+  );
+}
+
+/**
+ * A class-reshaping refactoring (#434) invalidates any recorded method undo: it creates
+ * new class versions, so the recorded sources may no longer even compile into the class
+ * they name, and offering to "undo the last refactoring" would name the wrong one.
+ *
+ * Applied here, at the single place each of their applies passes through, rather than at each
+ * command's several success paths. Runs whether the apply succeeded, partly failed, or threw:
+ * a partial class reshape invalidates the record just as thoroughly as a complete one.
+ *
+ * The three pure RENAMES (class / instance variable / class variable) go through here too, and
+ * still should: this clears whatever was recorded BEFORE them. They then record a reversal of
+ * their own from their command, once they have confirmed the rename actually landed -- see
+ * `recordReverseRename`. The order matters and falls out naturally, because this runs when the
+ * apply settles and the command records after that.
+ *
+ * The rest (add/remove instance variable, instance-variable structure, extract superclass,
+ * split class) record nothing at all: they need machinery that does not exist yet, or would
+ * lose data a by-name reversal cannot restore. Class shape has its own restore path -- the
+ * Class Definition History viewer.
+ */
+function invalidatingRefactoringUndo(
+  session: ActiveSession,
+  run: () => Promise<string>,
+): Promise<string> {
+  const forget = (): void => {
+    try {
+      clearRefactoringUndo(session);
+    } catch {
+      /* best-effort: never let the bookkeeping fail an apply */
+    }
+  };
+  return run().then(
+    (answer) => {
+      forget();
+      return answer;
+    },
+    (e: unknown) => {
+      forget();
+      throw e;
+    },
+  );
+}
+
+// Undo the last applied refactoring (#434). The record lives in the stone, so all of
+// these are round trips; the status probe is a blocking fetch (it is one small string
+// and drives a menu's visibility), while the preview / page / apply are NON-BLOCKING so
+// a large undo shows progress and keeps the extension host responsive.
+export function refactoringUndoStatus(session: ActiveSession): string {
+  return sharedRefactoringUndoStatus(defaultQueryExecutorUsing(session));
+}
+
+export function startUndoRefactoringPreview(
+  session: ActiveSession,
+  token: string,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Preparing the undo preview…');
+  return sharedStartUndoRefactoringPreview(exec, token, maxBytes);
+}
+
+export function pageUndoRefactoringPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageUndoRefactoringPreview(exec, token, offset, maxBytes);
+}
+
+export function applyUndoRefactoring(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Undoing the refactoring…');
+  return sharedApplyUndoRefactoring(exec, token, deselectedIds);
+}
+
+export function clearUndoRefactoringPreview(session: ActiveSession, token: string): string {
+  return sharedClearUndoRefactoringPreview(defaultQueryExecutorUsing(session), token);
+}
+
+export function clearRefactoringUndo(session: ActiveSession): string {
+  return sharedClearRefactoringUndo(defaultQueryExecutorUsing(session));
+}
+
+/**
+ * Record that a rename landed so it can be reversed by renaming back (#434). Called by the
+ * rename flows AFTER they have confirmed the forward apply succeeded, which is why this is
+ * not folded into the apply wrapper the way the method refactorings' recording is: only the
+ * command knows whether the rename it just ran is one worth offering to reverse.
+ */
+export function recordReverseRename(
+  session: ActiveSession,
+  kind: ReverseRenameKind,
+  className: string,
+  from: string,
+  to: string,
+  label: string,
+  engineClassName: string,
+  scope?: { kind: string; dictName?: string },
+): string {
+  return sharedRecordReverseRename(
+    defaultQueryExecutorUsing(session),
+    kind,
+    className,
+    from,
+    to,
+    label,
+    engineClassName,
+    scope,
+  );
+}
+
+/**
+ * The three-step protocol for reversing a class RESHAPE that has no mirror operation (#434):
+ * capture before the apply, then either commit the capture (the apply landed) or discard it.
+ *
+ * Kept as three explicit calls rather than a wrapper, because only the command knows whether its
+ * apply really landed -- these refactorings report partial application, and a capture promoted
+ * after a partial reshape would describe a state the stone was never in.
+ */
+export function captureClassHistory(session: ActiveSession, rootClassName: string): string {
+  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName);
+}
+
+export function discardPendingCapture(session: ActiveSession): string {
+  return sharedDiscardPendingCapture(defaultQueryExecutorUsing(session));
+}
+
+export function commitHistoryRevert(
+  session: ActiveSession,
+  label: string,
+  engineClassName: string,
+  createdClassNames: string[] = [],
+): string {
+  return sharedCommitHistoryRevert(
+    defaultQueryExecutorUsing(session),
+    label,
+    engineClassName,
+    createdClassNames,
   );
 }
 

@@ -1,4 +1,11 @@
 import * as vscode from 'vscode';
+import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
+import { slotLabel } from './undo/undoTypes';
+import { notifyUndoable } from './undo/undoableToast';
+import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
+import { recordDictionaryAdd } from './undo/recordDictionaryEdit';
+import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
+import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -55,34 +62,6 @@ interface BrowserState {
   viewMode: 'category' | 'hierarchy';
   hierarchyEntries: queries.ClassHierarchyEntry[];
   hierarchyClassName: string | null;
-}
-
-// ── Selector extraction ──────────────────────────────────────
-
-/**
- * Extract the Smalltalk selector from a message pattern (first line of a method).
- *
- *   "name"                   → "name"       (unary)
- *   "+ anObject"             → "+"          (binary)
- *   "at: index put: value"  → "at:put:"    (keyword)
- */
-export function extractSelector(messagePattern: string): string {
-  const trimmed = messagePattern.trim();
-  if (!trimmed) return '';
-
-  // Keyword messages: one or more word: pairs
-  const keywords = trimmed.match(/\b([a-zA-Z_]\w*:)/g);
-  if (keywords && keywords.length > 0) return keywords.join('');
-
-  // Binary messages: start with special characters
-  const binaryMatch = trimmed.match(/^([~!@%&*\-+=|\\<>,?/]+)/);
-  if (binaryMatch) return binaryMatch[1];
-
-  // Unary: just the first word
-  const unaryMatch = trimmed.match(/^(\w+)/);
-  if (unaryMatch) return unaryMatch[1];
-
-  return trimmed;
 }
 
 // ── File-out planning ────────────────────────────────────────
@@ -1394,6 +1373,9 @@ export class SystemBrowser {
     queries.addDictionary(this.session, name);
     this.dictEntryCache.clear();
     this.state.dictionaries = queries.getDictionaryNames(this.session);
+    // Recorded after the fact: there is nothing to capture before a dictionary exists, and
+    // the position it landed at is only knowable afterwards (#434).
+    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(this.session, name));
 
     // Reconcile the mirror (creates the new dir, updates state) via the manifest
     // diff rather than poking the filesystem directly.
@@ -1548,7 +1530,11 @@ export class SystemBrowser {
     );
     if (confirmed !== 'Delete') return;
 
+    // Snapshot before removing: deleteClass unbinds the name, and the class version is only
+    // reachable afterwards while something holds it (#434).
+    const recording = beginClassDeletion(this.session, [{ dict: dictIndex, className }]);
     queries.deleteClass(this.session, dictIndex, className);
+    notifyUndoable(`Deleted class ${className}`, recording?.commit());
     this.exportManager.removeClassFile(
       this.session,
       dictIndex,
@@ -1593,6 +1579,15 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Moving a class between dictionaries REBINDS the same class object -- `removeKey:` from
+    // one, `at:put:` into the other -- so it is an ordinary class edit over two slots: the name
+    // it left and the name it arrived under. The reversal rebinds the first and unbinds the
+    // second (#434).
+    const recording = beginClassEdit(this.session, [
+      { dict: srcIndex, className },
+      { dict: picked.index, className },
+    ]);
+
     queries.moveClass(this.session, srcIndex, picked.index, className);
     this.exportManager.removeClassFile(
       this.session,
@@ -1610,7 +1605,10 @@ export class SystemBrowser {
     this.clearDimming();
 
     this.handleSelectCategory(this.state.selectedCategory || ALL_CLASSES_CATEGORY);
-    vscode.window.showInformationMessage(`Moved ${className} to ${picked.label}.`);
+    notifyUndoable(
+      `Moved ${className} to ${picked.label}.`,
+      recording?.commit(`Move class ${className} to ${picked.label}`),
+    );
   }
 
   // Write `aSelectedClass fileOutClass` to a user-chosen path, mirroring Jade's
@@ -1814,7 +1812,19 @@ export class SystemBrowser {
     );
     if (confirmed !== 'Delete') return;
 
+    // Snapshot before removing: the source only exists until the removal lands (#434).
+    const recording = beginMethodDeletion(this.session, {
+      dict: dictIndex,
+      className,
+      isMeta: this.state.isMeta,
+      selector,
+      environmentId: 0,
+    });
     queries.deleteMethod(this.session, className, this.state.isMeta, selector, dictIndex);
+    notifyUndoable(
+      `Deleted ${className}${this.state.isMeta ? ' class' : ''}>>#${selector}`,
+      recording?.commit(),
+    );
     this.syncSelectedClass(className);
     this.envCache.delete(`${dictIndex}/${className}`);
     this.state.selectedMethod = null;
@@ -1842,6 +1852,17 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Snapshot the slot before moving: its captured state carries the CATEGORY as well as
+    // the source, so the ordinary method-edit reversal puts the category back (#434).
+    const slot = {
+      dict: dictIndex,
+      className,
+      isMeta: this.state.isMeta,
+      selector,
+      environmentId: 0,
+    };
+    const recording = beginMethodEdit(this.session, [slot]);
+
     queries.recategorizeMethod(
       this.session,
       className,
@@ -1856,6 +1877,14 @@ export class SystemBrowser {
     if (this.state.selectedMethodCategory) {
       this.handleSelectMethodCategory(this.state.selectedMethodCategory);
     }
+
+    const after = recording ? readMethodSlotState(this.session, [slot]) : undefined;
+    notifyUndoable(
+      `Moved #${selector} to '${picked}'.`,
+      after && recording
+        ? recording.commit(`Move ${slotLabel(slot)} to '${picked}'`, after)
+        : undefined,
+    );
   }
 
   private handleSendersOf(): void {
@@ -1947,6 +1976,10 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Recorded per CLASS, the same shape a class-category rename uses: what matters is the
+    // label this class carried, not the name of a category (#434).
+    const recording = beginClassCategoryEdit(this.session, dictIndex);
+
     queries.recategorizeClass(this.session, className, picked, dictIndex);
     void this.exportManager.syncClass(
       this.session,
@@ -1957,7 +1990,10 @@ export class SystemBrowser {
     // the categories column and class list.
     this.dictEntryCache.delete(dictIndex);
     this.rebuildClassCategories();
-    vscode.window.showInformationMessage(`Moved ${className} to category '${picked}'.`);
+    notifyUndoable(
+      `Moved ${className} to category '${picked}'.`,
+      recording?.commit(`Move class ${className} to category ${picked}`),
+    );
   }
 
   // Copy the selected method's source into another class, preserving its category.

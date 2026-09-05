@@ -63,11 +63,15 @@ describe('rename-temporary preview queries', () => {
   it('builds an apply query that sends an empty deselected set (all-or-nothing)', async () => {
     const exec = vi.fn().mockResolvedValue('{}');
 
-    await applyRenameTemporary(exec, 'tok');
+    await applyRenameTemporary(exec, 'tok', 'test undo');
 
-    expect(exec.mock.calls[0][1]).toBe(
-      "GsRenameTemporaryRefactoring applyForToken: 'tok' deselected: #()",
-    );
+    // Apply is routed through GsRefactoringUndo so the change is recorded (#434); the
+    // engine's own all-or-nothing call is the fallback for a stone whose engine
+    // predates undo.
+    const code = exec.mock.calls[0][1] as string;
+    expect(code).toContain("GsRenameTemporaryRefactoring applyForToken: 'tok' deselected: #()");
+    expect(code).toContain('#recordAndApplyForToken:engine:deselected:label:');
+    expect(code).toContain("with: 'test undo'");
   });
 
   it('builds a decline-reason pre-check addressing the class, selector, side, name, and offset', async () => {

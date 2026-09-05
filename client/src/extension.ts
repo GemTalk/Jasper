@@ -91,6 +91,10 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
+import { refreshUndoUi, createUndoStatusBarItem } from './undo/undoUi';
+import { undoLastCommand } from './undo/undoLastCommand';
+import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -1166,6 +1170,30 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
+  // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
+  // switching sessions switches which undo (if any) is on offer.
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() => refreshUndoUi(sessionManager.getSelectedSession())),
+  );
+  // A session's stack goes with the session: its entries name source in a transaction that
+  // no longer exists, and a later session reusing the id must not inherit them.
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession((id: number) => {
+      clearUndoStack(id);
+      refreshUndoUi(sessionManager.getSelectedSession());
+    }),
+  );
+  // The status-bar button is created before the first refresh, so that refresh can show it.
+  context.subscriptions.push(createUndoStatusBarItem());
+  // Every recording site pushes onto the stack and nothing else; this is what turns a
+  // push into a visible button, so no site has to remember to update the UI.
+  context.subscriptions.push(
+    new vscode.Disposable(
+      onUndoStackChanged(() => refreshUndoUi(sessionManager.getSelectedSession())),
+    ),
+  );
+  refreshUndoUi(sessionManager.getSelectedSession());
+
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
     'GemStone Enhanced Inspector Perf',
@@ -1386,6 +1414,11 @@ export function activate(context: vscode.ExtensionContext) {
         clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
+        // An abort rewinds the stone underneath every recorded undo, so each entry now
+        // describes a "before" state that never existed in the transaction the session is
+        // now in. Offering them would put back source the abort already discarded.
+        clearUndoStack(session.id);
+        refreshUndoUi(sessionManager.getSelectedSession());
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
@@ -1550,6 +1583,38 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.explorer.extractMethod', async () => {
       await extractMethodCommand(sessionManager);
+    }),
+
+    // Undo the last thing done in this session -- a method edit or an applied refactoring
+    // (#434). Reached five ways: the purple status-bar button, the Undo button on the
+    // post-apply toast, the palette entry, the Explorer title-bar button and the one on an
+    // open method editor -- all of which land in the one dispatcher.
+    vscode.commands.registerCommand('gemstone.undoLast', async () => {
+      await undoLastCommand(sessionManager);
+    }),
+
+    // The same dispatcher under a second name, so the title-bar icon and the palette can say
+    // "Revert" for a class edit (#434). A contributed menu title is a fixed string, so the
+    // only way for those affordances to agree with the status bar on the VERB is to have one
+    // command per verb and gate them on `gemstone.undoVerb`. Nothing else differs: whichever
+    // is invoked reverses whatever is on top of the stack.
+    vscode.commands.registerCommand('gemstone.revertLast', async () => {
+      await undoLastCommand(sessionManager);
+    }),
+
+    // An undo binds and unbinds classes behind GemStone Search's cached corpora, so without
+    // this a class the undo removed goes on being offered as a hit and opening it lands on
+    // "Class not found" (#434). Internal -- not contributed in package.json -- and called by
+    // every reverser through `refreshSearch`.
+    vscode.commands.registerCommand(SEARCH_RESYNC_COMMAND, (sessionId: number) => {
+      omniSearch?.notifySessionSynced(sessionId);
+    }),
+
+    // An undo recompiles over GCI rather than through the file system provider, so VS Code is
+    // never told the resource changed and a clean editor keeps showing the discarded source
+    // (#434). Internal -- not contributed in package.json.
+    vscode.commands.registerCommand(FS_CHANGED_COMMAND, (uris: vscode.Uri[]) => {
+      gemstoneFs.notifyChanged(uris);
     }),
 
     vscode.commands.registerCommand(
@@ -1870,6 +1935,7 @@ export function activate(context: vscode.ExtensionContext) {
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
         updateRefactoringSupportContext();
+        refreshUndoUi(session);
         treeProvider.refresh();
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,

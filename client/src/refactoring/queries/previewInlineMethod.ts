@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Inline-method (M2) query builders. The engine (GsInlineMethodRefactoring) is
 // addressed by class + selector + isMeta + a 1-based source OFFSET (the editor
@@ -72,15 +73,16 @@ export function pageInlineMethodPreview(
 
 /** Apply a started preview server-side (recompile the caller + optionally remove
  *  the now-unused target), WITHOUT committing. The caller recompile is always
- *  applied; `deselectedIds` skips only the target removal. */
+ *  applied; `deselectedIds` skips only the target removal.
+ *  Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+ *  see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`. */
 export function applyInlineMethod(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code =
-    `GsInlineMethodRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #(${ids})`;
+  const code = recordedApplyExpr('GsInlineMethodRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyInlineMethod(${token})`, code);
 }
 

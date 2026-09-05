@@ -12,6 +12,12 @@ import {
   dictNameFromDefinition,
   DEFAULT_CLASS_CATEGORY,
 } from './classDefinitionText';
+import { extractSelector } from './methodPattern';
+import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
+import { notifyUndoable } from './undo/undoableToast';
+import { beginClassEdit } from './undo/recordClassEdit';
+import { beginClassCommentEdit } from './undo/recordClassComment';
+import { MethodSlot, slotLabel, UndoEntry } from './undo/undoTypes';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
 // %2F-encoded) is collapsed by VS Code's path normalization, losing the
@@ -533,6 +539,60 @@ export interface ClassDefinitionCompiledEvent {
   previousUriIsTemplate: boolean;
 }
 
+// ── Undo recording for a save ─────────────────────────────────
+
+/**
+ * The method slots a save could touch (issue #434).
+ *
+ * Usually one — the method being saved, or the one being created. Two when the user
+ * edits the MESSAGE PATTERN of an existing method: GemStone compiles that as a new
+ * method and leaves the original in place, so undoing the save has to take the new one
+ * away as well as leave the old one alone.
+ *
+ * The new selector is read from the source with `extractSelector` rather than waited for,
+ * because by the time GemStone reports it authoritatively the previous state is already
+ * gone. A guess that turns out wrong costs the undo, not the save: `recordSave` checks the
+ * compiled selector against these slots and records nothing when it is not among them.
+ */
+function undoSlotsForSave(
+  parsed: ParsedNewMethodUri | ParsedMethodUri,
+  sourceCode: string,
+): MethodSlot[] {
+  const selectors: string[] = [];
+  if (parsed.kind === 'method') selectors.push(parsed.selector);
+  const guessed = extractSelector(sourceCode.split('\n')[0] ?? '');
+  if (guessed && !selectors.includes(guessed)) selectors.push(guessed);
+  return selectors.map((selector) => ({
+    dict: parsed.dictIndex ?? parsed.dictName,
+    className: parsed.className,
+    isMeta: parsed.isMeta,
+    selector,
+    environmentId: parsed.environmentId,
+  }));
+}
+
+/** Record a completed save against the slot GemStone actually compiled into, and answer the
+ *  entry so the caller can put Undo on its toast. Every other slot is left reading exactly as
+ *  it did before, so the reversal has nothing to do there. */
+function recordSave(
+  recording: MethodEditRecording,
+  slots: MethodSlot[],
+  compiledSelector: string,
+  sourceCode: string,
+  category: string,
+): UndoEntry | undefined {
+  const at = slots.findIndex((s) => s.selector === compiledSelector);
+  if (at < 0) {
+    logInfo(`[undo] not recording: compiled #${compiledSelector}, which was not snapshotted`);
+    return undefined;
+  }
+  const after = slots.map((slot, i) =>
+    i === at ? present(sourceCode, category) : recording.before[i],
+  );
+  const verb = recording.before[at].exists ? 'Save' : 'Add';
+  return recording.commit(`${verb} ${slotLabel(slots[at])}`, after);
+}
+
 // ── FileSystemProvider ────────────────────────────────────────
 
 export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
@@ -545,17 +605,24 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
    * or method used to be.
    *
    * `writeFile` fires this for its own saves; this is the entry point for the
-   * changes nothing here can see, made by a command acting directly on the image
-   * (the Explorer refiling a class, say). Without it an open class definition
+   * changes nothing here can see, made by a command acting directly on the image.
+   * The Explorer refiling a class is one: without this, an open class definition
    * keeps the category line the class no longer has — and saving that buffer
-   * would file the class straight back where it came from.
+   * would file the class straight back where it came from. An undo is another: it
+   * recompiles a method straight over GCI, never touching the provider, and an
+   * editor left showing the discarded source is how that undo gets silently
+   * re-saved (#434).
+   *
+   * Takes one URI or many; an empty array is a no-op.
    *
    * Safe to call for a document nobody has open: VS Code ignores a change event
    * for a file it is not showing. A DIRTY buffer is left alone, which is VS
    * Code's own rule for an external edit, not something to work around here.
    */
-  notifyChanged(uri: vscode.Uri): void {
-    this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+  notifyChanged(uris: vscode.Uri | vscode.Uri[]): void {
+    const list = Array.isArray(uris) ? uris : [uris];
+    if (list.length === 0) return;
+    this._onDidChangeFile.fire(list.map((uri) => ({ type: vscode.FileChangeType.Changed, uri })));
   }
 
   private _onMethodCompiled = new vscode.EventEmitter<MethodCompiledEvent>();
@@ -751,14 +818,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
           this.compileClassDefinition(uri, parsed, source, session);
           break;
         case 'comment':
-          queries.setClassComment(
-            session,
-            parsed.className,
-            source,
-            parsed.dictIndex ?? parsed.dictName,
-          );
-          vscode.window.showInformationMessage(`Comment updated for ${parsed.className}`);
-          void this.exportManager?.syncClass(session, parsed.dictName, parsed.className);
+          this.saveClassComment(parsed, source, session);
           break;
         case 'new-class':
           this.compileClassDefinition(uri, parsed, source, session);
@@ -793,12 +853,39 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     }
   }
 
+  private saveClassComment(parsed: ParsedCommentUri, source: string, session: ActiveSession): void {
+    const dictRef = parsed.dictIndex ?? parsed.dictName;
+    // Read the old comment BEFORE overwriting it — this is the one moment it still
+    // exists (#434).
+    const recording = beginClassCommentEdit(session, {
+      dict: dictRef,
+      className: parsed.className,
+    });
+
+    const result = queries.setClassComment(session, parsed.className, source, dictRef);
+    // setClassComment reports a class it cannot resolve by RETURNING a status string rather
+    // than throwing, so "Comment updated" used to appear over a save that wrote nothing —
+    // and an undo entry for it would offer to put back a comment nobody replaced.
+    if (!result.startsWith('Comment set:')) {
+      vscode.window.showWarningMessage(`Comment for ${parsed.className} was not saved: ${result}`);
+      return;
+    }
+
+    notifyUndoable(`Comment updated for ${parsed.className}`, recording?.commit(source));
+    void this.exportManager?.syncClass(session, parsed.dictName, parsed.className);
+  }
+
   private compileMethod(
     uri: vscode.Uri,
     parsedMethodUri: ParsedNewMethodUri | ParsedMethodUri,
     sourceCode: string,
     session: ActiveSession,
   ) {
+    // Snapshot BEFORE compiling — this is the one moment the previous source still
+    // exists. A capture that fails answers undefined and the save proceeds unrecorded.
+    const slots = undoSlotsForSave(parsedMethodUri, sourceCode);
+    const recording = beginMethodEdit(session, slots);
+
     const result = queries.compileMethod(
       session,
       parsedMethodUri.className,
@@ -814,6 +901,10 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       throw new BrowserQueryError(result);
     }
 
+    const undoEntry = recording
+      ? recordSave(recording, slots, selector, sourceCode, parsedMethodUri.category)
+      : undefined;
+
     const recv = receiver(parsedMethodUri.className, parsedMethodUri.isMeta);
     if (
       this.classIsWritable(
@@ -822,7 +913,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         parsedMethodUri.dictIndex ?? parsedMethodUri.dictName,
       )
     ) {
-      vscode.window.showInformationMessage(`Compiled method ${recv}>>#${selector}`);
+      // The Undo button rides on THIS toast, which is the only undo affordance with no
+      // discovery cost -- it is where the user is already looking (#434).
+      notifyUndoable(`Compiled method ${recv}>>#${selector}`, undoEntry);
     } else {
       // A non-writable class compiles into the transient (session) method dict,
       // NOT the persistent one, so GemStone reports success but the change is
@@ -871,18 +964,24 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // on base stones). Strip the category line, compile the always-valid
     // definition, then apply the category via Class>>category:.
     const { source: defSource, category } = splitOutCategory(source);
-    // A new-class definition may name a dictionary other than the one selected in
-    // the explorer (the user can edit the `inDictionary:` line). The class is
-    // created wherever that line says, so every post-compile step — existence
-    // check, recategorize, sync, reopen — must target THAT dictionary, not the
-    // selected one (parsed.dictName), or they look the class up in the wrong place
-    // (LookupError / "Class not found").
-    const targetDictName: string =
-      parsed.kind === 'new-class'
-        ? (dictNameFromDefinition(defSource) ?? parsed.dictName)
-        : parsed.dictName;
+    // A definition may name a dictionary other than the one the tab was opened on — the
+    // user can edit the `inDictionary:` line, on an existing class's definition just as
+    // much as on a new-class template, and the compile simply executes the source. So the
+    // class lands wherever that line says, and every post-compile step — existence check,
+    // recategorize, writability, undo, sync, reopen — must target THAT dictionary, not the
+    // one in the URI, or they look the class up in the wrong place. Looking it up in the
+    // wrong place does not fail loudly: `canClassBeWritten` reads a class it cannot find as
+    // NOT writable, so a save that moved a class used to be reported as "recompiled
+    // transiently — NOT persisted" when it had in fact persisted perfectly well.
+    const definedDictName = dictNameFromDefinition(defSource);
+    const targetDictName: string = definedDictName ?? parsed.dictName;
+    // Prefer the URI's SymbolList index while the definition leaves the class where it was:
+    // an index is unambiguous where a name is not, since two dictionaries can share a name.
+    // Once the definition names a different dictionary, the name is all there is to go on.
     const dictRef: number | string =
-      parsed.kind === 'definition' ? (parsed.dictIndex ?? parsed.dictName) : targetDictName;
+      parsed.kind === 'definition' && targetDictName === parsed.dictName
+        ? (parsed.dictIndex ?? parsed.dictName)
+        : targetDictName;
 
     // A NEW-class save must not silently redefine an existing class in the target
     // dictionary. (Editing an existing class's definition is a deliberate
@@ -896,6 +995,22 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         );
       }
     }
+
+    // Snapshot the class binding BEFORE compiling, and stash the version bound now: a
+    // shape-changing save answers a NEW version, and the old one is the only way back (#434).
+    //
+    // The name comes from the DEFINITION, never from the URI, for both kinds. A new-class
+    // URI carries only a placeholder; and a definition tab whose class name has been edited
+    // CREATES a class, leaving the one the tab was opened on untouched -- so watching
+    // parsed.className there would see no change, record nothing, and leave the creation
+    // unrevertible. parsed.className is only the fallback for a definition whose name cannot
+    // be parsed, which is a definition that will not compile anyway.
+    const undoName =
+      classNameFromDefinition(defSource) ??
+      (parsed.kind === 'definition' ? parsed.className : undefined);
+    const recording = undoName
+      ? beginClassEdit(session, [{ dict: dictRef, className: undoName }])
+      : undefined;
 
     const className = queries.compileClassDefinition(session, defSource);
 
@@ -924,20 +1039,24 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // method) without persisting, yet GemStone reports success — warn instead
     // of a misleading "updated" toast. A new class that couldn't be written to
     // its target dictionary would have thrown above, so it's always a success.
-    if (
-      parsed.kind === 'definition' &&
-      !this.classIsWritable(session, className, parsed.dictIndex ?? parsed.dictName)
-    ) {
+    if (parsed.kind === 'definition' && !this.classIsWritable(session, className, dictRef)) {
       vscode.window.showWarningMessage(
         `${className} recompiled transiently — NOT persisted (the class is not writable). ` +
           `The change will be lost when the session ends.`,
       );
     } else {
-      const message =
-        parsed.kind === 'new-class'
-          ? `Class created: ${className}`
-          : `Class definition updated for ${className}`;
-      vscode.window.showInformationMessage(message);
+      // Created or redefined is what the CAPTURE saw, not what the URI said: a definition
+      // tab whose class name was edited creates a class too, and calling that "definition
+      // updated" names the wrong thing. Only when nothing was captured does the URI kind
+      // have to answer for it.
+      const created = recording ? !recording.before[0]?.bound : parsed.kind === 'new-class';
+      const message = created
+        ? `Class created: ${className}`
+        : `Class definition updated for ${className}`;
+      notifyUndoable(
+        message,
+        recording?.commit(created ? `Add class ${className}` : `Redefine class ${className}`),
+      );
     }
 
     // Use the name GemStone returned, not parsed.className: for a new-class URI the segment is
@@ -947,9 +1066,13 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     // Preserve the dictionary index (when the edited URI carried one) so the
     // reopened definition tab targets the same dictionary and matches the tab
-    // being replaced. For a new class, target the dictionary the definition named
-    // (targetDictName), which may differ from the selected one.
-    const dictIndex = parsed.kind === 'definition' ? parsed.dictIndex : undefined;
+    // being replaced. Dropped when the definition moved the class: the index still
+    // points at the dictionary the tab came from, and pairing it with the new
+    // dictionary's name would reopen the tab looking in the old one.
+    const dictIndex =
+      parsed.kind === 'definition' && targetDictName === parsed.dictName
+        ? parsed.dictIndex
+        : undefined;
     const definitionUri = buildClassDefinitionUri(
       parsed.sessionId,
       targetDictName,

@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 /** An executor whose result is fetched asynchronously (non-blocking GCI), so a
  *  slow build shows progress and keeps the extension host responsive. */
@@ -79,16 +80,16 @@ export function pageRenameMethodPreview(
 
 // Apply a started preview server-side (compile new / remove old), skipping the
 // given deselected change ids, WITHOUT committing. Returns
-// {"applied":N,"failed":[{"id":..,"label":..,"error":..}]}.
+// {"applied":N,"failed":[{"id":..,"label":..,"error":..}],"undoRecorded":bool}.
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
 export function applyRenameMethod(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const idsLiteral = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code =
-    `GsRenameMethodRefactoring applyForToken: '${escapeString(token)}' ` +
-    `deselected: #(${idsLiteral})`;
+  const code = recordedApplyExpr('GsRenameMethodRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyRenameMethod(${token}, -${deselectedIds.length})`, code);
 }
 

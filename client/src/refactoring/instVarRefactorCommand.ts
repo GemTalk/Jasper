@@ -30,6 +30,7 @@ import {
 import { showInstVarRefactorPanel } from './instVarRefactorPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo, logWarning } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface InstVarRefactorRequest {
   session: ActiveSession;
@@ -239,7 +240,32 @@ export async function runInstVarRefactor(
       ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped. See the GemStone GCI channel for the list.`
       : '';
   const commitNote = result.committed ? ' Committed.' : '';
-  void vscode.window.showInformationMessage(`${titleFor(req)}.${droppedNote}${commitNote}`);
+
+  // Record the reversal: an add is undone by a remove and vice versa, by this same engine
+  // (#434). Deliberately NOT recorded when the apply MIGRATED instances or DELETED history --
+  // those are the two irreversible options in the family, and a reversal that silently cannot
+  // restore moved data or a destroyed history would be a false promise. `committed` is the
+  // engine's signal that one of them ran.
+  if (!result.committed) {
+    try {
+      queries.recordReverseRename(
+        session,
+        op === 'add' ? 'instVarAdd' : 'instVarRemove',
+        className,
+        ivarName,
+        ivarName,
+        titleFor(req),
+        'GsInstVarRefactoring',
+      );
+    } catch (e: unknown) {
+      logInfo(
+        `[undoRefactoring] could not record the reverse instVar op: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+  notifyRefactoringApplied(session, `${titleFor(req)}.${droppedNote}${commitNote}`, 'toast');
 
   return {
     applied: result.applied,

@@ -4,14 +4,16 @@ import { ActiveSession } from './sessionManager';
 import { ExportManager } from './exportManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
+import { beginClassCommentEdit } from './undo/recordClassComment';
+import { notifyUndoable } from './undo/undoableToast';
 
 /**
  * A "Comment" tab (a webview panel in ViewColumn.Two, beside the Globals and
  * class-definition tabs) showing the selected class's comment in an editable
- * field. Saving writes the comment back to GemStone (queries.setClassComment)
- * and re-syncs the class mirror — the same effect as saving the class's
- * gemstone://…/comment document, but as a persistent panel that refills as the
- * user browses classes rather than sharing the definition/method preview slot.
+ * field. Saving writes the comment back to GemStone (queries.setClassComment),
+ * records an undo entry and re-syncs the class mirror — the same effect as saving
+ * the class's gemstone://…/comment document, but as a persistent panel that refills
+ * as the user browses classes rather than sharing the definition/method preview slot.
  *
  * One panel per session (keyed like GlobalsBrowser); disposed on logout via
  * disposeForSession.
@@ -157,8 +159,23 @@ export class CommentBrowser {
 
   private save(text: string): void {
     try {
-      queries.setClassComment(this.session, this.className, text, this.dictIndex);
-      vscode.window.showInformationMessage(`Comment updated for ${this.className}`);
+      // Read the old comment BEFORE overwriting it — this is the one moment it still
+      // exists (#434).
+      const recording = beginClassCommentEdit(this.session, {
+        dict: this.dictIndex,
+        className: this.className,
+      });
+      const result = queries.setClassComment(this.session, this.className, text, this.dictIndex);
+      // setClassComment reports a class it cannot resolve by RETURNING a status string
+      // rather than throwing, so "Comment updated" used to appear over a save that wrote
+      // nothing — and an undo entry for it would offer to put back a comment nobody
+      // replaced.
+      if (!result.startsWith('Comment set:')) {
+        vscode.window.showWarningMessage(`Comment for ${this.className} was not saved: ${result}`);
+        this.panel.webview.postMessage({ command: 'saveError' });
+        return;
+      }
+      notifyUndoable(`Comment updated for ${this.className}`, recording?.commit(text));
       void this.exportManager?.syncClass(this.session, this.dictName, this.className);
       this.dirty = false;
       this.currentText = text;

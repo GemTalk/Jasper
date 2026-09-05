@@ -132,6 +132,18 @@ GsRefactoringChangeSet >> addClassAddInDictionary: dn className: cn superclassNa
 ]
 
 { #category : 'building' }
+GsRefactoringChangeSet >> addClassRemoveInDictionary: dn className: cn oldSource: os [
+	"Stage the UNBINDING of a class. Records the change only; NEVER removes or commits. Staged
+	 only by an undo reversing a refactoring that created the class -- see
+	 GsRefactoringChange class>>classRemoveId:dictName:className:oldSource:."
+	| change |
+	change := GsRefactoringChange
+		classRemoveId: self nextIdString dictName: dn className: cn oldSource: os.
+	changes add: change.
+	^change
+]
+
+{ #category : 'building' }
 GsRefactoringChangeSet >> addClassReparentInDictionary: dn className: cn oldSource: os newSource: ns [
 	"Stage the re-parenting of one descendant of a renamed class. Records the change
 	 only; NEVER compiles or commits. Apply recompiles the descendant's definition

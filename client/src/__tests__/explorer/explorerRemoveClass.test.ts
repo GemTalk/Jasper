@@ -7,7 +7,15 @@ vi.mock('../../browserQueries', async (orig) => ({
   getClassDescendantNames: vi.fn(() => []),
   getClassesWithCategory: vi.fn(() => []),
   deleteClass: vi.fn(() => 'Deleted class: X'),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
   referencesToClassInDict: vi.fn(() => []),
+}));
+// The revert recorder's one round trip, stubbed so the snapshot is data this test controls
+// rather than a live doit (#434).
+vi.mock('../../undo/queries/classSlotQueries', () => ({
+  captureClassSlots: vi.fn(),
+  applyClassSlotOps: vi.fn(),
+  newStashKey: vi.fn(() => 'k1'),
 }));
 vi.mock('../../methodResultsPicker', () => ({
   showMethodResults: vi.fn(),
@@ -23,6 +31,8 @@ import {
   deleteClass,
   referencesToClassInDict,
 } from '../../browserQueries';
+import { captureClassSlots } from '../../undo/queries/classSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 
@@ -75,6 +85,9 @@ beforeEach(() => {
   deleteClassMock.mockReturnValue('Deleted class: X');
   descendantsMock.mockReturnValue([]);
   referencesMock.mockReturnValue([]);
+  // clearAllMocks keeps implementations, so an undo capture stubbed by one describe would
+  // otherwise leak into another and put a button on a notice that test asserts is plain.
+  vi.mocked(captureClassSlots).mockReset();
 });
 
 describe('ExplorerController.removeClass — nothing references the class', () => {
@@ -90,6 +103,8 @@ describe('ExplorerController.removeClass — nothing references the class', () =
   });
 
   it('announces the removal so it is not silent', async () => {
+    // This describe stubs no capture, so there is no undo entry and the notice is plain; the
+    // button is asserted where a capture IS set up, in the revert describe below.
     const ctl = makeController();
 
     await ctl.removeClass();
@@ -381,6 +396,110 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
     await ctl.removeClass();
 
     expect(onClassRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeClass records a revert (#434)', () => {
+  /**
+   * `deleteClass` only unbinds the name — the class version itself survives — so the very
+   * same version can be bound again. That is only true while something still holds it, which
+   * is why the capture has to happen BEFORE the removal, and why it stashes.
+   */
+  const bound = (oop: string) => ({ bound: true, oop, selectors: [] });
+  const unbound = { bound: false, oop: null, selectors: [] };
+
+  beforeEach(() => {
+    resetUndoStacks();
+    vi.mocked(captureClassSlots).mockReset();
+  });
+
+  it('captures and stashes before the class is removed', async () => {
+    const order: string[] = [];
+    vi.mocked(captureClassSlots).mockImplementation((_e, _slots, keys) => {
+      order.push(keys ? 'capture-with-stash' : 'capture-plain');
+      return keys ? [bound('1')] : [unbound];
+    });
+    deleteClassMock.mockImplementation(() => {
+      order.push('delete');
+      return 'Deleted class: Doomed';
+    });
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(order[0]).toBe('capture-with-stash');
+    expect(order[1]).toBe('delete');
+  });
+
+  it('records one entry naming the class, with its stash key', async () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1')])
+      .mockReturnValueOnce([unbound]);
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Remove class Doomed',
+      stashKeys: ['k1'],
+    });
+  });
+
+  it('records the whole subtree as ONE entry', async () => {
+    descendantsMock.mockReturnValue([descendant('Child', 1)]);
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1'), bound('2')])
+      .mockReturnValueOnce([unbound, unbound]);
+    warn.mockResolvedValue('Remove With Subclass');
+
+    await makeController().removeClass();
+
+    const entry = peekUndoEntry(1);
+    expect(entry?.kind === 'classEdit' && entry.slots).toHaveLength(2);
+    expect(entry?.label).toContain('2 classes');
+  });
+
+  it('puts Revert on the silent-delete notice, rather than a second notice beside it', async () => {
+    // Safe delete's own sentence is the ONE notice for a deletion nothing referenced, so it is
+    // the one that carries the way back. "Revert" rather than "Undo" because a class edit binds
+    // an earlier version rather than rolling anything back.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1')])
+      .mockReturnValueOnce([unbound]);
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('nothing referenced it'),
+      'Revert',
+    );
+  });
+
+  it('records nothing when the removal was refused at the prompt', async () => {
+    // Safe delete only PROMPTS when something references the class; with nothing referencing
+    // it the removal goes through silently and there is no prompt to refuse.
+    referencesMock.mockReturnValue([reference({ className: 'Other', selector: 'usesIt' })]);
+    warn.mockResolvedValue(undefined);
+
+    await makeController().removeClass();
+
+    expect(deleteClassMock).not.toHaveBeenCalled();
+    expect(captureClassSlots).not.toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+
+  it('removes the class normally when the capture fails', async () => {
+    // Recording must never be the reason a removal fails.
+    vi.mocked(captureClassSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+    warn.mockResolvedValue('Remove');
+
+    await expect(makeController().removeClass()).resolves.toBeUndefined();
+    expect(deleteClassMock).toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
   });
 });
 

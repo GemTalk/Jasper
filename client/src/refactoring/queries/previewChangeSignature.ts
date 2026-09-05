@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor, RenameMethodScope } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Change-method-signature (M5) query builders. The engine
 // (GsChangeSignatureRefactoring) is addressed by class + meta + the OLD selector +
@@ -107,15 +108,16 @@ export function pageChangeSignaturePreview(
 
 // Apply a started preview server-side (compile new / remove old), skipping the given
 // deselected change ids, WITHOUT committing. Returns
-// {"applied":N,"failed":[{"id":..,"label":..,"error":..}]}.
+// {"applied":N,"failed":[{"id":..,"label":..,"error":..}],"undoRecorded":bool}.
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
 export function applyChangeSignature(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const code =
-    `GsChangeSignatureRefactoring applyForToken: '${escapeString(token)}' ` +
-    `deselected: #(${stringArrayLiteral(deselectedIds)})`;
+  const code = recordedApplyExpr('GsChangeSignatureRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyChangeSignature(${token}, -${deselectedIds.length})`, code);
 }
 

@@ -8,11 +8,18 @@ vi.mock('../../browserQueries', () => ({
   getVisibleClassVarNames: vi.fn(() => []),
   addAccessors: vi.fn(() => ({ created: 2, skipped: 0, noClass: false })),
   getClassEnvironments: vi.fn(() => []),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
 }));
+// The undo recorder's two captures — mocked so the flow records without a stone (#434).
+vi.mock('../../undo/queries/classVarQueries', () => ({ captureClassVar: vi.fn() }));
+vi.mock('../../undo/queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn() }));
 
 import * as vscode from 'vscode';
 import { ExplorerController } from '../../gemstoneExplorer';
 import * as queries from '../../browserQueries';
+import { captureClassVar } from '../../undo/queries/classVarQueries';
+import { captureMethodSlots } from '../../undo/queries/methodSlotQueries';
+import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 /**
@@ -20,7 +27,9 @@ import type { SessionManager, ActiveSession } from '../../sessionManager';
  * add sends addClassVariable and refuses an already-visible name; the accessors
  * question is asked up front (escaping it cancels the whole add); opting in
  * generates accessors on the correct side (class side for a class variable,
- * instance side for an instance variable). Queries are mocked; no live stone.
+ * instance side for an instance variable). It also records ONE undo entry covering
+ * the variable AND its accessors, because the user did one thing (#434). Queries are
+ * mocked; no live stone.
  */
 
 function makeController(session: ActiveSession | undefined) {
@@ -48,6 +57,8 @@ function makeController(session: ActiveSession | undefined) {
   return { ctl, refresh, reveal };
 }
 
+let captureCalls = 0;
+
 beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks clears call history but NOT implementations, so re-establish the
@@ -58,6 +69,26 @@ beforeEach(() => {
   vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
   vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
   vi.mocked(vscode.window.showQuickPick).mockResolvedValue('No accessors' as never);
+  resetUndoStacks();
+  // mockReset, not clearAllMocks: clearing a mock leaves its `...Once` queue in place, so a
+  // per-test `mockReturnValueOnce` would pile up and be answered in a later test instead.
+  vi.mocked(captureClassVar).mockReset();
+  vi.mocked(captureMethodSlots).mockReset();
+  // Not declared before the add, declared after it — what the recorder reads either side.
+  vi.mocked(captureClassVar)
+    .mockReturnValueOnce({ defined: false })
+    .mockReturnValue({ defined: true });
+  // Absent on the way in, present on the way out — what the stone reads either side of an
+  // add that actually compiled the accessors.
+  captureCalls = 0;
+  vi.mocked(captureMethodSlots).mockImplementation((_e, slots) => {
+    captureCalls += 1;
+    return slots.map((slot) =>
+      captureCalls === 1
+        ? { exists: false, source: null, category: null }
+        : { exists: true, source: `${slot.selector}\n\t^1`, category: 'accessing' },
+    );
+  });
 });
 
 describe('ExplorerController add class variable', () => {
@@ -111,6 +142,53 @@ describe('ExplorerController add class variable', () => {
     );
   });
 
+  it('records ONE undo entry covering the variable and the accessors it generated', async () => {
+    // The user did one thing, so one Undo takes all of it back. Removing the variable while
+    // its accessors remained would leave two methods reading a binding the class no longer
+    // declares.
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
+
+    await ctl.addClassVarOnClass('Foo');
+
+    // ONE, not two: the accessors ride on the class-variable entry rather than pushing their
+    // own, so the user does not have to press Undo twice for one action.
+    expect(undoStackDepth(1)).toBe(1);
+    const entry = peekUndoEntry(1);
+    expect(entry).toMatchObject({
+      kind: 'classVarEdit',
+      label: 'Add class variable Registry to Account'.replace('Account', 'Foo'),
+      slot: { className: 'Foo', varName: 'Registry', dict: 1 },
+    });
+    expect(entry?.kind === 'classVarEdit' && entry.accessorSlots.map((s) => s.selector)).toEqual([
+      'registry',
+      'registry:',
+    ]);
+    // Class-variable accessors live on the class side, so that is where undo removes them.
+    expect(entry?.kind === 'classVarEdit' && entry.accessorSlots.every((s) => s.isMeta)).toBe(true);
+  });
+
+  it('records no accessor slots when the user declined them', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
+
+    await ctl.addClassVarOnClass('Foo');
+
+    const entry = peekUndoEntry(1);
+    expect(entry?.kind === 'classVarEdit' && entry.accessorSlots).toEqual([]);
+  });
+
+  it('records nothing when the class could not be resolved', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
+    vi.mocked(queries.addClassVariable).mockReturnValue('no-class');
+
+    await ctl.addClassVarOnClass('Foo');
+
+    expect(undoStackDepth(1)).toBe(0);
+  });
+
   it('reports failure and does not refresh, reveal, or add accessors when the class cannot be resolved', async () => {
     // addClassVariable answers the non-throwing sentinel 'no-class' — the flow must
     // treat that as a failure, not proceed as if the variable had been added.
@@ -131,6 +209,53 @@ describe('ExplorerController add class variable', () => {
 });
 
 describe('ExplorerController add accessors (standalone row action)', () => {
+  it('records its own undo entry, unlike the copy that follows Add Class Variable', async () => {
+    // Standalone, it IS the whole action, so it gets its own entry.
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+
+    await ctl.generateAccessorsFor('Foo', 'count', 'ivar');
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodEdit',
+      label: 'Add accessors for count in Foo',
+    });
+    const entry = peekUndoEntry(1);
+    expect(entry?.kind === 'methodEdit' && entry.slots.map((s) => s.selector)).toEqual([
+      'count',
+      'count:',
+    ]);
+    expect(entry?.kind === 'methodEdit' && entry.slots.every((s) => !s.isMeta)).toBe(true);
+  });
+
+  it('says class-side in the label for a class variable, and targets the class side', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+
+    await ctl.generateAccessorsFor('Foo', 'Registry', 'classvar');
+
+    const entry = peekUndoEntry(1);
+    expect(entry?.label).toBe('Add class-side accessors for Registry in Foo');
+    expect(entry?.kind === 'methodEdit' && entry.slots.every((s) => s.isMeta)).toBe(true);
+  });
+
+  it('records nothing when every accessor already existed', async () => {
+    // Nothing was compiled, so there is nothing to take away.
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(queries.addAccessors).mockReturnValue({ created: 0, skipped: 2, noClass: false });
+
+    await ctl.generateAccessorsFor('Foo', 'count', 'ivar');
+
+    expect(undoStackDepth(1)).toBe(0);
+  });
+
+  it('records nothing when the class could not be resolved', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(queries.addAccessors).mockReturnValue({ created: 0, skipped: 0, noClass: true });
+
+    await ctl.generateAccessorsFor('Foo', 'count', 'ivar');
+
+    expect(undoStackDepth(1)).toBe(0);
+  });
+
   it('adds instance-side accessors for an instance variable', async () => {
     const { ctl } = makeController({} as ActiveSession);
 
