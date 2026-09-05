@@ -1,9 +1,16 @@
 import koffi from 'koffi';
 import * as path from 'path';
+import { setTimeout as sleep } from 'timers/promises';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
 import type { NotPromise } from './syncTypes';
+import { NativeSocketLibrary } from './sockets/nativeSocketLibrary';
+import { createNativeSocketLibrary } from './sockets/factory';
+
+// How often to check a pending non-blocking call's socket for readiness.
+// Short enough that a fast call still returns promptly, without busy-spinning.
+const NB_RESULT_POLL_INTERVAL_MS = 15;
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
@@ -345,7 +352,10 @@ export class GciLibrary {
     return this._GciTsNbLogin !== null && this._GciTsNbLoginFinished !== null;
   }
 
-  constructor(libraryPath: string) {
+  constructor(
+    libraryPath: string,
+    private nativeSocketLibrary: NativeSocketLibrary = createNativeSocketLibrary(),
+  ) {
     if (process.platform === 'linux') {
       // libgcits has an undefined reference to HostCreateThread, which is
       // defined in libnetldi. On Linux, dlopen uses RTLD_LOCAL by default,
@@ -2304,6 +2314,155 @@ export class GciLibrary {
     );
   }
 
+  /**
+   * Evaluates `code` via the non-blocking GCI entry point and fetches its
+   * result oop.
+   *
+   * `code` runs as an anonymous method: `self` is `nil`, names resolve
+   * against the user's symbol list (UserGlobals, Globals, and Published),
+   * and it runs in environment 0, GemStone's default environment. The
+   * result OOP is retained in the session's PureExportSet; the caller is
+   * responsible for releasing it when no longer needed.
+   *
+   * Does not block the event loop while GemStone evaluates `code` — unless
+   * checking whether the result is ready fails, in which case this falls
+   * back to a single blocking read instead of failing the call outright.
+   * That failure could be transient (e.g. an interrupted poll syscall) or
+   * genuinely fatal (e.g. a dead socket or session); this deliberately
+   * doesn't distinguish between them, on the assumption that such failures
+   * are rare. So it's worth the (rare, one-off) risk of blocking the event
+   * loop to still return a legitimate result when the failure turns out to
+   * be transient, rather than taking on the complexity of telling the two
+   * apart just to fail slightly faster in the fatal case.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If execution fails to start, the evaluated
+   *   code signals an error, or the underlying GCI call fails.
+   */
+  public async executeAndFetchOop(session: unknown, code: string): Promise<bigint> {
+    this.executeNb(session, code);
+
+    await this.waitForNbResult(session);
+
+    return this.fetchNbResult(session);
+  }
+
+  /**
+   * Starts `code` running on `session` via the non-blocking GCI entry
+   * point, without waiting for it to finish.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @throws {GciLibraryError} If the underlying GCI call fails to start.
+   */
+  private executeNb(session: unknown, code: string) {
+    const { success, err } = this.GciTsNbExecute(
+      session,
+      code,
+      this.utf8ClassOop(session),
+      OOP_ILLEGAL,
+      this.nilOop(),
+      0,
+      0,
+    );
+
+    this.throwUnless(success, err);
+  }
+
+  /**
+   * Blocks (without blocking the event loop) until `session`'s in-flight
+   * non-blocking GCI call is ready to fetch, polling its socket for
+   * readiness rather than waiting on GemStone directly.
+   *
+   * If a readiness check itself fails after polling has started, this
+   * treats the call as ready rather than throwing, so the caller can fall
+   * back to fetching the result with a single blocking read instead. A
+   * session that's already invalid before polling even starts, though, has
+   * no socket to poll at all — that failure, from identifying the socket
+   * itself, is not swallowed.
+   *
+   * @param session - The GemStone session to operate in.
+   * @throws {GciLibraryError} If `session`'s socket can't be identified.
+   */
+  private async waitForNbResult(session: unknown) {
+    // Looked up once, up front: the fd identifies the session's connection
+    // rather than this specific in-flight call, so it stays valid for the
+    // whole poll loop and doesn't need re-deriving on every tick.
+    const fd = this.socketFor(session);
+
+    while (!this.isNbResultReady(fd)) {
+      await this.waitBeforeNextNbResultCheck();
+    }
+  }
+
+  /**
+   * Whether the in-flight non-blocking GCI call on the connection
+   * identified by `fd` has a result ready to fetch.
+   *
+   * Reports "ready" instead of propagating an error if the check itself
+   * fails, for any reason — a transient hiccup and a genuinely dead socket
+   * are treated the same way, deliberately, so the caller falls back to a
+   * single blocking fetch rather than failing the call outright.
+   *
+   * @param fd - the file descriptor of the session's socket.
+   * @returns `true` if the call is ready to fetch, or if the readiness
+   *   check itself failed; `false` if the check succeeded and the call
+   *   isn't ready yet.
+   */
+  private isNbResultReady(fd: number) {
+    try {
+      return this.nativeSocketLibrary.isReadable(BigInt(fd));
+    } catch (error) {
+      console.warn(
+        `Polling for the result's readiness failed, so the event loop will block until GemStone finishes; the result itself is unaffected: ${error}`,
+      );
+      return true;
+    }
+  }
+
+  /** Waits `NB_RESULT_POLL_INTERVAL_MS` before the next readiness check. */
+  private async waitBeforeNextNbResultCheck() {
+    await sleep(NB_RESULT_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Blocks until `session`'s in-flight non-blocking GCI call finishes,
+   * and returns its result oop.
+   *
+   * @param session - The GemStone session to operate in.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If the evaluated code signals an error, or
+   *   if the underlying GCI call fails.
+   */
+  private fetchNbResult(session: unknown) {
+    const { result, err } = this.GciTsNbResult(session);
+
+    this.throwOnIllegalOop(result, err);
+
+    return result;
+  }
+
+  /**
+   * Returns the file descriptor of `session`'s socket, so a caller can
+   * poll it (e.g. via `poll`/`select`) for readiness instead of blocking
+   * while waiting on a non-blocking GCI call. The fd is owned by the
+   * native GCI library, not Node, so readiness must be checked with an
+   * OS-level poll wrapper rather than by handing it to a `net.Socket`.
+   *
+   * @param session - The GemStone session to operate in.
+   * @returns The session's socket file descriptor.
+   * @throws {GciLibraryError} If the underlying GCI call fails.
+   */
+  public socketFor(session: unknown) {
+    const { fd, err } = this.GciTsSocket(session);
+
+    this.throwUnless(fd >= 0, err);
+
+    return fd;
+  }
+
   // ---------------------------------------------------------------------
   // Message sending
   // ---------------------------------------------------------------------
@@ -2347,8 +2506,8 @@ export class GciLibrary {
    * past its own return (e.g. by returning it, or by capturing it in
    * something that outlives the call): the oop is released the instant
    * `callback` returns, so any use of it afterwards operates on an already
-   * released oop. Async callbacks are rejected at the type level for this
-   * reason; there is no equivalent check for an oop returned directly.
+   * released oop. Only the synchronous part of that contract is enforced;
+   * an oop returned directly is not caught.
    *
    * @param session - The GemStone session to operate in.
    * @param receiverOop - The oop of the message's receiver.
