@@ -362,3 +362,42 @@ describe('per-column renderer state', () => {
     expect(root.width).toBe(DEFAULT_WIDTH);
   });
 });
+
+describe('column lookup by id', () => {
+  // `get` and `columnOf` are handed ids that arrive from outside the model —
+  // a host message's columnId, and a DOM dataset — so the id map must not be
+  // reachable through Object.prototype. If it were, looking up '__proto__'
+  // would answer the prototype itself, and the renderer would then write a
+  // column's worth of fields onto every object in the frame.
+  it('answers undefined for a prototype key rather than Object.prototype', () => {
+    const { mgr } = setup();
+    mgr.addRoot(rootMsg(1));
+
+    for (const key of ['__proto__', 'constructor', 'toString']) {
+      expect(mgr.get(key as unknown as number)).toBeUndefined();
+    }
+  });
+
+  it('leaves Object.prototype clean after a drill names a prototype key', () => {
+    const { mgr } = setup();
+    mgr.addRoot(rootMsg(1));
+
+    // The shape of the attack: a message claims to be a child of '__proto__'.
+    // The model must treat that as "no such source column" — appending at the
+    // far right, as it does for any source that is gone — and no bystander
+    // object may come away carrying column fields.
+    mgr.addChild(childMsg(2, '__proto__' as unknown as number));
+
+    const bystander: Record<string, unknown> = {};
+    expect(bystander.oop).toBeUndefined();
+    expect(bystander.width).toBeUndefined();
+    expect(order(mgr)).toEqual([1, 2]);
+  });
+
+  it('still finds a column by its real id', () => {
+    const { mgr } = setup();
+    const root = mgr.addRoot(rootMsg(3));
+
+    expect(mgr.get(3)).toBe(root);
+  });
+});

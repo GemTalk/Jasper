@@ -181,14 +181,17 @@
     // header, where "what produced this" is the useful thing to know.
     col.title = titleFor(col);
     col.activeTab = null;
-    col.tabData = {};
-    col.loadedRows = {};
+    // Prototype-less: both are keyed by the tab name the host sends, and
+    // methodSource by a selector, so a plain object would let `__proto__`
+    // through to Object.prototype. See makeState below.
+    col.tabData = Object.create(null);
+    col.loadedRows = Object.create(null);
     col.evalText = '';
     col.evalOut = null;
     col.metaSubTab = 'instanceMethods';
     col.metaRenderedSubTab = null;
     col.openSelector = null;
-    col.methodSource = {};
+    col.methodSource = Object.create(null);
     col.bytesRadix = 16;
     col.chordArmed = false;
     col.evalVarsRequested = false;
@@ -1282,8 +1285,8 @@
         return {
           header: null,
           activeTab: null,
-          tabData: {},
-          loadedRows: {},
+          tabData: Object.create(null),
+          loadedRows: Object.create(null),
           history: [],
           historyIndex: -1,
           evalText: '',
@@ -1291,7 +1294,7 @@
           metaSubTab: 'instanceMethods',
           metaRenderedSubTab: null,
           openSelector: null,
-          methodSource: {},
+          methodSource: Object.create(null),
           bytesRadix: 16,
           chordArmed: false,
           evalVarsRequested: false,

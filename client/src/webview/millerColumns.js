@@ -47,7 +47,12 @@
     var makeState = opts.makeState;
 
     var columns = []; // ordered array of column descriptors (left→right)
-    var columnsById = {}; // id -> descriptor
+    // Prototype-less: ids reach `get`/`columnOf` from webview messages and from a
+    // DOM dataset, so a plain object would answer `__proto__` with Object.prototype
+    // and every field the renderer then set on that "column" would land on the
+    // prototype of every object in the frame. A null-prototype map answers
+    // undefined instead, which every caller already handles as "no such column".
+    var columnsById = Object.create(null); // id -> descriptor
     var focusedColumnId = null;
 
     // The fields the MODEL owns. Everything else on a descriptor belongs to the

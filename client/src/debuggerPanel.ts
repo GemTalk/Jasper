@@ -6,6 +6,7 @@ import { ActiveSession } from './sessionManager';
 import * as debug from './debugQueries';
 import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
+import { SMALLTALK_LANGUAGE } from './languageIds';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
 import { routeInspect, InspectorHandle } from './inspectRouter';
@@ -3615,10 +3616,15 @@ export class DebuggerPanel {
     // Watch for a drag of the panel↔source divider so the next open reuses it.
     // (No-op once running; the group was already sized when the column was carved.)
     this.startLayoutSampler();
-    // gemstone:// docs get their language from the FS provider; the read-only
-    // executed-code scheme does not, so set it so the source is highlighted.
-    if (doc.languageId !== 'gemstone-smalltalk') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    // Only the read-only executed-code scheme is tagged here, and only so its
+    // source is highlighted. A gemstone:// doc already carries the language the
+    // rest of the extension gave it (gemstone-method for a compiled method) —
+    // and this pane shows one whenever the frame is edit-and-continue-able, so
+    // re-tagging everything would put the method editor a developer is most
+    // likely to want a breakpoint in back on gemstone-smalltalk, taking away the
+    // gutter that `contributes.breakpoints` offers gemstone-method alone.
+    if (doc.uri.scheme === READONLY_SOURCE_SCHEME && doc.languageId !== SMALLTALK_LANGUAGE) {
+      await vscode.languages.setTextDocumentLanguage(doc, SMALLTALK_LANGUAGE);
     }
     return editor;
   }
