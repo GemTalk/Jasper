@@ -17,7 +17,19 @@ runs:
       uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
       with:
         distribution: Ubuntu-22.04
-        additional-packages: curl unzip
+    # curl/unzip are installed as their own step instead of through Setup
+    # WSL's `additional-packages` input: that input always runs a full
+    # `apt-get update` first (~40MB refetching every repo's index: main,
+    # universe, multiverse, restricted, security, backports), which costs
+    # ~27s just to install two small packages. The distro image's baked-in
+    # package index is fresh enough to install both without updating first;
+    # the `||` fallback only pays the update cost if that ever stops being
+    # true (e.g. a stale/pruned mirror).
+    - name: Install curl and unzip
+      shell: wsl-bash {0}
+      run: |
+        apt-get install -y --no-install-recommends curl unzip \
+          || (apt-get update && apt-get install -y --no-install-recommends curl unzip)
     - name: Cache GemStone Windows client download
       # The client build is always native Windows (this action only ever
       # runs on windows-latest), so there's only ever one platform's archive
