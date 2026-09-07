@@ -11,11 +11,6 @@ import { GCI_OPTIONAL_FUNCTIONS } from '../gciLibrary/optionalFunctions';
  * Those bind through `optionalFunc`, so Jasper still *loads* against 3.6.2 —
  * it's the call that throws, and a 3.7.5 dev image never shows you that.
  * Background: `docs/explanation/gci-version-compatibility.md`.
- *
- * A test rather than a lint rule because the gated set is imported from the
- * registry, and `eslint.config.mjs` can't import TypeScript: a selector-based
- * rule would have to restate those names, which is the drift the registry
- * exists to end. Worth revisiting if the config ever moves to TS.
  */
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');

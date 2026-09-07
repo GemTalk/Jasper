@@ -348,7 +348,7 @@ export class GciLibrary {
    * Whether a (possibly version-gated) GCI function is exported by the loaded
    * library. Use this to choose a fallback path instead of calling a function
    * that would throw "not available" — e.g. GciTsNbPoll is absent in 3.6.2.
-   * Only the names registered in `gciLibrary/optionalFunctions.ts` can be
+   * Only the names in the `gciLibrary/optionalFunctions.ts` registry can be
    * absent, so anything else is a typo and is rejected at compile time.
    */
   isAvailable(name: GciOptionalFunctionName): boolean {
@@ -592,9 +592,11 @@ export class GciLibrary {
     );
     // Bindings that may be absent from the loaded library. Why each one can be
     // missing — version floor, platform, removal — lives in
-    // client/src/gciLibrary/optionalFunctions.ts, which is verified against
-    // vendor/gci-headers/. This literal is keyed by that registry, so adding an
-    // optionalFunc binding without registering it does not compile.
+    // client/src/gciLibrary/optionalFunctions.ts, whose gated entries are
+    // generated from vendor/gci-headers/. This literal is keyed by that
+    // registry, so adding an optionalFunc binding without an entry does not
+    // compile — and a newly vendored revision that gates another symbol turns
+    // into a missing key here the moment the registry is regenerated.
     this._optional = {
       GciTsNbPoll: this.optionalFunc(
         'GciTsNbPoll',

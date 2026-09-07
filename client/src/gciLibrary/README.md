@@ -15,9 +15,12 @@ deliberate exception: the login wrappers force `GCI_LOGIN_QUIET` into `loginFlag
 `quietedLoginFlags` in `client/src/gciLibrary.ts`. It also now holds unit tests for this
 folder's own production modules, such as `headerDeclarations.test.ts`.
 
-Two of this folder's production modules are the cross-version compatibility machinery rather
-than wrappers: `headerDeclarations.ts` parses the vendored GCI headers, and
-`optionalFunctions.ts` is the registry of which bindings may be absent and why. See
+Four of this folder's production modules are the cross-version compatibility machinery rather
+than wrappers: `headerDeclarations.ts` parses the vendored GCI headers,
+`optionalFunctionsFromHeaders.ts` derives and renders the registry from what it parses,
+`optionalFunctions.generated.ts` is that rendered output (committed, and diff-checked in CI —
+don't edit it), and `optionalFunctions.ts` merges it with the one hand-written entry to form
+the registry of which bindings may be absent and why. See
 [GCI cross-version compatibility](../../../docs/explanation/gci-version-compatibility.md).
 
 The narrow scope of the raw-binding tests is deliberate. They can move without touching the
