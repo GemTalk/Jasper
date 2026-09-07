@@ -471,15 +471,24 @@ export function parseDeclarations(rawSource: string, label: string): Map<string,
   return declared;
 }
 
-export function declaredFunctions(revision: string): Map<string, DeclaredFunction> {
-  const headerPath = path.join(headersRoot, revision, 'gcits.hf');
+/**
+ * The functions `revision` declares. `root` is the same test seam as
+ * `vendoredRevisions`, and the failure message below reads the *given* root:
+ * seeded with a fixture tree, listing the real vendored revisions would name
+ * directories that root does not have.
+ */
+export function declaredFunctions(
+  revision: string,
+  root: string = headersRoot,
+): Map<string, DeclaredFunction> {
+  const headerPath = path.join(root, revision, 'gcits.hf');
   let source: string;
   try {
     source = fs.readFileSync(headerPath, 'utf-8');
   } catch (cause) {
     throw new Error(
       `headerDeclarations: no vendored gcits.hf for revision ${revision} at ${headerPath} — ` +
-        `the vendored revisions are ${vendoredRevisions().join(', ')}.`,
+        `the vendored revisions are ${vendoredRevisions(root).join(', ')}.`,
       { cause },
     );
   }

@@ -27,6 +27,17 @@ afterAll(() => {
   for (const root of temporaryRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** The same throwaway root, with a `<revision>/gcits.hf` body per entry. */
+function headersRootWithSources(sources: Record<string, string>): string {
+  const root = headersRootContaining(
+    Object.keys(sources).map((name) => ({ name, isDirectory: true })),
+  );
+  for (const [revision, source] of Object.entries(sources)) {
+    fs.writeFileSync(path.join(root, revision, 'gcits.hf'), source);
+  }
+  return root;
+}
+
 /**
  * The message of the error a call throws. Assertions about several parts of one
  * message read against a single failure this way, rather than re-running the
@@ -765,5 +776,24 @@ describe('declaredFunctions', () => {
     const message = messageFrom(() => declaredFunctions('9.9.9'));
     expect(message).toMatch(/9\.9\.9/);
     expect(message).toContain('3.7.5');
+  });
+
+  it('reads the given root rather than the vendored one', () => {
+    const root = headersRootWithSources({
+      '3.7.5': `EXTERN_GCI_DEC(int) GciTsFixtureOnly(GciSession sess) GCI_WEAK;`,
+    });
+
+    expect([...declaredFunctions('3.7.5', root).keys()]).toEqual(['GciTsFixtureOnly']);
+  });
+
+  // The revisions named in the failure must be the ones the caller's root has.
+  // Listing the vendored ten under a fixture root would send the reader looking
+  // for a directory that root never had.
+  it('lists the given root’s revisions when it has no header for one', () => {
+    const root = headersRootWithSources({ '3.7.5': '' });
+
+    const message = messageFrom(() => declaredFunctions('3.6.2', root));
+    expect(message).toContain('the vendored revisions are 3.7.5.');
+    expect(message).toContain(root);
   });
 });
