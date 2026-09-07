@@ -121,6 +121,58 @@ jobs:
       - name: Audit registry signatures
         run: npm audit signatures
 
+  # Split out of health-check: vitest runs straight off TS source (via the
+  # workspaces' vitest configs), so nothing in health-check actually needs
+  # the tsc output. Keeping compile here instead of as a step in that job
+  # means a compile failure surfaces independently of the (much slower)
+  # platform/GemStone-version matrix, and the matrix doesn't wait on it.
+  # Only Linux: compile behavior doesn't vary by platform, and health-check
+  # already covers the OS-specific paths (WSL, GCI DLLs, etc).
+  compile:
+    name: Compile (Node ${{ matrix.node-version || 'nvmrc' }})
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Same two legs as health-check's node-version axis: the default
+        # (resolved from .nvmrc) and the pinned Node floor, so a compile
+        # break on the floor is caught here too.
+        node-version: ['', '22.15.1']
+    steps:
+      - name: Checkout code
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job
+          persist-credentials: false
+      - name: Setup Node.js
+        if: ${{ !matrix.node-version }}
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      # See health-check's identically-named step for why the floor leg
+      # can't use setup-node's npm cache and needs its own npm pin below.
+      - name: Setup Node.js (Node floor leg)
+        if: ${{ matrix.node-version }}
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+      - name: Pin npm to an exact version that owns the lockfile
+        if: startsWith(matrix.node-version, '22.')
+        run: npm install --global npm@11.17.0 # zizmor: ignore[adhoc-packages] -- npm 11 owns the lockfile and no Node 22 release bundles it
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile
+        run: npm run compile
+
   health-check:
     # Each platform gets its own budget, scaled to its actual runtime plus
     # headroom, so a regression on one platform still trips the guard
@@ -247,8 +299,6 @@ jobs:
         run: npm install --global npm@11.17.0 # zizmor: ignore[adhoc-packages] -- npm 11 owns the lockfile and no Node 22 release bundles it
       - name: Install dependencies
         run: npm ci
-      - name: Compile
-        run: npm run compile
       - name: Cache GemStone server download
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v6
@@ -382,7 +432,7 @@ jobs:
   ci-complete:
     name: ci-complete
     if: always()
-    needs: [prepare, lint-workflows, lint, health-check, package-check]
+    needs: [prepare, lint-workflows, lint, compile, health-check, package-check]
     runs-on: ubuntu-22.04
     timeout-minutes: 1
     steps:
@@ -391,11 +441,13 @@ jobs:
           if [ "${{ needs.prepare.result }}" != "success" ] ||
             [ "${{ needs.lint-workflows.result }}" != "success" ] ||
             [ "${{ needs.lint.result }}" != "success" ] ||
+            [ "${{ needs.compile.result }}" != "success" ] ||
             [ "${{ needs.health-check.result }}" != "success" ] ||
             [ "${{ needs.package-check.result }}" != "success" ]; then
             echo "prepare=${{ needs.prepare.result }}"
             echo "lint-workflows=${{ needs.lint-workflows.result }}"
             echo "lint=${{ needs.lint.result }}"
+            echo "compile=${{ needs.compile.result }}"
             echo "health-check=${{ needs.health-check.result }}"
             echo "package-check=${{ needs.package-check.result }}"
             exit 1
