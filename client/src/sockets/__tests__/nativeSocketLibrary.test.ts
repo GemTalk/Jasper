@@ -1,5 +1,5 @@
 import koffi from 'koffi';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NativeSocketLibrary } from '../nativeSocketLibrary';
 import { NativePOSIXSocketLibrary } from '../nativePOSIXSocketLibrary';
 import { PosixSocketLibrary } from '../bindings/posixSocketLibrary';
@@ -38,7 +38,12 @@ describe('Native socket library', () => {
     it('reports a socket readable when data is actually waiting on it', async () => {
       await loopbackConnection.writeFromServer('hi');
 
-      expect(library.isReadable(fd)).toBe(true);
+      // The write flushing on the server side doesn't guarantee the bytes
+      // have already landed in the client's kernel receive buffer. Under
+      // CI load, loopback delivery can lag the write callback by a beat, so
+      // poll until the OS actually reports it, rather than assuming it's
+      // instantaneous.
+      await vi.waitFor(() => expect(library.isReadable(fd)).toBe(true));
     });
 
     it('reports a socket not readable when nothing has arrived yet', async () => {
