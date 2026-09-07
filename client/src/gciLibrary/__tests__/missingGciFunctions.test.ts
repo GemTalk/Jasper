@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockKoffiModule } from '../../__mocks__/koffi';
+import { fakeNativeSocketLibrary } from '../../__tests__/support/fakeNativeSocketLibrary';
 import { GCI_OPTIONAL_FUNCTIONS, GciOptionalFunctionName } from '../optionalFunctions';
 
 /**
@@ -37,7 +38,7 @@ describe('GciLibrary against a library exporting no optional functions', () => {
   let gci: GciLibrary;
 
   beforeEach(() => {
-    gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll');
+    gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll', fakeNativeSocketLibrary());
   });
 
   it('constructs successfully when optional functions are missing', () => {
