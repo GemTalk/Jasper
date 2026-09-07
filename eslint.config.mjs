@@ -64,6 +64,22 @@ const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
 
+// `rewriteRelativeImportExtensions` in tsconfig.base.json makes a `.ts`
+// specifier legal in every workspace, but it is wanted in only the few modules
+// that must also load under Node's type-stripping, which resolves nothing else.
+// Everywhere else it is the wrong idiom, so the flag is fenced off here rather
+// than left to convention. Per-file `files:` overrides mark the exceptions.
+//
+// Repeated in each block that configures this rule: flat config *replaces* a
+// rule's options rather than merging them, so a block setting
+// `@typescript-eslint/no-restricted-imports` for its own reason would otherwise
+// drop this ban for the files it matches.
+const TS_EXTENSION_IMPORT = {
+  regex: String.raw`^\.{1,2}/.*\.ts$`,
+  message:
+    'Import the module without the `.ts` extension. An explicit `.ts` specifier is for modules that must also load under Node type-stripping, and the exceptions are listed in eslint.config.mjs.',
+};
+
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
   // a hand-maintained duplicate list that drifts (e.g. missed `.vscode-test/`
@@ -119,6 +135,14 @@ export default tseslint.config(
       // Require a `-- reason` on every eslint-disable comment, so suppressions
       // must be justified inline instead of silently added.
       'eslint-comments/require-description': 'error',
+    },
+  },
+  {
+    files: ['**/*.ts'],
+    rules: {
+      // The typescript-eslint drop-in rather than the core rule, to match the
+      // other configuration of it below.
+      '@typescript-eslint/no-restricted-imports': ['error', { patterns: [TS_EXTENSION_IMPORT] }],
     },
   },
   {
@@ -344,6 +368,7 @@ export default tseslint.config(
         {
           patterns: [
             { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+            TS_EXTENSION_IMPORT,
           ],
         },
       ],
