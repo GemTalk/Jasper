@@ -146,6 +146,15 @@ export default tseslint.config(
     },
   },
   {
+    // The one module that names a `.ts` specifier, because eslint.config.mjs
+    // reaches its generated half through Node's type-stripping. Its import
+    // comment carries the full reason. Turned off wholesale rather than
+    // re-stated minus that pattern: no other configuration of this rule applies
+    // to a non-test file, so there is nothing else here to lose.
+    files: ['client/src/gciLibrary/optionalFunctions.ts'],
+    rules: { '@typescript-eslint/no-restricted-imports': 'off' },
+  },
+  {
     rules: {
       // Real dead-code signal, so this stays an error. The `^_` patterns let
       // intentionally-unused params/locals/catch bindings (required by a

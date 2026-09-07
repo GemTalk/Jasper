@@ -652,6 +652,9 @@ export class GciLibrary {
         'GciTsKeyfilePermissions',
         `int64 GciTsKeyfilePermissions(GciSessionPtr, _Out_ GciErrSType *)`,
       ),
+      // Absent before 3.7.4.1, but Jasper's login path calls GciTsLogin, which
+      // every supported release exports; only the GciTsLogin_ wrapper below
+      // (netldiName-aware, used by tests) would throw were it missing.
       GciTsLogin_: this.optionalFunc(
         'GciTsLogin_',
         `GciSessionPtr GciTsLogin_(const char *, const char *, const char *, int, const char *, const char *, const char *, const char *, unsigned int, int, _Out_ int *, _Out_ GciErrSType *)`,

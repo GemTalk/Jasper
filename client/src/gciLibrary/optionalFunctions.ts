@@ -1,8 +1,25 @@
+// The `.ts` on this specifier is deliberate, and the resolvers that see it do
+// three different things: tsc rewrites it to `.js` on emit
+// (`rewriteRelativeImportExtensions` in tsconfig.base.json), vitest's esbuild
+// transform resolves it literally, and Node's type-stripping — how
+// `eslint.config.mjs` reads this chain — resolves an explicit `.ts` and nothing
+// else, neither `.js` nor extensionless. "Helpfully" normalizing it to `.js`
+// breaks that last one. `eslint.config.mjs` bans `.ts` specifiers repo-wide and
+// exempts this file by name, so the exception stays deliberate rather than
+// becoming an idiom.
+import { HEADER_DERIVED_OPTIONAL_FUNCTIONS } from './optionalFunctions.generated.ts';
+
 /**
  * The single source of truth for which `GciTs*` bindings may be absent from a
- * loaded library, and why. Every field here is machine-verified against
- * `vendor/gci-headers/` by `optionalFunctions.headers.test.ts` — this module
- * itself makes no claim that isn't checked there.
+ * loaded library, and why.
+ *
+ * Two halves, split by what a header snapshot can prove. The version- and
+ * platform-gated entries are *derived* from `vendor/gci-headers/` into
+ * `optionalFunctions.generated.ts`, so a floor cannot be transcribed wrong and
+ * a vendored revision that moves one cannot be silently accepted — CI reruns
+ * the generator and fails on any diff. What is written by hand below is only
+ * what no snapshot can state: a symbol on its way out of a release that is
+ * deliberately not vendored.
  */
 
 export type GciAbsenceReason = {
@@ -10,37 +27,21 @@ export type GciAbsenceReason = {
   addedIn?: string;
   /** The declaration sits inside `#if defined(FLG_UNIX)` — absent from the Windows client DLL. */
   absentOn?: 'win32';
-  /** Gone from this release onward. The one field the header snapshot can't check going forward. */
-  removedIn?: '4.0';
-  /** Prose context; the only field no test can check. */
-  note?: string;
+  /**
+   * Gone from the next major release onward. A sentinel, not a version: those
+   * headers are deliberately not vendored (a pre-GA build whose content can
+   * still move), so nothing here can check it.
+   */
+  removedIn?: 'nextMajor';
 };
 
 export const GCI_OPTIONAL_FUNCTIONS = {
-  GciTsNbPoll: { addedIn: '3.7.0' },
-  GciTsDebugConnectToGem: { addedIn: '3.7.0', absentOn: 'win32' },
-  GciTsDebugStartDebugService: { addedIn: '3.7.0', absentOn: 'win32' },
-  GciTsFetchNamedOops: { addedIn: '3.7.1' },
-  GciTsFetchVaryingOops: { addedIn: '3.7.1' },
-  GciTsStoreNamedOops: { addedIn: '3.7.1' },
-  GciTsStoreIdxOops: { addedIn: '3.7.1' },
-  GciTsAddOopsToNsc: { addedIn: '3.7.1' },
-  GciTsPerformFetchOops: { addedIn: '3.7.2' },
-  GciTsFetchGbjInfo: { addedIn: '3.7.2' },
-  GciTsNewStringFromUtf16: { addedIn: '3.7.2' },
-  GciTsDirtyExportedObjs: { addedIn: '3.7.2' },
-  GciTsKeepAliveCount: { addedIn: '3.7.2' },
-  GciTsKeyfilePermissions: { addedIn: '3.7.2' },
-  GciTsLogin_: { addedIn: '3.7.4.1', note: 'the login path uses GciTsLogin' },
-  GciTsNbLogin_: { addedIn: '3.7.4.1', absentOn: 'win32' },
-  GciTsNbLogin: { absentOn: 'win32' },
-  GciTsNbLoginFinished: { absentOn: 'win32' },
-  GciTsEncrypt: {
-    removedIn: '4.0',
-    note:
-      '4.0 is not vendored (pre-GA private build) but declaration and comment block was deleted from gcits.hf, ' +
-      'so this is exempted rather than verified in optionalFunctions.headers.test.ts.',
-  },
+  ...HEADER_DERIVED_OPTIONAL_FUNCTIONS,
+  // Declared in every vendored revision, but deleted from `gcits.hf` for the
+  // next major release. Invisible to snapshots that all predate it, so this is
+  // recorded from direct inspection; the test alongside guards the exemption
+  // itself — it fails the day the headers come to cover the symbol.
+  GciTsEncrypt: { removedIn: 'nextMajor' },
 } as const satisfies Record<string, GciAbsenceReason>;
 
 export type GciOptionalFunctionName = keyof typeof GCI_OPTIONAL_FUNCTIONS;
