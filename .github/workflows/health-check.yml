@@ -112,6 +112,23 @@ jobs:
         run: npm run lint:supply-chain
       - name: GCI header version map
         run: npm run lint:gci-headers
+      - name: GCI optional-functions registry
+        # The derived half of the optional-functions registry is generated from
+        # vendor/gci-headers/ and committed, which is what keeps a moved floor
+        # visible in a diff instead of silently adopted. Rerun the generator and
+        # fail if the tree moved: the npm script rather than bare tsx, so
+        # Prettier's normalization is part of what's compared, and `git status
+        # --porcelain` rather than `git diff --exit-code`, which exits 0 for a
+        # file that was never committed or one deleted and recreated untracked.
+        run: |
+          npm run generate:gci-optional-functions
+          if [ -n "$(git status --porcelain -- client/src/gciLibrary/optionalFunctions.generated.ts)" ]; then
+            echo "client/src/gciLibrary/optionalFunctions.generated.ts is stale: regenerating it from"
+            echo "vendor/gci-headers/ changed the file. Run 'npm run generate:gci-optional-functions'"
+            echo "and commit the result, reviewing the diff — a moved floor is a real change."
+            git --no-pager diff -- client/src/gciLibrary/optionalFunctions.generated.ts
+            exit 1
+          fi
       - name: Lockfile lint
         run: npm run lint:lockfile
       - name: Format check

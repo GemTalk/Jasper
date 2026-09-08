@@ -2,6 +2,14 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "node16",
+    // Lets a relative import name the `.ts` file it actually resolves to; tsc
+    // rewrites the specifier to `.js` on emit. Needed where one module must be
+    // reachable both from compiled output and from Node's type-stripping, which
+    // resolves an explicit `.ts` specifier and nothing else — not `.js`, not
+    // extensionless. Repo-wide because every workspace extends this file, so the
+    // `@typescript-eslint/no-restricted-imports` ban in eslint.config.mjs is what
+    // keeps `.ts` specifiers to the modules that actually need them.
+    "rewriteRelativeImportExtensions": true,
     "lib": ["ES2024", "ESNext.Array", "ESNext.Collection", "ESNext.Iterator"],
     "strict": true,
     "sourceMap": true,
