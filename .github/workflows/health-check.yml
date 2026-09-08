@@ -156,12 +156,13 @@ jobs:
     #   windows-latest   6.27    7.08   9.30
     #   macos-latest     4.38    5.51   7.43
     #
-    # Each budget is ~1.5-2x its median and comfortably above the observed
-    # max: close enough to catch a real regression, far enough that ordinary
-    # runner variance doesn't turn a PR red. The previous budgets (5/10/8)
-    # sat within 7-20% of the observed max on every platform, so all three
-    # were producing false timeouts — jobs that were merely on a slow runner,
-    # not hung.
+    # Linux and Windows sit at ~1.9x their median, macOS at 2.7x — the extra
+    # headroom is the runner variance described above. All three are
+    # comfortably above the observed max: close enough to catch a real
+    # regression, far enough that ordinary runner variance doesn't turn a PR
+    # red. The previous budgets (5/10/8) sat within 7-20% of the observed max
+    # on every platform, so all three were producing false timeouts — jobs
+    # that were merely on a slow runner, not hung.
     #
     # A false timeout is expensive here: on Windows the GemStone setup step
     # doesn't acknowledge the cancel signal, so GitHub's 5-minute force-kill
