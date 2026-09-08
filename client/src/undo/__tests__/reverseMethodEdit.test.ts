@@ -7,6 +7,7 @@ vi.mock('../queries/methodSlotQueries', () => ({
   applyMethodSlotOps: vi.fn(),
 }));
 vi.mock('../afterUndo', () => ({
+  closeEditorsForRemovedMethods: vi.fn(),
   refreshExplorer: vi.fn(),
   refreshSearch: vi.fn(),
   reloadGemstoneEditors: vi.fn(),
@@ -15,7 +16,7 @@ vi.mock('../afterUndo', () => ({
 
 import * as vscode from 'vscode';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
-import { refreshSearch, revealMethod } from '../afterUndo';
+import { closeEditorsForRemovedMethods, refreshSearch, revealMethod } from '../afterUndo';
 import { reverseMethodEdit } from '../reverseMethodEdit';
 import { MethodEditUndoEntry, MethodSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -23,11 +24,15 @@ import type { ActiveSession } from '../../sessionManager';
 /**
  * Undoing a method edit (#434).
  *
- * A method edit reverses IMMEDIATELY, with no preview: the user just made it, and it is
- * one method. What is pinned here is the one exception to that — DRIFT. If the method has
- * changed since the edit was recorded, putting the old source back throws that change
- * away, and the user is asked first. Drift is a warning, never a refusal, which is the
- * same policy the refactoring undo follows.
+ * A method edit reverses with no preview: the user just made it, and it is one method.
+ * (Naming the change and asking is the dispatcher's job, done for every kind alike — see
+ * `undoLastCommand`.) What is pinned here is what this module asks on top of that — DRIFT.
+ * If the method has changed since the edit was recorded, putting the old source back throws
+ * that change away, and the user is asked first. Drift is a warning, never a refusal, which
+ * is the same policy the refactoring undo follows.
+ *
+ * And what it does AFTER: a method the reversal deleted has its editors closed rather than
+ * reloaded, since there is nothing left to read.
  */
 
 const session = { id: 1 } as ActiveSession;
@@ -132,6 +137,28 @@ describe('reverseMethodEdit', () => {
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
     expect(revealMethod).not.toHaveBeenCalled();
+  });
+
+  it('closes the editors for a method it removed, naming the slot it removed', async () => {
+    // Undoing a method you had just added deletes it, and a tab left open over it is one
+    // save away from compiling it straight back.
+    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^1')]);
+
+    await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
+
+    expect(closeEditorsForRemovedMethods).toHaveBeenCalledWith(session.id, [
+      { className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
+    ]);
+  });
+
+  it('closes nothing when the reversal only put source back', async () => {
+    // A restored or recompiled method still has source to read, so its editor is reloaded
+    // rather than closed.
+    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
+
+    await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
+
+    expect(closeEditorsForRemovedMethods).toHaveBeenCalledWith(session.id, []);
   });
 
   it('keeps the entry when the reversal could not even run', async () => {

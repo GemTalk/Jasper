@@ -36,7 +36,12 @@ import {
 import { classVarDrifted, planClassVarReversal } from './classVarPlan';
 import { driftedSlots, planReversal } from './methodSlotPlan';
 import { ClassVarEditUndoEntry, classVarSlotLabel, MethodSlot, slotLabel } from './undoTypes';
-import { refreshExplorer, refreshSearch, reloadGemstoneEditors } from './afterUndo';
+import {
+  closeEditorsForRemovedMethods,
+  refreshExplorer,
+  refreshSearch,
+  reloadGemstoneEditors,
+} from './afterUndo';
 
 /** Whether the entry is finished with — true when it was undone (or found already undone),
  *  false when the user backed out or the reversal could not run at all. */
@@ -104,6 +109,9 @@ export async function reverseClassVarEdit(
     else done.push(varOp === 'declare' ? 'declared the variable again' : 'removed the variable');
   };
 
+  // Undoing an ADD takes the generated accessors away again, and an editor left open on one
+  // of them is a view of a method that is gone -- collected here so its tab can be closed.
+  const removedAccessors: MethodSlot[] = [];
   const reverseAccessors = (): void => {
     if (accessorOps.length === 0) return;
     let results;
@@ -115,6 +123,7 @@ export async function reverseClassVarEdit(
     }
     for (const r of results) {
       if (r.error !== null) failures.push(`${slotLabel(r.op.slot)}: ${r.error}`);
+      else if (r.op.kind === 'remove') removedAccessors.push(r.op.slot);
     }
     const ok = results.filter((r) => r.error === null).length;
     if (ok > 0) done.push(`${ok} accessor${ok === 1 ? '' : 's'} put back`);
@@ -135,6 +144,7 @@ export async function reverseClassVarEdit(
   } catch {
     /* the Explorer may not be active */
   }
+  await closeEditorsForRemovedMethods(session.id, removedAccessors);
   await reloadGemstoneEditors();
 
   if (failures.length > 0) {

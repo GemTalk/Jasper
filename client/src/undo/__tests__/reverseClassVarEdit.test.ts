@@ -12,6 +12,7 @@ vi.mock('../queries/methodSlotQueries', () => ({
   applyMethodSlotOps: vi.fn(),
 }));
 vi.mock('../afterUndo', () => ({
+  closeEditorsForRemovedMethods: vi.fn(),
   refreshExplorer: vi.fn(),
   refreshSearch: vi.fn(),
   reloadGemstoneEditors: vi.fn(),

@@ -3,6 +3,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
 import {
+  closeEditorsForRemovedMethods,
   FS_CHANGED_COMMAND,
   refreshExplorer,
   refreshSearch,
@@ -291,5 +292,148 @@ describe('the overlay-category bridges', () => {
 
     await expect(renameOverlayCategory(slot, 'a', 'b')).resolves.toBe('not-listed');
     await expect(removeOverlayCategory(slot, 'a')).resolves.toBe('not-listed');
+  });
+});
+
+/**
+ * Closing the editors for methods an undo DELETED (#434).
+ *
+ * The rule with teeth here is the DICTIONARY. A class name is not unique in a session — a
+ * symbol list can hold `Account` in two dictionaries — so a match on class and selector alone
+ * would close the editor for a method that still exists, which is worse than the stale tab
+ * this is meant to remove. The dirty rule is the same one the reload follows.
+ */
+const METHOD = 'gemstone://1/Globals/Account/instance/accessing/balance';
+
+function methodTab(uri: string, isDirty = false) {
+  return { input: new vscode.TabInputText(vscode.Uri.parse(uri)), isDirty };
+}
+
+function openTabs(...tabs: { input: unknown; isDirty?: boolean }[]) {
+  Object.defineProperty(vscode.window.tabGroups, 'all', {
+    value: [{ viewColumn: 1, tabs }],
+    writable: true,
+  });
+}
+
+const slot = (over: Record<string, unknown> = {}) => ({
+  dict: 'Globals',
+  className: 'Account',
+  isMeta: false,
+  selector: 'balance',
+  environmentId: 0,
+  ...over,
+});
+
+describe('closeEditorsForRemovedMethods', () => {
+  beforeEach(() => {
+    openTabs();
+    vi.mocked(vscode.window.tabGroups.close).mockResolvedValue(true);
+  });
+
+  it('closes the editor for a method the undo removed', async () => {
+    const tab = methodTab(METHOD);
+    openTabs(tab);
+
+    await closeEditorsForRemovedMethods(1, [slot()]);
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab);
+  });
+
+  it('leaves a method the undo did not touch', async () => {
+    openTabs(methodTab('gemstone://1/Globals/Account/instance/accessing/total'));
+
+    await closeEditorsForRemovedMethods(1, [slot()]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it('leaves the class side alone when the instance side went', async () => {
+    openTabs(methodTab('gemstone://1/Globals/Account/class/accessing/balance'));
+
+    await closeEditorsForRemovedMethods(1, [slot({ isMeta: false })]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it('leaves a dirty editor open rather than discarding what was typed', async () => {
+    openTabs(methodTab(METHOD, true));
+
+    await closeEditorsForRemovedMethods(1, [slot()]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it("leaves another session's editor alone", async () => {
+    openTabs(methodTab('gemstone://2/Globals/Account/instance/accessing/balance'));
+
+    await closeEditorsForRemovedMethods(1, [slot()]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it('leaves a same-named class in ANOTHER dictionary open', async () => {
+    // The whole reason the dictionary is part of the match: this Account>>#balance is a
+    // different method that still exists.
+    openTabs(methodTab('gemstone://1/UserGlobals/Account/instance/accessing/balance'));
+
+    await closeEditorsForRemovedMethods(1, [slot({ dict: 'Globals' })]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it("compares a recorded symbol-list INDEX against the tab's own index", async () => {
+    const mine = methodTab(`${METHOD}?dict=3`);
+    openTabs(methodTab('gemstone://1/UserGlobals/Account/instance/accessing/balance?dict=7'), mine);
+
+    await closeEditorsForRemovedMethods(1, [slot({ dict: 3 })]);
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(1);
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(mine);
+  });
+
+  it('closes on class and selector when the tab carries no dictionary index', async () => {
+    // A URI with no ?dict= was resolved by walking the symbol list in order, the same lookup
+    // the Explorer's selection used — so it is the same class, and the alternative is leaving
+    // the stale tab in the common case. Documented on sameDictionary.
+    const tab = methodTab(METHOD);
+    openTabs(tab);
+
+    await closeEditorsForRemovedMethods(1, [slot({ dict: 3 })]);
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab);
+  });
+
+  it('closes every tab showing the same method, however its URI was built', async () => {
+    const withIndex = methodTab(`${METHOD}?dict=3`);
+    const withoutIndex = methodTab(METHOD);
+    openTabs(withIndex, withoutIndex);
+
+    await closeEditorsForRemovedMethods(1, [slot({ dict: 3 })]);
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(2);
+  });
+
+  it('does nothing at all when the undo removed no methods', async () => {
+    openTabs(methodTab(METHOD));
+
+    await closeEditorsForRemovedMethods(1, []);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it('ignores tabs that are not method source — a class definition, say', async () => {
+    openTabs(methodTab('gemstone://1/Globals/Account/definition'));
+
+    await closeEditorsForRemovedMethods(1, [slot()]);
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it('does not fail the undo when a tab refuses to close', async () => {
+    vi.mocked(vscode.window.tabGroups.close).mockRejectedValue(new Error('nope'));
+    openTabs(methodTab(METHOD));
+
+    await expect(closeEditorsForRemovedMethods(1, [slot()])).resolves.toBeUndefined();
   });
 });

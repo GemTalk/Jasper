@@ -22,7 +22,13 @@ import { logInfo } from '../gciLog';
 import { applyMethodSlotOps, captureMethodSlots } from './queries/methodSlotQueries';
 import { describeOps, driftedSlots, planReversal } from './methodSlotPlan';
 import { MethodEditUndoEntry, slotLabel } from './undoTypes';
-import { refreshExplorer, refreshSearch, reloadGemstoneEditors, revealMethod } from './afterUndo';
+import {
+  closeEditorsForRemovedMethods,
+  refreshExplorer,
+  refreshSearch,
+  reloadGemstoneEditors,
+  revealMethod,
+} from './afterUndo';
 
 /** Whether the entry is finished with — true when it was reversed (or found already
  *  reversed), false when the user backed out or the reversal could not run at all, so
@@ -81,6 +87,12 @@ export async function reverseMethodEdit(
   if (landOn && landOn.kind !== 'remove') {
     await revealMethod(landOn.slot.className, landOn.slot.selector, landOn.slot.isMeta);
   }
+  // Before the reload: a method this undo deleted has no source left to re-read, so its
+  // tab is closed rather than refreshed.
+  await closeEditorsForRemovedMethods(
+    session.id,
+    succeeded.filter((op) => op.kind === 'remove').map((op) => op.slot),
+  );
   await reloadGemstoneEditors();
 
   if (failures.length > 0) {

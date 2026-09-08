@@ -8,8 +8,16 @@
  * next save. The Explorer, the open editors and GemStone Search all cache what they show, so
  * all three have to be told. A change to the SYMBOL LIST needs more than a pane refresh —
  * see `refreshSymbolList`.
+ *
+ * A method the undo DELETED is the one case where putting an editor back in step means closing
+ * it rather than re-reading it: there is no source left to read, and a tab left open over a
+ * method the stone does not have is the same re-done-on-the-next-save trap, only worse,
+ * because saving it compiles the method back — see `closeEditorsForRemovedMethods`.
  */
 import * as vscode from 'vscode';
+import { MethodUriRef, parseMethodUri } from '../gemstoneFileSystemProvider';
+import { logInfo } from '../gciLog';
+import { MethodSlot } from './undoTypes';
 
 /**
  * The command that tells the `gemstone://` file system provider its resources changed.
@@ -25,6 +33,90 @@ async function announceGemstoneFilesChanged(uris: vscode.Uri[]): Promise<void> {
     await vscode.commands.executeCommand(FS_CHANGED_COMMAND, uris);
   } catch {
     /* the file system provider may not be registered */
+  }
+}
+
+/**
+ * Whether an undo entry's slot and an open editor name the same dictionary.
+ *
+ * The two sides record it differently, because they were built from different things. A slot
+ * carries `dictIndex ?? dictName` — a 1-based symbol-list position when the recording site
+ * knew one, and the dictionary's NAME when it did not. A method URI always carries the name
+ * in its path, and the index only as an optional `?dict=N`.
+ *
+ * So: a name compares against the name, an index against the index, and either is conclusive.
+ * What is left is an entry that recorded an INDEX against a tab that carries no index, where
+ * there is nothing to compare without resolving one to the other against the live symbol
+ * list — a query, from a function whose whole job is closing tabs. That case falls back to the
+ * class-and-selector match, which is the right way to be wrong here: a URI with no `?dict=`
+ * is one whose class was resolved by walking the symbol list in order, which is the same
+ * lookup the Explorer's own selection used, so it is overwhelmingly the same class. Being
+ * wrong costs a closed tab on a method that still exists; refusing to close would instead
+ * leave the stale tab this function exists to remove, in the common case.
+ */
+function sameDictionary(slotDict: number | string | undefined, ref: MethodUriRef): boolean {
+  if (slotDict === undefined) return true;
+  if (typeof slotDict === 'string') return slotDict === ref.dictName;
+  return ref.dictIndex === undefined || ref.dictIndex === slotDict;
+}
+
+/**
+ * Close the editors showing methods the undo has just DELETED.
+ *
+ * `reloadGemstoneEditors` below puts an open editor back in step by re-reading its source,
+ * which is the right answer for a method that changed. For one that no longer exists there is
+ * nothing to re-read: the tab is a view of a method the stone does not have, and leaving it
+ * open invites the user to carry on typing in it and save — which would compile the method
+ * straight back and quietly undo the undo. So those tabs go.
+ *
+ * Called BEFORE the reload, so a removed method's tab is gone before anything tries to
+ * refresh it.
+ *
+ * Matched on session, DICTIONARY, class, selector, side and environment rather than on the URI
+ * string: the same method can be open under more than one URI (the breadcrumb and the Explorer
+ * build theirs independently, and a base / session-override diff view carries a labelled
+ * selector that `parseMethodUri` un-labels), and every one of them is now a view of nothing.
+ *
+ * The dictionary is part of the match because a class name is NOT unique in a session: a
+ * symbol list can hold `Account` in two dictionaries, and closing the editor for the other
+ * one — a method that still exists — would be worse than the stale tab this is here to get
+ * rid of. See `sameDictionary` for what happens when the two sides cannot be compared.
+ *
+ * A DIRTY tab is left alone, which is the same line `reloadGemstoneEditors` draws: closing it
+ * would discard whatever the user has typed, and an undo of something else is not licence to
+ * do that. What they have is then a buffer over a method that is gone — saving it compiles it
+ * back, which is a decision they can see themselves making.
+ */
+export async function closeEditorsForRemovedMethods(
+  sessionId: number,
+  removed: MethodSlot[],
+): Promise<void> {
+  if (removed.length === 0) return;
+  const gone = (ref: MethodUriRef): boolean =>
+    removed.some(
+      (slot) =>
+        slot.className === ref.className &&
+        slot.selector === ref.selector &&
+        slot.isMeta === ref.isMeta &&
+        slot.environmentId === ref.environmentId &&
+        sameDictionary(slot.dict, ref),
+    );
+
+  const closing: Thenable<unknown>[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputText)) continue;
+      if (tab.isDirty) continue;
+      const ref = parseMethodUri(tab.input.uri);
+      if (!ref || ref.sessionId !== sessionId || !gone(ref)) continue;
+      logInfo(`[undo] closing the editor for the removed ${ref.className}>>${ref.selector}`);
+      closing.push(vscode.window.tabGroups.close(tab));
+    }
+  }
+  try {
+    await Promise.all(closing);
+  } catch {
+    /* best-effort: a tab that will not close must not fail the undo */
   }
 }
 
