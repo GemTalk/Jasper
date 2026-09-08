@@ -112,6 +112,7 @@ import {
 } from './methodHistory/methodHistoryPanel';
 import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
+import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -673,6 +674,10 @@ interface MethodHistoryPanelEntry {
   className: string;
   selector: string;
   isMeta: boolean;
+  // The dictionary the panel was opened against. Part of the panel's identity: two
+  // classes with the same name in different SymbolDictionaries are different methods
+  // and get their own tab, rather than one revealing the other's history.
+  dict: number | string | undefined;
   panel: vscode.WebviewPanel;
   refresh: () => void;
 }
@@ -3712,27 +3717,42 @@ export class ExplorerController {
         e.sessionId === session.id &&
         e.className === className &&
         e.selector === selector &&
-        e.isMeta === isMeta,
+        e.isMeta === isMeta &&
+        e.dict === dict,
     );
     if (already) {
       already.panel.reveal();
       return;
     }
 
-    // The method-history helper is installed at login (SessionTemps, no plugin).
-    // Ensure it once more here in case that login install was skipped or failed;
-    // it is idempotent and cheap.
-    installMethodHistory(session);
-
     const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
+
+    // The method-history helper is installed at login (SessionTemps, no plugin), so
+    // the overwhelmingly common path already has it. Read first and only pay the
+    // ~14-method install compile if the read comes back with the helper-missing
+    // envelope (a login bootstrap that was skipped or failed) — installing ahead of
+    // every open cost a full GCI round trip just to hit the server's already-installed
+    // short-circuit.
+    const readHistory = (): MethodVersion[] =>
+      parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta, dict));
 
     let versions: MethodVersion[];
     try {
-      versions = parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta));
+      versions = readHistory();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
-      return;
+      if (!isHelperMissingError(msg)) {
+        void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+        return;
+      }
+      installMethodHistory(session);
+      try {
+        versions = readHistory();
+      } catch (e2: unknown) {
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        void vscode.window.showErrorMessage(`Method history failed: ${msg2}`);
+        return;
+      }
     }
     if (versions.length === 0) {
       void vscode.window.showInformationMessage(
@@ -3771,7 +3791,7 @@ export class ExplorerController {
           return { versions: current, error: e instanceof Error ? e.message : String(e) };
         }
         current = parseMethodHistory(
-          queries.getMethodHistory(session, className, selector, isMeta),
+          queries.getMethodHistory(session, className, selector, isMeta, dict),
         );
         // The installed method changed — re-render the Methods pane so its
         // session-method indicators reflect the recompiled source.
@@ -3794,11 +3814,12 @@ export class ExplorerController {
       className,
       selector,
       isMeta,
+      dict,
       panel,
       refresh: () => {
         try {
           current = parseMethodHistory(
-            queries.getMethodHistory(session, className, selector, isMeta),
+            queries.getMethodHistory(session, className, selector, isMeta, dict),
           );
           refreshMethodHistoryPanel(panel, current);
         } catch {
@@ -3839,13 +3860,21 @@ export class ExplorerController {
   // one(s). Keyed by method identity; entries are removed on panel close.
   private methodHistoryPanels: MethodHistoryPanelEntry[] = [];
 
-  // Refresh any open method-history panel for a just-(re)compiled method. Matched
-  // by session + class only (the compile event does not carry the selector); an
-  // unrelated method's panel simply re-fetches identical data, and the webview
-  // refresh is idempotent, so over-refreshing is harmless.
-  private refreshOpenMethodHistoryPanels(sessionId: number, className: string): void {
+  // Refresh any open method-history panel for a just-(re)compiled method. When the
+  // compile event carries a selector, only that method's panel is refreshed — each
+  // refresh is a blocking GCI round trip, so refreshing N panels for unrelated
+  // methods of the same class cost N of them to re-fetch identical data. Callers
+  // that genuinely have no selector still fall back to refreshing the class's
+  // panels, which is correct, just chattier.
+  private refreshOpenMethodHistoryPanels(
+    sessionId: number,
+    className: string,
+    selector?: string,
+  ): void {
     for (const entry of this.methodHistoryPanels) {
-      if (entry.sessionId === sessionId && entry.className === className) entry.refresh();
+      if (entry.sessionId !== sessionId || entry.className !== className) continue;
+      if (selector !== undefined && entry.selector !== selector) continue;
+      entry.refresh();
     }
   }
 
@@ -6056,10 +6085,12 @@ export class ExplorerController {
   // compiled (Save). When it's the class we're showing, reload so the new method
   // / class appears in the panels without a manual refresh.
 
-  onExternalMethodCompiled(sessionId: number, className: string): void {
+  onExternalMethodCompiled(sessionId: number, className: string, selector?: string): void {
     // Refresh any open method-history viewer for this method first — independent of
     // what the explorer currently has selected (the panel outlives the selection).
-    this.refreshOpenMethodHistoryPanels(sessionId, className);
+    // The compile event carries the selector when the URI had one, so only the panel
+    // for the method that actually changed re-fetches.
+    this.refreshOpenMethodHistoryPanels(sessionId, className, selector);
 
     const session = this.session();
     if (
@@ -6461,7 +6492,7 @@ export function commitFilterOnRowSelection(
 // (method / class Save) and session lifecycle events (abort) to the controller
 // for a live panel refresh.
 export interface ExplorerHandle {
-  onMethodCompiled(sessionId: number, className: string): void;
+  onMethodCompiled(sessionId: number, className: string, selector?: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
   /** Claim an about-to-happen open so it navigates the panes; see
@@ -7196,7 +7227,8 @@ export function registerGemStoneExplorer(
   );
 
   return {
-    onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
+    onMethodCompiled: (sessionId, className, selector) =>
+      ctl.onExternalMethodCompiled(sessionId, className, selector),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),

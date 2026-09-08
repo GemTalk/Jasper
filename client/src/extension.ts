@@ -946,7 +946,10 @@ export function activate(context: vscode.ExtensionContext) {
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
               if (className !== 'new-class') {
-                explorer.onMethodCompiled(sessionId, className);
+                // parts[5] is the selector when the URI names a method; forwarding it
+                // lets the explorer refresh only that method's history panel instead
+                // of every panel open for the class.
+                explorer.onMethodCompiled(sessionId, className, parts[5]);
               }
             }
           }

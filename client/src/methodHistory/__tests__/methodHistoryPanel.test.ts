@@ -5,7 +5,7 @@ import * as path from 'path';
 import {
   renderMethodHistoryHtml,
   renderVersionRows,
-  formatLocalTimestamp,
+  formatRecordedTimestamp,
 } from '../methodHistoryPanelHtml';
 import { MethodVersion } from '../methodHistoryModel';
 
@@ -85,7 +85,7 @@ describe('method history viewer HTML', () => {
   it('shows each version’s timestamp in the user’s locale, and its author', () => {
     const html = renderVersionRows(versions);
 
-    expect(html).toContain(formatLocalTimestamp('2026-08-25T09:55:53'));
+    expect(html).toContain(formatRecordedTimestamp('2026-08-25T09:55:53').text);
     expect(html).toContain('DataCurator');
     expect(html).not.toContain('2026-08-25T09:55:53');
   });
@@ -174,5 +174,74 @@ describe('method history viewer behaviour', () => {
     // The newly-added current version comes in collapsed.
     const newCurrent = document.querySelector('li.version[data-index="3"]')!;
     expect(newCurrent.querySelector('.detail')?.classList.contains('hidden')).toBe(true);
+  });
+});
+
+// The stone emits `DateTime now` with no timezone, so the stamp is the STONE's wall
+// clock. Rendering it unlabelled reads as the viewer's own local time — the same digits
+// either way, which is exactly why it was wrong invisibly for anyone not in the stone's
+// timezone. The row must say whose clock it is.
+describe('timestamps', () => {
+  // The engine now records DateTime now asStringISO8601, which carries the stone's UTC
+  // offset (verified present on both 3.6.2 and 3.7.5), so the instant is unambiguous and
+  // is converted into the reader's own zone.
+  it('converts an offset-bearing stamp to the reader’s local time', () => {
+    const r = formatRecordedTimestamp('2026-08-25T09:55:53-0700');
+
+    expect(r.zoned).toBe(true);
+    expect(r.text).toBe(new Date('2026-08-25T09:55:53-07:00').toLocaleString());
+  });
+
+  it('accepts the colon form and Z as well as GemStone’s compact ±HHMM', () => {
+    const compact = formatRecordedTimestamp('2026-08-25T09:55:53-0700');
+    const colon = formatRecordedTimestamp('2026-08-25T09:55:53-07:00');
+    const utc = formatRecordedTimestamp('2026-08-25T16:55:53Z');
+
+    expect(colon.text).toBe(compact.text);
+    expect(utc.text).toBe(compact.text); // same instant
+    expect(utc.zoned).toBe(true);
+  });
+
+  // Versions recorded before the engine carried an offset. There is nothing to convert
+  // from, so the wall-clock components are kept and the caller is told it is unconverted.
+  it('keeps a legacy zone-less stamp’s wall-clock components and reports it unconverted', () => {
+    const r = formatRecordedTimestamp('2026-08-25T09:55:53');
+
+    expect(r.zoned).toBe(false);
+    expect(r.text).toBe(new Date(2026, 7, 25, 9, 55, 53).toLocaleString());
+  });
+
+  it('labels which clock the reader is looking at', () => {
+    const zonedHtml = renderVersionRows([
+      { ...versions[0], timeStamp: '2026-08-25T09:55:53-0700' },
+    ]);
+    const naiveHtml = renderVersionRows([{ ...versions[0], timeStamp: '2026-08-25T09:55:53' }]);
+
+    expect(zonedHtml).toContain('Your local time');
+    expect(naiveHtml).toContain('Stone time');
+    expect(naiveHtml).toContain('shown as-is');
+  });
+
+  it('returns the raw string unchanged when it is not a recognised shape', () => {
+    expect(formatRecordedTimestamp('not a timestamp').text).toBe('not a timestamp');
+  });
+
+  it('renders nothing for a version with no stamp (the synthetic current version)', () => {
+    expect(formatRecordedTimestamp('').text).toBe('');
+  });
+});
+
+// The panel is read-only: Cut and Paste do nothing on it, so the native webview context
+// menu reads as broken. Suppressed the same way debuggerView.js does it. Ctrl+C on a
+// selection is unaffected — only the right-click menu is removed.
+describe('native context menu', () => {
+  it('suppresses the default Cut/Copy/Paste menu', () => {
+    mount();
+
+    const ev = new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    const notCancelled = document.body.dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(notCancelled).toBe(false);
   });
 });

@@ -1,11 +1,18 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
+import { classLookupExpr, escapeString } from '../../queries/util';
 
 // The message returned (as a JSON error envelope) in the rare case the
 // JasperMethodHistory helper is not installed in the session (e.g. its login
 // bootstrap could not compile). Kept apostrophe-free so it needs no Smalltalk
 // escaping, and double-quote-free so it is valid inside the JSON envelope.
-const HELPER_MISSING = 'Method history support is not available in this session.';
+export const HELPER_MISSING = 'Method history support is not available in this session.';
+
+/** True when an error came from the helper being absent (rather than a real query
+ *  failure) — the one case worth paying a re-install for. Callers install lazily on
+ *  this signal instead of re-compiling the helper ahead of every read. */
+export function isHelperMissingError(message: string): boolean {
+  return message === HELPER_MISSING;
+}
 
 // The JasperMethodHistory helper is installed at login and held in SessionTemps
 // (see methodHistory/methodHistoryServer.ts) — NOT in the symbol list, and needs
@@ -25,34 +32,41 @@ h isNil
 // version, newest first, each carrying the version index, timeStamp, userId,
 // category, an isCurrent flag, and its source. Kept in the user's UserGlobals in
 // this stone, so it is this-stone-only and per-user. Read-only.
+//
+// `dict` (a 1-based SymbolList index, or a name) scopes the class lookup, exactly as
+// compileMethod does — without it a shadowed class name resolves to the first match in
+// the symbol list, which may not be the class whose history the user asked to see.
 export function getMethodHistory(
   execute: QueryExecutor,
   className: string,
   selector: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
   return execute(
     withHelper(
-      `h forClassNamed: '${escapeString(className)}' selector: '${escapeString(
-        selector,
-      )}' meta: ${isMeta ? 'true' : 'false'}`,
+      `h forClass: (${classLookupExpr(className, dict)}) named: '${escapeString(
+        className,
+      )}' selector: '${escapeString(selector)}' meta: ${isMeta ? 'true' : 'false'}`,
     ),
   );
 }
 
 // Forget all recorded versions of one method. Does NOT commit (the user commits).
-// Returns the raw JSON result ({"removed":bool,...} or {"error":..}).
+// Returns the raw JSON result ({"removed":bool,...} or {"error":..}). `dict` scopes the
+// class lookup as in getMethodHistory, so forgetting targets the class being viewed.
 export function removeMethodHistory(
   execute: QueryExecutor,
   className: string,
   selector: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
   return execute(
     withHelper(
-      `h removeHistoryForClassNamed: '${escapeString(className)}' selector: '${escapeString(
-        selector,
-      )}' meta: ${isMeta ? 'true' : 'false'}`,
+      `h removeHistoryForClass: (${classLookupExpr(className, dict)}) named: '${escapeString(
+        className,
+      )}' selector: '${escapeString(selector)}' meta: ${isMeta ? 'true' : 'false'}`,
     ),
   );
 }

@@ -30,6 +30,8 @@ vi.mock('../browserQueries', () => ({
 }));
 
 import { ExplorerController } from '../gemstoneExplorer';
+import * as queries from '../browserQueries';
+import { installMethodHistory } from '../methodHistory/methodHistoryServer';
 import {
   showMethodHistoryPanel,
   refreshMethodHistoryPanel,
@@ -140,5 +142,104 @@ describe('opening method history from an editor URI', () => {
 
     expect(showMethodHistoryPanel).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalled();
+  });
+});
+
+// A class name alone does not identify a class — two SymbolDictionaries can each hold
+// a different class called Foo. The dictionary is therefore part of a panel's identity
+// and of every history read, so opening Foo>>bar from dict A never shows (or restores
+// against) dict B's Foo>>bar.
+describe('dictionary scoping of method-history panels', () => {
+  it('opens separate tabs for same-named classes in different dictionaries', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethodHistory(SESSION, 'Foo', 'bar', false, 1);
+    await ctl.openMethodHistory(SESSION, 'Foo', 'bar', false, 2);
+
+    expect(showMethodHistoryPanel).toHaveBeenCalledTimes(2);
+    expect(fakePanel.reveal).not.toHaveBeenCalled();
+  });
+
+  it('still reveals the existing tab for the same class in the same dictionary', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethodHistory(SESSION, 'Foo', 'bar', false, 2);
+    await ctl.openMethodHistory(SESSION, 'Foo', 'bar', false, 2);
+
+    expect(showMethodHistoryPanel).toHaveBeenCalledTimes(1);
+    expect(fakePanel.reveal).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the dictionary through to the history read', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethodHistory(SESSION, 'Foo', 'bar', false, 7);
+
+    const getMethodHistory = queries.getMethodHistory as ReturnType<typeof vi.fn>;
+    expect(getMethodHistory).toHaveBeenCalledWith(SESSION, 'Foo', 'bar', false, 7);
+  });
+});
+
+// Each panel refresh is a blocking GCI round trip. The compile event carries the
+// selector, so only the panel for the method that actually changed re-fetches.
+describe('selector-targeted refresh', () => {
+  it('refreshes only the panel for the recompiled selector', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+    await ctl.openMethodHistory(SESSION, 'Array', 'size', false, 1);
+    ctl.state.className = 'Other';
+
+    ctl.onExternalMethodCompiled(1, 'Array', 'at:');
+
+    expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes every panel for the class when the event carries no selector', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+    await ctl.openMethodHistory(SESSION, 'Array', 'size', false, 1);
+    ctl.state.className = 'Other';
+
+    ctl.onExternalMethodCompiled(1, 'Array');
+
+    expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The helper is installed at login, so the common path must not pay a ~14-method
+// compile before every read just to hit the server's already-installed short-circuit.
+describe('lazy install of the method-history helper', () => {
+  it('does not re-install the helper when the read succeeds', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+
+    expect(installMethodHistory).not.toHaveBeenCalled();
+  });
+
+  it('installs once and retries when the session reports the helper missing', async () => {
+    const ctl = makeController();
+    const getMethodHistory = queries.getMethodHistory as ReturnType<typeof vi.fn>;
+    getMethodHistory.mockImplementationOnce(() =>
+      JSON.stringify({ error: 'Method history support is not available in this session.' }),
+    );
+
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+
+    expect(installMethodHistory).toHaveBeenCalledTimes(1);
+    expect(showMethodHistoryPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not install for an unrelated query failure', async () => {
+    const ctl = makeController();
+    const getMethodHistory = queries.getMethodHistory as ReturnType<typeof vi.fn>;
+    getMethodHistory.mockImplementationOnce(() => {
+      throw new Error('GCI session is busy');
+    });
+
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+
+    expect(installMethodHistory).not.toHaveBeenCalled();
+    expect(showMethodHistoryPanel).not.toHaveBeenCalled();
   });
 });

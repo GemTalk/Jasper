@@ -111,4 +111,96 @@ describe('method history (integration)', () => {
     // Only the synthetic current version (the installed method) remains.
     expect(versions.every((v) => v.notInHistory)).toBe(true);
   });
+
+  /**
+   * The finding this suite exists for: the store key and both lookups must be scoped
+   * by the DEFINING dictionary. Two classes with the same name in different
+   * SymbolDictionaries are different classes — sharing one history entry would
+   * interleave their versions, and an unscoped read would show (and let you restore)
+   * the wrong class's source.
+   *
+   * The fixture inserts a second dictionary AHEAD of UserGlobals, so a bare
+   * `objectNamed:` resolves to the NEW dictionary's class — meaning an unscoped read
+   * for the UserGlobals class would answer the other one's history.
+   */
+  describe('two same-named classes in different dictionaries', () => {
+    const SHADOW = 'JMHItShadow';
+    const OTHER_DICT = 'JMHItOtherDict';
+
+    const defineClassIn = (dictExpr: string, className: string): void => {
+      exec(
+        `| d | d := ${dictExpr}. (Object subclass: '${className}' instVarNames: #() ` +
+          'classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: d ' +
+          'options: #()) name printString',
+      );
+    };
+
+    /** UserGlobals' class first, then a new dictionary inserted at index 1 holding a
+     *  second class of the same name. Answers nothing; both are addressed by dict. */
+    const defineShadowPair = (): void => {
+      defineClassIn('UserGlobals', SHADOW);
+      exec(
+        `| d | d := SymbolDictionary new. d name: #'${OTHER_DICT}'. ` +
+          'System myUserProfile insertDictionary: d at: 1. true printString',
+      );
+      defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
+    };
+
+    it('keeps each class’s versions in its own history entry', () => {
+      installMethodHistory(session());
+      defineShadowPair();
+
+      // Two edits on the UserGlobals class, one on the shadowing class.
+      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 1', 0, 'UserGlobals');
+      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 2', 0, 'UserGlobals');
+      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
+
+      const inUserGlobals = parseMethodHistory(
+        q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
+      );
+      const inOther = parseMethodHistory(q.getMethodHistory(session(), SHADOW, 'answer', false, 1));
+
+      // Neither history contains the other's source: the key separated them.
+      expect(inUserGlobals.map((v) => v.source).join('\n')).toContain('^ 2');
+      expect(inUserGlobals.map((v) => v.source).join('\n')).not.toContain('^ 99');
+      expect(inOther.map((v) => v.source).join('\n')).toContain('^ 99');
+      expect(inOther.map((v) => v.source).join('\n')).not.toContain('^ 2');
+    });
+
+    it('forgets only the dictionary-scoped class’s history', () => {
+      installMethodHistory(session());
+      defineShadowPair();
+      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 1', 0, 'UserGlobals');
+      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
+
+      q.removeMethodHistory(session(), SHADOW, 'answer', false, 1);
+
+      // The shadowing class's history is gone; the UserGlobals one is untouched.
+      const inOther = parseMethodHistory(q.getMethodHistory(session(), SHADOW, 'answer', false, 1));
+      const inUserGlobals = parseMethodHistory(
+        q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
+      );
+      expect(inOther.filter((v) => !v.isCurrent)).toHaveLength(0);
+      expect(inUserGlobals.map((v) => v.source).join('\n')).toContain('^ 1');
+    });
+  });
+
+  // A stamp without a UTC offset is read by the client as its OWN local time, so every
+  // developer outside the stone's timezone misreads it — invisibly, because the digits
+  // are unchanged. asStringISO8601 is present on 3.6.2 and 3.7.5; this pins that the
+  // engine actually emits the offset rather than a bare wall clock.
+  it('records timestamps carrying the stone’s UTC offset', () => {
+    installMethodHistory(session());
+    defineClass();
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+
+    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    const stamp = versions.find((v) => v.timeStamp)?.timeStamp ?? '';
+
+    expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})$/);
+    // And it must be a real instant, not just well-shaped text.
+    expect(Number.isNaN(new Date(stamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')).getTime())).toBe(
+      false,
+    );
+  });
 });

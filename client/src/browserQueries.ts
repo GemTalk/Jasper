@@ -1920,8 +1920,15 @@ export function getMethodHistory(
   className: string,
   selector: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedGetMethodHistory(defaultQueryExecutorUsing(session), className, selector, isMeta);
+  return sharedGetMethodHistory(
+    defaultQueryExecutorUsing(session),
+    className,
+    selector,
+    isMeta,
+    dict,
+  );
 }
 
 export function removeMethodHistory(
@@ -1929,8 +1936,15 @@ export function removeMethodHistory(
   className: string,
   selector: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedRemoveMethodHistory(defaultQueryExecutorUsing(session), className, selector, isMeta);
+  return sharedRemoveMethodHistory(
+    defaultQueryExecutorUsing(session),
+    className,
+    selector,
+    isMeta,
+    dict,
+  );
 }
 
 export function globalNameInUse(session: ActiveSession, name: string): boolean {

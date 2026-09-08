@@ -105,6 +105,14 @@
       doc.defaultView.addEventListener('message', function (e) {
         handleMessage(e.data);
       });
+
+      // Suppress the native Cut/Copy/Paste context menu, as debuggerView.js does.
+      // This panel is read-only -- Cut and Paste do nothing here, so offering them
+      // reads as broken. Selecting text and pressing Ctrl+C still copies: this only
+      // removes the right-click menu, not the keyboard command.
+      doc.defaultView.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+      });
     }
 
     wireRows();

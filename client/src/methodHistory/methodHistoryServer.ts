@@ -13,7 +13,9 @@ import { logError, logInfo } from '../gciLog';
  * The class itself is transient (defined in a throwaway SymbolDictionary, held
  * only via SessionTemps — recreated each login, never committed). Its STORE is
  * persistent: `UserGlobals at: #JasperMethodHistoryStore`, a Dictionary keyed by
- * class+selector+side, valued by an ordered list of version records
+ * dictionary+class+selector+side (the defining SymbolDictionary is part of the key,
+ * so two classes named Foo in different dictionaries keep separate histories rather
+ * than interleaving into one entry), valued by an ordered list of version records
  * {timeStamp. userId. category. source}. Store writes ride the user's compile
  * transaction and are committed when the user commits — the helper never commits.
  *
@@ -66,14 +68,18 @@ const CLASS_METHODS: string[] = [
   ] on: Error do: [:e | ^self]`,
 
   // --- reading ----------------------------------------------------------------
-  `forClassNamed: aName selector: aSelector meta: isMeta
+  `forClass: cls named: aName selector: aSelector meta: isMeta
   "A JSON array of the recorded versions of aName>>aSelector (class side when
-   isMeta), newest first, or an error envelope if the name is unbound. Read-only.
+   isMeta), newest first, or an error envelope if cls is not a class. Read-only.
    The version whose source matches the installed method is flagged isCurrent; if
    the installed method is not in the history a synthetic current version is
-   emitted on top (notInHistory:true)."
-  | cls behavior store key list curSrc curIdx ws first |
-  cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+   emitted on top (notInHistory:true).
+   cls is resolved BY THE CLIENT (queries/util.ts classLookupExpr), dictionary-scoped
+   when the caller knows which dictionary it means, so that a class name shadowed
+   across SymbolDictionaries reads the history of the class the user is looking at.
+   Resolution is deliberately not repeated here: the client owns the one dict-aware
+   lookup idiom. aName is carried only to name the class in the error envelope."
+  | behavior store key list curSrc curIdx ws first |
   (cls isNil or: [(cls isKindOf: Behavior) not])
     ifTrue: [^'{"error":"not a class: ', (self jsonEscape: aName), '"}'].
   behavior := isMeta ifTrue: [cls class] ifFalse: [cls].
@@ -97,11 +103,12 @@ const CLASS_METHODS: string[] = [
   ws nextPut: $].
   ^ws contents`,
 
-  `removeHistoryForClassNamed: aName selector: aSelector meta: isMeta
+  `removeHistoryForClass: cls named: aName selector: aSelector meta: isMeta
   "Forget all recorded versions of aName>>aSelector (class side when isMeta). Does
-   NOT commit. Answers {removed, remaining} or an error envelope."
-  | cls behavior store key existed |
-  cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+   NOT commit. Answers {removed, remaining} or an error envelope.
+   cls is client-resolved and dictionary-scoped exactly as forClass:named:... is, so
+   forgetting history targets the same class the viewer is showing."
+  | behavior store key existed |
   (cls isNil or: [(cls isKindOf: Behavior) not])
     ifTrue: [^'{"removed":false,"error":"not a class: ', (self jsonEscape: aName), '"}'].
   behavior := isMeta ifTrue: [cls class] ifFalse: [cls].
@@ -122,8 +129,40 @@ const CLASS_METHODS: string[] = [
 
   `keyFor: aBehavior selector: aSelector
   "A stable String key for one method. aBehavior name is 'Foo' for the instance
-   side and 'Foo class' for the class side, so the key encodes the side too."
-  ^aBehavior name asString, '>>', aSelector asString`,
+   side and 'Foo class' for the class side, so the key encodes the side too, and
+   the defining dictionary's name is prefixed so that two classes named Foo in
+   different SymbolDictionaries do not interleave their versions into one entry.
+   '::' cannot occur in a dictionary or class name, so the parts stay separable."
+  ^(self dictionaryNameOf: aBehavior), '::', aBehavior name asString, '>>', aSelector asString`,
+
+  `dictionaryNameOf: aBehavior
+  "The name of the SymbolDictionary binding aBehavior's class BY IDENTITY, or ''
+   when nothing in the symbol list binds it (a transient or unbound class -- those
+   share the '' scope, which is the pre-existing name-only behaviour).
+   A metaclass is not itself bound -- 'Foo class' is reached through Foo -- so the
+   ' class' suffix is trimmed and the metaclass is recognised as the bound class's
+   own class. Identity, not name, so a name shadowed across dictionaries resolves to
+   the slot holding THIS class; this mirrors the client's symbolListIndexOfClassExpr
+   idiom (queries/util.ts). An unnamed SymbolDictionary has a nil name, hence the
+   ifNil: guard before asString.
+   NB references NO global but System: these methods are compiled into a THROWAWAY
+   SymbolDictionary, so a bare global like Metaclass is an undefined symbol at compile
+   time (error 1001) and takes the whole install doit down with it -- which presents as
+   'Method history support is not available in this session', not as a compile error.
+   Message sends are resolved at runtime and are therefore safe; bare globals are not.
+   The ' class' test goes through asSymbol because a plain String = 'literal' compare
+   raises ArgumentError 2718 on 3.6.x (see queries/util.ts)."
+  | nm sl d bound |
+  nm := aBehavior name asString.
+  (nm size > 6 and: [(nm copyFrom: nm size - 5 to: nm size) asSymbol == #' class'])
+    ifTrue: [nm := nm copyFrom: 1 to: nm size - 6].
+  sl := System myUserProfile symbolList.
+  1 to: sl size do: [:i |
+    d := sl at: i.
+    bound := d at: nm asSymbol ifAbsent: [nil].
+    (bound notNil and: [bound == aBehavior or: [bound class == aBehavior]])
+      ifTrue: [^(d name ifNil: ['']) asString]].
+  ^''`,
 
   // --- selector parsing (base-kernel compiler; no parser add-on) --------------
   `selectorFrom: source in: aBehavior environmentId: envId
@@ -179,21 +218,40 @@ const CLASS_METHODS: string[] = [
   ws nextPut: $}`,
 
   `formatTimeStamp: aDateTime
-  "aDateTime as a locale-NEUTRAL ISO-8601 string (yyyy-mm-ddTHH:MM:SS), so the
-   client renders it in the user's own locale. '' on nil or any format surprise."
+  "aDateTime as ISO-8601 CARRYING THE STONE'S UTC OFFSET (yyyy-mm-ddTHH:MM:SS-HHMM),
+   so the client can convert it into the reader's own timezone. A zone-less stamp is
+   not merely imprecise: the client reads those digits as its OWN local time, so every
+   reader outside the stone's timezone silently misreads every version's stamp.
+   asStringISO8601 is present on 3.6.2 and 3.7.5. The fallback keeps the older
+   zone-less shape, which the client still renders -- as stone wall-clock, labelled as
+   such, rather than pretending to have converted it. '' on nil or any format surprise."
   aDateTime isNil ifTrue: [^''].
-  ^[ aDateTime year printString, '-', (self pad2: aDateTime month), '-',
-     (self pad2: aDateTime dayOfMonth), 'T',
-     (self pad2: aDateTime hour), ':', (self pad2: aDateTime minute), ':',
-     (self pad2: aDateTime second truncated) ]
+  ^[ aDateTime asStringISO8601 ]
     on: Error
-    do: [:e | [aDateTime printString] on: Error do: [:e2 | '']]`,
+    do: [:e |
+      [ aDateTime year printString, '-', (self pad2: aDateTime month), '-',
+        (self pad2: aDateTime dayOfMonth), 'T',
+        (self pad2: aDateTime hour), ':', (self pad2: aDateTime minute), ':',
+        (self pad2: aDateTime second truncated) ]
+        on: Error
+        do: [:e2 | [aDateTime printString] on: Error do: [:e3 | '']]]`,
 
   `pad2: anInteger
   "anInteger as a two-digit, zero-padded decimal string (e.g. 7 -> '07')."
   ^(anInteger < 10 ifTrue: ['0'] ifFalse: ['']), anInteger printString`,
 
   // --- JSON string escaping (inlined; base kernel only) --------------------
+  //
+  // These duplicate GsRefactoringJson's escaping helpers, and that is deliberate, not an
+  // oversight: method history must work on a BARE stone with no server plugin, and
+  // GsRefactoringJson ships with the plugin. Verified on a bare 3.7.5 stone —
+  // `symbolList objectNamed: #GsRefactoringJson` answers **nil**, so referencing it here
+  // would not merely be slower, it would fail to resolve. These methods are also compiled
+  // into a throwaway SymbolDictionary, where a bare global is a compile-time error that
+  // takes the whole install down (see dictionaryNameOf:).
+  //
+  // The repo's structural dedup guard cannot see this copy (it scans .class.st files, and
+  // this is Smalltalk built from a TS string), so it is called out here instead.
   `hex2: anInteger
   | digits |
   digits := '0123456789abcdef'.

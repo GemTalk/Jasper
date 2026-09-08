@@ -23,14 +23,48 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-// Render the engine's locale-neutral ISO timestamp (yyyy-mm-ddTHH:MM:SS) in the
-// user's own locale (this runs in the extension host, so toLocaleString uses the
-// user's machine locale). Falls back to the raw string if it isn't parseable, and
-// to '' when there is no stamp (the synthetic current version).
-export function formatLocalTimestamp(raw: string): string {
-  if (!raw) return '';
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? raw : d.toLocaleString();
+// Render a recorded timestamp for the reader.
+//
+// The engine records `DateTime now asStringISO8601`, which carries the stone's UTC
+// offset (e.g. 2026-09-08T13:23:35-0700). That makes the instant unambiguous, so it is
+// genuinely converted into the reader's own timezone.
+//
+// Versions recorded before that carry a bare yyyy-mm-ddTHH:MM:SS with no zone. There is
+// nothing to convert FROM, and handing such a string to `new Date()` makes JS read those
+// digits as the reader's local time — the digits come out unchanged, so it looks right
+// while silently relabelling a stone timestamp as the reader's own. Those are parsed
+// component-wise instead and reported as unconverted, so renderVersionRow can say whose
+// clock they are.
+//
+// `zoned` tells the caller which of the two happened. Falls back to the raw string when
+// it matches neither shape, and to '' when there is no stamp (the synthetic current
+// version).
+const ZONED_STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+const NAIVE_STAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/;
+
+export function formatRecordedTimestamp(raw: string): { text: string; zoned: boolean } {
+  if (!raw) return { text: '', zoned: false };
+
+  const zoned = ZONED_STAMP.exec(raw);
+  if (zoned) {
+    // Normalise ±HHMM to ±HH:MM — GemStone emits the compact form, but only the
+    // colon form is guaranteed parseable by Date.
+    const off =
+      zoned[2] === 'Z' || zoned[2].includes(':')
+        ? zoned[2]
+        : `${zoned[2].slice(0, 3)}:${zoned[2].slice(3)}`;
+    const d = new Date(`${zoned[1]}${off}`);
+    if (!Number.isNaN(d.getTime())) return { text: d.toLocaleString(), zoned: true };
+  }
+
+  const naive = NAIVE_STAMP.exec(raw);
+  if (naive) {
+    const n = (i: number): number => Number(naive[i]);
+    const d = new Date(n(1), n(2) - 1, n(3), n(4), n(5), n(6));
+    if (!Number.isNaN(d.getTime())) return { text: d.toLocaleString(), zoned: false };
+  }
+
+  return { text: raw, zoned: false };
 }
 
 // A compact unified line-diff (old → new) as HTML, using the shared pure lineDiff.
@@ -50,8 +84,14 @@ function renderDiff(oldText: string, newText: string): string {
 function renderVersionRow(v: MethodVersion, curSource: string | undefined): string {
   const badge = v.isCurrent ? '<span class="cur">current</span>' : '';
   const who = v.userId ? ` by ${escapeHtml(v.userId)}` : '';
-  const when = formatLocalTimestamp(v.timeStamp);
-  const stamp = when ? `${escapeHtml(when)}${who}` : v.isCurrent ? 'installed now' : who.trim();
+  const { text: when, zoned } = formatRecordedTimestamp(v.timeStamp);
+  // An offset-bearing stamp really is the reader's local time; a legacy zone-less one is
+  // the stone's wall clock and must say so rather than pass as the reader's.
+  const whenTitle = zoned
+    ? 'Your local time, converted from the stone’s recorded UTC offset'
+    : 'Stone time — recorded without a timezone, shown as-is';
+  const whenHtml = when ? `<span class="when" title="${whenTitle}">${escapeHtml(when)}</span>` : '';
+  const stamp = when ? `${whenHtml}${who}` : v.isCurrent ? 'installed now' : who.trim();
   const cat = v.category
     ? `<span class="cat" title="method category">${escapeHtml(v.category)}</span>`
     : '';

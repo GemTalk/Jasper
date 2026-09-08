@@ -7,7 +7,7 @@ describe('getMethodHistory', () => {
     const execute = vi.fn<QueryExecutor>(() => '[]');
     getMethodHistory(execute, 'Foo', 'bar', false);
     const code = execute.mock.calls[0][0];
-    expect(code).toContain("forClassNamed: 'Foo'");
+    expect(code).toContain("named: 'Foo'");
     expect(code).toContain("selector: 'bar'");
     expect(code).toContain('meta: false');
   });
@@ -33,7 +33,7 @@ describe('getMethodHistory', () => {
     const execute = vi.fn<QueryExecutor>(() => '[]');
     getMethodHistory(execute, "Foo'", "at:put:'", false);
     const code = execute.mock.calls[0][0];
-    expect(code).toContain("forClassNamed: 'Foo'''");
+    expect(code).toContain("named: 'Foo'''");
     expect(code).toContain("selector: 'at:put:'''");
   });
 });
@@ -44,8 +44,54 @@ describe('removeMethodHistory', () => {
     removeMethodHistory(execute, 'Foo', 'bar', true);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('SessionTemps current at: #JasperMethodHistory');
-    expect(code).toContain("removeHistoryForClassNamed: 'Foo'");
+    expect(code).toContain('removeHistoryForClass: ');
+    expect(code).toContain("named: 'Foo'");
     expect(code).toContain("selector: 'bar'");
     expect(code).toContain('meta: true');
+  });
+});
+
+// A class name alone does not identify a class: a user's symbolList is an ordered list
+// of SymbolDictionaries and `objectNamed:` answers the FIRST match, shadowing later
+// ones. Restore already scoped its recompile by dictionary, so a read that did not
+// would resolve a different class than the one being restored — the read/write
+// split-brain these tests guard against.
+describe('dictionary scoping', () => {
+  it('scopes the class lookup to a SymbolList index when given one', () => {
+    const execute = vi.fn<QueryExecutor>(() => '[]');
+    getMethodHistory(execute, 'Foo', 'bar', false, 3);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('System myUserProfile symbolList at: 3');
+    expect(code).toContain("at: #'Foo' ifAbsent: [nil]");
+  });
+
+  it('scopes the class lookup to a dictionary name when given one', () => {
+    const execute = vi.fn<QueryExecutor>(() => '[]');
+    getMethodHistory(execute, 'Foo', 'bar', false, 'MyDict');
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("objectNamed: #'MyDict'");
+    expect(code).toContain("at: #'Foo' ifAbsent: [nil]");
+  });
+
+  it('falls back to an unscoped global lookup when no dictionary is known', () => {
+    const execute = vi.fn<QueryExecutor>(() => '[]');
+    getMethodHistory(execute, 'Foo', 'bar', false);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("symbolList objectNamed: #'Foo'");
+    expect(code).not.toContain('symbolList at: ');
+  });
+
+  it('scopes forgetting by dictionary too, so read and write agree', () => {
+    const execute = vi.fn<QueryExecutor>(() => '{"removed":true}');
+    removeMethodHistory(execute, 'Foo', 'bar', false, 3);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('System myUserProfile symbolList at: 3');
+    expect(code).toContain("at: #'Foo' ifAbsent: [nil]");
+  });
+
+  it('escapes a dictionary name carrying a quote', () => {
+    const execute = vi.fn<QueryExecutor>(() => '[]');
+    getMethodHistory(execute, 'Foo', 'bar', false, "My'Dict");
+    expect(execute.mock.calls[0][0]).toContain("objectNamed: #'My''Dict'");
   });
 });
