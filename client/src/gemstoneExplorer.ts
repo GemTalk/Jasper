@@ -5746,12 +5746,27 @@ export class ExplorerController {
     to: string,
   ): OverlayRenameOutcome {
     // The overlay belongs to the class the pane is showing; anything else is a different
-    // (empty) set that happens to share names.
-    if (this.state.className !== slot.className || this.state.dictIndex !== slot.dict) {
+    // (empty) set that happens to share names. A slot that names a dictionary has to agree
+    // on that too, but one recorded WITHOUT a dictIndex constrains only the class rather
+    // than matching nothing at all: the "+" button records whatever dictIndex the pane held,
+    // and unlike the pencil it does not require one, so a category created while no
+    // dictionary was selected would otherwise be impossible to undo.
+    if (
+      this.state.className !== slot.className ||
+      (slot.dict !== undefined && this.state.dictIndex !== slot.dict)
+    ) {
+      logInfo(
+        `[undo] overlay reversal skipped: the pane is on ` +
+          `${this.state.className ?? '(no class)'}@${this.state.dictIndex ?? '(no dict)'}, ` +
+          `the entry names ${slot.className}@${slot.dict ?? '(no dict)'}`,
+      );
       return 'not-listed';
     }
     const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
-    if (!freshSet.has(from)) return 'not-listed';
+    if (!freshSet.has(from)) {
+      logInfo(`[undo] overlay rename: '${from}' is not in the pane's fresh set`);
+      return 'not-listed';
+    }
     // A name taken by another fresh category, or by a real one, is a collision either way:
     // the pane would show two rows with one name.
     const real = this.envLines.filter((l) => l.isMeta === slot.isMeta).map((l) => l.category);
@@ -5782,11 +5797,23 @@ export class ExplorerController {
     slot: { className: string; isMeta: boolean; dict?: number | string },
     name: string,
   ): OverlayRenameOutcome {
-    if (this.state.className !== slot.className || this.state.dictIndex !== slot.dict) {
+    // Matched the same way as the rename above, and for the same reason.
+    if (
+      this.state.className !== slot.className ||
+      (slot.dict !== undefined && this.state.dictIndex !== slot.dict)
+    ) {
+      logInfo(
+        `[undo] overlay reversal skipped: the pane is on ` +
+          `${this.state.className ?? '(no class)'}@${this.state.dictIndex ?? '(no dict)'}, ` +
+          `the entry names ${slot.className}@${slot.dict ?? '(no dict)'}`,
+      );
       return 'not-listed';
     }
     const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
-    if (!freshSet.has(name)) return 'not-listed';
+    if (!freshSet.has(name)) {
+      logInfo(`[undo] overlay remove: '${name}' is not in the pane's fresh set`);
+      return 'not-listed';
+    }
 
     freshSet.delete(name);
     // The pane is about to stop listing it, so a selection pointing at it would name a row
