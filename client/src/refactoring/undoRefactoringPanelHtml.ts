@@ -32,7 +32,7 @@ import {
   historyRevertCaveat,
   deselectionNote,
 } from './undoRefactoringPreview';
-import { lineDiff, DiffLine, DiffLineType } from './lineDiff';
+import { lineDiff, DiffLine, DiffLineType } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s

@@ -14,7 +14,7 @@
  * so Apply sends `deselected: []` — exactly the all-or-nothing contract.
  */
 import { ClassVarRenameChange, ClassVarOutOfScope, SkippedMethod } from './renameClassVarPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s
