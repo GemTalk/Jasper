@@ -23,9 +23,14 @@ export type ConnectLoopbackClient = (port: number) => Promise<RawSocketConnectio
  *
  * `writeFromServer`, `resetFromServer`, and `close` resolve once their effect has actually
  * happened at the OS level (the write has flushed; the reset/closed socket
- * has closed) rather than after a guessed delay: on loopback there's no real
- * wire transfer, so by the time the local op completes, the client side has
- * already seen it.
+ * has closed) rather than after a guessed delay. Note that for both
+ * `writeFromServer` and `resetFromServer` this is only the server side's half
+ * completing (the send flushed; the peer's own socket torn down), not proof
+ * the client fd's kernel state already reflects it: on POSIX in particular,
+ * a resolved `resetFromServer()` doesn't guarantee the RST has reached and
+ * been processed on the client side. Callers that need to observe the effect
+ * on the client side should poll for it rather than assume it's
+ * instantaneous.
  *
  * @param connectClient - supplies the platform-specific way to obtain the
  * client's raw fd/handle for a given port.
