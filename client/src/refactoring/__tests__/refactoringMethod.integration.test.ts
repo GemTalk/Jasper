@@ -58,6 +58,10 @@ describe('rename method (integration)', () => {
     expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
 
+  // Generous timeout, as on every other in-stone suite here: one blocking exec files
+  // in the whole engine-tests payload and runs FOUR SUnit suites over the GCI. It was
+  // left on vitest's 5s default and landed at 5.6s on a macOS CI runner, failing a push
+  // that had nothing to do with refactoring.
   it('runs the engine GS SUnit suites in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
@@ -73,7 +77,7 @@ failuresAndErrors := 0.
 failuresAndErrors printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('runs the rename-method suite alone and reports its test count', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
