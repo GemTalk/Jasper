@@ -91,7 +91,7 @@ the owning window has two logins, MCP tools act on whichever one is active
 the AI sees on the next tool call.
 
 The **Logins & Sessions** view shows the live answer on the session itself:
-the row MCP is serving is marked `· MCP`, and every other session row offers
+the row MCP is serving is marked `· MCP`, and every session row offers
 **Serve MCP from This Session** (the robot icon), which selects that session
 and claims the server in one step. There is no separate MCP pane — ownership is
 a property of a session, so it is reported where the sessions are.

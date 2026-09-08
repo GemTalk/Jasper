@@ -58,22 +58,31 @@ describe('sessionMcpState', () => {
 });
 
 describe('the session row', () => {
-  it('marks the served session and drops its button, so the state reads two ways', () => {
+  it('marks the served session in its description', () => {
     const row = new GemStoneSessionItem(makeSession(7), true, 'serving');
     expect(row.description).toContain('· MCP');
-    // The inline button is contributed for `gemstoneSession`; the served row
-    // takes a different contextValue so VS Code withholds it.
-    expect(row.contextValue).toBe('gemstoneSessionServingMcp');
+    expect(String(row.tooltip)).toContain('run their GemStone tools against this session');
   });
 
-  it('offers the button on every other row, and says so when another window owns it', () => {
+  it('says nothing about MCP on any other row', () => {
     for (const state of ['off', 'idle', 'elsewhere'] as const) {
-      const row = new GemStoneSessionItem(makeSession(8), false, state);
-      expect(row.description).not.toContain('MCP');
-      expect(row.contextValue).toBe('gemstoneSession');
+      expect(new GemStoneSessionItem(makeSession(8), false, state).description).not.toContain(
+        'MCP',
+      );
     }
     expect(String(new GemStoneSessionItem(makeSession(8), false, 'elsewhere').tooltip)).toContain(
       'Another VS Code window',
     );
+  });
+
+  it('keeps one contextValue whatever MCP is doing, so the row keeps its actions', () => {
+    // File In, Commit, Abort, Session Configuration, Logout and the backup pair
+    // are all contributed for `viewItem == gemstoneSession`. Marking the served
+    // row with a contextValue of its own took every one of them off that row.
+    for (const state of ['off', 'idle', 'serving', 'elsewhere'] as const) {
+      expect(new GemStoneSessionItem(makeSession(7), true, state).contextValue).toBe(
+        'gemstoneSession',
+      );
+    }
   });
 });

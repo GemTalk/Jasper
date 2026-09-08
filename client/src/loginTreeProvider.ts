@@ -94,10 +94,14 @@ export class GemStoneSessionItem extends vscode.TreeItem {
         'take it over — it will only succeed once that window releases it.';
     }
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
-    // The row already serving MCP drops the button — there is nothing to do to
-    // it — which also makes the button's absence the second cue that it is the
-    // serving one.
-    this.contextValue = mcp === 'serving' ? 'gemstoneSessionServingMcp' : 'gemstoneSession';
+    // Every session row keeps this one contextValue, MCP state included: each of
+    // the row's other actions — File In, Commit, Abort, Session Configuration,
+    // Logout, and the backup pair in the context menu — is contributed for
+    // `viewItem == gemstoneSession`, so a row given a different value to mark it
+    // as the served one loses all of them. `· MCP` above is the marker instead,
+    // and Serve MCP from This Session stays on the served row, where it is a
+    // harmless no-op.
+    this.contextValue = 'gemstoneSession';
   }
 }
 
