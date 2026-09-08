@@ -1,4 +1,5 @@
 import { describe, it } from 'vitest';
+import { isWindows } from '../wslBridge';
 
 const isSupportedPosixPlatform = process.platform === 'linux' || process.platform === 'darwin';
 
@@ -17,3 +18,12 @@ export const onSupportedPosixDescribe: ReturnType<typeof describe.runIf> =
 
 /** Same as {@link onSupportedPosixDescribe}, for a single `it` rather than a whole block. */
 export const onSupportedPosixIt: ReturnType<typeof it.runIf> = it.runIf(isSupportedPosixPlatform);
+
+/**
+ * Wraps a `describe` block that only makes sense on Windows: behavior backed
+ * by Win32-specific primitives (e.g. a raw `SOCKET` opened via `ws2_32.dll`)
+ * that have no POSIX equivalent. Runs the block's tests normally on Windows;
+ * reports them as skipped elsewhere.
+ */
+export const onSupportedWindowsDescribe: ReturnType<typeof describe.runIf> =
+  describe.runIf(isWindows());

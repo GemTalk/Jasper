@@ -15,9 +15,13 @@ vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn() }));
 // and on a real Windows runner that shells out to wsl.exe and takes seconds — long
 // enough that a test driving two refreshes measures the probe rather than the panel.
 // Held to "no WSL here" so every platform exercises the same path.
+// POSIX by default, so every other test takes the ordinary path. The Windows
+// tests flip this — a suite that pins it to false can never see a Windows-only
+// mistake, which is how the product-tree discovery shipped comparing a UNC
+// prefix against a Linux path.
 vi.mock('../../wslBridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../wslBridge')>()),
-  needsWsl: () => false,
+  needsWsl: vi.fn(() => false),
 }));
 
 import * as fs from 'fs';
@@ -27,6 +31,8 @@ import * as vscode from 'vscode';
 import { DatabaseManager } from '../databaseManager';
 import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
+import { SysadminStorage } from '../../sysadminStorage';
+import { needsWsl } from '../../wslBridge';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -82,7 +88,13 @@ let onDisk: GemStoneVersion[];
 let nfsRisk: { rootPath: string; fsType: string } | undefined;
 let createDatabaseDirect: ReturnType<typeof vi.fn>;
 /** Databases the storage reports; empty unless a test makes one on disk. */
-let databases: { dirName: string; path: string; config: Record<string, string> }[];
+let registerExistingDatabase: ReturnType<typeof vi.fn>;
+let recordNetldiPort: ReturnType<typeof vi.fn>;
+let databases: {
+  dirName: string;
+  path: string;
+  config: Record<string, string | number | boolean>;
+}[];
 let deleteDownload: ReturnType<typeof vi.fn>;
 
 function makeDeps() {
@@ -107,8 +119,17 @@ function makeDeps() {
       isStoneRunning: () => false,
       isNetldiRunning: () => false,
       getExternalServers: () => ({}),
+      // Read for every row: nothing is running here, so no version disagrees.
+      versionMismatchRefusal: () => undefined,
+      discoverServersUnder: () => [],
+      netldiPortFor: () => undefined,
     },
-    databaseManager: { nfsRiskForNextDatabase: () => nfsRisk, createDatabaseDirect },
+    databaseManager: {
+      nfsRiskForNextDatabase: () => nfsRisk,
+      createDatabaseDirect,
+      registerExistingDatabase,
+      recordNetldiPort,
+    },
     getLogins: () => [],
     saveLogin: vi.fn(async () => {}),
     refreshAdminViews: vi.fn(),
@@ -127,11 +148,28 @@ function makeDeps() {
 
 beforeEach(() => {
   DatabasesPanel.close();
+  vi.mocked(needsWsl).mockReturnValue(false);
   vi.mocked(vscode.window.createWebviewPanel).mockClear();
   vi.mocked(vscode.commands.executeCommand).mockClear();
   onDisk = [{ ...RELEASE }];
   databases = [];
   nfsRisk = undefined;
+  // Answers the config as it now stands, the way the real one does.
+  recordNetldiPort = vi.fn((db: { config: Record<string, unknown> }, port: number) => ({
+    ...db.config,
+    netldiPort: port,
+  }));
+  registerExistingDatabase = vi.fn(async () => ({
+    dirName: 'db-2',
+    path: '/root/db-2',
+    config: {
+      version: '3.7.5.1',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      registered: true,
+      productPath: '/opt/theirs/product',
+    },
+  }));
   createDatabaseDirect = vi.fn(async () => ({
     dirName: 'db-1',
     path: '/root/db-1',
@@ -146,8 +184,18 @@ beforeEach(() => {
 
 /** The last state the panel posted, which is what the view would have drawn. */
 function lastState(): {
-  databases: { logFiles: { name: string }[] }[];
-  create: { nfsWarning: boolean; rootPath: string; ldiNames: string[] };
+  databases: {
+    dirName: string;
+    logFiles: { name: string }[];
+    registered?: boolean;
+    registeredReason?: string;
+    productPath?: string;
+    netldiPort?: number;
+    availableExtents: string[];
+    backupFiles: unknown[];
+    extentBackupFiles: unknown[];
+  }[];
+  create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -677,5 +725,343 @@ describe('overlapping state passes', () => {
     await drain();
 
     expect(lastPostedState()?.databases.map((d) => d.dirName)).toEqual(['db-after']);
+  });
+});
+
+// ── Registering an existing installation ──────────────────────────────────
+// The host half of Register Existing: reading the chosen directory, and writing
+// the record. See registeredDatabase.ts for the rule these keep.
+
+describe('registering an existing database', () => {
+  it('answers the folder picker with the version it read and what is running there', async () => {
+    const deps = makeDeps() as unknown as {
+      processManager: { discoverServersUnder: () => unknown[] };
+    };
+    deps.processManager.discoverServersUnder = () => [
+      { type: 'stone', name: 'theirstone', pid: 7, globalDir: '/opt/gemstone' },
+    ];
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+    // Through the Uri, because that is how the pick reaches the panel: on
+    // Windows `fsPath` answers a separator-normalized path, so the literal the
+    // dialog was handed is not the string the panel posts back.
+    const productUri = vscode.Uri.file('/opt/theirs/product');
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([productUri] as never);
+
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(picked).toMatchObject({
+      productPath: productUri.fsPath,
+      version: '3.7.5.1',
+      description: 'branch 3.7.5.1',
+    });
+    expect(picked?.servers).toHaveLength(1);
+  });
+
+  it('tells the form when the chosen folder is not a product tree, rather than failing silently', async () => {
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue(undefined);
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
+      vscode.Uri.file('/home/me/Documents'),
+    ] as never);
+
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(String(picked?.problem)).toContain('version.txt');
+    expect(picked?.version).toBeUndefined();
+  });
+
+  it('passes the form\u2019s answers straight to the register call', async () => {
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      netldiPort: 46717,
+      confPath: '/opt/theirs/product/data',
+      globalDir: '/opt/gemstone',
+    });
+
+    // The wire message's own `command` is not part of the record.
+    expect(registerExistingDatabase).toHaveBeenCalledWith({
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      netldiPort: 46717,
+      confPath: '/opt/theirs/product/data',
+      globalDir: '/opt/gemstone',
+    });
+  });
+
+  it('refuses a stone name that is already on the list, without writing a record', async () => {
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.5',
+          stoneName: 'theirstone',
+          ldiName: 'gs64ldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+    });
+
+    expect(registerExistingDatabase).not.toHaveBeenCalled();
+  });
+
+  it('refuses a product directory that is on the Windows side, not in WSL', async () => {
+    // GemStone has no Windows build: everything Jasper runs for a database runs
+    // inside the guest, under a path the guest can resolve. A tree picked on the
+    // Windows side would register happily and then fail on every command, so it
+    // is refused while the folder that has to change is still on screen.
+    vi.mocked(needsWsl).mockReturnValue(true);
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
+      { fsPath: 'C:\\gemstone\\product' },
+    ] as never);
+
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(String(picked?.problem)).toContain('WSL');
+    expect(picked?.version).toBeUndefined();
+  });
+
+  it('accepts a product directory inside the guest, addressed as a UNC path', async () => {
+    vi.mocked(needsWsl).mockReturnValue(true);
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
+      { fsPath: '\\\\wsl$\\Ubuntu\\opt\\theirs\\product' },
+    ] as never);
+
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(picked?.problem).toBeUndefined();
+    expect(picked?.version).toBe('3.7.5.1');
+  });
+
+  it('refuses a NetLDI name another database already carries', async () => {
+    // Two databases sharing an ldiName both match the same gslist row
+    // (`isNetldiRunning` matches on name + version), so each reports the other's
+    // NetLDI as its own and `netldiPortFor` can hand one database's port to the
+    // other's login.
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.5',
+          stoneName: 'ourstone',
+          ldiName: 'theirldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+    });
+
+    expect(registerExistingDatabase).not.toHaveBeenCalled();
+  });
+
+  it('offers the form the databases\u2019 own NetLDI names, not every one running', async () => {
+    // The name being registered is normally already held by the running NetLDI
+    // being adopted, so the create form's list — which counts a live NetLDI as
+    // taken — would refuse every ordinary registration. The register form checks
+    // the narrower list instead.
+    const deps = makeDeps() as unknown as {
+      processManager: { getProcesses: () => unknown[] };
+    };
+    deps.processManager.getProcesses = () => [
+      { type: 'netldi', name: 'theirldi', pid: 9, version: '3.7.5', status: 'OK' },
+    ];
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.5',
+          stoneName: 'ourstone',
+          ldiName: 'gs64ldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+
+    const create = lastState().create;
+    expect(create.dbLdiNames).toEqual(['gs64ldi']);
+    expect(create.ldiNames).toContain('theirldi');
+  });
+
+  it('draws a registered row as registered, with nothing extent-shaped on it', async () => {
+    databases = [
+      {
+        dirName: 'db-2',
+        path: '/root/db-2',
+        config: {
+          version: '3.7.5',
+          stoneName: 'theirstone',
+          ldiName: 'theirldi',
+          registered: true,
+          productPath: '/opt/theirs/product',
+          netldiPort: 46717,
+        },
+      },
+    ];
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    const row = lastState().databases[0];
+    expect(row.registered).toBe(true);
+    expect(row.registeredReason).toContain('Jasper did not create this database');
+    expect(row.productPath).toBe('/opt/theirs/product');
+    expect(row.netldiPort).toBe(46717);
+    // Nothing that would offer to write inside the installation.
+    expect(row.availableExtents).toEqual([]);
+    expect(row.backupFiles).toEqual([]);
+    expect(row.extentBackupFiles).toEqual([]);
+  });
+});
+
+describe('a registered database whose NetLDI has moved', () => {
+  const registered = {
+    dirName: 'db-4',
+    path: '/root/db-4',
+    config: {
+      version: '3.7.5',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      registered: true,
+      productPath: '/opt/theirs/product',
+      netldiPort: 46717,
+    },
+  };
+
+  it('shows the port it is listening on now, and corrects the record', async () => {
+    // The failure this closes: register while the NetLDI is up, restart it, and
+    // every login built from the record dials the old port — an ECONNABORTED
+    // that says nothing about ports.
+    databases = [registered];
+    const deps = makeDeps() as unknown as {
+      processManager: { netldiPortFor: () => number | undefined };
+    };
+    deps.processManager.netldiPortFor = () => 34199;
+
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+
+    expect(lastState().databases[0].netldiPort).toBe(34199);
+    expect(recordNetldiPort).toHaveBeenCalledWith(
+      expect.objectContaining({ dirName: 'db-4' }),
+      34199,
+    );
+  });
+
+  it('keeps the recorded port while nothing is running to contradict it', async () => {
+    databases = [registered];
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    expect(lastState().databases[0].netldiPort).toBe(46717);
+    expect(recordNetldiPort).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleting a login from the panel', () => {
+  it('routes through the command, which is what confirms and clears the keychain', async () => {
+    // Reaching for storage.deleteLogin here would skip the active-session
+    // refusal and the confirmation, and orphan the keychain entry.
+    const login = {
+      label: 'DataCurator on gs64stone (localhost)',
+      gs_user: 'DataCurator',
+      stone: 'gs64stone',
+      gem_host: 'localhost',
+      version: '3.7.5',
+      netldi: 'gs64ldi',
+      gs_password: '',
+      host_user: '',
+      host_password: '',
+    };
+    const deps = {
+      ...(makeDeps() as unknown as Record<string, unknown>),
+      getLogins: () => [login],
+    } as unknown as Parameters<typeof DatabasesPanel.show>[0];
+
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await sendMessage({ command: 'deleteLogin', login: login.label });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.deleteLogin', {
+      login,
+    });
+  });
+
+  it('does nothing for a label no login answers to', async () => {
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await sendMessage({ command: 'deleteLogin', login: 'nobody on nowhere (localhost)' });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.deleteLogin',
+      expect.anything(),
+    );
   });
 });
