@@ -31,6 +31,12 @@ import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClass
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
+import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
+import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
+import { fileOutMethodCategory as sharedFileOutMethodCategory } from './queries/fileOutMethodCategory';
+import { fileOutDictionary as sharedFileOutDictionary } from './queries/fileOutDictionary';
+import { fileInChunk as sharedFileInChunk } from './queries/fileInChunk';
+import { removeAllMethods as sharedRemoveAllMethods } from './queries/removeAllMethods';
 import { describeClass as sharedDescribeClass } from './queries/describeClass';
 import { getInstVarNames as sharedGetInstVarNames } from './queries/getInstVarNames';
 import { getDefinedInstVarNames as sharedGetDefinedInstVarNames } from './queries/getDefinedInstVarNames';
@@ -749,6 +755,52 @@ export function fileOutClass(
   dict?: number | string,
 ): string {
   return sharedFileOutClass(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function fileOutHeader(session: ActiveSession): string {
+  return sharedFileOutHeader(defaultQueryExecutorUsing(session));
+}
+
+export function fileOutMethod(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict);
+}
+
+export function fileOutMethodCategory(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  category: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutMethodCategory(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    category,
+    dict,
+  );
+}
+
+export function fileOutDictionary(session: ActiveSession, dict: number | string): string {
+  return sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
+}
+
+export function fileInChunk(session: ActiveSession, code: string): string {
+  return sharedFileInChunk(defaultQueryExecutorUsing(session), code);
+}
+
+export function removeAllMethods(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+): string {
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
 }
 
 export function describeClass(

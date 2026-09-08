@@ -27,6 +27,15 @@ const engineTestsPayloadPath = (): string =>
  * (`serverPlugin/installHelpers.ts`): on Windows it rewrites a client
  * checkout path to its WSL-visible form, since the gem always runs inside
  * WSL there; a no-op everywhere else.
+ *
+ * Any test that runs this needs a generous explicit timeout — `}, 60_000)`. The
+ * payload is ~400 KB of Smalltalk and is COMPILED in the stone, and the harness
+ * aborts after every test, so it cannot be filed in once and shared: each test pays
+ * the full compile before its suite even starts. Under vitest's 5s default that lands
+ * at 5.6-5.9s on a macOS CI runner — passing locally, and failing whichever test drew
+ * the busiest runner that day, in whatever PR happened to be open. Filing the payload
+ * in once at stone setup and committing it there would remove the cost rather than
+ * budget for it, but that is a change to the harness, not to these tests.
  */
 export const fileInEngineTestsExpr = (): string =>
   `GsFileIn fromServerPath: '${escapeString(toLocalGemPath(engineTestsPayloadPath()))}'.`;
