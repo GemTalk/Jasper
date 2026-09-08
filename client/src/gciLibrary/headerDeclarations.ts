@@ -225,10 +225,20 @@ function conditionEffect(
 interface ConditionalFrame {
   /** The branch currently open is compiled only where `FLG_UNIX` is defined. */
   unixOnly: boolean;
+  /**
+   * The branch currently open is compiled only where `FLG_UNIX` is *not*
+   * defined. Not the negation of `unixOnly`: most branches are neither, and
+   * only this being true makes `unixOnly: false` a *proven* answer rather than
+   * merely an unestablished one — which is what lets an inner unclassifiable
+   * condition go unexamined.
+   */
+  excludesUnix: boolean;
   /** The branch currently open is compiled at all. */
   live: boolean;
   /** Reaching a later branch of this chain implies `FLG_UNIX` is defined. */
   fallThroughUnixOnly: boolean;
+  /** Reaching a later branch of this chain implies `FLG_UNIX` is not defined. */
+  fallThroughExcludesUnix: boolean;
   /** A later branch of this chain is reachable at all. */
   fallThroughLive: boolean;
   /**
@@ -248,8 +258,10 @@ interface ConditionalFrame {
 function openedBy(effect: ConditionEffect): ConditionalFrame {
   return {
     unixOnly: effect.requiresUnix,
+    excludesUnix: effect.excludesUnix,
     live: effect.canHold,
     fallThroughUnixOnly: effect.excludesUnix,
+    fallThroughExcludesUnix: effect.requiresUnix,
     fallThroughLive: effect.canFail,
     unclassifiable: effect.unclassifiable,
     fallThroughUnclassifiable: effect.unclassifiable,
@@ -262,8 +274,10 @@ function continuedBy(frame: ConditionalFrame, effect: ConditionEffect): Conditio
   const unclassifiable = frame.fallThroughUnclassifiable || effect.unclassifiable;
   return {
     unixOnly: frame.fallThroughUnixOnly || effect.requiresUnix,
+    excludesUnix: frame.fallThroughExcludesUnix || effect.excludesUnix,
     live: frame.fallThroughLive && effect.canHold,
     fallThroughUnixOnly: frame.fallThroughUnixOnly || effect.excludesUnix,
+    fallThroughExcludesUnix: frame.fallThroughExcludesUnix || effect.requiresUnix,
     fallThroughLive: frame.fallThroughLive && effect.canFail,
     unclassifiable,
     fallThroughUnclassifiable: unclassifiable,
@@ -275,8 +289,10 @@ function continuedBy(frame: ConditionalFrame, effect: ConditionEffect): Conditio
 function elseBranchOf(frame: ConditionalFrame): ConditionalFrame {
   return {
     unixOnly: frame.fallThroughUnixOnly,
+    excludesUnix: frame.fallThroughExcludesUnix,
     live: frame.fallThroughLive,
     fallThroughUnixOnly: frame.fallThroughUnixOnly,
+    fallThroughExcludesUnix: frame.fallThroughExcludesUnix,
     fallThroughLive: false,
     unclassifiable: frame.fallThroughUnclassifiable,
     fallThroughUnclassifiable: frame.fallThroughUnclassifiable,
@@ -322,12 +338,14 @@ interface Capture {
   unixOnly: boolean;
   /**
    * Snapshotted the same way `unixOnly` is: true when an enclosing frame's
-   * platform gating could not be classified *and* nothing else already
-   * pins `unixOnly` true. A `FLG_SOLARIS` sub-branch nested inside a proven
+   * platform gating could not be classified *and* nothing else already proves
+   * `unixOnly` either way. A `FLG_SOLARIS` sub-branch nested inside a proven
    * `FLG_UNIX` block does not need to be understood — the declaration is
-   * unix-only regardless of what the inner condition turns out to mean — so
-   * this stays false in that case even though the inner frame itself is
-   * unclassifiable.
+   * unix-only regardless of what the inner condition turns out to mean — and
+   * neither does a `FLG_MSWIN32` sub-branch nested inside a proven
+   * `!defined(FLG_UNIX)` block, which settles the answer just as firmly in the
+   * other direction. So this stays false in both cases even though the inner
+   * frame itself is unclassifiable.
    */
   unclassifiable: boolean;
   unclassifiableReason?: string;
@@ -350,6 +368,7 @@ export function parseDeclarations(rawSource: string, label: string): Map<string,
   let occurrences = 0;
 
   const currentlyUnixOnly = () => frames.some((frame) => frame.unixOnly);
+  const currentlyExcludesUnix = () => frames.some((frame) => frame.excludesUnix);
   const currentlyLive = () => frames.every((frame) => frame.live);
   const currentlyUnclassifiable = () => frames.find((frame) => frame.unclassifiable);
 
@@ -419,7 +438,14 @@ export function parseDeclarations(rawSource: string, label: string): Map<string,
     if (!capture) {
       if (!line.includes(DECLARATION_MACRO)) continue;
       const unixOnly = currentlyUnixOnly();
-      const unclassifiableFrame = unixOnly ? undefined : currentlyUnclassifiable();
+      /*
+       * Either proof settles the classification, so an inner condition this
+       * parser cannot read no longer has to be read: a declaration under a
+       * proven `!defined(FLG_UNIX)` frame is not UNIX-only whatever the inner
+       * flag means.
+       */
+      const platformSettled = unixOnly || currentlyExcludesUnix();
+      const unclassifiableFrame = platformSettled ? undefined : currentlyUnclassifiable();
       capture = {
         text: '',
         parenDepth: 0,

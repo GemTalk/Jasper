@@ -306,6 +306,37 @@ describe('parseDeclarations (inline fixtures)', () => {
     expect(declared.get('GciTsSolarisOnUnix')).toEqual({ unixOnly: true });
   });
 
+  it('exempts an unclassifiable frame nested inside a proven non-UNIX frame', () => {
+    // The outer frame already settles the answer, so the FLG_MSWIN32 shape the
+    // parser cannot classify does not have to be classified: whatever it means,
+    // the declaration is not UNIX-only.
+    const source = `
+      #if !defined(FLG_UNIX)
+      #if defined(FLG_MSWIN32)
+      EXTERN_GCI_DEC(int) GciTsWindowsOnly(GciSession sess) GCI_WEAK;
+      #endif
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsWindowsOnly')).toEqual({ unixOnly: false });
+  });
+
+  it('exempts an unclassifiable frame nested in the #else of #if defined(FLG_UNIX)', () => {
+    // The same proof, reached through the #else rather than a negated condition.
+    const source = `
+      #if defined(FLG_UNIX)
+      EXTERN_GCI_DEC(int) GciTsOnUnix(GciSession sess) GCI_WEAK;
+      #else
+      #if defined(FLG_MSWIN32)
+      EXTERN_GCI_DEC(int) GciTsOffUnix(GciSession sess) GCI_WEAK;
+      #endif
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsOnUnix')).toEqual({ unixOnly: true });
+    expect(declared.get('GciTsOffUnix')).toEqual({ unixOnly: false });
+  });
+
   it('keeps a declaration whose argument list branches on the platform', () => {
     const source = `
       EXTERN_GCI_DEC(int) GciTsSplitArgs(
