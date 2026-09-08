@@ -16,19 +16,16 @@ permissions:
 # run's result obsolete, and the matrix is wide enough (and macOS runners
 # slow enough) that the wasted capacity delays the run that actually matters.
 #
-# `github.ref` is the right group key for every trigger this workflow has:
-# for `pull_request` it's `refs/pull/N/merge` (one group per PR), for `push`
-# it's the branch ref, and merge-queue refs are unique per queued entry.
+# `github.ref` gives one group per PR (`refs/pull/N/merge`), per `*/wip/*`
+# branch, and per merge-queue entry (those refs are unique per entry).
 #
-# The `cancel-in-progress` guard is load-bearing. Pushes to `main` all share
-# `refs/heads/main`, so an unguarded `true` would let one merge cancel the
-# previous merge's run on main — the one run whose result nobody can
-# reproduce by pushing again. Everything else is safe to cancel: PR refs, and
-# pushes to the `*/wip/*` branches this workflow also watches (a `refs/heads/`
-# ref that isn't `main`).
+# `main` gets a per-commit group instead, so its runs never contend:
+# `cancel-in-progress: false` would not protect them, because GitHub cancels
+# a *pending* run as soon as a newer one queues behind the same in-progress
+# run — `cancel-in-progress` only governs the run that is executing.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
 
 jobs:
   prepare:
