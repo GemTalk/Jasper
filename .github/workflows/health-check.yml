@@ -216,9 +216,11 @@ jobs:
           # trip the timeout on a bad-runner day — noise that says nothing
           # about the code under test. Cut to one leg while that variance is
           # investigated; restore the platform to the axis above once it is
-          # understood. Nothing macOS-specific is version-dependent (the DMG
-          # mount and shared-memory setup are the same on every release), so
-          # one leg still covers the macOS-specific path.
+          # understood. The macOS-specific mechanics are version-independent
+          # (the DMG mount and shared-memory setup are the same on every
+          # release), so one leg still covers those. What it gives up: the
+          # dropped legs were the only place a newer release's darwin GCI
+          # client got exercised.
           #
           # It runs the *oldest* supported version, not the newest: the newest
           # is already exercised on ubuntu and windows, whereas the oldest is
