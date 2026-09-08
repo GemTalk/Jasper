@@ -23,7 +23,7 @@
  * `(code: string) => string`) so it can be unit-tested without a stone.
  */
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
+import { escapeString, homeDictionaryNameExpr } from '../../queries/util';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -191,6 +191,53 @@ export interface InspectorRow {
   revertible?: boolean;
 }
 
+/**
+ * SessionTemps slots holding the last snapshot each paged-by-position tab took.
+ * One slot per tab, so a dictionary's key order and an unordered collection's
+ * element order can't be handed to each other.
+ */
+const ITEMS_SNAPSHOT_KEY = 'JasperInspectorItems';
+const ENTRIES_SNAPSHOT_KEY = 'JasperInspectorKeys';
+
+/**
+ * Assigns `snapshot`, a four-argument block — slot key, object, whether this is
+ * the FIRST page of a read, and a block that builds the Array — answering the
+ * Array to page through and memoizing it in that session-temp slot. Needs
+ * nothing from the payload prelude.
+ *
+ * Two tabs have no index to read a page by: a dictionary's Entries go in sorted
+ * key order, and an unordered Collection (Set, Bag) has no `at:` at all. Both
+ * had to rebuild that order for EVERY page — a full sort, or a full `do:` walk
+ * from the start — and one "Load all" click asks for up to fifty pages in a row,
+ * so a 10,000-element Set was walked 10,000 times over. Built once, the pages
+ * after the first just index into it.
+ *
+ * A first page always rebuilds, so what the tab shows is never staler than the
+ * moment the read began: the memo is there to hold ONE read's ordering still
+ * while its later pages arrive, not to cache the object between reads. Even
+ * then it is dropped unless it was built for this same object at this same
+ * size, so a "Load more" cannot be cut from an ordering that predates a change
+ * to the object.
+ *
+ * It holds one array per tab, which bounds what a session keeps alive; two
+ * columns paging two different objects turn by turn miss it every time and pay
+ * exactly what they used to.
+ *
+ * It is only ever an ORDERING. Every value a row shows — printString, OOP,
+ * class — is read from the object at the moment the page is built.
+ */
+const PAGE_SNAPSHOT = `snapshot := [:key :obj2 :isFirstPage :build | | memo sz |
+  sz := [obj2 size] on: Error do: [:e | -1].
+  memo := SessionTemps current at: key ifAbsent: [nil].
+  (isFirstPage not and: [memo notNil
+      and: [(memo at: 1) == obj2 and: [(memo at: 2) = sz]]])
+    ifTrue: [memo at: 3]
+    ifFalse: [ | arr |
+      arr := build value.
+      SessionTemps current at: key put: (Array with: obj2 with: sz with: arr).
+      arr]].
+`;
+
 /** Emits one `label \t value \t oop \t class \t index` record. Needs `out`, `tab`, `esc`, `psOf`. */
 const ROW_BLOCK = `row := [:lbl :obj2 :idx |
   out nextPutAll: (esc value: lbl); nextPutAll: tab;
@@ -281,10 +328,11 @@ out contents`;
  *
  * Access is semantic where it can be. A SequenceableCollection is read with
  * `at:`, so a String's page shows Characters rather than the byte values
- * `_basicAt:` would give. An unordered Collection (Set, Bag) has no index, so it
- * is enumerated with `do:` and a counter — random access isn't available, but
- * the page is still one round trip. Anything else falls back to the physical
- * indexable region, read with `_basicAt:`.
+ * `_basicAt:` would give. An unordered Collection (Set, Bag) has no index at
+ * all, so it is paged through an Array snapshot of its `do:` order, memoized by
+ * {@link PAGE_SNAPSHOT} — the rows are numbered by position in that order, and
+ * carry no write index, since there is no positional write to make. Anything
+ * else falls back to the physical indexable region, read with `_basicAt:`.
  */
 export function fetchItems(
   execute: QueryExecutor,
@@ -294,10 +342,10 @@ export function fetchItems(
 ): InspectorRow[] {
   if (!Number.isInteger(from) || from < 1) return [];
   if (!Number.isInteger(count) || count < 1) return [];
-  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row last n |
+  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row snapshot last elems |
 obj := Object _objectForOop: ${oop}.
 out := WriteStream on: String new.
-${dumpPayloadPrelude()}${ROW_BLOCK}last := ${from} + ${count} - 1.
+${dumpPayloadPrelude()}${ROW_BLOCK}${PAGE_SNAPSHOT}last := ${from} + ${count} - 1.
 (obj isKindOf: SequenceableCollection)
   ifTrue: [
     ${from} to: (last min: obj size) do: [:i |
@@ -307,11 +355,13 @@ ${dumpPayloadPrelude()}${ROW_BLOCK}last := ${from} + ${count} - 1.
   ifFalse: [
     (obj isKindOf: Collection)
       ifTrue: [
-        n := 0.
-        obj do: [:each |
-          n := n + 1.
-          (n >= ${from} and: [n <= last])
-            ifTrue: [row value: '[', n printString, ']' value: each value: 0]]]
+        elems := snapshot
+          value: #'${ITEMS_SNAPSHOT_KEY}'
+          value: obj
+          value: ${from === 1 ? 'true' : 'false'}
+          value: [[obj asArray] on: Error do: [:e | Array new]].
+        ${from} to: (last min: elems size) do: [:i |
+          row value: '[', i printString, ']' value: (elems at: i) value: 0]]
       ifFalse: [
         ${from} to: (last min: obj _basicSize) do: [:i |
           row value: '[', i printString, ']'
@@ -327,8 +377,10 @@ out contents`;
  *
  * Keys are sorted when they can be, so paging is stable across calls and the
  * listing matches the old tree's sorted `SymbolDictionary` view — but unlike the
- * tree this works for *every* dictionary, not just `SymbolDictionary`. Each row
- * carries the key's OOP as well as the value's, so an edit can `at:put:` it.
+ * tree this works for *every* dictionary, not just `SymbolDictionary`. The
+ * sorted key Array is memoized by {@link PAGE_SNAPSHOT}, so a walk through a big
+ * dictionary sorts it once rather than once per page. Each row carries the key's
+ * OOP as well as the value's, so an edit can `at:put:` it.
  */
 export function fetchEntries(
   execute: QueryExecutor,
@@ -338,11 +390,15 @@ export function fetchEntries(
 ): InspectorRow[] {
   if (!Number.isInteger(from) || from < 1) return [];
   if (!Number.isInteger(count) || count < 1) return [];
-  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} keys k v |
+  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} snapshot keys k v |
 obj := Object _objectForOop: ${oop}.
 out := WriteStream on: String new.
-${dumpPayloadPrelude()}keys := [obj keys asSortedCollection asArray]
-  on: Error do: [:e | [obj keys asArray] on: Error do: [:e2 | #()]].
+${dumpPayloadPrelude()}${PAGE_SNAPSHOT}keys := snapshot
+  value: #'${ENTRIES_SNAPSHOT_KEY}'
+  value: obj
+  value: ${from === 1 ? 'true' : 'false'}
+  value: [[obj keys asSortedCollection asArray]
+    on: Error do: [:e | [obj keys asArray] on: Error do: [:e2 | Array new]]].
 ${from} to: (${from} + ${count} - 1 min: keys size) do: [:i |
   k := keys at: i.
   v := [obj at: k] on: Error do: [:e | nil].
@@ -508,17 +564,19 @@ export interface BrowseLocation {
 
 /**
  * Resolve a value's class and the symbol dictionary holding it, for "Browse
- * Class" on a row. Mirrors `fetchMethodBrowseLocation` in the Enhanced
- * Inspector's queries, minus STONJSON and minus the method category — this one
- * browses to the class, not to a selector.
+ * Class" on a row. Like `fetchMethodBrowseLocation` in the Enhanced Inspector's
+ * queries, minus STONJSON and minus the method category — this one browses to
+ * the class, not to a selector. The dictionary itself comes from the shared
+ * {@link homeDictionaryNameExpr}, which both of those and the debugger's Browse
+ * also ask, so there is one rule for which dictionary owns a class.
  */
 export function fetchBrowseLocation(execute: QueryExecutor, oop: bigint): BrowseLocation | null {
-  const code = `| obj cls dicts out ${DUMP_PAYLOAD_TEMPS} |
+  const code = `| obj cls dictName out ${DUMP_PAYLOAD_TEMPS} |
 obj := Object _objectForOop: ${oop}.
 cls := obj class theNonMetaClass.
 out := WriteStream on: String new.
-${dumpPayloadPrelude()}dicts := [System myUserProfile dictionariesAndSymbolsOf: cls] on: Error do: [:e | #()].
-out nextPutAll: (esc value: (dicts isEmpty ifTrue: [''] ifFalse: [dicts first first name asString]));
+${dumpPayloadPrelude()}dictName := [${homeDictionaryNameExpr('cls')}] on: Error do: [:e | ''].
+out nextPutAll: (esc value: dictName);
     nextPutAll: tab;
     nextPutAll: (esc value: cls name asString).
 out contents`;

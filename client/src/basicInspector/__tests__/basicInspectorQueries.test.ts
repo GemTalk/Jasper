@@ -313,4 +313,85 @@ describe('browse location', () => {
     expect(bi.fetchBrowseLocation(executorAnswering('\t'), 100n)).toBeNull();
     expect(bi.fetchBrowseLocation(executorAnswering(''), 100n)).toBeNull();
   });
+
+  /**
+   * The dictionary a class is browsed in has one rule, shared with the debugger's
+   * Browse and the Enhanced Inspector's — the symbol-list slot that binds the
+   * class object under its own name. `dictionariesAndSymbolsOf:` answers alias
+   * bindings too, so its first pair can name a dictionary that merely references
+   * the class.
+   */
+  it('resolves the owning dictionary through the shared symbol-list rule', () => {
+    const execute = executorAnswering('UserGlobals\tAccount');
+
+    bi.fetchBrowseLocation(execute, 100n);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('cls name asSymbol ifAbsent: [nil]) == cls');
+    expect(code).not.toContain('dictionariesAndSymbolsOf:');
+  });
+});
+
+describe('paging by a memoized snapshot', () => {
+  /**
+   * A Set has no `at:`, and a dictionary's sorted key order has to be built —
+   * both were rebuilt from scratch for every page, fifty times over for one
+   * "Load all".
+   */
+  it('pages an unordered collection through a snapshot of its do: order', () => {
+    const execute = executorAnswering('');
+
+    bi.fetchItems(execute, 100n, 101, 100);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('SessionTemps current at: key ifAbsent: [nil]');
+    expect(code).toContain("value: #'JasperInspectorItems'");
+    expect(code).toContain('obj asArray');
+  });
+
+  it('sorts a dictionary’s keys into a snapshot rather than once per page', () => {
+    const execute = executorAnswering('');
+
+    bi.fetchEntries(execute, 100n, 101, 100);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("value: #'JasperInspectorKeys'");
+    expect(code).toContain('obj keys asSortedCollection asArray');
+  });
+
+  /** A snapshot must never outlive the state it was taken from. */
+  it('discards a snapshot taken for a different object, or a changed size', () => {
+    const execute = executorAnswering('');
+
+    bi.fetchEntries(execute, 100n, 101, 100);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('(memo at: 1) == obj2');
+    expect(code).toContain('(memo at: 2) = sz');
+  });
+
+  /**
+   * The memo holds one read's ordering still while its later pages arrive; it is
+   * not a cache of the object between reads, so re-opening a tab reads the
+   * object as it is now.
+   */
+  it('rebuilds the ordering whenever a read starts at the first page', () => {
+    const execute = executorAnswering('');
+
+    bi.fetchEntries(execute, 100n, 1, 100);
+    bi.fetchEntries(execute, 100n, 101, 100);
+
+    expect(execute.mock.calls[0][0]).toContain('value: true\n  value: [[obj keys');
+    expect(execute.mock.calls[1][0]).toContain('value: false\n  value: [[obj keys');
+  });
+
+  it('leaves a sequenceable collection reading straight through at:', () => {
+    const execute = executorAnswering('');
+
+    bi.fetchItems(execute, 100n, 1, 100);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('(obj isKindOf: SequenceableCollection)');
+    expect(code).toContain('[obj at: i]');
+  });
 });

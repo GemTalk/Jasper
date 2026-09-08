@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
+/** Settings the panel reads, so a test can stand in for the user's own. */
+const settings = vi.hoisted(() => ({ loadAllPageLimit: undefined as number | undefined }));
+
 vi.mock('vscode', () => ({
   window: {
     createWebviewPanel: vi.fn(),
     showWarningMessage: vi.fn(),
     setStatusBarMessage: vi.fn(),
+  },
+  workspace: {
+    getConfiguration: () => ({
+      get: (key: string, fallback: unknown) =>
+        key === 'inspector.loadAllPageLimit' && settings.loadAllPageLimit !== undefined
+          ? settings.loadAllPageLimit
+          : fallback,
+    }),
   },
   env: { clipboard: { writeText: vi.fn(() => Promise.resolve()) } },
   ViewColumn: { Beside: 2 },
@@ -46,6 +57,7 @@ import * as vscode from 'vscode';
 import { BasicInspector } from '../basicInspector';
 import * as queries from '../queries/basicInspectorQueries';
 import * as debug from '../../debugQueries';
+import { forgetSession as forgetSessionPins } from '../../exportSetPins';
 import { SystemBrowser } from '../../systemBrowser';
 import type { ActiveSession } from '../../sessionManager';
 
@@ -122,6 +134,7 @@ const HEADER = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  settings.loadAllPageLimit = undefined;
   callInProgress = 0;
   session = makeSession();
   panel = makeMockPanel();
@@ -143,6 +156,10 @@ beforeEach(() => {
   // Panels stay in the static per-session registry until disposed; a leftover
   // from an earlier test would be closed by the next disposeForSession.
   (BasicInspector as unknown as { panels: Map<number, unknown> }).panels = new Map();
+  // Export-set pins are ref-counted per session in module state, so a test that
+  // pins without disposing would otherwise leave a claim standing and stop the
+  // next test's pin from reaching the stone.
+  forgetSessionPins(session.id);
 });
 
 describe('opening the panel', () => {
@@ -264,6 +281,35 @@ describe('serving a tab', () => {
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(350);
   });
 
+  /**
+   * What a refetch after a write sends, so a tab the user had paged through
+   * comes back the length it was rather than as page one.
+   */
+  it('reads on until it has the rows a refetch asked to restore', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 300 });
+
+    expect(queries.fetchItems).toHaveBeenCalledTimes(3);
+    expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(300);
+  });
+
+  it('takes one page when a refetch has only one page to restore', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 100 });
+
+    expect(queries.fetchItems).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops a refetch at the same ceiling a Load all stops at', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 20_000 });
+
+    expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(5000);
+  });
+
   it('stops a Load all at a ceiling rather than holding the session', () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
@@ -272,6 +318,65 @@ describe('serving a tab', () => {
     // 50 pages of 100. The tab still shows a remainder, and another click
     // carries on from there.
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(5000);
+  });
+
+  /**
+   * A "Load all" that stops short of "all" reads as a bug unless the tab says
+   * what happened, so the reply carries whether the ceiling is what stopped it
+   * and how many rows one click is worth.
+   */
+  it('reports a Load all that stopped at the ceiling, and what a click is worth', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: true, loadAllRows: 5000 });
+  });
+
+  it('reports no ceiling when a Load all reached the end of the object', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: false });
+  });
+
+  it('reports no ceiling for a plain Load more, which only ever wanted one page', () => {
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101 });
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: false });
+  });
+
+  it('reads as far as the user has set the ceiling', () => {
+    settings.loadAllPageLimit = 200;
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({ loadAllRows: 20_000 });
+    expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(20_000);
+  });
+
+  it('falls back to the standard ceiling when the setting is nonsense', () => {
+    settings.loadAllPageLimit = 0;
+    vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+
+    expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(5000);
+  });
+
+  it('counts the bytes ceiling in bytes, which page four at a time', () => {
+    vi.mocked(queries.fetchBytes).mockImplementation(
+      (_exec: unknown, _oop: bigint, _from: number, count: number) =>
+        Array.from({ length: count }, () => 98),
+    );
+
+    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'bytes', from: 1, all: true });
+
+    expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: true, loadAllRows: 20_000 });
   });
 
   it('reads every remaining byte for a Load all on the bytes tab', () => {
@@ -604,6 +709,32 @@ describe('the panel title and lifetime', () => {
 
     expect(first.dispose).toHaveBeenCalled();
     expect(second.dispose).toHaveBeenCalled();
+  });
+
+  /**
+   * The Globals view's Inspect focuses the panel it already opened for that
+   * global rather than adding a second tab for the one object — what the
+   * classic Inspector tree did with its roots.
+   */
+  it('reveals the panel a session already has open on a label', () => {
+    open(100n, 'Transcript');
+
+    expect(BasicInspector.revealExisting(session, 'Transcript')).toBe(true);
+    expect(panel.reveal).toHaveBeenCalled();
+  });
+
+  it('has nothing to reveal for a label no panel was opened with', () => {
+    open(100n, 'Transcript');
+
+    expect(BasicInspector.revealExisting(session, 'AllUsers')).toBe(false);
+    expect(panel.reveal).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal a panel that belongs to another session', () => {
+    open(100n, 'Transcript');
+
+    expect(BasicInspector.revealExisting({ ...session, id: 2 }, 'Transcript')).toBe(false);
+    expect(panel.reveal).not.toHaveBeenCalled();
   });
 
   it('leaves the panels of another session alone', () => {

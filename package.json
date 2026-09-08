@@ -311,6 +311,13 @@
             "minimum": 0,
             "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
+          "gemstone.inspector.loadAllPageLimit": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 1000,
+            "markdownDescription": "How many pages one **Load all** click reads in the Inspector before it stops and leaves the rest.\n\nA page is 100 rows (400 bytes on the **Bytes** tab), so the default reads 5,000 rows a click. Each page is a synchronous round trip, so a collection of a million elements would otherwise hold the session — and the editor — for as long as the reads took. When a click stops here the toolbar says so (`Load all stopped at 5,000 — click again for the next 5,000`) and another click carries on from where it left off; nothing is out of reach, it just takes more clicks.\n\nRaise it to read more per click on a large collection, at the cost of a longer freeze while it reads."
+          },
           "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
             "default": true,

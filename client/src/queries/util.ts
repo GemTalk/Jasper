@@ -134,3 +134,28 @@ export function symbolListIndexOfClassExpr(classVar: string): string {
         ifTrue: [idx := i]].
     idx] value: System myUserProfile symbolList)`;
 }
+
+/** A Smalltalk EXPRESSION evaluating to the NAME of the dictionary that is the home of
+ *  the class object held in temp `classVar` — the SymbolList slot binding it under its
+ *  own name — or '' when no dictionary does (the class isn't in the user's symbol list)
+ *  or when that dictionary is unnamed. `classVar` must already be the non-meta class.
+ *
+ *  The single home for "which dictionary owns THIS class, by name": a class rename's
+ *  scope, the debugger's Browse, and both inspectors' Browse Class all ask it, and each
+ *  needs the same answer — a `gemstone://` URI or a browser navigation built on a
+ *  dictionary that merely references the class lands somewhere the user didn't ask for.
+ *  Resolves through {@link symbolListIndexOfClassExpr}, so the identity idiom itself
+ *  stays in one place too.
+ *
+ *  NOT `dictionariesAndSymbolsOf:`, which answers EVERY binding — alias entries
+ *  included (Python's `#object -> Object` sorts before Globals), so its first pair can
+ *  name a dictionary that only references the class — and whose `first first` raises
+ *  when nothing binds it at all. */
+export function homeDictionaryNameExpr(classVar: string): string {
+  // `slot`, not `idx`: the nested expression declares an `idx` block temp of its
+  // own, and GemStone refuses a name redefined in an enclosing scope.
+  return `([:symList | | slot |
+    slot := ${symbolListIndexOfClassExpr(classVar)}.
+    slot = 0 ifTrue: [''] ifFalse: [((symList at: slot) name ifNil: ['']) asString]]
+      value: System myUserProfile symbolList)`;
+}

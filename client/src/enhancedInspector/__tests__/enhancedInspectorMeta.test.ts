@@ -93,6 +93,22 @@ describe('fetchMethodBrowseLocation', () => {
     expect(code).toContain('99999');
     expect(code).toContain('size');
   });
+
+  /**
+   * The owning dictionary comes from the shared symbol-list rule — the slot that
+   * binds the class object under its own name — not from
+   * `dictionariesAndSymbolsOf:`, which answers alias bindings too (so its first
+   * pair can name a dictionary that merely references the class) and whose
+   * `first first` raises when nothing binds it at all.
+   */
+  it('resolves the dictionary through the shared symbol-list rule', () => {
+    expect.assertions(2);
+    const execute = vi.fn(() => '{}');
+    fetchMethodBrowseLocation(execute, 1000n, 'size', false);
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(code).toContain('baseCls name asSymbol ifAbsent: [nil]) == baseCls');
+    expect(code).not.toContain('dictionariesAndSymbolsOf:');
+  });
 });
 
 describe('fetchMethodSource', () => {

@@ -271,6 +271,27 @@ describe('naming the editor tab', () => {
 
     expect(title()).toBe('OrderedCollection');
   });
+
+  /**
+   * Enter, Dive Here and Back/Forward all replace a column's object in place
+   * without changing which column has focus, so the title has to be re-posted
+   * for the tab to stop naming the object that has just been navigated away
+   * from.
+   */
+  it('renames the tab when a column dives in place', () => {
+    const col = openRoot({ className: 'Account' });
+
+    view.handleHostMessage({
+      command: 'replaceColumn',
+      columnId: col.id,
+      oop: '200',
+      label: 'balance',
+      remember: true,
+      header: header({ className: 'ScaledDecimal' }),
+    });
+
+    expect(title()).toBe('ScaledDecimal');
+  });
 });
 
 describe('ordering the slots', () => {
@@ -722,6 +743,37 @@ describe('editing a value', () => {
     view.handleHostMessage({ command: 'setSlotResult', columnId: 0, ok: true });
 
     expect(sent('fetchTab').length).toBe(before + 1);
+  });
+
+  /**
+   * A row past the first page is only reachable by having loaded more pages, so
+   * a refetch that came back with page 1 alone would take the row just written
+   * off the screen.
+   */
+  it('refetches a paged tab to the length the user had already loaded', () => {
+    const col = openRoot({ itemCount: 500 });
+    sendRows(0, 'items', [row({ label: '[1]' })]);
+    (col.el.contentPane.querySelector('[data-more="all"]') as HTMLElement).click();
+    // 'Load all' brought back rows 2..300, so the tab is 300 rows long.
+    sendRows(
+      0,
+      'items',
+      Array.from({ length: 299 }, (_, i) => row({ label: `[${i + 2}]` })),
+      2,
+    );
+
+    view.handleHostMessage({ command: 'setSlotResult', columnId: 0, ok: true });
+
+    expect(sent('fetchTab').at(-1)).toMatchObject({ tab: 'items', from: 1, through: 300 });
+  });
+
+  it('asks for one page when refetching a tab that only ever had one', () => {
+    openRoot({ itemCount: 500 });
+    sendRows(0, 'items', [row({ label: '[1]' })]);
+
+    view.handleHostMessage({ command: 'setSlotResult', columnId: 0, ok: true });
+
+    expect(sent('fetchTab').at(-1)).toMatchObject({ tab: 'items', from: 1, through: 1 });
   });
 
   it('shows why a write failed, and leaves the stone unread', () => {
@@ -1199,6 +1251,86 @@ describe('loading the rest of a tab', () => {
     sendRows(0, 'items', [row({ label: '[1]' })]);
 
     expect(col.el.contentPane.querySelector('[data-more]')).toBeNull();
+  });
+
+  /**
+   * A button labelled "Load all" that comes back with a fraction of the object
+   * reads as broken. The tab has to say the ceiling stopped it, that clicking
+   * again continues, and which setting raises it.
+   */
+  it('says so when a Load all stopped at the ceiling rather than at the end', () => {
+    const col = openRoot({ itemCount: 50000 });
+
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+
+    const note = col.el.contentPane.querySelector('.load-note')!;
+    expect(note.textContent).toContain('5000');
+    expect(note.textContent).toContain('gemstone.inspector.loadAllPageLimit');
+  });
+
+  it('says nothing about a ceiling a read never reached', () => {
+    const col = openRoot({ itemCount: 50000 });
+
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: false,
+      loadAllRows: 5000,
+    });
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('drops the notice once a later click reaches the end', () => {
+    const col = openRoot({ itemCount: 50000 });
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 2,
+      rows: [row({ label: '[2]' })],
+      stoppedAtLimit: false,
+      loadAllRows: 5000,
+    });
+
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('tells the Load all button how much one click is worth', () => {
+    const col = openRoot({ itemCount: 50000 });
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+
+    const all = col.el.contentPane.querySelector('[data-more="all"]') as HTMLElement;
+    expect(all.title).toContain('5000');
   });
 });
 

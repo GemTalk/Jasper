@@ -85,6 +85,8 @@ import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { BasicInspector } from './basicInspector/basicInspector';
+import { forgetSession as forgetSessionPins } from './exportSetPins';
+import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
   runInstallServerSupport,
@@ -2195,6 +2197,10 @@ export function activate(context: vscode.ExtensionContext) {
         // suspended GsProcess against a live handle.
         DebuggerPanel.disposeForSession(session.id);
         sessionManager.logout(session.id);
+        // Every panel that held an export-set pin released it in its dispose()
+        // above; drop the registry's bookkeeping for the session anyway, since
+        // its export set went with it.
+        forgetSessionPins(session.id);
         treeProvider.refresh();
         breakpointManager.clearAllForSession(session.id);
         stepPointHints.refresh();
@@ -2412,6 +2418,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.inspectGlobal',
       async (args: { className: string }) => {
+        // Inspecting the same global twice from the Globals view focuses the
+        // panel it already opened rather than adding a duplicate editor tab for
+        // the one object — the classic Inspector tree's reveal-existing rule,
+        // which only ever applied to this command. See revealInspect: the
+        // Enhanced Inspector was excluded from it then and still is.
+        const selected = sessionManager.getSelectedSession();
+        if (selected && revealInspect(selected, args.className)) return;
         await codeExecutor.inspectExpression(args.className, args.className);
       },
     ),

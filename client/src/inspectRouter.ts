@@ -27,3 +27,17 @@ export function routeInspect(session: ActiveSession, oop: bigint, label: string)
     ? EnhancedInspector.create(session, oop, label)
     : BasicInspector.create(session, oop, label);
 }
+
+/**
+ * Focus an inspector this session already has open on `label` — the name an
+ * "Inspect" was asked for, not the object — and answer whether it took focus,
+ * so a caller can skip opening a second one.
+ *
+ * Only the Explorer's Globals view asks, and only the basic Inspector answers.
+ * The Enhanced Inspector has always opened a fresh panel per Inspect, including
+ * from that view (the classic tree's reveal-existing rule was explicitly
+ * skipped for it), and this keeps it that way.
+ */
+export function revealInspect(session: ActiveSession, label: string): boolean {
+  return session.enhancedInspectorAvailable ? false : BasicInspector.revealExisting(session, label);
+}

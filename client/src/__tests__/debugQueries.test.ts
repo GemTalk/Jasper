@@ -798,6 +798,34 @@ describe('debugQueries', () => {
       );
       expect(evalCall![4]).toEqual([FRAME_RECEIVER, 0xddan]); // the user symbol list, unwrapped
     });
+
+    /**
+     * `System myUserProfile symbolList` is three round trips, and it is on the
+     * path of every Display It and every inspector slot edit. It answers the
+     * same persistent object all session, so it is read once.
+     */
+    it('reads the session symbol list once and reuses it', () => {
+      const session = tempSession();
+      // No temp dictionary to build, so each eval takes the plain session list.
+      (session.gci.resolveSymbol as ReturnType<typeof vi.fn>).mockImplementation(
+        (_h: unknown, name: string) => {
+          if (name === 'SymbolDictionary') throw new Error('not resolved');
+          return 0xd2n;
+        },
+      );
+
+      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 3', 3);
+
+      const sels = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c: unknown[]) => c[3],
+      );
+      expect(sels.filter((sel: unknown) => sel === 'symbolList')).toHaveLength(1);
+      expect(sels.filter((sel: unknown) => sel === 'myUserProfile')).toHaveLength(1);
+      expect(sels.filter((sel: unknown) => sel === 'evaluateInContext:symbolList:')).toHaveLength(
+        2,
+      );
+    });
   });
 
   // Non-blocking sibling of evaluateInFrame (#9 cancel): same frame-setup +

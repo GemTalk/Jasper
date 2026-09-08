@@ -23,6 +23,9 @@ export interface ActiveSession {
    *  context key and the Explorer's rename-instance-variable command. Latched at
    *  login (and re-probed after an install) — see refactoringAvailability.ts. */
   rbSupportAvailable?: boolean;
+  /** `System myUserProfile symbolList`, memoized on first use — see
+   *  `sessionSymbolListOop` in debugQueries.ts, which owns this field. */
+  symbolListOop?: bigint;
 }
 
 /**

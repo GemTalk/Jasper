@@ -147,6 +147,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
+import { forgetSession as forgetSessionPins } from '../exportSetPins';
 import { EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
@@ -611,6 +612,10 @@ describe('DebuggerPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Export-set pins are ref-counted per session in module state, so a test
+    // that pins without releasing would otherwise leave a claim standing and
+    // stop the next test's pin from reaching the stone.
+    forgetSessionPins(1);
     // clearAllMocks() clears call history but NOT mockImplementation overrides;
     // re-apply the captured factory defaults so a sticky override from one test
     // doesn't leak into the next under sequence.shuffle.

@@ -14,6 +14,7 @@ import {
   splitDumpRows,
   unescapeDumpField,
 } from './queries/dumpPayload';
+import { homeDictionaryNameExpr } from './queries/util';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -275,12 +276,13 @@ export interface ClassHomeInfo {
  * — as candidate places to implement (override) `selector`. Ordered
  * most-specific first (the receiver's class), so callers can pre-select it. A
  * class receiver walks its class-side chain (isMeta true throughout). For each
- * class: its home dictionary (found by NAME key in the user's symbol list — see
- * the symbol-list home-dict gotcha; '' when not in the symbol list, so not an
- * editable target) and whether it ALREADY implements `selector` (so the caller
- * can open the existing source instead of clobbering it with a stub, and warn
- * about a subclass implementation shadowing a superclass override). Returns []
- * on any failure so callers degrade gracefully.
+ * class: its home dictionary (the symbol-list dictionary that binds the class
+ * object under its own name, through the shared `homeDictionaryNameExpr`; ''
+ * when nothing in the symbol list binds it, so not an editable target) and
+ * whether it ALREADY implements `selector` (so the caller can open the existing
+ * source instead of clobbering it with a stub, and warn about a subclass
+ * implementation shadowing a superclass override). Returns [] on any failure so
+ * callers degrade gracefully.
  */
 export function getReceiverClassChain(
   session: ActiveSession,
@@ -290,7 +292,7 @@ export function getReceiverClassChain(
   try {
     // selector is a method selector (no quotes), but guard the quote anyway.
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel rows nm dn impl |
+    const code = `| rcvr meta cls sel rows base nm dn impl |
 rcvr := Object _objectForOop: ${receiverOop}.
 (rcvr isKindOf: Class)
   ifTrue: [ cls := rcvr. meta := true ]
@@ -298,10 +300,9 @@ rcvr := Object _objectForOop: ${receiverOop}.
 sel := '${sel}' asSymbol.
 rows := OrderedCollection new.
 [ cls notNil ] whileTrue: [
-  nm := cls theNonMetaClass name asString.
-  dn := ''.
-  System myUserProfile symbolList do: [:d |
-    (d includesKey: nm asSymbol) ifTrue: [ dn := d name ]].
+  base := cls theNonMetaClass.
+  nm := base name asString.
+  dn := ${homeDictionaryNameExpr('base')}.
   impl := cls includesSelector: sel.
   rows add: nm, (String with: Character tab),
     (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
@@ -335,7 +336,8 @@ export interface BrowseTarget {
   className: string;
   /** True when the method is class-side (the receiver is a class). */
   isMeta: boolean;
-  /** The defining class's home dictionary, '' when not in the user's symbol list. */
+  /** The defining class's home dictionary, '' when nothing in the user's symbol
+   *  list binds the class under its own name. */
   dictName: string;
   /** The method's category in the defining class ('' when uncategorized). */
   category: string;
@@ -347,11 +349,12 @@ export interface BrowseTarget {
  * for an inherited method), so "Browse" lands on the source that is really
  * executing. Walks the receiver's class chain for the first class that
  * `includesSelector:` (the lookup result), then reports that class's home
- * dictionary (by NAME key in the user's symbol list — see the symbol-list
- * home-dict gotcha) and the selector's method category. A class receiver walks
- * its class-side chain (isMeta true). Returns undefined when the selector can't
- * be found anywhere in the chain or on any failure, so the caller degrades to a
- * clear message rather than opening a misleading browser.
+ * dictionary (the shared `homeDictionaryNameExpr`: the symbol-list dictionary
+ * that binds the class object under its own name) and the selector's method
+ * category. A class receiver walks its class-side chain (isMeta true). Returns
+ * undefined when the selector can't be found anywhere in the chain or on any
+ * failure, so the caller degrades to a clear message rather than opening a
+ * misleading browser.
  */
 export function getBrowseTarget(
   session: ActiveSession,
@@ -360,7 +363,7 @@ export function getBrowseTarget(
 ): BrowseTarget | undefined {
   try {
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel def dn |
+    const code = `| rcvr meta cls sel def base dn |
 rcvr := Object _objectForOop: ${receiverOop}.
 (rcvr isKindOf: Class)
   ifTrue: [ cls := rcvr. meta := true ]
@@ -371,10 +374,9 @@ def := nil.
   (cls includesSelector: sel) ifTrue: [ def := cls ].
   cls := cls superclass ].
 def isNil ifTrue: [ '' ] ifFalse: [
-  dn := ''.
-  System myUserProfile symbolList do: [:d |
-    (d includesKey: def theNonMetaClass name asSymbol) ifTrue: [ dn := d name ]].
-  def theNonMetaClass name asString, (String with: Character tab),
+  base := def theNonMetaClass.
+  dn := ${homeDictionaryNameExpr('base')}.
+  base name asString, (String with: Character tab),
     (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
     dn, (String with: Character tab),
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
@@ -1373,6 +1375,12 @@ export function getDictionaryValueOop(
  * value alive after the slot is overwritten — otherwise it could be scavenged
  * and its OOP number reused for a different object, so revert would restore the
  * wrong object. No-op for an empty list; immediates need not be saved.
+ *
+ * The raw GCI call, which knows nothing about who else on this session wants
+ * the object kept: the export set is not ref-counted, so a second save adds
+ * nothing and the first release undoes both. Holders that can coexist on one
+ * session — the debugger's and the basic Inspector's revert bookkeeping — pin
+ * through `exportSetPins.ts` instead, which counts claims and calls this once.
  */
 export function saveObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
@@ -1384,7 +1392,9 @@ export function saveObjs(session: ActiveSession, oops: bigint[]): void {
 
 /** Releases objects previously pinned with {@link saveObjs} (`GciTsReleaseObjs`).
  *  Targeted release only — never ReleaseAllObjs, since a session may host more
- *  than one debugger panel. No-op for an empty list. */
+ *  than one debugger panel. No-op for an empty list. Call it through
+ *  `exportSetPins.ts` rather than directly, so an object another holder on the
+ *  same session still needs isn't unpinned out from under it. */
 export function releaseObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
   const { success, err } = session.gci.GciTsReleaseObjs(session.handle, oops);
@@ -1412,11 +1422,26 @@ function resolveGlobalOop(session: ActiveSession, name: string): bigint | null {
  * 3.6.x stone that perform fails with NameError 2404, "There is no Symbol with
  * the specified value". The two-argument form is present on every supported
  * release, so it is the only one used.
+ *
+ * Memoized on the session, because it is three synchronous round trips
+ * (`System`, `myUserProfile`, `symbolList`) on the interactive path of every
+ * Display It, Execute It and inspector slot edit, and it answers the same
+ * persistent object each time: the profile's SymbolList is reached from the
+ * profile, and adding or removing a dictionary mutates that object rather than
+ * replacing it. Only `UserProfile>>symbolList:`, installing a whole new list,
+ * would leave the memo stale — and it dies with the session anyway.
  */
 function sessionSymbolListOop(session: ActiveSession): bigint {
+  if (session.symbolListOop !== undefined) return session.symbolListOop;
   const systemClass = resolveGlobalOop(session, 'System');
   if (systemClass === null) throw new Error('Cannot resolve System to build a symbol list');
-  return gciPerform(session, gciPerform(session, systemClass, 'myUserProfile'), 'symbolList');
+  const listOop = gciPerform(
+    session,
+    gciPerform(session, systemClass, 'myUserProfile'),
+    'symbolList',
+  );
+  session.symbolListOop = listOop;
+  return listOop;
 }
 
 /**

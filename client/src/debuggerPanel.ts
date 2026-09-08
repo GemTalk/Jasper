@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession } from './sessionManager';
 import * as debug from './debugQueries';
+import * as pins from './exportSetPins';
 import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
 import { SMALLTALK_LANGUAGE } from './languageIds';
@@ -1294,9 +1295,12 @@ export class DebuggerPanel {
    * `undoOriginals` maps a slot key (`level:kind:index`) → the OOP the slot held
    * before its FIRST edit this halt; `undoDirty` is the subset whose value still
    * differs from that original (drives the ↺ revert icon). `undoPinned` is the
-   * non-immediate originals saved against GC via `saveObjs` — released together
-   * (never per-slot, since the export set isn't ref-counted) by clearUndoState()
-   * on any stack-mutating op and on dispose. See setVariable / revertVariable.
+   * non-immediate originals pinned against GC through `exportSetPins.ts` —
+   * released together (never per-slot, since the export set itself isn't
+   * ref-counted) by clearUndoState() on any stack-mutating op and on dispose.
+   * The pin registry counts claims, so releasing here cannot unpin an object a
+   * basic Inspector on this same session is still holding for its own revert.
+   * See setVariable / revertVariable.
    */
   private undoOriginals = new Map<string, bigint>();
   private undoDirty = new Set<string>();
@@ -2609,7 +2613,7 @@ export class DebuggerPanel {
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
     if (!debug.isSpecialOop(this.session, originalOop)) {
-      debug.saveObjs(this.session, [originalOop]);
+      pins.pinObject(this.session, originalOop);
       this.undoPinned.push(originalOop);
     }
   }
@@ -2657,16 +2661,18 @@ export class DebuggerPanel {
   }
 
   /**
-   * Drop all variable-revert state and release every pinned original. Called on
-   * any stack-mutating op (step / resume / restart) and on dispose — once the
-   * stack moves, the stored `{level,index}` slots are no longer valid, and we
-   * must not leak the session's export set. Best-effort release (a failure here
-   * must not break dispose).
+   * Drop all variable-revert state and let go of every pinned original — which
+   * releases it from the export set only if no other panel on this session is
+   * still holding it (see `exportSetPins.ts`). Called on any stack-mutating op
+   * (step / resume / restart) and on dispose — once the stack moves, the stored
+   * `{level,index}` slots are no longer valid, and we must not leak the
+   * session's export set. Best-effort release (a failure here must not break
+   * dispose).
    */
   private clearUndoState(): void {
     if (this.undoPinned.length > 0) {
       try {
-        debug.releaseObjs(this.session, this.undoPinned);
+        pins.unpinObjects(this.session, this.undoPinned);
       } catch (e: unknown) {
         logError(this.sessionId, e instanceof Error ? e.message : String(e));
       }

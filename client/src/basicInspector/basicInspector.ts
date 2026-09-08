@@ -17,6 +17,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugQueries';
+import * as pins from '../exportSetPins';
 import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
 import { QueryExecutor } from '../queries/types';
@@ -48,10 +49,25 @@ const DEFAULT_COLUMN_WIDTH = 340;
 const MIN_COLUMN_WIDTH = 280;
 
 /**
- * How many pages one "Load all" click will read before stopping and leaving the
- * rest for the next click. See {@link BasicInspector.readPages}.
+ * How many pages one "Load all" click reads before stopping and leaving the rest
+ * for the next click, when the user hasn't said otherwise. See
+ * {@link BasicInspector.readPages}, and `gemstone.inspector.loadAllPageLimit`,
+ * which is what a user who wants to read more per click raises.
  */
 const LOAD_ALL_MAX_PAGES = 50;
+
+/**
+ * The user's ceiling for one "Load all", in pages. Read per request rather than
+ * latched, so changing the setting takes effect on the next click.
+ */
+function loadAllPageLimit(): number {
+  const configured = vscode.workspace
+    .getConfiguration('gemstone')
+    .get<number>('inspector.loadAllPageLimit', LOAD_ALL_MAX_PAGES);
+  return Number.isFinite(configured) && configured >= 1
+    ? Math.floor(configured)
+    : LOAD_ALL_MAX_PAGES;
+}
 
 /** Which tab's data is being asked for. */
 type TabName = 'slots' | 'items' | 'entries' | 'bytes' | 'meta' | 'print';
@@ -69,6 +85,12 @@ type BasicInspectorMessage =
       from: number;
       /** Keep reading pages to the end of the tab, rather than taking just one. */
       all?: boolean;
+      /**
+       * Keep reading pages until at least this many rows are in hand. A refetch
+       * after a write sends the count the tab already had, so a tab the user
+       * had paged past the first page comes back the same length.
+       */
+      through?: number;
     }
   | { command: 'inspectRow'; sourceColumnId: number; oop: string; label: string }
   | {
@@ -139,9 +161,11 @@ export class BasicInspector {
   /**
    * Non-immediate originals pinned into the session's export set so they can't
    * be scavenged (and their OOP numbers reused for something else) while we hold
-   * them for a revert. Released en masse on dispose — the export set isn't
-   * ref-counted, and a targeted release is all we may do since a session can
-   * host more than one panel.
+   * them for a revert. Released en masse on dispose, through
+   * `exportSetPins.ts`: the export set itself isn't ref-counted, and the
+   * debugger's own revert bookkeeping can be holding the very same object on
+   * this session, so the claims are counted and the stone is only asked to
+   * release what nobody else still wants.
    */
   private undoPinned: bigint[] = [];
 
@@ -167,6 +191,31 @@ export class BasicInspector {
    */
   close(): void {
     this.panel.dispose();
+  }
+
+  /**
+   * Focus the panel this session already has open on `label`, if there is one,
+   * and answer whether it took focus.
+   *
+   * Inspecting the same global twice from the Explorer's Globals view should
+   * land on the panel it already opened rather than stacking up editor tabs for
+   * one object — what the classic Inspector tree did by revealing the root it
+   * already had for that label. Only that command asks: an Inspect It in a
+   * workspace opens a panel of its own every time, as it always has, since two
+   * inspectors on one object are a reasonable thing to want side by side.
+   *
+   * Keyed by the label the panel was OPENED with, exactly as the tree keyed its
+   * roots. A column that has since been dived elsewhere still answers to the
+   * name it opened under, which is the same bargain the tree struck.
+   */
+  static revealExisting(session: ActiveSession, label: string): boolean {
+    for (const inspector of BasicInspector.panels.get(session.id) ?? []) {
+      if (inspector.rootLabel === label) {
+        inspector.panel.reveal();
+        return true;
+      }
+    }
+    return false;
   }
 
   static disposeForSession(sessionId: number): void {
@@ -214,7 +263,14 @@ export class BasicInspector {
           this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
           return;
         case 'fetchTab':
-          this.postTabData(msg.columnId, BigInt(msg.oop), msg.tab, msg.from, msg.all === true);
+          this.postTabData(
+            msg.columnId,
+            BigInt(msg.oop),
+            msg.tab,
+            msg.from,
+            msg.all === true,
+            msg.through ?? 0,
+          );
           return;
         case 'inspectRow':
           this.postColumn('addChild', this.nextColumnId++, BigInt(msg.oop), msg.label, {
@@ -296,8 +352,9 @@ export class BasicInspector {
   }
 
   /**
-   * Fetch one page of one tab — or, for a "Load all", every remaining page —
-   * and post the result back to the column that asked.
+   * Fetch one page of one tab — or, for a "Load all", every remaining page, or
+   * for a post-write refetch, back to the row count the tab already had — and
+   * post the result to the column that asked.
    */
   private postTabData(
     columnId: number,
@@ -305,33 +362,55 @@ export class BasicInspector {
     tab: TabName,
     from: number,
     all = false,
+    through = 0,
   ): void {
     const exec = this.makeExecutor();
     const payload: Record<string, unknown> = { command: 'tabData', columnId, tab, from };
+    const maxPages = loadAllPageLimit();
 
     switch (tab) {
       case 'slots':
         payload.rows = this.stampRevertible(oop, fetchSlots(exec, oop), 'instvar');
         break;
-      case 'items':
-        payload.rows = this.stampRevertible(
-          oop,
-          this.readPages(from, PAGE_SIZE, all, (at, count) => fetchItems(exec, oop, at, count)),
-          'indexed',
+      case 'items': {
+        const read = this.readPages(
+          from,
+          PAGE_SIZE,
+          all,
+          (at, count) => fetchItems(exec, oop, at, count),
+          through,
+          maxPages,
         );
+        payload.rows = this.stampRevertible(oop, read.rows, 'indexed');
+        this.stampCeiling(payload, read.stoppedAtLimit, maxPages * PAGE_SIZE);
         break;
-      case 'entries':
-        payload.rows = this.stampRevertible(
-          oop,
-          this.readPages(from, PAGE_SIZE, all, (at, count) => fetchEntries(exec, oop, at, count)),
-          'entry',
+      }
+      case 'entries': {
+        const read = this.readPages(
+          from,
+          PAGE_SIZE,
+          all,
+          (at, count) => fetchEntries(exec, oop, at, count),
+          through,
+          maxPages,
         );
+        payload.rows = this.stampRevertible(oop, read.rows, 'entry');
+        this.stampCeiling(payload, read.stoppedAtLimit, maxPages * PAGE_SIZE);
         break;
-      case 'bytes':
-        payload.bytes = this.readPages(from, PAGE_SIZE * 4, all, (at, count) =>
-          fetchBytes(exec, oop, at, count),
+      }
+      case 'bytes': {
+        const read = this.readPages(
+          from,
+          PAGE_SIZE * 4,
+          all,
+          (at, count) => fetchBytes(exec, oop, at, count),
+          through,
+          maxPages,
         );
+        payload.bytes = read.rows;
+        this.stampCeiling(payload, read.stoppedAtLimit, maxPages * PAGE_SIZE * 4);
         break;
+      }
       case 'meta':
         payload.meta = fetchObjectMeta(exec, oop);
         break;
@@ -343,32 +422,66 @@ export class BasicInspector {
   }
 
   /**
-   * One page, or every page left, from a paged reader.
+   * Tell the webview a read stopped at the ceiling rather than at the end of the
+   * object, and how many rows one click is worth, so the toolbar can say so
+   * instead of leaving the user to wonder why a "Load all" didn't.
+   */
+  private stampCeiling(
+    payload: Record<string, unknown>,
+    stoppedAtLimit: boolean,
+    limitRows: number,
+  ): void {
+    payload.stoppedAtLimit = stoppedAtLimit;
+    payload.loadAllRows = limitRows;
+  }
+
+  /**
+   * One page from a paged reader, every page left over for a "Load all", or as
+   * many pages as it takes to reach `through` rows for a refetch — plus whether
+   * it was the ceiling that stopped it.
    *
    * Each page is a synchronous round trip to the stone, so "Load all" cannot
    * simply loop to the end: an Array of a million elements would hold the
    * extension host — and with it the webview — for as long as the reads took,
    * and then hand the webview a million rows to lay out. It stops after
-   * {@link LOAD_ALL_MAX_PAGES}, which leaves the tab showing a remainder and
-   * its Load more / Load all still offered, so another click carries on from
-   * where this one stopped. A short page means the end of the object, and ends
-   * the loop whatever the ceiling is.
+   * `maxPages` (`gemstone.inspector.loadAllPageLimit`), which leaves the tab
+   * showing a remainder and its Load more / Load all still offered, so another
+   * click carries on from where this one stopped — and `stoppedAtLimit` says
+   * that is what happened, so the toolbar can tell the user rather than looking
+   * like a Load all that quietly didn't. A short page means the end of the
+   * object, and ends the loop whatever the ceiling is.
+   *
+   * `through` is a row count the read must reach before stopping — what a
+   * refetch after a write sends so the tab comes back as long as it was. The
+   * same ceiling applies: a tab grown past it over several clicks comes back
+   * shorter, still with its Load more offered.
    */
   private readPages<T>(
     from: number,
     pageSize: number,
     all: boolean,
     readPage: (at: number, count: number) => T[],
-  ): T[] {
+    through = 0,
+    maxPages = LOAD_ALL_MAX_PAGES,
+  ): { rows: T[]; stoppedAtLimit: boolean } {
     const first = readPage(from, pageSize);
-    if (!all || first.length < pageSize) return first;
+    // Rows still wanted after this page, counting from where the read started.
+    const wanted = all ? Number.MAX_SAFE_INTEGER : through - (from - 1);
+    // A short page is the end of the object; a full one that is all that was
+    // asked for stopped on the ask, not on a ceiling. Either way, nothing to
+    // report. (A "Load all" never takes this branch — it always wants more.)
+    if (first.length < pageSize || first.length >= wanted) {
+      return { rows: first, stoppedAtLimit: false };
+    }
     const rows = first;
-    for (let page = 1; page < LOAD_ALL_MAX_PAGES; page++) {
+    for (let page = 1; page < maxPages; page++) {
       const next = readPage(from + rows.length, pageSize);
       rows.push(...next);
-      if (next.length < pageSize) break;
+      if (next.length < pageSize) return { rows, stoppedAtLimit: false };
+      if (rows.length >= wanted) return { rows, stoppedAtLimit: false };
     }
-    return rows;
+    // Ran out of pages with a full page in hand: there is more to come.
+    return { rows, stoppedAtLimit: true };
   }
 
   // ── Editing ──────────────────────────────────────────
@@ -486,7 +599,7 @@ export class BasicInspector {
     this.undoOriginals.set(key, original);
     if (!debug.isSpecialOop(this.session, original)) {
       try {
-        debug.saveObjs(this.session, [original]);
+        pins.pinObject(this.session, original);
         this.undoPinned.push(original);
       } catch (e: unknown) {
         // Couldn't pin it: drop the record rather than offer a revert that might
@@ -521,7 +634,7 @@ export class BasicInspector {
   private releasePins(): void {
     if (this.undoPinned.length === 0) return;
     try {
-      debug.releaseObjs(this.session, this.undoPinned);
+      pins.unpinObjects(this.session, this.undoPinned);
     } catch {
       // Best effort — the session may already be gone.
     }
@@ -883,6 +996,11 @@ export class BasicInspector {
     .btn:hover { background: var(--vscode-list-hoverBackground); }
     .btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: var(--vscode-button-background); }
     .toolbar-label { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
+    .load-note {
+      font-size: 0.8em; color: var(--vscode-descriptionForeground);
+      padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .load-note code { font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
     .ctx-menu {
       position: fixed; display: none;
       background: var(--vscode-menu-background, var(--vscode-editor-background));

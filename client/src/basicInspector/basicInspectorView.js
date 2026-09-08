@@ -68,15 +68,40 @@
    * The paging buttons a partially-loaded tab offers. "Load more" takes the
    * next page; "Load all" keeps going until the tab is complete — bounded by
    * the panel, which reads in pages and stops at a ceiling rather than holding
-   * the session for a collection of a million elements. When it stops early the
-   * toolbar simply still shows a remainder, and another click carries on.
+   * the session for a collection of a million elements.
+   *
+   * The ceiling is in the button's own tooltip, because a "Load all" that
+   * quietly stops short of "all" is the kind of thing a user reads as a bug.
+   * When a click actually stops there, {@link ceilingNote} says so.
    */
-  function moreButtons(remaining) {
+  function moreButtons(col, remaining) {
+    var cap = col.loadAllRows || 0;
+    var title =
+      cap > 0 && remaining > cap
+        ? 'Load ' + cap + ' more of the remaining ' + remaining + ' (one click reads ' + cap + ')'
+        : 'Load the remaining ' + remaining;
     return (
       '<button class="btn" data-more="page">Load more</button>' +
-      '<button class="btn" data-more="all" title="Load the remaining ' +
-      remaining +
+      '<button class="btn" data-more="all" title="' +
+      esc(title) +
       '">Load all</button>'
+    );
+  }
+
+  /**
+   * What the toolbar says when a "Load all" stopped at the ceiling rather than
+   * at the end of the object: what happened, that another click continues, and
+   * the setting that raises it. Without this the button reads as broken — it
+   * says "all" and plainly didn't fetch all.
+   */
+  function ceilingNote(col) {
+    if (!col.stoppedAtLimit) return '';
+    return (
+      '<div class="load-note">Load all stopped at ' +
+      (col.loadAllRows || 0) +
+      ' — click it again for the next ' +
+      (col.loadAllRows || 0) +
+      '. Raise <code>gemstone.inspector.loadAllPageLimit</code> to read more per click.</div>'
     );
   }
 
@@ -197,6 +222,8 @@
     col.evalVarsRequested = false;
     col.editing = null;
     col.editError = null;
+    col.stoppedAtLimit = false;
+    col.loadAllRows = 0;
 
     var e = col.el;
     e.objClass.textContent = col.className;
@@ -267,7 +294,14 @@
 
   // ── Tabs ──────────────────────────────────
 
-  function activateTab(col, tab) {
+  /**
+   * Show a tab, fetching its first page if this column hasn't read it yet.
+   *
+   * `through` asks the host to keep reading pages until at least that many rows
+   * are in hand — how a refetch restores a tab the user had already paged past
+   * the first page. Omitted for a plain tab switch, which takes one page.
+   */
+  function activateTab(col, tab, through) {
     col.activeTab = tab;
     var tabEls = col.el.tabBar.querySelectorAll('.tab');
     for (var i = 0; i < tabEls.length; i++) {
@@ -282,7 +316,14 @@
       return;
     }
     col.el.contentPane.innerHTML = '<div class="placeholder">Loading&#8230;</div>';
-    post({ command: 'fetchTab', columnId: col.id, oop: col.oop, tab: tab, from: 1 });
+    post({
+      command: 'fetchTab',
+      columnId: col.id,
+      oop: col.oop,
+      tab: tab,
+      from: 1,
+      through: through || 0,
+    });
   }
 
   function renderTab(col) {
@@ -325,8 +366,9 @@
         ' of ' +
         total +
         '</span>' +
-        moreButtons(total - rows.length) +
-        '</div>';
+        moreButtons(col, total - rows.length) +
+        '</div>' +
+        ceilingNote(col);
     }
     html += '<div class="table-wrap"><table class="rows"><thead><tr>';
     // On Slots the Name header is the sort control, the way a table's header
@@ -443,11 +485,19 @@
     renderTab(col);
   }
 
-  /** A write landed: every printString and OOP on the tab is stale, so refetch. */
+  /**
+   * A write landed: every printString and OOP on the tab is stale, so refetch.
+   *
+   * Refetched to the extent the user had already loaded, not back to page one.
+   * Editing a row at index 150 of a 500-element Array — reachable only by
+   * having clicked Load more or Load all — must not answer by redrawing rows
+   * 1-100, which would take the row just written off the screen.
+   */
   function refetchActiveTab(col) {
+    var loaded = col.loadedRows[col.activeTab] || 0;
     col.tabData[col.activeTab] = undefined;
     col.loadedRows[col.activeTab] = 0;
-    activateTab(col, col.activeTab);
+    activateTab(col, col.activeTab, loaded);
   }
 
   // ── Bytes ─────────────────────────────────
@@ -509,7 +559,7 @@
       ' of ' +
       total +
       ' bytes</span>' +
-      (total > bytes.length ? moreButtons(total - bytes.length) : '') +
+      (total > bytes.length ? moreButtons(col, total - bytes.length) : '') +
       '<span class="toolbar-gap"></span>' +
       '<button class="btn' +
       (radix === 16 ? ' active' : '') +
@@ -518,6 +568,7 @@
       (radix === 10 ? ' active' : '') +
       '" data-radix="10" title="Show each byte as the integer it is">Dec</button>' +
       '</div>' +
+      ceilingNote(col) +
       '<div class="bytes">' +
       (lines.length
         ? '<div class="bytes-head">' + head + '</div>' + lines.join('<br>')
@@ -1209,7 +1260,14 @@
         return;
       case 'replaceColumn':
         col = Columns.get(msg.columnId);
-        if (col) populateColumn(col, msg);
+        if (!col) return;
+        populateColumn(col, msg);
+        // populateColumn recomputes the column's title, but `focus` is the only
+        // thing that posts one to the host, and an in-place dive (Enter, Dive
+        // Here, Back/Forward) doesn't change which column has focus — so
+        // without forcing it the editor tab would keep the previous object's
+        // name until some other column was opened.
+        Columns.focus(col, true);
         return;
       case 'tabData':
         col = Columns.get(msg.columnId);
@@ -1244,6 +1302,11 @@
 
   /** Merge a page into the tab's accumulated data, then draw it. */
   function applyTabData(col, msg) {
+    // Whether THIS read stopped at the ceiling, and what one click is worth —
+    // replaced by every reply, so the note disappears as soon as a later click
+    // reaches the end of the object.
+    col.stoppedAtLimit = msg.stoppedAtLimit === true;
+    if (msg.loadAllRows) col.loadAllRows = msg.loadAllRows;
     if (msg.tab === 'print') {
       col.tabData.print = msg.text;
     } else if (msg.tab === 'meta') {
@@ -1298,6 +1361,8 @@
           bytesRadix: 16,
           chordArmed: false,
           evalVarsRequested: false,
+          stoppedAtLimit: false,
+          loadAllRows: 0,
           editing: null,
           editError: null,
         };
