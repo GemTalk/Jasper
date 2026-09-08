@@ -18,7 +18,6 @@ import {
 const dict = (dictName = 'Globals'): ExplorerLanding => ({
   sessionId: 1,
   dictName,
-  dictIndex: 1,
 });
 const category = (path: string): ExplorerLanding => ({ ...dict(), classCategory: path });
 const klass = (className: string, classCategory?: string): ExplorerLanding => ({
@@ -177,9 +176,32 @@ describe('ExplorerNavigationHistory', () => {
     expect(history.canGoBack()).toBe(true);
   });
 
+  it('keeps the cursor on a landing that only partly resolved, rewritten to where it reached', async () => {
+    // The method has gone but its class is still there, so `go` reports the class
+    // it reached. Pruning and rewinding instead would leave the pinned line and
+    // the trail's marker naming the method we came FROM, with Forward pointing at
+    // a place we never left.
+    const partial = new ExplorerNavigationHistory({
+      go: (landing) =>
+        Promise.resolve(
+          landing.selector === 'gone'
+            ? klass(landing.className ?? '', landing.classCategory)
+            : true,
+        ),
+    });
+    partial.record(method('Array', 'gone'));
+    partial.record(method('Set', 'add:'));
+
+    await partial.back();
+
+    expect(partial.entries()).toHaveLength(2);
+    expect(partial.currentIndex()).toBe(0);
+    expect(partial.current()).toMatchObject({ className: 'Array' });
+    expect(partial.current()?.selector).toBeUndefined();
+    expect(partial.canGoForward()).toBe(true);
+  });
+
   it('treats a throwing restore as unreachable rather than propagating', async () => {
-    history.record(method('Array', 'at:'));
-    history.record(method('Set', 'add:'));
     const boom = new ExplorerNavigationHistory({
       go: () => Promise.reject(new Error('stone went away')),
     });

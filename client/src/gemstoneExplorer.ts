@@ -4623,12 +4623,13 @@ export class ExplorerController {
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
+    // dictIndex is not part of the coordinate — Back re-resolves it from the name —
+    // but until the panes have one there is no dictionary landed on to record.
     if (!session || dictName === undefined || dictIndex === undefined) return;
     this.history.record(
       {
         sessionId: session.id,
         dictName,
-        dictIndex,
         classCategory,
         className,
         selector: method?.selector,
@@ -4647,9 +4648,11 @@ export class ExplorerController {
    * Answers false when the landing no longer resolves, which drops it from the
    * chain so a second press tries the one before it. A landing whose class is
    * still there but whose method is gone still moves the panes to that class —
-   * better than refusing to move at all — and then reports the method missing.
+   * better than refusing to move at all — reports the method missing, and answers
+   * with that class as the coordinate it reached, so the chain records the place
+   * the panes are on rather than the method that has gone.
    */
-  private async goToLanding(landing: ExplorerLanding): Promise<boolean> {
+  private async goToLanding(landing: ExplorerLanding): Promise<boolean | ExplorerLanding> {
     const session = this.session();
     if (!session || session.id !== landing.sessionId) {
       // Deliberately does NOT reconnect or switch sessions behind the user's back.
@@ -4708,7 +4711,11 @@ export class ExplorerController {
       void vscode.window.showWarningMessage(
         `${landing.className} no longer implements ${revealMethod.isMeta ? 'class method ' : ''}${revealMethod.selector}.`,
       );
-      return false;
+      // The panes are on the class — revealClass got that far — so answer with the
+      // class landing rather than false, which would prune this entry and rewind
+      // the cursor off the very place we just moved to.
+      const { selector: _selector, isMeta: _isMeta, ...reached } = landing;
+      return reached;
     }
     // revealClass has already selected the row; reopen the source too, since a
     // method landing is a method the user was reading.

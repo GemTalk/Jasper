@@ -2144,11 +2144,11 @@
         },
         {
           "command": "gemstone.explorer.showNavigationSelectorsOnly",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.hasActiveSession && !config.gemstone.explorer.navigationSelectorsOnly"
         },
         {
           "command": "gemstone.explorer.showNavigationFullLocations",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.hasActiveSession && config.gemstone.explorer.navigationSelectorsOnly"
         },
         {
           "command": "gemstone.renameTemporary",

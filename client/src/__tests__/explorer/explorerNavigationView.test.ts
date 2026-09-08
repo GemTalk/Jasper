@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JSDOM } from 'jsdom';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
@@ -66,6 +67,56 @@ const state = (over: Partial<NavigationViewState> = {}): NavigationViewState => 
   trail: trail(2),
   ...over,
 });
+
+/**
+ * Mount the pane's REAL chrome and its REAL inline script into a jsdom window, so
+ * what is asserted is what the webview does rather than what its source says.
+ *
+ * A jsdom *window* built here, rather than the file-wide jsdom environment this
+ * repo's other webview tests declare with a pragma: those load a view script that
+ * ships as its own `.js` file, while this pane's script is inline in a module that
+ * imports `vscode` — and under that environment the bare `vscode` specifier no
+ * longer resolves, so the whole file fails to load. (Do not write that pragma even
+ * in a comment here: it is matched anywhere in the file, not just at the top.)
+ * `runScripts: 'outside-only'` gives a window that will `eval` the script without
+ * running the page's own, so the script is handed the `acquireVsCodeApi` it
+ * expects before it runs.
+ *
+ * Layout is the one thing this cannot see: jsdom computes no styles, so the flex
+ * and overflow rules the pane depends on stay pinned as text below.
+ */
+function mountPane() {
+  const html = renderNavigationViewHtml('test-nonce');
+  const scriptAt = html.indexOf('<script');
+  const shell = html.slice(html.indexOf('<body>') + '<body>'.length, scriptAt);
+  const script = html.slice(html.indexOf('>', scriptAt) + 1, html.indexOf('</script>'));
+  if (!shell.includes('id="trail"') || !script.includes('drawTrail')) {
+    throw new Error('renderNavigationViewHtml no longer has a body/script shape this can mount');
+  }
+
+  const posted: Record<string, unknown>[] = [];
+  const dom = new JSDOM(`<body>${shell}</body>`, { runScripts: 'outside-only' });
+  const win = dom.window as unknown as Window & {
+    acquireVsCodeApi: () => { postMessage: (m: Record<string, unknown>) => void };
+    eval: (source: string) => void;
+  };
+  win.acquireVsCodeApi = () => ({ postMessage: (m) => posted.push(m) });
+  win.eval(script);
+  const doc = dom.window.document;
+
+  return {
+    posted,
+    /** Deliver a state push exactly as the provider posts one. */
+    push: (over: Partial<NavigationViewState> = {}) =>
+      win.dispatchEvent(
+        new dom.window.MessageEvent('message', { data: { kind: 'state', ...state(over) } }),
+      ),
+    location: () => doc.getElementById('location')!,
+    rows: () => Array.from(doc.querySelectorAll('#trail .row')),
+    trail: () => doc.getElementById('trail')!,
+    button: (cmd: string) => doc.querySelector(`[data-cmd="${cmd}"]`) as HTMLButtonElement,
+  };
+}
 
 describe('the Actions & Navigation pane', () => {
   beforeEach(() => {
@@ -238,23 +289,85 @@ describe('the Actions & Navigation pane', () => {
     );
   });
 
-  it('pins a current-location line above the trail, drawn from text', () => {
+  it('pins a current-location line above the trail, and hides it until there is one', () => {
     // Dictionaries, class categories and classes are not rows of their own; this
     // one replaceable line is where they show.
-    const html = renderNavigationViewHtml('test-nonce');
-    expect(html).toContain('id="location"');
-    expect(html).toContain('where.textContent = location');
-    expect(html).toContain('drawLocation(state.location)');
-    // Hidden until there is somewhere to name.
-    expect(html).toMatch(/\.location \{[^}]*display: none/);
-    expect(html).toContain('.location.shown { display: block; }');
+    const pane = mountPane();
+
+    pane.push({ location: undefined });
+    expect(pane.location().className).toBe('location');
+    expect(pane.location().textContent).toBe('');
+
+    pane.push({ location: 'Globals \u203a Account' });
+    expect(pane.location().classList.contains('shown')).toBe(true);
+    expect(pane.location().textContent).toBe('In Globals \u203a Account');
+    // The whole name is on the line's own tooltip, since the line itself elides.
+    expect(pane.location().title).toBe('Globals \u203a Account');
+  });
+
+  it('draws one row per trail entry, newest first, with the accent on where you are', () => {
+    const pane = mountPane();
+
+    pane.push({
+      trail: [
+        { index: 0, label: 'Array>>at:', context: 'Globals', current: false },
+        { index: 1, label: 'Set>>add:', context: 'Globals', current: true },
+      ],
+    });
+
+    const rows = pane.rows();
+    expect(rows.map((r) => r.querySelector('.label')?.textContent)).toEqual([
+      'Set>>add:',
+      'Array>>at:',
+    ]);
+    // The row's index is its place in the CHAIN, which is what a click on it names.
+    expect(rows.map((r) => (r as HTMLElement).dataset.index)).toEqual(['1', '0']);
+    expect(rows.map((r) => r.className)).toEqual(['row current', 'row']);
+    // Where you are says so in the dimmed slot rather than repeating its dictionary.
+    expect(rows.map((r) => r.querySelector('.dict')?.textContent)).toEqual(['current', 'Globals']);
+  });
+
+  it('says the trail is empty rather than drawing nothing at all', () => {
+    const pane = mountPane();
+
+    pane.push({ trail: [] });
+
+    expect(pane.rows()).toHaveLength(0);
+    expect(pane.trail().textContent).toContain('Methods you open are listed here.');
+  });
+
+  it('posts the chain index of the row that was clicked', () => {
+    const pane = mountPane();
+    pane.push({
+      trail: [{ index: 4, label: 'Array>>at:', context: 'Globals', current: false }],
+    });
+
+    (pane.rows()[0] as HTMLElement).click();
+
+    expect(pane.posted).toContainEqual({ kind: 'goto', index: 4 });
+  });
+
+  it('dims the arrows the chain has run out of', () => {
+    const pane = mountPane();
+
+    pane.push({ back: true, forward: false, clear: false });
+
+    expect(pane.button('gemstone.navigateBack').disabled).toBe(false);
+    expect(pane.button('gemstone.navigateForward').disabled).toBe(true);
+    expect(pane.button('gemstone.explorer.clearHistory').disabled).toBe(true);
   });
 
   it('gives the trail its own scrolling region under the fixed button row', () => {
+    // Text, not DOM: jsdom computes no layout, so the rules that keep the button
+    // row put while the trail scrolls can only be pinned as the CSS they are.
     const html = renderNavigationViewHtml('test-nonce');
     expect(html).toContain('id="trail"');
-    expect(html).toMatch(/\.trail \{[^}]*overflow-y: auto/);
-    expect(html).toMatch(/\.toolbar \{[^}]*flex: 0 0 auto/);
+    expect(html).toMatch(/\.trail \{[^}]*overflow-y:\s*auto/);
+    expect(html).toMatch(/\.toolbar \{[^}]*flex:\s*0 0 auto/);
+    // Hidden until a state push names somewhere; the shown/hidden pair is asserted
+    // as behaviour above, this pins the display rules it swaps between.
+    expect(html).toMatch(/\.location \{[^}]*display:\s*none/);
+    expect(html).toMatch(/\.location\.shown \{\s*display:\s*block/);
   });
 
   it('builds trail rows from text, never markup', () => {

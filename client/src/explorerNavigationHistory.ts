@@ -4,8 +4,10 @@
  * A landing is a *coordinate* — session + dictionary + class category + class +
  * side + selector — not a handle on an object. Back recomputes the coordinate
  * against the live stone, so a method that has since been recompiled (or a class
- * that has been reshaped) still resolves; one that has genuinely gone is dropped
- * from the chain instead of erroring.
+ * that has been reshaped) still resolves. One that has genuinely gone never errors:
+ * a method whose class is still there leaves the panes on that class and has its
+ * entry rewritten to it, while a landing with nothing left to reach — dead session,
+ * dropped dictionary, dropped class — leaves the chain so a second press moves on.
  *
  * Semantics are the browser's, which is also VS Code's: a linear chain with a
  * cursor, Forward re-walks what Back undid, and a new landing after going Back
@@ -26,9 +28,12 @@
  */
 export interface ExplorerLanding {
   sessionId: number;
+  /**
+   * The dictionary by NAME, which is the whole coordinate: its symbolList index is
+   * deliberately NOT recorded, because a commit elsewhere can shift every index, so
+   * the index is re-resolved from the name on the way back (see `goToLanding`).
+   */
   dictName: string;
-  /** 1-based symbolList position at record time; re-resolved by name on the way back. */
-  dictIndex: number;
   /** Selected class category, or undefined for "all classes in the dictionary". */
   classCategory?: string;
   className?: string;
@@ -163,8 +168,12 @@ export interface ExplorerNavigationHistoryOptions {
    * Navigate the Explorer to a landing. Resolves true when it landed, false when
    * the coordinate no longer resolves (dead session, dropped class, removed
    * method) so its entry can be pruned.
+   *
+   * A landing it could only partly reach — the class is still there but the method
+   * has gone — resolves the coordinate it DID reach, so the chain can record where
+   * the panes actually are instead of a method that is no longer implemented.
    */
-  go(landing: ExplorerLanding): Promise<boolean>;
+  go(landing: ExplorerLanding): Promise<boolean | ExplorerLanding>;
   /** Fired whenever the chain or the cursor moved, so the pane and the button
    *  enablement can be repainted. */
   onChange?(): void;
@@ -178,7 +187,7 @@ export class ExplorerNavigationHistory {
   // this never accumulates chains for stones that are gone.
   private readonly chains = new Map<number, SessionChain>();
   private activeSessionId: number | undefined;
-  private readonly go: (landing: ExplorerLanding) => Promise<boolean>;
+  private readonly go: (landing: ExplorerLanding) => Promise<boolean | ExplorerLanding>;
   private readonly onChange: () => void;
   private readonly passThrough: (direction: 'back' | 'forward') => void;
   // True while back/forward is driving the Explorer. The reveals it runs record
@@ -414,7 +423,7 @@ export class ExplorerNavigationHistory {
     // runs; `restoring` keeps the reveals it provokes out of the chain.
     chain.cursor = target;
     this.onChange();
-    let ok = false;
+    let ok: boolean | ExplorerLanding = false;
     this.restoring = true;
     try {
       ok = await this.go(landing);
@@ -423,7 +432,18 @@ export class ExplorerNavigationHistory {
     } finally {
       this.restoring = false;
     }
-    if (ok) return;
+    if (ok === true) return;
+    if (ok !== false) {
+      // Landed, but somewhere coarser than the entry named — the method has gone
+      // and the panes are on its class. The cursor stays here and the entry is
+      // rewritten to the place we actually reached, so the pinned line and the
+      // trail's marker agree with the panes. Pruning and rewinding instead would
+      // leave both naming the landing we came FROM, with Forward pointing at a
+      // place we never left.
+      chain.landings[target] = ok;
+      this.onChange();
+      return;
+    }
     // Couldn't get there: drop the stale entry and put the cursor back where it
     // was, so a second press tries the next landing along instead of sticking.
     chain.landings.splice(target, 1);

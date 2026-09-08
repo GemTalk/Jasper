@@ -43,6 +43,7 @@ import {
   getDictionaryNames,
 } from '../../browserQueries';
 import type { NavigationViewState } from '../../explorerNavigationView';
+import { landingPath, type ExplorerLanding } from '../../explorerNavigationHistory';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 const classesInDict = getClassesWithCategory as ReturnType<typeof vi.fn>;
@@ -109,6 +110,13 @@ beforeEach(() => {
   vi.mocked(vscode.window.showWarningMessage).mockReset();
   vi.mocked(vscode.window.showInformationMessage).mockReset();
 });
+
+/** A stand-in for the Actions & Navigation pane, to read what the controller pushes. */
+function watchPane(ctl: ExplorerController) {
+  const states: NavigationViewState[] = [];
+  ctl.setNavigationView({ setState: (s: NavigationViewState) => states.push(s) } as never);
+  return { latest: () => states[states.length - 1] };
+}
 
 describe('the Explorer records a landing where the panes actually land', () => {
   it('folds a drill-down from dictionary to class to method into the one place it reached', async () => {
@@ -196,14 +204,14 @@ describe('Go Back puts the panes back on a landing, recomputed against the stone
 
   it('re-resolves the dictionary by name when the symbol list has shifted under it', async () => {
     const { ctl } = await seedTwoMethods();
-    // A commit elsewhere added a dictionary ahead of ours, so the index recorded
-    // with the landing (1) now names a different dictionary.
+    // A commit elsewhere added a dictionary ahead of ours, so the position the
+    // dictionary held when the landing was recorded (1) now names a different one.
     dictNames.mockReturnValue(['Globals', DICT]);
     classEnvs.mockClear();
 
     await ctl.history.back();
 
-    // Re-resolved to 2 by name rather than trusting the recorded 1.
+    // Resolved to 2 from the name, which is the only thing the landing carries.
     expect(classEnvs).toHaveBeenCalledWith(expect.anything(), 2, CLASS, expect.anything());
     expect(ctl.history.currentIndex()).toBe(0);
   });
@@ -244,7 +252,31 @@ describe('Go Back puts the panes back on a landing, recomputed against the stone
     expect(warned).toContain('balance');
     // Moving to the class beats refusing to move at all, so the reveal still ran.
     expect(classEnvs).toHaveBeenCalledWith(expect.anything(), 1, CLASS, expect.anything());
-    expect(ctl.history.entries()).toHaveLength(1);
+    // The cursor follows the panes onto the class instead of rewinding onto the
+    // method we came from, and the entry is rewritten to the place actually
+    // reached — so the pinned line names the class rather than a method the stone
+    // no longer has, and Forward still points where it did.
+    expect(ctl.history.currentIndex()).toBe(0);
+    expect(ctl.history.entries()).toHaveLength(2);
+    expect(ctl.history.current()).toMatchObject({ className: CLASS });
+    expect(ctl.history.current()?.selector).toBeUndefined();
+    expect(landingPath(ctl.history.current() as ExplorerLanding)).not.toContain('balance');
+    expect(ctl.history.canGoForward()).toBe(true);
+  });
+
+  it('leaves the trail with no method row marked once the cursor is on a class', async () => {
+    const { ctl } = await seedTwoMethods();
+    classEnvs.mockReturnValue(envLine(['deposit:']));
+
+    await ctl.history.back();
+    const pane = watchPane(ctl);
+    ctl.syncNavigationState();
+
+    // `balance` is no longer a method landing, so it leaves the trail; `deposit:`
+    // is still listed but is not where we are, so nothing claims the accent.
+    expect(pane.latest().trail.map((r) => r.label)).toEqual([`${CLASS}>>deposit:`]);
+    expect(pane.latest().trail.some((r) => r.current)).toBe(false);
+    expect(pane.latest().location).toContain(CLASS);
   });
 
   it('keeps the landings its own reveal provokes out of the chain', async () => {
@@ -403,13 +435,6 @@ describe('the navigation commands are actually registered, not just contributed'
 });
 
 describe('the pane draws methods; the dictionaries and classes stay on one pinned line', () => {
-  /** A stand-in for the Actions & Navigation pane, to read what the controller pushes. */
-  function watchPane(ctl: ExplorerController) {
-    const states: NavigationViewState[] = [];
-    ctl.setNavigationView({ setState: (s: NavigationViewState) => states.push(s) } as never);
-    return { latest: () => states[states.length - 1] };
-  }
-
   it('leaves a dictionary out of the trail and names it on the pinned line', () => {
     const { ctl, clickDict } = makeController();
     const pane = watchPane(ctl);
@@ -606,13 +631,6 @@ describe('Recent Locations lists what the trail leaves out', () => {
 });
 
 describe('the trail label mode is a setting, not just a button', () => {
-  /** A stand-in for the Actions & Navigation pane, to read what the controller pushes. */
-  function watchPane(ctl: ExplorerController) {
-    const states: NavigationViewState[] = [];
-    ctl.setNavigationView({ setState: (s: NavigationViewState) => states.push(s) } as never);
-    return { latest: () => states[states.length - 1] };
-  }
-
   async function readTwoMethods() {
     const h = makeController();
     h.clickDict();
@@ -638,7 +656,9 @@ describe('the trail label mode is a setting, not just a button', () => {
   it('drops the class to the dimmed column when the setting is on', async () => {
     // Working inside one class, the repeated class name crowds out the selector,
     // which is the only part that differs.
-    vscode.workspace.getConfiguration('gemstone').update('explorer.navigationSelectorsOnly', true);
+    await vscode.workspace
+      .getConfiguration('gemstone')
+      .update('explorer.navigationSelectorsOnly', true);
     const { ctl } = await readTwoMethods();
     const pane = watchPane(ctl);
     ctl.syncNavigationState();
