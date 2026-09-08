@@ -166,7 +166,7 @@ jobs:
     #
     # A false timeout is expensive here: on Windows the GemStone setup step
     # doesn't acknowledge the cancel signal, so GitHub's 5-minute force-kill
-    # grace kicks in and the job burns 15 minutes, not 12. Genuine hangs are
+    # grace kicks in and the job burns 17 minutes, not 12. Genuine hangs are
     # unbounded (the wedged step sits with no progress and would never
     # finish), so a larger budget costs only those extra minutes on the rare
     # hang while sparing every slow-but-healthy run.
