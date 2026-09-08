@@ -200,6 +200,24 @@ function describeStep(step: ReturnType<typeof parseTopazScript>[number]): string
 const firstLine = (source: string): string => source.split('\n')[0]?.trim() ?? '';
 
 /**
+ * Which session this file-in lands in, for the routes that carry no session of their
+ * own — the Command Palette, and a file picked in VS Code's Explorer.
+ *
+ * `alwaysAsk`, unlike every other write in Jasper, which files into whichever session
+ * is current without a word. A file-in is not one method: it can redefine classes
+ * across a whole dictionary, and landing that in the wrong stone because the tree
+ * happened to be showing it is not a mistake the user gets told about until after.
+ * The current session leads the list and is marked, so the usual answer is Enter; with
+ * only one session logged in there is nothing to choose and nothing is asked.
+ */
+function askWhichSession(sessionManager: SessionManager): Promise<ActiveSession | undefined> {
+  return sessionManager.resolveSession({
+    alwaysAsk: true,
+    placeHolder: 'Select the GemStone session to file into',
+  });
+}
+
+/**
  * The File In command: pick one or more `.gs` files and read them into the session.
  *
  * Several files run in the order they were picked, into one combined report, so a
@@ -217,7 +235,7 @@ export async function fileInCommand(
   // first costs nothing, and it means nothing connected is said before the user has
   // browsed and picked rather than after. File Out warns in the same order, and it
   // keeps this route and fileInUris asking the question at the same point.
-  const target = session ?? (await sessionManager.resolveSession());
+  const target = session ?? (await askWhichSession(sessionManager));
   if (!target) return;
 
   const uris = await vscode.window.showOpenDialog({
@@ -243,12 +261,11 @@ export async function fileInUris(
   target?: ActiveSession,
 ): Promise<void> {
   if (uris.length === 0) return;
-  // resolveSession, not getSelectedSession: filing in is a write, and with several
-  // sessions open the user is asked which one it lands in — unless the caller has
-  // already answered that: a session row, the Explorer's current session, or
-  // fileInCommand, which resolves before it opens the picker and hands the answer
-  // down here.
-  const session = target ?? (await sessionManager.resolveSession());
+  // See askWhichSession: with several sessions logged in the user is asked which one
+  // this lands in — unless the caller has already answered that: a session row, the
+  // Explorer's current session, or fileInCommand, which asks before it opens the
+  // picker and hands the answer down here.
+  const session = target ?? (await askWhichSession(sessionManager));
   if (!session) return;
 
   const total = emptyOutcome();

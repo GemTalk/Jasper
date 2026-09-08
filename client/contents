@@ -1,0 +1,5 @@
+topaz> %
+unknown command: %
+topaz> logout
+LOGOUT can't be used prior to logging in.
+topaz> exit

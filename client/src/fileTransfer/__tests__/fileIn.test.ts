@@ -377,6 +377,41 @@ describe('the File In command', () => {
     );
   });
 
+  it('asks which session even when one is already selected', async () => {
+    // Every other write files into whichever session is current without a word. A
+    // file-in can redefine classes across a whole dictionary, so the route with no
+    // session of its own asks rather than inheriting whatever the window happens to
+    // be showing.
+    const resolveSession = vi.fn().mockResolvedValue({ id: 3 });
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+
+    await fileInCommand({ resolveSession } as unknown as SessionManager, memento);
+
+    expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
+  });
+
+  it('asks on the right-clicked-file route too, which names no session either', async () => {
+    const resolveSession = vi.fn().mockResolvedValue({ id: 3 });
+
+    await fileInUris(
+      { resolveSession } as unknown as SessionManager,
+      [vscode.Uri.file(A_GS)],
+      memento,
+    );
+
+    expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
+  });
+
+  it('still asks nothing when the caller named a session', async () => {
+    const resolveSession = vi.fn();
+    const named = { id: 7 } as ActiveSession;
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+
+    await fileInCommand({ resolveSession } as unknown as SessionManager, memento, named);
+
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
+
   it('says what went in, and that it is not committed', async () => {
     await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
 
