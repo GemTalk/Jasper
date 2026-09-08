@@ -1,7 +1,11 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Only supplier of Node globals here is dotenv's own
+    // `/// <reference types="node" />` — the accident mcp-server/tsconfig.json
+    // argues against leaning on. Name it directly.
+    "types": ["node"]
   },
   "include": ["bin/**/*.ts"]
 }
