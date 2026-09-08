@@ -2337,6 +2337,23 @@ export function activate(context: vscode.ExtensionContext) {
       await codeExecutor.inspectIt();
     }),
 
+    // Flip between "whichever this session can have" and "the basic tabbed one,
+    // always" — the switch worth having on a keystroke, since the Enhanced
+    // Inspector cannot be conjured onto a session that lacks its server support,
+    // so `enhanced` is only ever a synonym for `auto`. Open panels are left
+    // alone: the choice decides where the NEXT Inspect It goes.
+    vscode.commands.registerCommand('gemstone.switchInspector', async () => {
+      const config = vscode.workspace.getConfiguration('gemstone');
+      const next = config.get<string>('inspector.preferred', 'auto') === 'basic' ? 'auto' : 'basic';
+      await config.update('inspector.preferred', next, vscode.ConfigurationTarget.Global);
+      vscode.window.setStatusBarMessage(
+        next === 'basic'
+          ? 'Inspect It now opens the basic Inspector'
+          : 'Inspect It now opens the Enhanced Inspector where the session has it',
+        4000,
+      );
+    }),
+
     vscode.commands.registerCommand('gemstone.showTranscript', () => {
       showTranscript();
     }),
