@@ -15,7 +15,10 @@
  * The button runs the ordinary Undo, which reverses whatever is on TOP of the stack. If
  * the user has done something else in the meantime, that is what gets undone — the same
  * rule the toast on a refactoring follows, and the same rule any "Undo" affordance in a
- * stack-based editor follows. The toast is transient; the stack is the record.
+ * stack-based editor follows. The toast is transient; the stack is the record. Which is why
+ * pressing it does not reverse anything on its own: the dispatcher names the change and asks
+ * first, so a toast that has been sitting there while the user did something else cannot
+ * quietly undo the something else instead.
  *
  * Fire-and-forget: `showInformationMessage` resolves only when the user answers or
  * dismisses it, and the edit that triggered it must not stay "running" until then.

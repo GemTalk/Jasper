@@ -1,5 +1,5 @@
 /**
- * Undoing a method-category rename — immediately, with no preview (issue #434).
+ * Undoing a method-category rename — with no preview (issue #434).
  *
  * A category renamed on the STONE is reversed by renaming it back, not by recompiling the
  * methods it holds: `renameCategory:to:` moves all of them in one message and recompiles

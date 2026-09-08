@@ -10,9 +10,11 @@
  * selected ones server-side WITHOUT committing, then refresh the Explorer and reload
  * the open method editors so the reverted source is what the user sees.
  *
- * Unlike a method edit, which reverses on the spot, a refactoring keeps its preview: it
- * can have rewritten dozens of methods across a hierarchy, and undoing that unseen is not
- * a decision to take on the user's behalf.
+ * Unlike a method edit, which reverses once the change is confirmed, a refactoring keeps
+ * its preview: it can have rewritten dozens of methods across a hierarchy, and undoing that
+ * unseen is not a decision to take on the user's behalf. The preview also stands IN PLACE OF
+ * the dispatcher's confirmation — it names the change and everything the change touched, so
+ * a modal in front of it would ask a smaller version of the same question twice.
  *
  * Not committing is deliberate and matches the rest of the family: undoing an
  * uncommitted refactoring leaves the session uncommitted, and undoing a committed one

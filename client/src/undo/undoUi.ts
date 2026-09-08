@@ -15,7 +15,10 @@
  * fixed string in `package.json`, so nothing there can carry the entry's label. What they can
  * do is choose between two contributed commands on a context key, which is what
  * `UNDO_AVAILABLE_CONTEXT_KEY` / `REVERT_AVAILABLE_CONTEXT_KEY` are for — so every affordance
- * agrees on the VERB even though only the status bar can name the change.
+ * agrees on the VERB even though only the status bar can name the change BEFORE it is
+ * pressed. After it is pressed they all name it, because the dispatcher's confirmation does
+ * (`confirmUndo` in `undoLastCommand`); a tooltip is only read by someone who hovers, which
+ * is not the person who clicks quickly.
  *
  * The VERB follows the entry. A class edit is reversed by binding the earlier version
  * again, which is a revert and not a rollback, and every message that action produces says

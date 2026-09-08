@@ -1,5 +1,5 @@
 /**
- * Undoing a class-category change — immediately, with no preview (issue #434).
+ * Undoing a class-category change — with no preview (issue #434).
  *
  * Each class is put back under the label it carried, one `Class>>category:` per class, rather
  * than renaming a category back. That is what makes it exact: a rename that MERGED into an

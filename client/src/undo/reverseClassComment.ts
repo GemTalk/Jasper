@@ -1,13 +1,14 @@
 /**
- * Undoing a class comment save — immediately, with no preview (issue #434).
+ * Undoing a class comment save — with no preview (issue #434).
  *
  * A comment is one piece of text on one class, and the user just wrote it, so this follows
- * the method-edit path rather than the class-edit one: reverse on the spot, report what it
- * did, and call it an UNDO. `comment:` does not re-version the class, so nothing is left
- * behind and there is no discard modal to show.
+ * the method-edit path rather than the class-edit one: reverse, report what it did, and call
+ * it an UNDO. `comment:` does not re-version the class, so nothing is left behind and there
+ * is no discard modal to show.
  *
- * The single thing worth asking about is DRIFT — the comment having changed since the save
- * being undone — and, as everywhere else, it is a warning rather than a refusal.
+ * The only thing worth asking about HERE is DRIFT — the comment having changed since the
+ * save being undone — and, as everywhere else, it is a warning rather than a refusal.
+ * Naming the change itself is the dispatcher's job and is done for every kind alike.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';

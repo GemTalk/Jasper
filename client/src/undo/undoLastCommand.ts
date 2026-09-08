@@ -8,28 +8,32 @@
  * refactoring plugs in here as one more kind. Adding a further kind means another branch
  * here and a reverser beside it — not a change to the stack, the UI, or any recording site.
  *
- * The kinds behave differently on purpose, and the difference is the point of the design:
+ * Every undo CONFIRMS first, naming the change — see `confirmUndo` for why it is
+ * unconditional. Past that, the kinds behave differently on purpose, and the difference is
+ * the point of the design:
  *
- *  - a METHOD EDIT reverses immediately, because the user just made it and it is one
+ *  - a METHOD EDIT reverses straight away, because the user just made it and it is one
  *    method;
- *  - a CLASS EDIT reverses immediately too, but calls itself a REVERT and asks first when
- *    binding the earlier version would leave methods behind — GemStone re-versions a class
- *    rather than rolling it back, and the user has to know that before it happens;
- *  - a CLASS COMMENT and a CLASS VARIABLE reverse immediately and stay UNDOs: neither
+ *  - a CLASS EDIT reverses straight away too, but calls itself a REVERT and asks a SECOND
+ *    time when binding the earlier version would leave methods behind — that question is
+ *    what the reversal costs, rather than which change it is, and GemStone re-versions a
+ *    class rather than rolling it back, so the user has to know before it happens;
+ *  - a CLASS COMMENT and a CLASS VARIABLE reverse straight away and stay UNDOs: neither
  *    re-versions the class, so putting the earlier text back, or taking the declaration and
  *    its accessors away again, is exact and leaves nothing behind;
  *  - a METHOD CATEGORY is renamed back, a CLASS CATEGORY is put back one class at a time, and a
  *    DICTIONARY is renamed back or put back at its old position on the symbol list — all exact,
  *    and all UNDOs for the same reason;
- *  - a REFACTORING opens the preview panel it already has, because it can have rewritten
- *    dozens of methods across a hierarchy and undoing it wholesale, unseen, is not a
- *    decision to take on the user's behalf.
+ *  - a REFACTORING opens the preview panel it already has INSTEAD of the confirmation,
+ *    because it can have rewritten dozens of methods across a hierarchy and undoing it
+ *    wholesale, unseen, is not a decision to take on the user's behalf.
  */
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
-import { refreshUndoUi } from './undoUi';
+import { refreshUndoUi, undoVerb } from './undoUi';
+import { UndoEntry } from './undoTypes';
 import { reverseMethodEdit } from './reverseMethodEdit';
 import { reverseClassEdit } from './reverseClassEdit';
 import { reverseClassComment } from './reverseClassComment';
@@ -66,6 +70,15 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     }
 
     logInfo(`[undo] invoked on #${entry.id} (${entry.kind}) "${entry.label}"`);
+
+    // Confirm before reversing anything, naming the change. A REFACTORING is the one
+    // exemption: it opens a preview listing every reversal with its diff and its own
+    // checkbox, which is a fuller form of this same question, and asking twice would read
+    // as Jasper not trusting its own preview.
+    if (entry.kind !== 'refactoring' && !(await confirmUndo(entry))) {
+      logInfo(`[undo] #${entry.id} declined at the confirmation`);
+      return;
+    }
 
     // Popping is enough: the stack's change listener updates the button and the context key.
     // Leaving the entry in place when it was not spent is what keeps a cancelled or
@@ -121,4 +134,42 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     if (!after.available || after.sequence !== entry.sequence) popUndoEntry(session.id);
     return;
   }
+}
+
+/**
+ * Name the change and ask, before anything is reversed.
+ *
+ * Undo takes the top of the STACK, which is not always the last thing the user did: an
+ * action that cannot be reversed records nothing, so the entry underneath it — an older
+ * change, possibly several actions back — becomes what a click reverses. Every affordance
+ * says which change that is (the tooltip names it, the toast is raised by the action
+ * itself), but a tooltip is only read by someone who hovers, and a quick click on the
+ * button was reversing the wrong change with nothing to stop it (review of #507).
+ *
+ * So the confirmation is unconditional rather than clever: no attempt is made to work out
+ * whether this particular entry is the user's most recent action and skip the question when
+ * it is. That test would be wrong exactly when it matters — an unrecorded action is by
+ * definition one Jasper knows nothing about — and a prompt that usually does not appear is
+ * worse than one that always does, because the one time it appears is the time the user has
+ * already clicked through.
+ *
+ * The VERB matches every other affordance: `Revert` for a class edit, which binds an
+ * earlier version rather than rolling anything back, and `Undo` for the rest. The
+ * consequence modals that some reversals raise afterwards are a different question — what
+ * it costs, rather than which change it is — and are left where they are.
+ */
+async function confirmUndo(entry: UndoEntry): Promise<boolean> {
+  const verb = undoVerb(entry);
+  const choice = await vscode.window.showWarningMessage(
+    `${verb} ${entry.label}?`,
+    {
+      modal: true,
+      detail:
+        'This is the most recent change Jasper recorded in this session. It is not ' +
+        'necessarily the last thing you did — an action that cannot be reversed records ' +
+        'nothing, so the change before it is what this reverses.',
+    },
+    verb,
+  );
+  return choice === verb;
 }

@@ -8,7 +8,12 @@ vi.mock('../reverseClassVarEdit', () => ({ reverseClassVarEdit: vi.fn() }));
 vi.mock('../reverseMethodCategoryEdit', () => ({ reverseMethodCategoryEdit: vi.fn() }));
 vi.mock('../reverseDictionaryEdit', () => ({ reverseDictionaryEdit: vi.fn() }));
 vi.mock('../reverseClassCategoryEdit', () => ({ reverseClassCategoryEdit: vi.fn() }));
-vi.mock('../undoUi', () => ({ refreshUndoUi: vi.fn() }));
+// undoVerb comes from the real module: it is a pure one-liner over the entry's kind, and a
+// hand-written copy in the mock would be free to drift from the verb the UI actually shows.
+vi.mock('../undoUi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../undoUi')>()),
+  refreshUndoUi: vi.fn(),
+}));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
 }));
@@ -35,8 +40,10 @@ import type { ActiveSession, SessionManager } from '../../sessionManager';
  * The dispatcher (#434) — the single Undo every affordance runs.
  *
  * What is pinned here is the split that the whole design rests on: a METHOD EDIT reverses
- * on the spot, a REFACTORING opens the preview it already has, and the dispatcher is the
- * only place that knows the difference. Plus the two bookkeeping rules that keep the stack
+ * straight away, a REFACTORING opens the preview it already has, and the dispatcher is the
+ * only place that knows the difference. Plus the confirmation that now precedes every
+ * reversal but the refactoring's — it names the change, because the top of the stack is not
+ * always the last thing the user did. Plus the two bookkeeping rules that keep the stack
  * honest — an entry is popped only when it was actually spent, and a refactoring entry the
  * stone no longer holds is dropped and skipped rather than previewed over nothing.
  */
@@ -120,9 +127,23 @@ const dictionaryEdit = (label: string): NewUndoEntry => ({
   stashKey: 'k1',
 });
 
+/**
+ * Answer the confirmation with its own action button.
+ *
+ * Every undo asks before it reverses anything, so a test about the DISPATCH would otherwise
+ * stop at the modal. Resolving to the last argument answers whichever verb the modal offered
+ * ('Undo' or 'Revert') without the test having to know which entry kind it is looking at.
+ */
+function confirmTheModal(): void {
+  vi.mocked(vscode.window.showWarningMessage).mockImplementation(
+    (...args: unknown[]) => Promise.resolve(args[args.length - 1]) as never,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
+  confirmTheModal();
 });
 
 describe('undoLastCommand', () => {
@@ -133,7 +154,7 @@ describe('undoLastCommand', () => {
     );
   });
 
-  it('reverses a method edit on the spot — no preview panel', async () => {
+  it('reverses a method edit once confirmed — no preview panel', async () => {
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     vi.mocked(reverseMethodEdit).mockResolvedValue(true);
 
@@ -309,6 +330,63 @@ describe('undoLastCommand', () => {
 
     expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
     expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  describe('the confirmation every undo asks first', () => {
+    // Undo takes the top of the STACK, which is not always the last thing the user did:
+    // an action that cannot be reversed records nothing, so the entry underneath becomes
+    // what a click reverses. Naming the change before reversing it is what stops a quick
+    // click from undoing something the user did not mean (review of #507).
+    it('names the change, and reverses nothing until it is answered', async () => {
+      pushUndoEntry(methodEdit('Save Account>>#balance'));
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+      await undoLastCommand(sessions);
+
+      const [message, options] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+      expect(message).toContain('Save Account>>#balance');
+      expect(options).toMatchObject({ modal: true });
+      expect(reverseMethodEdit).not.toHaveBeenCalled();
+      expect(undoStackDepth(session.id)).toBe(1);
+    });
+
+    it('says why the change named may not be the last thing you did', async () => {
+      pushUndoEntry(methodEdit('Save Account>>#balance'));
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+      await undoLastCommand(sessions);
+
+      const options = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
+        detail: string;
+      };
+      expect(options.detail).toContain('not necessarily the last thing you did');
+    });
+
+    it('offers Undo for a method edit and Revert for a class edit', async () => {
+      pushUndoEntry(methodEdit('Save Account>>#balance'));
+      await undoLastCommand(sessions);
+      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Undo');
+
+      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      pushUndoEntry(classEdit('Redefine class Account'));
+      vi.mocked(reverseClassEdit).mockResolvedValue(true);
+      await undoLastCommand(sessions);
+      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Revert');
+    });
+
+    it('does not ask twice for a refactoring, which has its own preview', async () => {
+      // The preview lists every reversal with its diff and its own checkbox — a fuller form
+      // of the same question, so a modal in front of it would be Jasper asking twice.
+      pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
+      vi.mocked(checkRefactoringUndoAvailable)
+        .mockReturnValueOnce(status(true))
+        .mockReturnValueOnce(status(false));
+
+      await undoLastCommand(sessions);
+
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(undoLastRefactoringCommand).toHaveBeenCalledWith(sessions);
+    });
   });
 
   it('asks for a session before anything else', async () => {

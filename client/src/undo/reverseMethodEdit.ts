@@ -1,16 +1,19 @@
 /**
- * Undoing a method edit — immediately, with no preview (issue #434).
+ * Undoing a method edit — with no preview (issue #434).
  *
  * A refactoring can rewrite dozens of methods across a hierarchy, which is why undoing
  * one opens a preview panel with a row and a checkbox per change. A method edit is one
  * method (two, when a save creates one and a rename-shaped edit retires another), and
  * the user just did it: previewing it would be ceremony around a decision already made.
- * So this reverses on the spot and reports what it did.
+ * So this reverses and reports what it did. The dispatcher has already named the change and
+ * had it confirmed (`confirmUndo` in `undoLastCommand`) — that question is WHICH change,
+ * asked of every kind alike, and is not this module's business.
  *
- * The single exception is DRIFT. If the method has changed since the edit was recorded —
- * someone else saved it, a refactoring rewrote it, the user edited it again — putting the
- * old source back discards that. Drift is the one thing worth a confirmation, and it is a
- * warning rather than a refusal, matching the refactoring undo's policy.
+ * What IS this module's business is DRIFT. If the method has changed since the edit was
+ * recorded — someone else saved it, a refactoring rewrote it, the user edited it again —
+ * putting the old source back discards that, which the user cannot know from the change's
+ * name alone. So it is worth asking a second time, and it is a warning rather than a
+ * refusal, matching the refactoring undo's policy.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
