@@ -3403,6 +3403,7 @@
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
+    "jsdom": "^30.0.1",
     "lefthook": "^2.1.10",
     "lockfile-lint": "^5.0.1",
     "ovsx": "^1.1.1",
