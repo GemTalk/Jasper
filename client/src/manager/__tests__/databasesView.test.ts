@@ -77,6 +77,7 @@ function state(overrides: Record<string, unknown> = {}): Record<string, unknown>
     create: {
       versions: [{ version: '3.7.5', extents: ['extent0', 'extent1'] }],
       stoneNames: [],
+      dbLdiNames: [],
       ldiNames: [],
       nfsWarning: false,
       rootPath: '/root',
@@ -110,25 +111,245 @@ function typeInto(field: string, value: string): void {
   el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function typeIntoRegister(field: string, value: string): void {
+  const el = root.querySelector<HTMLInputElement>(`[data-register-field="${field}"]`);
+  if (!el) throw new Error(`no ${field} field on screen`);
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** A message from the host, as VS Code relays it into the webview. */
+function fromHost(msg: Record<string, unknown>): void {
+  window.dispatchEvent(new MessageEvent('message', { data: msg }));
+}
+
+/** A database registered from an installation Jasper did not create. */
+function registeredDatabase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return database({
+    dirName: 'db-2',
+    stoneName: 'theirstone',
+    ldiName: 'theirldi',
+    baseExtent: undefined,
+    availableExtents: [],
+    registered: true,
+    registeredReason:
+      'Jasper did not create this database \u2014 it was registered from an existing ' +
+      'installation, so Jasper does not modify its files.',
+    productPath: '/opt/theirs/product',
+    netldiPort: 46717,
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
 });
 
 describe('what leads the panel', () => {
-  it('puts versions first when nothing is installed, because there is nothing to make a database from', () => {
-    mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
-    const sections = Array.from(root.querySelectorAll('details.section')).map(
+  function sectionOrder(): (string | undefined)[] {
+    return Array.from(root.querySelectorAll('details.section')).map(
       (d) => (d as HTMLElement).dataset.section,
     );
-    expect(sections.indexOf('versions')).toBeLessThan(sections.indexOf('databases'));
-  });
+  }
 
   it('puts databases first once something is installed', () => {
     mount(state({ databases: [database()] }));
-    const sections = Array.from(root.querySelectorAll('details.section')).map(
-      (d) => (d as HTMLElement).dataset.section,
-    );
+    const sections = sectionOrder();
     expect(sections.indexOf('databases')).toBeLessThan(sections.indexOf('versions'));
+  });
+
+  // Versions used to lead here, on the reasoning that a machine with nothing
+  // installed had no database to make yet. Register Existing… adopts an
+  // installation from anywhere, so this machine can hold databases and no
+  // installed release at once.
+  it('puts databases first when nothing is installed too', () => {
+    mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
+    const sections = sectionOrder();
+    expect(sections.indexOf('databases')).toBeLessThan(sections.indexOf('versions'));
+  });
+
+  it('leads with a registered database rather than burying it under Versions', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [registeredDatabase()],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    expect(sectionOrder()[0]).toBe('databases');
+    expect(root.querySelector('details.db-item[data-db]')).not.toBeNull();
+  });
+});
+
+describe('when the host says an action failed', () => {
+  // The message was posted and dropped: the panel cleared its busy flag and
+  // redrew the unchanged state, so a refused action looked like one that had
+  // simply done nothing at all.
+  it('shows the reason rather than absorbing it', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: "EACCES: permission denied, mkdir '/nope'" });
+    expect(root.querySelector('.gm-blocked')?.textContent).toContain('permission denied');
+  });
+
+  it('keeps it through the unchanged state that follows', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'could not register' });
+    // The host always posts state after a failure; it is the same state as before.
+    api().render(state());
+    expect(root.textContent).toContain('could not register');
+  });
+
+  it('lets it be dismissed', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'could not register' });
+    click('dismissFailure');
+    expect(root.querySelector('.gm-blocked')).toBeNull();
+  });
+});
+
+describe('a login with no database of its own', () => {
+  // Logins are drawn under the database they target, matched by stone name, so a
+  // login to a stone this machine has no database for matched no row and was
+  // shown nowhere — it had saved, it was in the settings, and the panel simply
+  // had no place to put it.
+  function remoteLogin(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      label: 'DataCurator on gs64stone (berlin)',
+      user: 'DataCurator',
+      stone: 'gs64stone',
+      version: '3.7.5.1',
+      host: 'berlin',
+      netldi: '50377',
+      running: false,
+      connected: false,
+      current: false,
+      sessions: [],
+      ...overrides,
+    };
+  }
+
+  it('is shown, rather than dropped for want of a row to sit under', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other).not.toBeNull();
+    expect(other?.textContent).toContain('DataCurator');
+  });
+
+  it('says what makes it different, since no database above it does', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const text = root.querySelector('details.section[data-section="otherLogins"]')?.textContent;
+    // The label carries user, stone and host; the NetLDI and release follow it,
+    // because no database row above supplies them here.
+    expect(text).toContain('DataCurator on gs64stone (berlin)');
+    expect(text).toContain('50377');
+    expect(text).toContain('3.7.5.1');
+  });
+
+  it('offers the same actions the per-database rows do', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    for (const action of ['editLogin', 'deleteLogin', 'connectLogin']) {
+      expect(other?.querySelector(`[data-action="${action}"]`)).not.toBeNull();
+    }
+  });
+
+  it('offers its own New Login, since the per-database one prefills from a database', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const add = root.querySelector(
+      'details.section[data-section="otherLogins"] [data-action="addLogin"]',
+    );
+    expect(add).not.toBeNull();
+    add?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'addLogin' }));
+  });
+
+  // Its sessions can only appear on the row itself: there is no database above it
+  // carrying them, so without this a connected login here showed nothing for it.
+  it('shows the sessions opened from it', () => {
+    mount(
+      state({
+        databases: [database()],
+        logins: [remoteLogin({ connected: true, sessions: [{ id: 7, current: true }] })],
+      }),
+    );
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other?.querySelector('.session-block')).not.toBeNull();
+    expect(other?.textContent).toContain('session 7');
+  });
+
+  it('captions one session and several differently', () => {
+    mount(
+      state({
+        databases: [database()],
+        logins: [
+          remoteLogin({
+            connected: true,
+            sessions: [
+              { id: 7, current: true },
+              { id: 8, current: false },
+            ],
+          }),
+        ],
+      }),
+    );
+    const caption = root.querySelector(
+      'details.section[data-section="otherLogins"] .session-caption',
+    );
+    expect(caption?.textContent).toBe('Sessions');
+  });
+
+  it('shows no session block when nothing is open', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other?.querySelector('.session-block')).toBeNull();
+  });
+
+  it('stays absent when every login already has a database', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin({ dirName: 'db-1' })] }));
+    expect(root.querySelector('details.section[data-section="otherLogins"]')).toBeNull();
+  });
+});
+
+describe('what the header says this machine has', () => {
+  // The header said "No GemStone release on this machine yet" whenever nothing
+  // was installed — denying the registered database listed directly beneath it,
+  // which read as the registration not having landed.
+  it('counts registered databases even with no release installed here', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [registeredDatabase()],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    const lead = root.querySelector('.gm-head-lead')?.textContent;
+    expect(lead).toContain('1 database');
+    expect(lead).not.toContain('No GemStone release on this machine yet');
+  });
+
+  it('still says the machine is bare when it holds nothing at all', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    const lead = root.querySelector('.gm-head-lead')?.textContent;
+    expect(lead).toContain('No GemStone release on this machine yet');
+    // ...and names registering as a way forward, not only installing.
+    expect(lead).toContain('register a database that already exists');
+  });
+
+  it('offers Register Existing with nothing installed, since it needs nothing installed', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    expect(root.querySelector('[data-action="beginRegister"]')).not.toBeNull();
   });
 });
 
@@ -177,19 +398,23 @@ describe('getting a release in the first place', () => {
     expect(root.querySelector('[data-action="openWalkthrough"]')).toBeNull();
   });
 
-  it('offers a labelled way to register a build you compiled', () => {
+  // Registering a link to a tree you built has gone. A tree put in the versions
+  // folder is recognised on its own, and a stone already running from one is
+  // adopted by Register Existing Database, which records where it really lives.
+  it('does not offer to register a local build', () => {
     mount();
-    expect(root.querySelector('[data-action="registerLocalVersion"]')?.textContent).toContain(
-      'Register Local',
-    );
+    expect(root.querySelector('[data-action="registerLocalVersion"]')).toBeNull();
   });
 
-  it('puts both buttons in the body when nothing is installed, beside the sentence saying so', () => {
+  it('puts the install button in the body when nothing is installed, beside the sentence saying so', () => {
     mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
-    const empty = root.querySelector('.empty');
+    // Scoped to Versions: Databases leads the panel now, so its own empty block
+    // is the first `.empty` on screen.
+    const empty = root.querySelector('details.section[data-section="versions"] .empty');
     expect(empty?.textContent).toContain('No GemStone release on this machine yet');
     expect(empty?.querySelector('[data-action="installNewVersion"]')).not.toBeNull();
-    expect(empty?.querySelector('[data-action="registerLocalVersion"]')).not.toBeNull();
+    // ...and says where to put one you already have, since no button does that now.
+    expect(empty?.textContent).toContain('/root');
   });
 
   it('asks the host to install when the button is pressed', () => {
@@ -442,7 +667,7 @@ describe('a login row', () => {
         database({
           logins: [
             {
-              label: 'DataCurator on gs64stone',
+              label: 'DataCurator on gs64stone (localhost)',
               user: 'DataCurator',
               stone: 'gs64stone',
               host: 'localhost',
@@ -454,6 +679,14 @@ describe('a login row', () => {
       ],
     });
   }
+
+  // The row used to print the GemStone user alone, which says nothing about which
+  // login it is once a database has more than one, and nothing at all in a list.
+  it('is named by its full label — user, stone and host', () => {
+    mount(withLogin({}));
+    const row = root.querySelector('.db-login .db-login-user');
+    expect(row?.textContent).toBe('DataCurator on gs64stone (localhost)');
+  });
 
   it('offers Log in and shows no session row while none is open', () => {
     mount(withLogin({}));
@@ -851,8 +1084,8 @@ describe('every way into the New Database form', () => {
     expect(host.postMessage).not.toHaveBeenCalled();
   });
 
-  // With nothing installed there is no version to pick, so the way out is
-  // Install — which the Versions section leads with in exactly that case.
+  // With nothing installed there is no version to pick, so New Database… is
+  // withheld and the empty text names the two ways out instead.
   it('is not offered at all when no release is installed', () => {
     mount(
       state({
@@ -863,7 +1096,9 @@ describe('every way into the New Database form', () => {
     );
     expect(root.querySelector('[data-action="beginCreate"]')).toBeNull();
     const databases = root.querySelector('details.section[data-section="databases"] .empty');
-    expect(databases?.textContent).toContain('install a GemStone release first');
+    expect(databases?.textContent).toContain('install a GemStone release to make one');
+    // Registering needs nothing installed, so it is named here as the other way in.
+    expect(databases?.textContent).toContain('Register Existing');
   });
 
   it('has no button left that posts a create without the answers', () => {
@@ -961,14 +1196,12 @@ describe('asking for a database on a machine with no release', () => {
     );
   });
 
-  // The message is the sentence only. Versions is the very next thing on screen
-  // in this state and leads with both buttons, so a copy in the message made
-  // three Install Version… — and, with the pair the section header also carried,
-  // two of everything.
-  it('offers each way of getting a release exactly once', () => {
+  // The message is the sentence only. The Versions section is on screen below and
+  // leads with the install button, so a copy in the message made two Install
+  // Version… — three, with the one the section header also carried.
+  it('offers the way of getting a release exactly once', () => {
     openFormOnEmptyMachine();
     expect(root.querySelectorAll('[data-action="installNewVersion"]')).toHaveLength(1);
-    expect(root.querySelectorAll('[data-action="registerLocalVersion"]')).toHaveLength(1);
   });
 
   it('puts that one pair beside the sentence explaining them', () => {
@@ -1018,6 +1251,33 @@ describe('what a server button looks like', () => {
     mount(state({ databases: [database()] }));
     const start = root.querySelector('[data-action="startStone"]');
     expect(start?.className).toContain('power-start');
+  });
+});
+
+describe('the whole-database power control', () => {
+  it('offers Start on a stopped database and Stop on a running one', () => {
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-action="startDatabase"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+
+    mount(state({ databases: [database({ stoneRunning: true })] }));
+    expect(root.querySelector('[data-action="stopDatabase"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+  });
+
+  it('withholds it from a database with a server started outside Jasper', () => {
+    // Jasper cannot stop that server, and starting the other half beside it
+    // would only collide with it — the same reason the per-server rows withhold
+    // their own toggles, so the two must not disagree.
+    mount(
+      state({
+        databases: [database({ external: [{ type: 'stone', pid: 9001 }] })],
+      }),
+    );
+
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="startStone"]')).toBeNull();
   });
 });
 
@@ -1137,5 +1397,330 @@ describe('names with an ampersand in them', () => {
 
     const remove = root.querySelector('[data-action="deleteStaleLock"]');
     expect(remove?.getAttribute('data-tip')).toBe('Remove the stale lock file for A&B');
+  });
+});
+
+// ── Registering an existing database ──────────────────────────────────────
+// The other way a database gets onto the panel: it was already here. What these
+// pin is the difference the user has to be able to see — and the actions that
+// difference rules out.
+
+describe('the Register Existing form', () => {
+  it('cannot be submitted before a product directory has been chosen', () => {
+    mount();
+    click('beginRegister');
+    const submit = root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]');
+    expect(submit?.disabled).toBe(true);
+    // And it says which answer is missing, rather than a dead button.
+    expect(root.textContent).toContain('Choose the GemStone product directory');
+  });
+
+  it('asks the host for the directory, since a webview cannot open one', () => {
+    mount();
+    click('beginRegister');
+    click('pickProduct');
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'pickProductDirectory' });
+  });
+
+  it('shows the version the host read from the tree, and never offers to type one', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      description: 'branch 3.7.5.1',
+      servers: [],
+    });
+    expect(root.textContent).toContain('3.7.5.1');
+    expect(root.querySelector('[data-register-field="version"]')).toBeNull();
+    // Nothing of it is running, which the form says is still registerable.
+    expect(root.textContent).toContain('Nothing of this installation is running');
+  });
+
+  it('fills the names, port and directories in from a server already running there', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [
+        {
+          type: 'stone',
+          name: 'theirstone',
+          pid: 2818260,
+          globalDir: '/opt/gemstone',
+          confPath: '/opt/theirs/product/data/system.conf',
+        },
+        { type: 'netldi', name: 'theirldi', pid: 2818359, port: 46717 },
+      ],
+    });
+
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      'theirstone',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="ldiName"]')?.value).toBe(
+      'theirldi',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="netldiPort"]')?.value).toBe(
+      '46717',
+    );
+    expect(root.textContent).toContain('pid 2818260');
+
+    click('submitRegister');
+    // The directories go with it: they are what let Jasper stop the stone it
+    // has just adopted, and only a running server could tell us them.
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      netldiPort: 46717,
+      confPath: '/opt/theirs/product/data/system.conf',
+      globalDir: '/opt/gemstone',
+    });
+  });
+
+  it('relays the host\u2019s complaint about a folder that is not a product tree', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/home/me/Documents',
+      problem: 'That folder is not a GemStone product directory.',
+    });
+    expect(root.textContent).toContain('not a GemStone product directory');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+  });
+
+  it('refuses a NetLDI name another database already carries, but not a running one', () => {
+    // The NetLDI being adopted is normally up under that very name, so the
+    // running list cannot be the one this checks — only the databases' own.
+    mount(
+      state({
+        create: {
+          ...(state().create as object),
+          dbLdiNames: ['theirldi'],
+          ldiNames: ['theirldi', 'gs64ldi'],
+        },
+      }),
+    );
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    expect(root.textContent).toContain('A NetLDI called "theirldi" is already registered.');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+
+    // A name only a running NetLDI holds is exactly what registering adopts.
+    typeIntoRegister('ldiName', 'gs64ldi');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      false,
+    );
+  });
+
+  it('puts the form back, answers and all, when the host refuses the registration', () => {
+    // Resetting the form on submit meant the reason appeared over the lists with
+    // every answer gone — including the product directory, which can only be
+    // re-chosen through the folder dialog.
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    click('submitRegister');
+    // Closed on submit, the way Create closes: the new row is the confirmation.
+    expect(root.querySelector('[data-action="submitRegister"]')).toBeNull();
+
+    fromHost({
+      command: 'actionFailed',
+      message: 'A stone called "theirstone" is already registered.',
+    });
+
+    expect(root.textContent).toContain('already registered');
+    expect(root.querySelector('[data-action="submitRegister"]')).not.toBeNull();
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      'theirstone',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="ldiName"]')?.value).toBe(
+      'theirldi',
+    );
+    expect(root.textContent).toContain('/opt/theirs/product');
+  });
+
+  it('starts clean the next time, once a registration has landed', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    click('submitRegister');
+
+    // No refusal: the host answers with the state carrying the new row.
+    fromHost({ command: 'state', state: state({ databases: [registeredDatabase()] }) });
+
+    click('beginRegister');
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      '',
+    );
+    expect(root.textContent).toContain('Choose the GemStone product directory');
+  });
+
+  it('rejects a port that is not a number, and keeps it optional', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    typeIntoRegister('netldiPort', 'forty-six');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+
+    typeIntoRegister('netldiPort', '');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      false,
+    );
+  });
+});
+
+describe('a registered database on the list', () => {
+  it('is marked as registered and says where it came from', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    const row = root.querySelector('.db-item');
+    expect(row?.textContent).toContain('registered');
+    expect(row?.textContent).toContain('/opt/theirs/product');
+    expect(row?.textContent).toContain('NetLDI port 46717');
+  });
+
+  it('shows Delete greyed out with the reason on hover, rather than hiding it', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    const del = root.querySelector<HTMLButtonElement>('[data-action="deleteDatabase"]');
+    expect(del).not.toBeNull();
+    expect(del?.disabled).toBe(true);
+    // A disabled button receives no hover of its own, so the reason hangs on
+    // the wrapper — which is what the tooltip layer reads.
+    const wrap = del?.closest('.db-disabled-wrap');
+    expect(wrap?.getAttribute('data-tip')).toContain('Jasper did not create this database');
+  });
+
+  it('offers Unregister instead, which drops only the record', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    click('unregisterDatabase');
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'unregisterDatabase',
+      dirName: 'db-2',
+      login: undefined,
+      name: undefined,
+      version: undefined,
+      folder: undefined,
+      path: undefined,
+      sessionId: undefined,
+      action: undefined,
+    });
+  });
+
+  it('offers no extent chooser: the extent is the installation\u2019s own file', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    expect(root.querySelector('[data-select="replaceExtent"]')).toBeNull();
+    // ...while a database Jasper created still has one.
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-select="replaceExtent"]')).not.toBeNull();
+  });
+
+  it('offers no extent backup, which would copy files Jasper does not own', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    expect(root.querySelector('[data-action="offlineExtentBackup"]')).toBeNull();
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-action="offlineExtentBackup"]')).not.toBeNull();
+  });
+
+  it('replaces the power button with the reason when another version holds the name', () => {
+    mount(
+      state({
+        databases: [
+          registeredDatabase({
+            versionMismatch:
+              'The stone running under this name is GemStone 3.6.2, but this database is registered as 3.7.5.',
+          }),
+        ],
+      }),
+    );
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+    expect(root.textContent).toContain('version mismatch');
+    expect(root.querySelector('[data-tip*="GemStone 3.6.2"]')).not.toBeNull();
+  });
+});
+
+describe('a login row in the panel', () => {
+  function mountLogin(): void {
+    mount(
+      state({
+        databases: [
+          database({
+            logins: [
+              {
+                label: 'DataCurator on gs64stone',
+                user: 'DataCurator',
+                stone: 'gs64stone',
+                host: 'localhost',
+                sessions: [],
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+  }
+
+  it('offers removal beside the edit, the way the rest of the panel does', () => {
+    // The panel could create logins and not delete them: the only route to
+    // deleting one was the Logins & Sessions tree.
+    mountLogin();
+    const row = root.querySelector('.db-login')!;
+    const actions = Array.from(row.querySelectorAll('[data-action]')).map((b) =>
+      b.getAttribute('data-action'),
+    );
+    expect(actions).toEqual(['editLogin', 'deleteLogin', 'connectLogin']);
+  });
+
+  it('says Delete Login, the same words the command uses', () => {
+    mountLogin();
+    const del = root.querySelector('[data-action="deleteLogin"]');
+    expect(del?.getAttribute('data-tip')).toBe('Delete Login');
+  });
+
+  it('names the login it is deleting, since the host looks it up by label', () => {
+    mountLogin();
+    click('deleteLogin');
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'deleteLogin', login: 'DataCurator on gs64stone' }),
+    );
   });
 });

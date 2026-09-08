@@ -18,6 +18,7 @@ import {
   OmniTruncationSink,
 } from '../omniTypes';
 import { match } from '../omniMatch';
+import { compareMethodRows } from '../rank';
 
 /** Runs the bounded selector search against the stone. Injected so the provider is stone-free. */
 export type SelectorSearchRunner = (
@@ -27,8 +28,8 @@ export type SelectorSearchRunner = (
 ) => SelectorSearchResult[];
 
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
- *  wider pool to pick the best matches from — a tie-break by class name (below) can only be A→Z over
- *  the rows it was given (see search()). */
+ *  wider pool to pick the best matches from — the tie-break by class name (below) can only be A→Z
+ *  over the rows it was given (see search()). */
 export const SERVER_OVERFETCH = 4;
 function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
@@ -113,15 +114,13 @@ export function createMethodsProvider(
         });
       }
       // Rank by match score, but break ties between same-scored selectors (e.g. many `withAll:`
-      // implementors) alphabetically by class name so the capped page — and each "Load more" page —
-      // is a predictable A→Z list rather than shortest-label-first. Mirrors the engine's final sort.
-      out.sort((a, b) => {
-        if (a.score !== b.score) return b.score - a.score;
-        const ac = a.action.kind === 'openMethod' ? a.action.className : a.label;
-        const bc = b.action.kind === 'openMethod' ? b.action.className : b.label;
-        const byClass = ac.localeCompare(bc);
-        return byClass !== 0 ? byClass : a.label.localeCompare(b.label);
-      });
+      // implementors) by class A→Z, then instance side before class side, then selector, so the
+      // capped page — and each "Load more" page — is a predictable list rather than
+      // shortest-label-first. `compareMethodRows` is the SAME comparator the engine ranks the flat
+      // list with (not a hand-rolled mirror of it): the cap below decides which rows survive, so an
+      // order of our own would drop rows by one key and display the survivors by another — at the
+      // boundary, dropping an instance-side row while keeping its class-side sibling.
+      out.sort(compareMethodRows);
       return out.slice(0, cfg.maxResultsPerCategory);
     },
   };

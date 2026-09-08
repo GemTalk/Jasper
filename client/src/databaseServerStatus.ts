@@ -131,3 +131,22 @@ export function databaseStatus(state: DatabaseProcessState): DatabaseStatus {
 export function isConnectable(state: DatabaseProcessState): boolean {
   return usable(state.stone) && usable(state.netldi);
 }
+
+/** Which whole-database action a database can offer, from its two servers'
+ *  statuses.
+ *
+ *  Running and Stopped follow the stone, the way the Databases & Versions
+ *  panel's power button does — a database is up when its stone is. External
+ *  gets neither: Jasper cannot stop a server started outside its environment,
+ *  and starting the other half beside one would only collide with it.
+ *
+ *  Lives here, pure, because three surfaces have to agree on it: the Databases
+ *  sidebar's row context value, the panel's power button, and the Command
+ *  Palette's database picker — which has no row to read and so would otherwise
+ *  be the one surface offering Stop on an already-stopped database. */
+export type DatabaseAction = 'Running' | 'Stopped' | 'External';
+
+export function databaseAction(status: DatabaseStatus): DatabaseAction {
+  if (status.stone === 'external' || status.netldi === 'external') return 'External';
+  return status.stone === 'stopped' ? 'Stopped' : 'Running';
+}

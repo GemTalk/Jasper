@@ -137,6 +137,13 @@ export class LoginEditorPanel {
           case 'save':
             await this.handleSave(message.data, message.originalLabel);
             break;
+          case 'cancel':
+            // Ends the editing session, the way Save does. Cancel used to ask
+            // for the stored login back, which reverted the form in place and
+            // left the panel up — so the pair disagreed about what pressing
+            // either one finishes, and neither closed the editor.
+            this.dispose();
+            break;
           case 'requestData':
             this.panel.webview.postMessage({
               command: 'loadData',
@@ -170,6 +177,32 @@ export class LoginEditorPanel {
 
     data.label = loginLabel(data);
 
+    // A login is identified by its user, stone and host, so one whose label
+    // already exists is that same login again. `saveLogin` reads a matching label
+    // as the row being edited and replaces it — which here means the other login
+    // is silently overwritten, no row is added, and the panel looks exactly as it
+    // did before the Save.
+    //
+    // Both ways in are checked. New Login on a database that already has its
+    // DataCurator login hit it every time: the form is prefilled from the
+    // database, so its answers match the login already there unless something is
+    // changed by hand. An *edit* reaches the same replace by changing the user,
+    // stone or host into another row's identity, and vanishes that row instead.
+    // The row being edited is excluded, so re-saving it unchanged — or changing
+    // only its password, tags or NetLDI — is not a clash with itself. Refused
+    // with the reason, and the form left open on the answer that has to change.
+    const clash = this.storage
+      .getLogins()
+      .find((l) => loginLabel(l) === data.label && loginLabel(l) !== originalLabel);
+    if (clash) {
+      vscode.window.showErrorMessage(
+        `A login "${data.label}" already exists. Change the GemStone user, stone or host to ` +
+          `${originalLabel ? 'a combination that is free' : 'add a different login'}, or edit ` +
+          `the existing one.`,
+      );
+      return;
+    }
+
     if (data.password_in_keychain) {
       // Store the password in SecretStorage and strip it from the settings
       // object before we persist.
@@ -188,8 +221,16 @@ export class LoginEditorPanel {
     await this.storage.saveLogin(data, originalLabel);
     this.treeProvider.refresh();
     this.login = data;
+    // Retitled and re-pointed before closing, not instead of it: `show` reveals
+    // and reloads an already-open panel when a different login is opened for
+    // editing, and that branch reads both.
     this.panel.title = `Edit: ${data.label}`;
     vscode.window.showInformationMessage(`Login "${data.label}" saved.`);
+    // A Save/Cancel form ends its editing session on either — see the `cancel`
+    // case above. Leaving the panel up said nothing about whether the work had
+    // landed: the toast was the only signal, and the form still had to be
+    // closed by hand.
+    this.dispose();
   }
 
   private update(login: GemStoneLogin): void {
@@ -501,7 +542,7 @@ export class LoginEditorPanel {
     });
 
     document.getElementById('cancelBtn').addEventListener('click', () => {
-      vscode.postMessage({ command: 'requestData' });
+      vscode.postMessage({ command: 'cancel' });
     });
   </script>
 </body>

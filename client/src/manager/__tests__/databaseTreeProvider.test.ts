@@ -162,7 +162,59 @@ describe('DatabaseTreeProvider', () => {
       const item = provider.getTreeItem(node);
 
       expect(item.label).toBe('db-1');
-      expect(item.contextValue).toBe('gemstoneDb');
+      expect(item.contextValue).toBe('gemstoneDbStopped');
+    });
+
+    it('offers Stop on a database whose stone is up', () => {
+      // The row's context value is what puts the whole-database power action on
+      // it, so a running database has to read Running and not the other way on.
+      const running = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP, LDI_UP]) as never,
+      );
+
+      const item = running.getTreeItem({ kind: 'database', db });
+
+      expect(item.contextValue).toBe('gemstoneDbRunning');
+    });
+
+    it('still offers Stop on a database whose stone is up but not reachable', () => {
+      // A half-up database is exactly when someone wants to stop the whole thing,
+      // so the states short of plain Running must not fall back to offering Start.
+      const halfUp = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP]) as never,
+      );
+
+      const item = halfUp.getTreeItem({ kind: 'database', db });
+
+      expect(item.contextValue).toBe('gemstoneDbRunning');
+    });
+
+    it('offers neither action on a database with a server started outside Jasper', () => {
+      // Jasper cannot stop that server, and starting the other half beside it
+      // would only collide with it.
+      const outside = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([], { stone: hostServer() }) as never,
+      );
+
+      const item = outside.getTreeItem({ kind: 'database', db });
+
+      expect(item.contextValue).toBe('gemstoneDbExternal');
+    });
+
+    it('withholds the action when it is the NetLDI that is outside Jasper', () => {
+      const outside = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP], {
+          netldi: hostServer({ type: 'netldi', name: 'gs64ldi' }),
+        }) as never,
+      );
+
+      const item = outside.getTreeItem({ kind: 'database', db });
+
+      expect(item.contextValue).toBe('gemstoneDbExternal');
     });
 
     it('renders stone node', () => {

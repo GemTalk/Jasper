@@ -17,6 +17,13 @@ const MAX_MSG = 1024;
 // refuse oversized selections in Smalltalk before any suite runs and tell the
 // caller to narrow the scope. A typical project's own test set is well under
 // this; "run literally everything" is the footgun, not a real workflow.
+//
+// The cap counts classes, but what it really bounds is blocking *time* — and
+// that scales with what the tests do, not how many there are. A bare vendor
+// extent's 7 kernel SUnit self-test classes take ~2s on most versions and ~46s
+// on 3.7.5, while 100 trivial one-assertion TestCases run in ~4ms (see
+// runLimitProbeFixture). So 100 isn't a measured time threshold; it's the point
+// past which an unnarrowed selection stops being a workflow anyone asked for.
 export const MAX_RUN_CLASSES = 100;
 
 // Run SUnit suites and return only the failed/errored results — the agent

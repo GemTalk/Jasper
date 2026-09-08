@@ -5,6 +5,7 @@ import { setTranscriptLive, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
+import { SMALLTALK_LANGUAGE } from './languageIds';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit (the
@@ -21,8 +22,10 @@ import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 export const SMALLTALK_CONTROLLER_ID = 'gemstone-smalltalk-kernel';
 export const SMALLTALK_CONTROLLER_LABEL = 'GemStone Smalltalk';
 // The language id for Smalltalk notebook cells — must match the controller's
-// supportedLanguages and the `gemstone-smalltalk` language contribution.
-export const SMALLTALK_LANGUAGE_ID = 'gemstone-smalltalk';
+// supportedLanguages and the `gemstone-smalltalk` language contribution. A cell
+// is not a compiled method, so it is deliberately NOT gemstone-method and is
+// offered no breakpoint gutter (see client/src/languageIds.ts).
+export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
 const MAX_CELL_RESULT = 256 * 1024;
 

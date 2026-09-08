@@ -44,3 +44,21 @@ export function findDatabaseForLogin(
     (db) => db.config.stoneName === login.stone && versionsMatch(db.config.version, login.version),
   );
 }
+
+/**
+ * The sessions logged into a database — the ones stopping its stone kills.
+ *
+ * Paired through `findDatabaseForLogin`, so a session inherits its care about
+ * host and version: a login on a remote host, or on a same-named stone of a
+ * different installed version, is not a session on *this* database and must not
+ * be reaped when it stops.
+ *
+ * Pure (no vscode / fs) so it can be unit-tested directly.
+ */
+export function sessionsOnDatabase<T extends { login: GemStoneLogin }>(
+  db: GemStoneDatabase,
+  sessions: T[],
+  databases: GemStoneDatabase[],
+): T[] {
+  return sessions.filter((s) => findDatabaseForLogin(s.login, databases)?.path === db.path);
+}

@@ -46,6 +46,12 @@ const referencesMock = referencesToClassInDict as ReturnType<typeof vi.fn>;
 
 // A descendant now carries the dictionary that binds it (resolved by object identity
 // in the query layer), so removeClass never has to guess by name.
+/** Click the dialog's confirm button — the LAST one it offered — whatever it is labeled.
+ *  Answering with a hard-coded string instead would silently turn every one of these into a
+ *  "cancelled" run the day the label changes; the label itself is pinned by its own test below. */
+const confirmSubtreeOnce = () =>
+  warn.mockImplementationOnce((...args: unknown[]) => Promise.resolve(args[args.length - 1]));
+
 const descendant = (className: string, dictIndex: number, dictName = 'UserGlobals') => ({
   className,
   parentName: 'Doomed',
@@ -106,7 +112,7 @@ describe('ExplorerController.removeClass — nothing references the class', () =
     descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
     referencesMock.mockReturnValue([reference({ className: 'Sub1' })]);
     const ctl = makeController();
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
 
     await ctl.removeClass();
 
@@ -143,7 +149,7 @@ describe('ExplorerController.removeClass — nothing references the class', () =
       reference({ className: 'Shadowed', dictName: 'MyDict', selector: 'goesAwayToo' }),
     ]);
     const ctl = makeController();
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
 
     await ctl.removeClass();
 
@@ -204,7 +210,7 @@ describe('ExplorerController.removeClass — the class has subclasses', () => {
     const ctl = makeController();
     // Sub2 lives in a different dictionary (index 3) than the root (index 1).
     descendantsMock.mockReturnValue([descendant('Sub1', 1), descendant('Sub2', 3, 'OtherDict')]);
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
 
     await ctl.removeClass();
 
@@ -225,6 +231,33 @@ describe('ExplorerController.removeClass — the class has subclasses', () => {
     expect(deleteClassMock).not.toHaveBeenCalled();
   });
 
+  // The Classes pane allows a multi-row selection, so a confirm button reading "Remove All"
+  // next to a dialog titled after ONE class says "every row you selected" — and then only the
+  // clicked class and its subtree went. The button names the subtree instead. The inline trash
+  // is a row control (VS Code hands it its own row and nothing else), so a selection-wide
+  // remove is not what it could have meant.
+  it('names the subtree in the confirm button rather than calling it "All"', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    const buttons = warn.mock.calls[0].slice(2) as string[];
+    expect(buttons).toContain('Remove With Subclass');
+    expect(buttons.join(' ')).not.toContain('All');
+  });
+
+  it('pluralizes the confirm button when more than one subclass goes with it', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1), descendant('Sub2', 1)]);
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0].slice(2)).toContain('Remove With Subclasses');
+  });
+
   it('names the subclasses that go with it in the confirmation', async () => {
     const ctl = makeController();
     descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
@@ -241,7 +274,7 @@ describe('ExplorerController.removeClass — the class has subclasses', () => {
     // of the same name lives in dict index 1. The query resolved by object identity,
     // so the descendant carries dictIndex 3 — deleteClass must target 3, not 1.
     descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'OtherDict')]);
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
 
     await ctl.removeClass();
 
@@ -315,7 +348,7 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
     const onClassRemoved = vi.fn();
     const ctl = makeController(onClassRemoved);
     descendantsMock.mockReturnValue([descendant('Kid', 1), descendant('GrandKid', 1)]);
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
 
     await ctl.removeClass();
 
@@ -326,7 +359,7 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
     const onClassRemoved = vi.fn();
     const ctl = makeController(onClassRemoved);
     descendantsMock.mockReturnValue([descendant('Kid', 1)]);
-    warn.mockResolvedValueOnce('Remove All');
+    confirmSubtreeOnce();
     // Root deletes; the subclass reports a failure — dropping it from the corpus would hide a class
     // that is still in the image.
     deleteClassMock

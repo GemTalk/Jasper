@@ -492,7 +492,7 @@ export class SunitTestController implements vscode.Disposable {
   ): Promise<void> {
     const classItem = await this.ensureClassItem(dictName, className);
     if (!classItem) return;
-    await this.runTestItems([classItem], kind);
+    await this.runTestItems([classItem], kind, className);
   }
 
   /**
@@ -508,7 +508,7 @@ export class SunitTestController implements vscode.Disposable {
     await this.discoverTests();
     const classItems: TestItem[] = this.itemsForClasses(dictName, classNames);
 
-    await this.runTestItems(classItems, kind);
+    await this.runTestItems(classItems, kind, classNames.join(', '));
   }
 
   /** Run all test methods in a method category from browser context menus. */
@@ -528,7 +528,7 @@ export class SunitTestController implements vscode.Disposable {
       }
     });
 
-    await this.runTestItems(methodItems, kind);
+    await this.runTestItems(methodItems, kind, `${className} category '${category}'`);
   }
 
   /** Run named test methods of one class. */
@@ -545,7 +545,11 @@ export class SunitTestController implements vscode.Disposable {
       .map((selector) => this.itemForMethodNamed(classItem, selector))
       .filter((result) => result !== undefined);
 
-    await this.runTestItems(methodItems, kind);
+    await this.runTestItems(
+      methodItems,
+      kind,
+      selectors.map((selector) => `${className}>>${selector}`).join(', '),
+    );
   }
 
   /**
@@ -553,6 +557,16 @@ export class SunitTestController implements vscode.Disposable {
    * first if it isn't known yet. Reports to the user and answers undefined when
    * the class isn't a test class, so every named entry point above fails the
    * same way.
+   *
+   * The method list is re-read from the stone on EVERY named run, not just when
+   * it is empty. Writing a test and immediately running it is the ordinary loop,
+   * and a class listed before that method existed keeps a stale child list: the
+   * new method is missing from it, so running it by name reported "No tests
+   * found" and running its whole class silently skipped it, until the user
+   * happened to hit Refresh SUnit Tests (issue #532). The cost is one
+   * `discoverTestMethods` query per run — next to running the tests themselves,
+   * nothing. The lazy path in the Testing view is untouched: it lists a class's
+   * methods when its row is expanded, where nothing has just been written.
    */
   private async ensureClassItem(
     dictName: string,
@@ -571,9 +585,7 @@ export class SunitTestController implements vscode.Disposable {
       return undefined;
     }
 
-    if (classItem.children.size === 0) {
-      await this.resolveTestMethods(classItem);
-    }
+    await this.resolveTestMethods(classItem);
 
     return classItem;
   }
@@ -597,8 +609,11 @@ export class SunitTestController implements vscode.Disposable {
     return `${className} is not a test class.`;
   }
 
-  public noTestsFoundErrorMessage() {
-    return `No tests found`;
+  /** "No tests found" on its own leaves the user guessing which name was looked up — the very thing
+   *  they need to see when a just-written test won't run. `looked` names what was searched for;
+   *  without it (a run started from the Testing view's own selection) the bare message stands. */
+  public noTestsFoundErrorMessage(looked?: string) {
+    return looked ? `No tests found for ${looked}` : `No tests found`;
   }
 
   // ── Discovery ──────────────────────────────────────────────
@@ -1225,9 +1240,13 @@ export class SunitTestController implements vscode.Disposable {
    * context menu takes exactly the same path (and gets the same reporting and
    * cancellation) as one started from the Test Explorer itself.
    */
-  private async runTestItems(testItems: TestItem[], kind: SunitRunKind = 'run'): Promise<void> {
+  private async runTestItems(
+    testItems: TestItem[],
+    kind: SunitRunKind = 'run',
+    looked?: string,
+  ): Promise<void> {
     if (testItems.length === 0) {
-      vscode.window.showWarningMessage(this.noTestsFoundErrorMessage());
+      vscode.window.showWarningMessage(this.noTestsFoundErrorMessage(looked));
       return;
     }
 

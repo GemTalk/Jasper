@@ -12,6 +12,9 @@ import {
   dedupeMethodResults,
   type MethodSearchResult,
 } from '../methodSearch';
+import { getClassHierarchy } from '../getClassHierarchy';
+import { getSiblingClassNames } from '../../refactoring/queries/getSiblingClassNames';
+import { getClassDescendantNames } from '../../refactoring/queries/getClassDescendantNames';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
 
@@ -136,13 +139,49 @@ describe('referencesToClassInDict', () => {
     // A bare `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a
     // class referenced only from another environment came back unreferenced — and safe
     // delete would then report that nothing referenced it and delete without asking.
+    // The environment is now set where the organizer gathers its classes rather than
+    // afterwards, and the cache is keyed by it so environments cannot share one.
     const execute = vi.fn<QueryExecutor>(() => '');
 
     referencesToClassInDict(execute, 'Account', 3, 2);
 
     const code = execute.mock.calls[0][0];
-    expect(code).toContain('ClassOrganizer new environmentId: 2; yourself');
-    expect(code).not.toMatch(/ClassOrganizer new referencesToObject:/);
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toMatch(/ClassOrganizer new /);
+  });
+
+  it('reuses one organizer per session rather than building one per query', () => {
+    // `ClassOrganizer new` indexes the whole image, so its cost follows the image
+    // rather than the question. One per query filled the gem's temporary object
+    // memory on a large image, which killed the session — and everything else in
+    // it then reported a broken connection instead of its own result.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    searchMethodSource(execute, 'printOn', false);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('SessionTemps current');
+    expect(code).toContain('JasperClassOrganizer_0');
+    expect(code).not.toMatch(/ClassOrganizer new /);
+  });
+
+  it('shares the organizer with the hierarchy queries', () => {
+    // They ask `subclassesOf:` and `allSuperclassesOf:`, which read the same
+    // snapshot the searches do, and paid the same per-image build for it. Every
+    // refactoring that creates the class they would then ask about compiles it
+    // through `compileClassDefinition`, which drops the cache in the doit that
+    // creates it — so the snapshot they read is never one short.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    getClassHierarchy(execute, 'Account');
+    getSiblingClassNames(execute, 'Account');
+    getClassDescendantNames(execute, 'Account');
+
+    for (const [code] of execute.mock.calls) {
+      expect(code).toContain('JasperClassOrganizer_0');
+      expect(code).not.toMatch(/ClassOrganizer new\b/);
+    }
   });
 
   it('reports the environment each row was found in', () => {

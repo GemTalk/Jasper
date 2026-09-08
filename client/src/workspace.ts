@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { logInfo } from './gciLog';
+import { SMALLTALK_LANGUAGE } from './languageIds';
 
 const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
 
@@ -35,8 +36,8 @@ export async function openWorkspace(): Promise<void> {
   try {
     const uri = vscode.Uri.from({ scheme: 'untitled', path: 'Workspace' });
     const doc = await vscode.workspace.openTextDocument(uri);
-    if (doc.languageId !== 'gemstone-smalltalk') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    if (doc.languageId !== SMALLTALK_LANGUAGE) {
+      await vscode.languages.setTextDocumentLanguage(doc, SMALLTALK_LANGUAGE);
     }
     // Seed the template only into a fresh, empty buffer — never into a doc that
     // hot-exit just restored with the user's own content.

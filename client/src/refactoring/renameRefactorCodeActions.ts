@@ -15,6 +15,29 @@
  * (that needs the stone); simple but polite.
  */
 import * as vscode from 'vscode';
+import { METHOD_LANGUAGE } from '../languageIds';
+
+/**
+ * The documents this provider is attached to: the source of a saved, compiled
+ * method, and nothing else.
+ *
+ * Every action offered below runs a command that funnels through
+ * `resolveMethodEditor`, which refuses anything but a `kind: 'method'` URI. So a
+ * class definition, a `new-method` template and a `new-class` template — all
+ * behind the same `gemstone://` scheme, and all matched while this was
+ * registered for the one Smalltalk language id — could only ever answer "This
+ * rename works in a method source editor." The read-only override diff view
+ * resolved, but a rewrite has no buffer to land in there and the two versions on
+ * screen do not name the one method to run it against.
+ *
+ * So the language split (see client/src/languageIds.ts) narrowed this
+ * registration along with the breakpoint gutter, and for the same reason: the
+ * "Refactor…" menu is no longer offered where it never worked.
+ */
+export const REFACTOR_CODE_ACTION_SELECTOR: vscode.DocumentFilter = {
+  scheme: 'gemstone',
+  language: METHOD_LANGUAGE,
+};
 
 const IDENTIFIER = /[A-Za-z_][A-Za-z0-9_]*/;
 

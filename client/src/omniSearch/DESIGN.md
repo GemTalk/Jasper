@@ -77,7 +77,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
      | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
      | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
-     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | full reload + the references list; deferred only while the docked panel is collapsed |
+     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | the session's cached `ClassOrganizer` is dropped first, then a full reload + the references list; deferred only while the docked panel is collapsed |
 
      Everything else — a global created by evaluating code, a class or method compiled by a workspace
      doit, a class removed by another session — announces nothing this panel can listen for, so short of
@@ -85,7 +85,11 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      upper bound, which is why the **⟳ refresh** exists: it is the user's way to close it on demand,
      without inventing a polling scheme or making every doit fire a corpus reload
      ([#517](https://github.com/GemTalk/Jasper/issues/517)). It clears any deferred sync rather than
-     paying for both. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
+     paying for both, and it drops the session's cached `ClassOrganizer` (see
+     `queries/classOrganizer.ts`) before reloading anything: Source, Literals and the
+     senders/references pivot all run through that organizer, whose class list is a snapshot taken
+     once per session. Commit, abort and Jasper's own class compile drop it too; a class created by
+     executing `subclass:` in a workspace does neither, which is exactly the gap the ⟳ closes. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
      but running the command while the docked panel is COLLAPSED is: its view is disposed, so the reload
      would pay three image-wide executes to post results to nobody. That request is remembered
      (`refreshPending`) and paid on the next reveal, so the panel you come back to is the fresh one you
@@ -147,7 +151,8 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
    from settings (`gemstone.omniSearch.matchMode`, `…caseSensitive`). It returns match **ranges**,
    which the webview renders as `<mark>` highlights. `rank.ts` is the shared per-provider helper: match
-   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
+   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`
+   — plus `compareMethodRows`, the method-row order the Methods provider and the engine share.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
    ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
@@ -236,7 +241,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 | `omniTypes.ts`               | `OmniProvider`, `OmniResult`, `OmniCategory`, config types            | no        | —                      |
 | `omniConfig.ts`              | read `gemstone.omniSearch.*` → typed `OmniConfig`                     | no        | ✅                     |
 | `omniMatch.ts`               | pure matcher/ranker (modes, score, ranges)                           | no        | ✅                     |
-| `rank.ts`                    | shared provider helper: match → sort → cap                           | no        | ✅ (via providers)     |
+| `rank.ts`                    | shared provider helpers: match → sort → cap; method-row order        | no        | ✅ (via providers)     |
 | `omniActions.ts`             | dispatch an `OmniAction` to injected handlers (open / reveal)        | no        | ✅                     |
 | `references.ts`              | pure glue: `OmniResult` → reference/senders query request           | no        | ✅                     |
 | `omniEngine.ts`              | the search engine: scope, case, load-more/all, count, ref pivot → `OmniViewData` | no | ✅            |
@@ -287,6 +292,18 @@ Behaviour decisions (Eric's review of the first webview cut):
 - **Flat, globally relevance-ranked results — no category grouping.** Typing "foo" should surface the
   closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
+- **Ties break by kind.** Below the prefix and first-letter-case rules, method rows (Methods / Source /
+  Literals) order by **match score first**, then class A→Z, then instance side before class side, then
+  selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
+  so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
+  the match quality. Method rows need their own key because Source and Literals hits match a method
+  BODY, so every one of them scores 0 and there is no label match left to rank on; for those the whole
+  order IS class/side/selector, and without it they came back in the stone's traversal order
+  ([#532](https://github.com/GemTalk/Jasper/issues/532)). One key per kind, never a conditional
+  override of the other: a comparator that only reorders SOME pairs is not transitive, and a cyclic
+  comparator makes `Array.prototype.sort` return anything it likes. The key (`compareMethodRows`,
+  in `rank.ts`) is shared with the Methods provider, which caps its own page with it — a provider
+  ordering its own rows differently would drop rows by one key and display the survivors by another.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
   so a raised "Load all" cap never silently persists into the next search.
@@ -430,7 +447,11 @@ Revisit only if the corpus grows by an order of magnitude AND the matcher shows 
   removals fold per class, dictionary changes and commit/abort re-scan), so a class created after the
   UI opened DOES appear now. Still stale until the next commit/abort `resync`: a **global created by
   evaluating code** (nothing announces a new global), a **brand-new class category** when the
-  Class Categories scope is already loaded, and anything changed by **another session**.
+  Class Categories scope is already loaded, and anything changed by **another session**. Clearing on
+  every workspace execution is deliberately NOT the answer — most doits create nothing searchable, and
+  paying a corpus reload plus a `ClassOrganizer` rebuild for all of them gives back exactly what the
+  per-session organizer bought. The ⟳ is the answer, and its tooltip now names this case so a stale
+  search reads as "press the button", not as "the search is broken".
 - Extra providers / scopes: **dedicated Symbols scope**, **method-categories scope**,
   senders/implementors, commands, settings.
 - **Double-tap-Shift** trigger.

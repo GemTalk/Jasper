@@ -17,6 +17,7 @@ import {
   getMethodSource,
   getClassDefinition,
 } from '../browserQueries';
+import { clearClassOrganizerCode } from '../queries/classOrganizer';
 import { getAllClassNames, getClassNameEntriesFor } from '../queries/getAllClassNames';
 import { getAllGlobalNames } from '../queries/getAllGlobalNames';
 import { getAllClassCategories } from '../queries/getAllClassCategories';
@@ -438,6 +439,25 @@ export function registerOmniSearch(
     // The ⟳ in the panel title bar, and a palette entry. Sent to BOTH hosts: only one is in use for a
     // given `ui` setting, and each no-ops when it has nothing open, so there is nothing to branch on.
     vscode.commands.registerCommand('gemstone.search.refresh', async () => {
+      // The session's cached ClassOrganizer goes first, because the corpora
+      // rebuilt below are not the only thing that can be stale: Source, Literals
+      // and the senders/references pivot all run through that organizer, whose
+      // class list is a snapshot (see queries/classOrganizer.ts). A commit or an
+      // abort drops it, and so does Jasper's own class compile — but a class
+      // created by executing `subclass:` in a workspace does neither, and this ⟳
+      // is the gesture that says "ask the stone again".
+      const session = currentSession(sessionManager);
+      if (session) {
+        try {
+          defaultQueryExecutorUsing(session)(clearClassOrganizerCode());
+        } catch (e: unknown) {
+          // A refresh that cannot reach the stone still redraws from what it has.
+          logWarning(
+            `GemStone Search: could not clear the cached ClassOrganizer — ` +
+              `${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
       await viewProvider.refresh();
       OmniSearchPanel.refresh();
     }),

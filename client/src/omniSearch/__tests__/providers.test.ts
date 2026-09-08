@@ -349,6 +349,34 @@ describe('methodsProvider', () => {
     expect(r.label.slice(r.ranges[0][0], r.ranges[0][1])).toBe('add');
   });
 
+  // The cap below this sort decides which rows survive, so the provider's order and the engine's
+  // must be ONE key. A label tiebreak would not be: 'Array class>>at:' sorts before 'Array>>at:',
+  // so it would keep and hide the two sides in opposite orders at the cap boundary.
+  describe('orders rows by the same key the engine displays them in', () => {
+    const sides: SelectorSearchResult[] = [
+      { dictName: 'Globals', className: 'Array', isMeta: true, selector: 'at:', category: 'a' },
+      { dictName: 'Globals', className: 'Array', isMeta: false, selector: 'at:', category: 'a' },
+    ];
+
+    it('puts the instance side before the class side of the same selector', () => {
+      const p = createMethodsProvider(1, () => sides);
+      const results = p.search('at:', cfg({ methodMinQueryLength: 2 }), NEVER_CANCELLED) as {
+        label: string;
+      }[];
+      expect(results.map((r) => r.label)).toEqual(['Array>>at:', 'Array class>>at:']);
+    });
+
+    it('keeps the instance side, not the class side, when the display cap admits only one', () => {
+      const p = createMethodsProvider(1, () => sides);
+      const results = p.search(
+        'at:',
+        cfg({ methodMinQueryLength: 2, maxResultsPerCategory: 1 }),
+        NEVER_CANCELLED,
+      ) as { label: string }[];
+      expect(results.map((r) => r.label)).toEqual(['Array>>at:']);
+    });
+  });
+
   // Triage #14: the clamp had no test, and the truncation it causes was invisible to the engine — so
   // the footer reported a cut-off slice as an exact total once "Load all" raised the display cap.
   describe('server scan ceiling (maxServerScan)', () => {

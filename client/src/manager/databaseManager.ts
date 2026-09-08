@@ -2,7 +2,14 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager } from './processManager';
-import { GemStoneDatabase } from '../sysadminTypes';
+import { DatabaseYaml, GemStoneDatabase } from '../sysadminTypes';
+import {
+  DEFAULT_GLOBAL_DIR,
+  defaultConfDir,
+  isRegisteredDatabase,
+  registeredDatabaseYaml,
+  registeredRefusal,
+} from './registeredDatabase';
 import { appendSysadmin } from '../sysadminChannel';
 import { needsWsl, windowsPathToWsl, wslExecSync } from '../wslBridge';
 import {
@@ -16,6 +23,12 @@ import {
   wslChmodSync,
   wslReaddirSync,
 } from '../wslFs';
+
+/** Drop a trailing path separator, either kind: an answer from the folder dialog
+ *  is a `\\wsl$\…` UNC on Windows and a POSIX path everywhere else. */
+function trimSeparator(p: string | undefined): string {
+  return (p ?? '').replace(/[/\\]+$/, '');
+}
 
 /** `20260831-153000` — sorts chronologically as text, and is safe in a filename. */
 export function timestampForFileName(when: Date): string {
@@ -134,6 +147,136 @@ export class DatabaseManager {
   }
 
   /**
+   * Adopt an installation that already exists, as a database Jasper can list,
+   * start, stop and log in to — without creating or copying anything of its.
+   *
+   * What gets written is one `database.yaml` in Jasper's own root, plus the
+   * `log/` directory that Jasper's own `startstone` writes into. Nothing is
+   * written inside `productPath`: no conf, no key file, no extent, no
+   * `default.conf` copy — all of which `createDatabaseDirect` above does, and
+   * none of which Jasper is entitled to do to someone else's installation.
+   *
+   * The version is not asked for. It is read from the product tree's own
+   * `version.txt`, because a version typed by hand is a version that can be
+   * wrong, and every path Jasper resolves from it (its binaries, its GCI
+   * library) has to match the tree it actually runs.
+   *
+   * `confPath` and `globalDir` default to GemStone's own conventions when the
+   * caller cannot supply better; the panel supplies what it reads off a running
+   * server, which is exact.
+   */
+  async registerExistingDatabase(input: {
+    productPath: string;
+    stoneName: string;
+    ldiName: string;
+    netldiPort?: number;
+    confPath?: string;
+    globalDir?: string;
+  }): Promise<GemStoneDatabase> {
+    const productPath = trimSeparator(input.productPath);
+    const info = SysadminStorage.readVersionTxt(productPath);
+    if (!info) {
+      throw new Error(
+        `${productPath} is not a GemStone product directory — it has no readable version.txt.`,
+      );
+    }
+
+    this.storage.ensureRootPath();
+    const parent = this.storage.getRootPath();
+    const dbNum = this.storage.getNextDbNumber(parent);
+    const dbDir = path.join(parent, `db-${dbNum}`);
+
+    const confPath = trimSeparator(input.confPath) || defaultConfDir(productPath);
+    const globalDir = trimSeparator(input.globalDir) || DEFAULT_GLOBAL_DIR;
+
+    wslMkdirSync(dbDir);
+    // Jasper's own log directory, not the installation's: a start driven from
+    // here passes `-l` into this directory, so the one file Jasper's actions
+    // create lands on Jasper's side of the line.
+    wslMkdirSync(path.join(dbDir, 'log'));
+
+    const config: DatabaseYaml = {
+      version: info.version,
+      stoneName: input.stoneName,
+      ldiName: input.ldiName,
+      registered: true,
+      productPath,
+      confPath,
+      globalDir,
+      ...(input.netldiPort ? { netldiPort: input.netldiPort } : {}),
+    };
+    wslWriteFileSync(path.join(dbDir, 'database.yaml'), registeredDatabaseYaml(config));
+
+    appendSysadmin(
+      `Registered existing database db-${dbNum}: stone "${input.stoneName}", ` +
+        `NetLDI "${input.ldiName}"${input.netldiPort ? ` (port ${input.netldiPort})` : ''}, ` +
+        `GemStone ${info.version} at ${productPath}`,
+    );
+
+    return { dirName: `db-${dbNum}`, path: dbDir, config };
+  }
+
+  /**
+   * Write a registered database's NetLDI port into its record, when what is
+   * running disagrees with what was written down.
+   *
+   * The record's port exists so a login can address a NetLDI whose name may not
+   * resolve, and so `startNetldi` can ask for the same port back. Both are
+   * wrong the moment someone restarts that NetLDI outside Jasper, since it then
+   * takes a fresh ephemeral port — so the observed port replaces the remembered
+   * one rather than being merely preferred at the point of use. Only Jasper's
+   * own file is rewritten; the installation is untouched — and it is rewritten
+   * through the same serializer registration uses, so a record that recorded
+   * only its product tree keeps working rather than acquiring the literal
+   * `"undefined"` where its resolved defaults belong.
+   *
+   * Returns the config as it now stands, so a caller need not re-read it.
+   */
+  recordNetldiPort(db: GemStoneDatabase, port: number): DatabaseYaml {
+    if (!isRegisteredDatabase(db) || db.config.netldiPort === port) return db.config;
+    const updated: DatabaseYaml = { ...db.config, netldiPort: port };
+    wslWriteFileSync(path.join(db.path, 'database.yaml'), registeredDatabaseYaml(updated));
+    appendSysadmin(
+      `NetLDI "${updated.ldiName}" is on port ${port}; updated ${db.dirName}'s record` +
+        (db.config.netldiPort ? ` (was ${db.config.netldiPort})` : ''),
+    );
+    return updated;
+  }
+
+  /**
+   * Drop Jasper's record of a registered database, leaving the installation
+   * exactly as it was.
+   *
+   * The counterpart of Delete, which registered databases do not get: there is
+   * nothing of Jasper's to delete but the record, and nothing of the user's
+   * that Jasper should. Only the `db-N` directory Jasper wrote goes — and it goes
+   * whole: registering makes a `log/` inside it, so a non-recursive remove fails
+   * on its own subdirectory with EISDIR and the record can never be dropped.
+   */
+  async unregisterDatabase(db: GemStoneDatabase): Promise<boolean> {
+    if (!isRegisteredDatabase(db)) {
+      vscode.window.showErrorMessage(
+        `"${db.config.stoneName}" was created by Jasper — use Delete Database, which removes its files too.`,
+      );
+      return false;
+    }
+    const confirmed = await vscode.window.showWarningMessage(
+      `Stop managing "${db.config.stoneName}" (${db.dirName})?`,
+      {
+        modal: true,
+        detail:
+          `Only Jasper's record of it is removed. The installation at ` +
+          `${db.config.productPath} is left untouched, and any running stone keeps running.`,
+      },
+      'Unregister',
+    );
+    if (confirmed !== 'Unregister') return false;
+    wslRmSync(db.path, { recursive: true, force: true });
+    appendSysadmin(`Unregistered database ${db.dirName} (${db.config.stoneName})`);
+    return true;
+  }
+
+  /**
    * Where offline extent copies live: their own directory inside the database's
    * backups folder.
    *
@@ -164,6 +307,17 @@ export class DatabaseManager {
    * Answers the directory written to, or undefined if nothing was.
    */
   async offlineExtentBackup(db: GemStoneDatabase): Promise<string | undefined> {
+    // Copying a registered database's extents means reading the installation's
+    // files and writing copies of them; the panel offers no button for it, and
+    // this is the same answer for every other way in. Worth having, and what it
+    // needs is the extent list, which `db.path` cannot supply for a registered
+    // database: https://github.com/GemTalk/Jasper/issues/562
+    if (isRegisteredDatabase(db)) {
+      vscode.window.showErrorMessage(
+        registeredRefusal('back up the extents of', db.config.stoneName),
+      );
+      return undefined;
+    }
     // Re-read first, then refuse for a stone alive anywhere on the host — not
     // just one Jasper's own gslist knows about. Same guard, and same reasoning,
     // as deleting a database or replacing its extent.
@@ -240,6 +394,16 @@ export class DatabaseManager {
 
   /** Delete a database directory after confirmation */
   async deleteDatabase(db: GemStoneDatabase): Promise<boolean> {
+    // A registered database's files are the user's, not Jasper's. The panel
+    // greys the button and says why, and this is the same answer for every
+    // other way the command can be reached (palette, sidebar row).
+    if (isRegisteredDatabase(db)) {
+      vscode.window.showErrorMessage(
+        `${registeredRefusal('delete', db.config.stoneName)} Use Unregister Database to drop ` +
+          `Jasper's record of it instead.`,
+      );
+      return false;
+    }
     // Re-read before the guard: isServerAlive answers from the memoized
     // per-refresh gslist verdict, and the user may have started a stone by
     // hand since the tree last refreshed. Without this, the check could pass
@@ -273,6 +437,14 @@ export class DatabaseManager {
 
   /** Replace the extent and transaction logs with a fresh base extent */
   async replaceExtent(db: GemStoneDatabase): Promise<boolean> {
+    // The extent of a registered database is the installation's own file, in a
+    // directory the user handed over to be read, not overwritten.
+    if (isRegisteredDatabase(db)) {
+      vscode.window.showErrorMessage(
+        registeredRefusal('replace the extent of', db.config.stoneName),
+      );
+      return false;
+    }
     // See deleteDatabase: re-read first so the guard sees a stone the user
     // started by hand since the last refresh, then refuse for a stone alive
     // anywhere on the host, not just one Jasper's own gslist can see.
@@ -289,7 +461,10 @@ export class DatabaseManager {
       label: '$(folder-opened) Browse for extent file…',
       detail: 'Copy an extent from another location (e.g. a copy from another machine)',
     };
-    const currentExtent = db.config.baseExtent.replace(/\.dbf$/, '');
+    // Only a created database reaches here, and one always records its extent —
+    // but the field is optional on the type (a registered database has none), so
+    // an empty current selection is the honest fallback rather than a cast.
+    const currentExtent = (db.config.baseExtent ?? '').replace(/\.dbf$/, '');
     const items: vscode.QuickPickItem[] = [browseItem];
     const extents = this.storage.getAvailableExtents(db.config.version);
     if (extents.length > 0) {

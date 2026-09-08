@@ -122,11 +122,13 @@ jobs:
         run: npm audit signatures
 
   health-check:
-    # The Windows leg needs extra headroom (WSL provisioning + GCI client
-    # download); the Linux legs still fit in 5. Scoped per-platform so a
-    # Linux-side regression that doubles the runtime still trips the guard
-    # instead of quietly passing under the Windows leg's larger budget.
-    timeout-minutes: ${{ matrix.platform == 'windows-latest' && 10 || 5 }}
+    # Each platform gets its own budget, scaled to its actual runtime plus
+    # headroom, so a regression on one platform still trips the guard
+    # instead of quietly passing under a slower platform's larger budget.
+    # Windows needs the most (WSL provisioning + GCI client download);
+    # macOS needs more than Linux (DMG mount + shared-memory setup); Linux
+    # is the baseline.
+    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":5,"windows-latest":10,"macos-latest":8}')[matrix.platform] }}
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     runs-on: ${{ matrix.platform }}
@@ -157,7 +159,7 @@ jobs:
       SKIP_REPORT_PLUGIN_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
     strategy:
       matrix:
-        platform: [ubuntu-latest, windows-latest]
+        platform: [ubuntu-latest, windows-latest, macos-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
         node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
@@ -254,27 +256,40 @@ jobs:
         with:
           path: client/tmp/downloads
           # The Windows leg's server install also runs as Linux (inside WSL,
-          # see setup-gemstone-in-windows), so every current matrix platform
-          # downloads the same archive for a given version: one shared key,
-          # no runner.os, lets either leg warm the cache for the other.
-          # IMPORTANT: this assumes every platform downloads the Linux archive, which
-          # is only true today. gs-config.sh also has a Darwin branch that
-          # resolves a different filename (a .dmg, not this .zip); if a
-          # macos-latest leg ever joins the matrix, it needs its own key
-          # instead of reusing this one, or it'll silently stop caching.
-          key: gemstone-server-download-linux-${{ matrix.gemstone-version }}
-          # enableCrossOsArchive is required for that sharing to actually
-          # happen: actions/cache scopes its restore lookup by key *and* a
-          # version hash that silently appends a windows-only tag on
-          # Windows runners unless this is set, so without it the two
-          # platforms would never satisfy each other's cache despite using
-          # the same key string.
+          # see setup-gemstone-in-windows), so it downloads the same archive
+          # as the ubuntu-latest legs for a given version: grouping both
+          # under one 'linux' key lets either leg warm the cache for the
+          # other. macOS gets its own 'darwin' key because gs-config.sh
+          # resolves a different filename there (a .dmg, not the shared
+          # .zip). Reusing the Linux key would restore a cache hit whose
+          # contents never match the archive macOS actually needs, so it
+          # would always still re-download, and then never save (actions/
+          # cache skips saving after a hit), leaving the leg permanently
+          # uncached.
+          key: gemstone-server-download-${{ runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.gemstone-version }}
+          # enableCrossOsArchive is required for the ubuntu/windows sharing
+          # above to actually happen: actions/cache scopes its restore
+          # lookup by key *and* a version hash that silently appends a
+          # windows-only tag on Windows runners unless this is set, so
+          # without it the two platforms would never satisfy each other's
+          # cache despite using the same key string.
           enableCrossOsArchive: true
       - name: Setup GemStone in Windows
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-gemstone-in-windows
         with:
           gemstone-version: ${{ matrix.gemstone-version }}
+      - name: Configure macOS shared memory
+        # GemStone's Stone process attaches a System V shared page cache;
+        # macOS's default kern.sysv.shmmax/shmall are far too small for it
+        # (Stone fails with "fork of cache monitor failed, Monitor process
+        # did not start"), and macOS doesn't apply /etc/sysctl.conf-style
+        # config on its own. resources/setSharedMemory.sh is the same script
+        # end users run once via the extension's setup wizard; applying it
+        # with sysctl -w takes effect immediately, no reboot needed, which
+        # is what a same-boot CI runner needs.
+        if: runner.os == 'macOS'
+        run: sudo ./resources/setSharedMemory.sh
       - name: Setup GemStone in Linux
         if: runner.os != 'Windows'
         # zizmor(template-injection): bind the untrusted matrix value to an

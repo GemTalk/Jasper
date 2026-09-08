@@ -14,7 +14,7 @@ import { bundledWindowsClientVersions, bundledGciArchSupported } from '../bundle
 import { LoginStorage } from '../loginStorage';
 import { LoginTreeProvider } from '../loginTreeProvider';
 import { SysadminStorage } from '../sysadminStorage';
-import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
+import { DEFAULT_LOGIN, GemStoneLogin, loginLabel } from '../loginTypes';
 
 function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   return { ...DEFAULT_LOGIN, label: 'Test', ...overrides };
@@ -416,6 +416,165 @@ describe('LoginEditorPanel', () => {
       });
 
       expect(saveSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Pressing New Login on a database that already has its DataCurator login
+  // prefills the form from that database, so every answer matches the login
+  // already stored. Saving that used to overwrite the existing login with itself:
+  // no row appeared, nothing changed, and the panel looked untouched.
+  describe('saving a new login whose identity already exists', () => {
+    it('refuses it and says why, rather than overwriting the existing one', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      // No originalLabel: this is the "new login" path, not an edit.
+      await handler({ command: 'save', data: { ...existing } });
+
+      expect(storage.saveLogin).not.toHaveBeenCalled();
+      expect(window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('already exists'),
+      );
+    });
+
+    it('leaves the form open on the answer that has to change', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'save', data: { ...existing } });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
+    });
+
+    it('still saves a new login that differs, and one being edited', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      // A different user is a different login.
+      await handler({ command: 'save', data: { ...existing, gs_user: 'SystemUser' } });
+      expect(storage.saveLogin).toHaveBeenCalled();
+
+      // ...and an edit carries the original label, so the clash is itself.
+      vi.mocked(storage.saveLogin).mockClear();
+      await handler({
+        command: 'save',
+        data: { ...existing },
+        originalLabel: loginLabel(existing),
+      });
+      expect(storage.saveLogin).toHaveBeenCalled();
+    });
+
+    it('refuses an EDIT that turns one login into another that already exists', async () => {
+      // The same silent overwrite, reached the other way: changing the user,
+      // stone or host of an existing login into another row's identity makes
+      // `saveLogin` replace that other row, which vanishes from the list.
+      const existing = makeLogin({ gs_user: 'DataCurator' });
+      const other = makeLogin({ gs_user: 'SystemUser' });
+      storage.getLogins = vi.fn(() => [existing, other]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: { ...existing, gs_user: 'SystemUser' },
+        originalLabel: loginLabel(existing),
+      });
+
+      expect(storage.saveLogin).not.toHaveBeenCalled();
+      expect(window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('already exists'),
+      );
+      expect(panel.dispose).not.toHaveBeenCalled();
+    });
+
+    it('still saves an edit that changes only what does not identify the login', async () => {
+      // Password, tags and NetLDI are not part of the label, so the row being
+      // edited must not be read as a clash with itself.
+      const existing = makeLogin({ gs_user: 'DataCurator' });
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: { ...existing, netldi: 'someotherldi' },
+        originalLabel: loginLabel(existing),
+      });
+
+      expect(storage.saveLogin).toHaveBeenCalled();
+    });
+  });
+
+  describe('what Save and Cancel do with the panel', () => {
+    it('closes it, because a Save/Cancel form ends its editing session on Save', async () => {
+      // The toast used to be the only sign the work had landed: the form stayed
+      // up, submitted, and had to be closed by hand.
+      vi.spyOn(storage, 'saveLogin').mockResolvedValue();
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: makeLogin({ stone: 'edited' }),
+        originalLabel: 'Test',
+      });
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('closes it on Cancel too, so the pair agrees about what finishes', async () => {
+      // Cancel used to post `requestData`, which reverted the form in place and
+      // left the panel up — one button that finished the editing session and one
+      // that did not.
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'cancel' });
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('still answers requestData without closing, since the form loads with it', async () => {
+      // The webview asks for its data on load; only the Cancel button was
+      // rerouted, so this must stay a plain reply.
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'requestData' });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
+      expect(panel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'loadData' }),
+      );
+    });
+
+    it('leaves it open when the save was refused as read-only', async () => {
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin(), undefined, true);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'save', data: makeLogin(), originalLabel: 'Test' });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
     });
   });
 

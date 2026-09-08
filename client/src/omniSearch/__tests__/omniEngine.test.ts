@@ -180,6 +180,163 @@ describe('createOmniEngine', () => {
     expect(upperView!.rows[0].label).toBe('Signal'); // uppercase → name first
   });
 
+  it('orders score-0 Source hits by class then selector, not by the order they arrived', async () => {
+    // Source hits match a method BODY, so they all carry score 0 and there is no label match to rank
+    // on. The rows below are the shape that used to come back in the stone's own traversal order —
+    // and whose same-selector-only class tiebreak made the comparator cyclic (issue #532).
+    const sourceHit = (className: string, selector: string): OmniResult => ({
+      categoryId: 'source',
+      label: `${className}>>${selector}`,
+      score: 0,
+      ranges: [],
+      action: {
+        kind: 'openMethod',
+        sessionId: 1,
+        dictName: 'Globals',
+        className,
+        isMeta: false,
+        category: 'accessing',
+        selector,
+        environmentId: 0,
+        dictIndex: 0,
+      },
+    });
+    const engine = createOmniEngine({
+      providers: [
+        fakeProvider('source', [
+          sourceHit('Array', 'at:'),
+          sourceHit('Bag', 'at:'),
+          sourceHit('Array', 'at:put:'),
+          sourceHit('Array', '_basicAt:put:'),
+          sourceHit('AbstractDictionary', '_at:'),
+          sourceHit('AppendableString', 'at:put:'),
+        ]),
+      ],
+      config: cfg(),
+    });
+    await engine.setScope('source');
+    const view = await engine.search('anIndex');
+    expect(view!.rows.map((r) => r.label)).toEqual([
+      'AbstractDictionary>>_at:',
+      'AppendableString>>at:put:',
+      'Array>>_basicAt:put:',
+      'Array>>at:',
+      'Array>>at:put:',
+      'Bag>>at:',
+    ]);
+  });
+
+  it('puts a class-side method after the instance-side one of the same name', async () => {
+    const sided = (className: string, isMeta: boolean): OmniResult => ({
+      categoryId: 'methods',
+      label: `${className}${isMeta ? ' class' : ''}>>at:`,
+      score: 5,
+      ranges: [],
+      action: {
+        kind: 'openMethod',
+        sessionId: 1,
+        dictName: 'Globals',
+        className,
+        isMeta,
+        category: 'accessing',
+        selector: 'at:',
+        environmentId: 0,
+        dictIndex: 0,
+      },
+    });
+    const engine = createOmniEngine({
+      providers: [fakeProvider('methods', [sided('Array', true), sided('Array', false)])],
+      config: cfg(),
+    });
+
+    const view = await engine.search('at:');
+
+    expect(view!.rows.map((r) => r.label)).toEqual(['Array>>at:', 'Array class>>at:']);
+  });
+
+  it('still leads with the better match when scores differ', async () => {
+    const engine = createOmniEngine({
+      providers: [
+        fakeProvider('methods', [
+          methodResult('Zebra>>at:', 'at:', 9),
+          methodResult('Apple>>at:', 'at:', 1),
+        ]),
+      ],
+      config: cfg(),
+    });
+
+    const view = await engine.search('at:');
+
+    // Alphabetically Apple leads; the score outranks that, and only breaks ties below it.
+    expect(view!.rows.map((r) => r.label)).toEqual(['Zebra>>at:', 'Apple>>at:']);
+  });
+
+  it('keeps a total order over method-like rows that are not method opens', async () => {
+    // Nothing produces one today — Methods, Source and Literals all open a method. The key falls
+    // back to the label so that stays true of a row some later provider puts in that bucket, rather
+    // than the comparator quietly going cyclic again.
+    const oddity = (label: string): OmniResult => ({
+      categoryId: 'source',
+      label,
+      score: 0,
+      ranges: [],
+      action: {
+        kind: 'openClass',
+        sessionId: 1,
+        dictName: 'Globals',
+        className: label,
+        dictIndex: 1,
+      },
+    });
+    const engine = createOmniEngine({
+      providers: [fakeProvider('source', [oddity('Zebra'), oddity('Apple'), oddity('Mango')])],
+      config: cfg(),
+    });
+    await engine.setScope('source');
+
+    const view = await engine.search('anIndex');
+
+    expect(view!.rows.map((r) => r.label)).toEqual(['Apple', 'Mango', 'Zebra']);
+  });
+
+  it('ranks the same rows the same way whatever order the provider hands them back in', async () => {
+    // A transitive comparator is one whose output doesn't depend on the input permutation. A cyclic
+    // one lets Array.prototype.sort return anything — which is how the stone's traversal order used
+    // to survive the sort untouched.
+    const methods = [
+      methodResult('AppendableString>>at:put:', 'at:put:', 0),
+      methodResult('Array>>at:put:', 'at:put:', 0),
+      methodResult('Array>>_basicAt:put:', '_basicAt:put:', 0),
+      methodResult('Bag>>at:', 'at:', 0),
+    ].map((m, i) => ({
+      ...m,
+      action: { ...m.action, className: m.label.split('>>')[0] },
+      // Keep every score equal so only the tiebreaks decide, as in a Source search.
+      score: 0,
+      ranges: [] as Array<[number, number]>,
+      categoryId: 'methods' as const,
+      description: `row ${i}`,
+    }));
+    const rank = async (rows: OmniResult[]) => {
+      const engine = createOmniEngine({
+        providers: [fakeProvider('methods', rows)],
+        config: cfg(),
+      });
+      const view = await engine.search('at');
+      return view!.rows.map((r) => r.label);
+    };
+    const forwards = await rank(methods);
+    const backwards = await rank([...methods].reverse());
+    expect(forwards).toEqual(backwards);
+    // Prefix matches still lead (`_basicAt:put:` merely contains "at"); the rest is class A→Z.
+    expect(forwards).toEqual([
+      'AppendableString>>at:put:',
+      'Array>>at:put:',
+      'Bag>>at:',
+      'Array>>_basicAt:put:',
+    ]);
+  });
+
   it('includes only categories that returned results', async () => {
     const engine = createOmniEngine({
       providers: [fakeProvider('classes', [classResult('Foo')]), fakeProvider('methods', [])],

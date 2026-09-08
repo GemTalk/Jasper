@@ -215,10 +215,11 @@ export class GemStoneDebugSession extends DebugSession {
     // so a breakpoint here could never be hit again. Refuse it out loud rather
     // than report a verified breakpoint that silently never fires.
     //
-    // `sourceRequest` withholds the mime type that used to resolve this document
-    // to the gemstone-smalltalk language, so VS Code no longer offers the gutter
-    // here. This stays as the backstop for the ways a request can still arrive —
-    // `debug.allowBreakpointsEverywhere`, or a client that is not VS Code.
+    // VS Code does not offer the gutter here: `contributes.breakpoints` names
+    // gemstone-method, and this document resolves to gemstone-smalltalk (see
+    // `sourceRequest`). This stays as the backstop for the ways a request can
+    // still arrive — `debug.allowBreakpointsEverywhere`, or a client that is not
+    // VS Code.
     if (args.source.sourceReference && args.source.sourceReference > 0) {
       for (let i = 0; i < requestedLines.length; i++) {
         breakpoints.push({
@@ -339,14 +340,16 @@ export class GemStoneDebugSession extends DebugSession {
 
     try {
       const source = debug.getMethodSource(this.session, methodOop);
-      // Deliberately no `mimeType`. Returning 'text/x-gemstone-smalltalk' resolved
-      // this document to the gemstone-smalltalk language (the language declares
-      // that mime type in package.json), and `contributes.breakpoints` names that
-      // language — so VS Code offered the breakpoint gutter on a frame that cannot
-      // hold a breakpoint. Withholding it costs syntax highlighting in this
-      // read-only view, which the debugger panel's own source pane provides
-      // anyway, and buys a gutter that never invites a breakpoint it must refuse.
-      response.body = { content: source };
+      // The mime type resolves this document to the gemstone-smalltalk language
+      // (declared in package.json), so the read-only frame source is syntax
+      // highlighted. It offers no breakpoint gutter: `contributes.breakpoints`
+      // names gemstone-method, which only a compiled method's own editor is
+      // given (see client/src/languageIds.ts), and a frame like this — an ad-hoc
+      // execution, or a method whose class is not bound in the symbol list — has
+      // no compiled method to arm. This mime type used to be withheld precisely
+      // to keep the gutter away, at the cost of the highlighting; the language
+      // split pays for both.
+      response.body = { content: source, mimeType: 'text/x-gemstone-smalltalk' };
     } catch (e) {
       response.body = { content: `// Error fetching source: ${e}` };
     }
