@@ -147,7 +147,30 @@ jobs:
     # Windows needs the most (WSL provisioning + GCI client download);
     # macOS needs more than Linux (DMG mount + shared-memory setup); Linux
     # is the baseline.
-    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":5,"windows-latest":10,"macos-latest":8}')[matrix.platform] }}
+    #
+    # The numbers come from measuring 3735 matrix legs across 300 runs
+    # (2026-08-26 to 2026-09-08), not from guesswork. Duration of the legs
+    # that passed, in minutes:
+    #
+    #   platform        median   p95    max
+    #   ubuntu-latest    3.17    3.63   4.17
+    #   windows-latest   6.27    7.08   9.30
+    #   macos-latest     4.38    5.51   7.43
+    #
+    # Each budget is ~1.5-2x its median and comfortably above the observed
+    # max: close enough to catch a real regression, far enough that ordinary
+    # runner variance doesn't turn a PR red. The previous budgets (5/10/8)
+    # sat within 7-20% of the observed max on every platform, so all three
+    # were producing false timeouts — jobs that were merely on a slow runner,
+    # not hung.
+    #
+    # A false timeout is expensive here: on Windows the GemStone setup step
+    # doesn't acknowledge the cancel signal, so GitHub's 5-minute force-kill
+    # grace kicks in and the job burns 15 minutes, not 12. Genuine hangs are
+    # unbounded (the wedged step sits with no progress and would never
+    # finish), so a larger budget costs only those extra minutes on the rare
+    # hang while sparing every slow-but-healthy run.
+    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":6,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     runs-on: ${{ matrix.platform }}
