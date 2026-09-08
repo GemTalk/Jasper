@@ -174,8 +174,17 @@ export class ObjectGraphWalk {
   /** Release every pinned object. Called when the walk restarts or the panel closes, so a
    *  long exploration does not leave a hundred objects pinned in the session. */
   releaseAll(): void {
-    for (const step of this.trail) this.deps.unpin(step.oop);
+    // The CANVAS as well as the trail. Every box is pinned when it is put on the graph, and
+    // most boxes are never centred on, so releasing the trail alone left the majority of a
+    // long exploration's objects pinned in the session's export set for as long as it
+    // lasted — which is the exact thing this method's name promises not to do.
+    const released = new Set<string>();
+    for (const step of this.trail) released.add(step.oop.toString());
+    for (const node of this.canvasNodes) released.add(node.oop);
+    for (const oop of released) this.deps.unpin(BigInt(oop));
     this.trail = [];
+    this.canvasNodes = [];
+    this.canvasEdges = [];
     this.expanded = undefined;
     this.groupsByOop.clear();
   }
