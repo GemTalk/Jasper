@@ -91,6 +91,7 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
+import * as vscode from 'vscode';
 import { SessionManager, evaluateLoginPolicy } from '../sessionManager';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import { GciLibraryError } from '../gciLibraryError';
@@ -219,6 +220,73 @@ describe('SessionManager', () => {
     manager.logout(session.id);
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
+  });
+
+  describe('resolveSession', () => {
+    const twoSessions = () => {
+      configValues['sessionMode'] = 'multiple';
+      manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
+      const second = manager.login({ ...DEFAULT_LOGIN, label: 'Two' }, '/mock/lib');
+      manager.selectSession(second.id);
+      return second;
+    };
+
+    it('uses the selected session without asking', async () => {
+      const selected = twoSessions();
+
+      const resolved = await manager.resolveSession();
+
+      expect(resolved?.id).toBe(selected.id);
+      expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    });
+
+    it('asks anyway under alwaysAsk, for a command a wrong stone would cost', async () => {
+      const selected = twoSessions();
+      vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+        label: 'One',
+        session: manager.getSessions()[0],
+      } as unknown as vscode.QuickPickItem);
+
+      const resolved = await manager.resolveSession({ alwaysAsk: true });
+
+      expect(vscode.window.showQuickPick).toHaveBeenCalled();
+      expect(resolved?.id).not.toBe(selected.id);
+    });
+
+    it('leads with the selected session, marked, so Enter keeps it', async () => {
+      const selected = twoSessions();
+      vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+      await manager.resolveSession({ alwaysAsk: true });
+
+      const items = vi.mocked(vscode.window.showQuickPick).mock.calls[0][0] as unknown as {
+        description: string;
+        session: { id: number };
+      }[];
+      expect(items[0].session.id).toBe(selected.id);
+      expect(items[0].description).toContain('current');
+    });
+
+    it('asks nothing when only one session is logged in, however it is called', async () => {
+      const only = manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
+
+      const resolved = await manager.resolveSession({ alwaysAsk: true });
+
+      expect(resolved?.id).toBe(only.id);
+      expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    });
+
+    it("carries the caller's wording into the prompt", async () => {
+      twoSessions();
+      vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+      await manager.resolveSession({ alwaysAsk: true, placeHolder: 'file into' });
+
+      expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ placeHolder: 'file into' }),
+      );
+    });
   });
 
   describe('ping', () => {

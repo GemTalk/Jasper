@@ -8,6 +8,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Using `overrides` in root `package.json`](how-to/npm-overrides.md) — an override may only narrow; violating that silently breaks packaging.
 - [Raising the VS Code / Node version floor](how-to/raising-the-version-floor.md) — the coordinated set of files that must move together.
 - [Publishing a release](how-to/publishing-a-release.md) — the maintainer-only token pre-flight, version bump, changelog sweep, and dual-registry publish, and why a success message is not yet a live release.
+- [Consulting the official GemStone manuals](how-to/consulting-the-gemstone-manuals.md) — the optional `npm run docs:fetch` download, and how the agent uses it.
 
 ## Explanation
 
