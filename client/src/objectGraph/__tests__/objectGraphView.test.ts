@@ -232,3 +232,204 @@ describe('where the page is scrolled after a redraw', () => {
     ).not.toThrow();
   });
 });
+
+describe('dragging a box', () => {
+  /** A press, a move and a release, in CSS pixels -- which are diagram units here, since
+   *  the svg is drawn 1:1 with its viewBox. */
+  const dragBy = (page: Loaded, box: Element, dx: number, dy: number): void => {
+    const grip = box.querySelector('[data-drag-handle]')!;
+    const at = (type: string, x: number, y: number, target: Element): void => {
+      target.dispatchEvent(
+        new page.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }),
+      );
+    };
+    at('pointerdown', 100, 100, grip);
+    at('pointermove', 100 + dx, 100 + dy, grip);
+    at('pointerup', 100 + dx, 100 + dy, grip);
+  };
+
+  it('sends only the final position, so the host re-routes the edges', () => {
+    // The movement is local; a second copy of the router in here is the thing being
+    // avoided, which is why the edges hold still during a drag and snap when it ends.
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+    const x0 = Number(box.getAttribute('data-bx'));
+    const y0 = Number(box.getAttribute('data-by'));
+
+    dragBy(page, box, 40, 25);
+
+    expect(posted).toEqual([{ command: 'moveBox', boxId: 'o:3', x: x0 + 40, y: y0 + 25 }]);
+  });
+
+  it('ignores a press that never became a move', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+
+    dragBy(page, box, 1, 1);
+
+    expect(posted).toEqual([]);
+  });
+
+  it('does not also focus the object it moved', () => {
+    // The grip sits inside a box that carries data-focus-oop, so the click the press would
+    // otherwise produce has to be swallowed.
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+
+    dragBy(page, box, 40, 25);
+    click(page, box);
+
+    expect(posted).toEqual([
+      { command: 'moveBox', boxId: 'o:3', x: expect.any(Number), y: expect.any(Number) },
+    ]);
+  });
+
+  it('takes the next click again, once one has been swallowed', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+
+    dragBy(page, box, 40, 25);
+    click(page, box);
+    click(page, box);
+
+    expect(posted[posted.length - 1]).toEqual({ command: 'focusNode', oop: '3' });
+  });
+
+  it('never drags a box to a negative position', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:2"]')!;
+
+    dragBy(page, box, -9999, -9999);
+
+    expect(posted).toEqual([{ command: 'moveBox', boxId: 'o:2', x: 0, y: 0 }]);
+  });
+
+  it('leaves the grip the only place a drag can start', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+    const notTheGrip = box.querySelector('rect')!;
+
+    notTheGrip.dispatchEvent(
+      new page.window.MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+      }),
+    );
+    notTheGrip.dispatchEvent(
+      new page.window.MouseEvent('pointermove', { bubbles: true, clientX: 200, clientY: 200 }),
+    );
+    notTheGrip.dispatchEvent(
+      new page.window.MouseEvent('pointerup', { bubbles: true, clientX: 200, clientY: 200 }),
+    );
+
+    expect(posted.some((m) => m.command === 'moveBox')).toBe(false);
+  });
+});
+
+describe('hiding a line', () => {
+  // Hiding trims the DRAWING, never the graph: an edge is a fact about the repository, so
+  // this never leaves the webview and any redraw brings every line back.
+  const selectedEdge = (page: Loaded): Element => {
+    const edge = page.doc.querySelector('[data-edge][data-tip]')!;
+    click(page, edge.querySelector('.edgehit')!);
+    return edge;
+  };
+
+  it('takes the line off the drawing without telling the host', () => {
+    const page = load(chain(4));
+    const edge = selectedEdge(page);
+
+    click(page, edge.querySelector('[data-edge-hide]')!);
+
+    expect(edge.classList.contains('hidden')).toBe(true);
+    expect(posted).toEqual([]);
+  });
+
+  it('counts what is hidden, so nothing is a dead end', () => {
+    const page = load(chain(4));
+
+    click(page, selectedEdge(page).querySelector('[data-edge-hide]')!);
+
+    expect(page.doc.getElementById('edgebar')!.hasAttribute('hidden')).toBe(false);
+    expect(page.doc.getElementById('edgecount')!.textContent).toBe('1');
+  });
+
+  it('puts them all back on request', () => {
+    const page = load(chain(4));
+    click(page, selectedEdge(page).querySelector('[data-edge-hide]')!);
+
+    click(page, page.doc.getElementById('restoreedges')!);
+
+    expect(page.doc.querySelectorAll('[data-edge].hidden')).toHaveLength(0);
+    expect(page.doc.getElementById('edgebar')!.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('lets the selection go with the line it was on', () => {
+    const page = load(chain(4));
+    const edge = selectedEdge(page);
+
+    click(page, edge.querySelector('[data-edge-hide]')!);
+
+    expect(page.doc.querySelectorAll('[data-edge].hl')).toHaveLength(0);
+    expect(edge.querySelector(':scope > title')).toBeNull();
+  });
+
+  it('offers no × until a line is selected', () => {
+    // An × on every edge would be exactly the clutter it exists to relieve; it is CSS-
+    // hidden until then, and the bar stays away while nothing is hidden.
+    const page = load(chain(4));
+
+    expect(page.doc.getElementById('edgebar')!.hasAttribute('hidden')).toBe(true);
+  });
+});
+
+describe('the other controls', () => {
+  it('walks back along the breadcrumb without opening a tab', () => {
+    const page = load(chain(4));
+    const crumb = page.doc.querySelector('[data-goto]');
+    if (!crumb) return; // a one-step trail has no way back, which is itself correct
+
+    click(page, crumb);
+
+    expect(posted).toEqual([{ command: 'goTo', index: 0 }]);
+  });
+
+  it('asks the host to put removed boxes back', () => {
+    const page = load({ ...chain(4), removedCount: 2 });
+
+    click(page, page.doc.querySelector('[data-restore-removed]')!);
+
+    expect(posted).toEqual([{ command: 'restoreRemoved' }]);
+  });
+
+  it('asks the host to drop every hand placement', () => {
+    const page = load({ ...chain(4), positions: { 'o:2': { x: 400, y: 250 } } });
+
+    click(page, page.doc.querySelector('[data-reset-layout]')!);
+
+    expect(posted).toEqual([{ command: 'resetLayout' }]);
+  });
+
+  it('offers neither control while there is nothing to undo', () => {
+    // Not drawn at all rather than drawn disabled: a way back that leads nowhere is one
+    // more thing on a page whose whole problem was having too much on it.
+    const page = load(chain(4));
+
+    expect(page.doc.querySelector('[data-restore-removed]')).toBeNull();
+    expect(page.doc.querySelector('[data-reset-layout]')).toBeNull();
+  });
+
+  it('lets the innermost control win, whatever encloses it', () => {
+    // Nesting decides, not the order of the routing table: a × inside a box that is itself
+    // clickable used to turn into a re-centre.
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+    const remove = box.querySelector('[data-remove-oop]')!;
+
+    click(page, remove);
+
+    expect(posted).toEqual([{ command: 'removeFromCanvas', oop: '3' }]);
+  });
+});
