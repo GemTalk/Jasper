@@ -52,10 +52,6 @@ describe('rename class + class history (integration)', () => {
     expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
 
-  // Generous timeout, as on every other in-stone suite here: one blocking exec files
-  // in the whole engine-tests payload and runs two SUnit suites over the GCI. It was
-  // left on vitest's 5s default and landed at 5.8s on a macOS CI runner, failing a push
-  // that had nothing to do with refactoring.
   it('runs the rename-class and class-history GS SUnit suites in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 

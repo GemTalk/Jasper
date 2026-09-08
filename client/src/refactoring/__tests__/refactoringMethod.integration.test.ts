@@ -58,10 +58,6 @@ describe('rename method (integration)', () => {
     expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
 
-  // Generous timeout, as on every other in-stone suite here: one blocking exec files
-  // in the whole engine-tests payload and runs FOUR SUnit suites over the GCI. It was
-  // left on vitest's 5s default and landed at 5.6s on a macOS CI runner, failing a push
-  // that had nothing to do with refactoring.
   it('runs the engine GS SUnit suites in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
@@ -92,7 +88,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
     const [runCount, failed] = exec(code).trim().split(' ');
     expect(Number(runCount)).toBeGreaterThanOrEqual(15);
     expect(failed).toBe('0');
-  });
+  }, 60_000);
 
   const BASE = 'RMItBase';
   const defineFixture = (): void => {
