@@ -24,6 +24,9 @@
  *   data-remove-oop         -> { command: 'removeFromCanvas', oop }
  *   data-remove-group       -> { command: 'removeGroup', ownerOop, className }
  *   data-clear-canvas       -> { command: 'clearCanvas' }
+ *   data-focus-oop          -> { command: 'focusNode', oop }
+ *   data-reset-layout       -> { command: 'resetLayout' }
+ *   data-restore-removed    -> { command: 'restoreRemoved' }
  *
  * Two gestures never leave the view at all, because they decorate the drawing rather than
  * change the walk: clicking an edge selects it, and `data-edge-hide` trims one out.
@@ -36,7 +39,6 @@
  * Dragging a box is a third case, and a mixed one: the movement is local, but the position
  * has to outlive the next redraw, so on release it goes up as
  * `{ command: 'moveBox', boxId, x, y }` and `[data-reset-layout]` clears them all.
- *   data-focus-oop          -> { command: 'focusNode', oop }
  *
  * Exposed as the global `ObjectGraphView` so both the webview (classic <script>) and tests
  * (new Function(source)()) can reach `wire`.
@@ -168,6 +170,11 @@
     // box, since the row has no x of its own. Oops are digit strings, so they go into an
     // attribute selector as they are.
     function boxLeftOf(oop) {
+      // Digits only. This value came from a reply the stone streamed, and a stray quote in
+      // it would throw SyntaxError out of querySelector -- which happens during wire(),
+      // after the listeners are attached, so the page stays clickable while the scroll
+      // handling silently never installs.
+      if (!/^\d+$/.test(String(oop))) return null;
       var box = doc.querySelector('[data-box="o:' + oop + '"]');
       if (!box) {
         var row = doc.querySelector('[data-focus-oop="' + oop + '"]');
@@ -293,6 +300,9 @@
     var DRAG_THRESHOLD = 3;
 
     doc.addEventListener('pointerdown', function (event) {
+      // A new press starts a new gesture, so a swallow left over from a drag that never
+      // saw its click cannot eat an unrelated one later.
+      suppressClick = false;
       if (event.button !== 0) return;
       var el = event.target;
       if (!el || !el.closest) return;
@@ -302,6 +312,17 @@
       if (!el.closest('[data-drag-handle]')) return;
       var box = el.closest('g[data-box]');
       if (!box) return;
+      // Capture, so the move and the release keep coming to us even once the pointer has
+      // left the webview. Without it, releasing outside the frame left `drag` non-null and
+      // the box glued to the pointer, and the next unrelated click committed a move the
+      // user never made.
+      if (typeof box.setPointerCapture === 'function') {
+        try {
+          box.setPointerCapture(event.pointerId);
+        } catch (_e) {
+          // Not fatal -- the buttons check below is the backstop.
+        }
+      }
       drag = {
         box: box,
         id: box.getAttribute('data-box'),
@@ -315,6 +336,14 @@
 
     doc.addEventListener('pointermove', function (event) {
       if (!drag) return;
+      // The button went up somewhere we never heard about; drop the drag rather than
+      // dragging on with nothing held.
+      if (event.buttons === 0) {
+        drag.box.classList.remove('dragging');
+        drag.box.removeAttribute('transform');
+        drag = null;
+        return;
+      }
       var dx = event.clientX - drag.px;
       var dy = event.clientY - drag.py;
       if (!drag.moved && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
@@ -338,6 +367,13 @@
         x: Math.max(0, d.x0 + (event.clientX - d.px)),
         y: Math.max(0, d.y0 + (event.clientY - d.py)),
       });
+    });
+
+    doc.addEventListener('pointercancel', function () {
+      if (!drag) return;
+      drag.box.classList.remove('dragging');
+      drag.box.removeAttribute('transform');
+      drag = null;
     });
 
     var suppressClick = false;

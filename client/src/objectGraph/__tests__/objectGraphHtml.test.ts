@@ -7,7 +7,12 @@
 // presented as a false one.
 import { describe, it, expect } from 'vitest';
 
-import { renderObjectGraphHtml, ObjectGraphView } from '../objectGraphHtml';
+import {
+  renderObjectGraphHtml,
+  isMetaclassName,
+  classNameFromMetaclass,
+  ObjectGraphView,
+} from '../objectGraphHtml';
 import type { CanvasNode } from '../objectGraphHtml';
 import type { ReferrerGroup, SlotEdge } from '../../queries/objectGraph';
 
@@ -297,12 +302,166 @@ describe('what the panel says about itself', () => {
     expect(renderObjectGraphHtml(viewOf({ groups: many }))).toContain('referrer classes');
   });
 
-  it('escapes a printString rather than letting it close a tag', () => {
-    // Labels are arbitrary text from the stone.
+  it('escapes stone text rather than letting it close a tag', () => {
+    // Labels, class names and slot names are arbitrary text from the stone, and they land
+    // in attribute values as well as in element text.
+    //
+    // The fixture needs a SECOND node: with one node and no groups the panel draws no
+    // graph at all, `svgOf` returns '', and an assertion that the empty string contains no
+    // `<script>` passes however broken the escaping is.
+    const payload = '"><script>alert(1)</script>';
     const view = viewOf({
-      canvas: { nodes: [node('10', '<script>alert(1)</script>', 'Evil')], edges: [] },
+      groupsByOop: { '10': [group(`Cls${payload}`, '100', 1)] },
+      canvas: {
+        nodes: [
+          node('10', `Product${payload}`, 'GraphDemoProduct'),
+          node('20', `Item${payload}`, `Cls${payload}`, '10', `Cls${payload}`),
+        ],
+        edges: [{ fromOop: '20', toOop: '10', via: `slot${payload}` }],
+      },
+    });
+    const svg = svgOf(view);
+
+    expect(svg).not.toBe('');
+    expect(svg).not.toContain('<script>');
+    // Present, but inert: the payload survives as text with its markup escaped.
+    expect(svg).toContain('&lt;script&gt;');
+  });
+
+  it('escapes the class name that goes into an edge’s identity', () => {
+    // A group box's id embeds the referrer class name, and that id is written into an
+    // attribute. It was the one interpolation in the file that skipped escapeHtml, while
+    // the identical value was escaped twice more further down.
+    const view = viewOf({
+      groupsByOop: { '10': [group('Cls"><b>', '100', 4)] },
+      canvas: {
+        nodes: [
+          node('10', 'Product(Widget)', 'GraphDemoProduct'),
+          node('20', 'A', 'Cls"><b>', '10', 'Cls"><b>'),
+          node('21', 'B', 'Cls"><b>', '10', 'Cls"><b>'),
+        ],
+        edges: [],
+      },
+    });
+    const svg = svgOf(view);
+
+    expect(svg).toContain('data-edge="sg:10:Cls&quot;&gt;&lt;b&gt;"');
+    expect(svg).not.toContain('<b>');
+  });
+});
+
+describe('how much of a big answer it draws', () => {
+  // `Object` answers 3,380 referrer classes on a 3.7.5 stone. Drawn uncapped that is one
+  // column of 3,380 boxes and no picture at all, so the diagram takes the largest few and
+  // the table below carries the rest.
+  const manyGroups = (n: number): ObjectGraphView =>
+    viewOf({
+      groups: Array.from({ length: n }, (_, i) => group(`C${i}`, String(i), n - i)),
+      groupsByOop: {
+        '10': Array.from({ length: n }, (_, i) => group(`C${i}`, String(i), n - i)),
+      },
+      canvas: {
+        nodes: [
+          node('10', 'Product(Widget)', 'GraphDemoProduct'),
+          node('20', 'One', 'C0', '10', 'C0'),
+        ],
+        edges: [],
+      },
     });
 
-    expect(svgOf(view)).not.toContain('<script>');
+  it('caps the boxes it draws however many classes came back', () => {
+    const svg = svgOf(manyGroups(100));
+
+    expect(attrs(svg, /data-box="(g:[^"]*)"/g).length).toBe(20);
+  });
+
+  it('draws them all when there are few enough', () => {
+    const svg = svgOf(manyGroups(5));
+
+    expect(attrs(svg, /data-box="(g:[^"]*)"/g).length).toBe(5);
+  });
+
+  it('says how many it drew and how many there were', () => {
+    // The note is only honest if the number in it is the number of boxes.
+    const html = renderObjectGraphHtml(manyGroups(100));
+
+    expect(html).toContain('Drawing the 20 largest of 100 referrer classes');
+    expect(attrs(svgOf(manyGroups(100)), /data-box="(g:[^"]*)"/g).length).toBe(20);
+  });
+
+  it('makes no such claim when it drew everything', () => {
+    expect(renderObjectGraphHtml(manyGroups(5))).not.toContain('Drawing the');
+  });
+});
+
+describe('the parts of the panel below the picture', () => {
+  // None of the fixtures above reaches these: every trail is one step and nothing is
+  // expanded, so the breadcrumb, the referrer table and the expanded object rows could all
+  // return '' and the suite would not notice.
+  const walked = (over: Partial<ObjectGraphView> = {}): ObjectGraphView =>
+    viewOf({
+      trail: [
+        { oop: '10', label: 'GraphDemoProduct' },
+        { oop: '20', label: 'GraphDemoLineItem' },
+      ] as ObjectGraphView['trail'],
+      targetOop: '20',
+      groups: [group('GraphDemoOrder', '400', 12)],
+      ...over,
+    });
+
+  it('offers a way back to every step but the one you are on', () => {
+    const html = renderObjectGraphHtml(walked());
+
+    expect(html).toContain('data-goto="0"');
+    expect(html).not.toContain('data-goto="1"');
+  });
+
+  it('lists the referrer classes under the picture', () => {
+    const html = renderObjectGraphHtml(walked());
+
+    expect(html).toContain('GraphDemoOrder');
+    expect(html).toContain('data-expand="400"');
+  });
+
+  it('lists the objects of an expanded class, with what each offers', () => {
+    const html = renderObjectGraphHtml(
+      walked({
+        expanded: {
+          ownerOop: '20',
+          classOop: '400',
+          className: 'GraphDemoOrder',
+          total: 12,
+          objects: [
+            { oop: '50', printString: 'Order(SO-1001)', isClass: false },
+            { oop: '51', printString: 'GraphDemoOrder', isClass: true },
+          ],
+        },
+      }),
+    );
+
+    expect(html).toContain('Order(SO-1001)');
+    expect(html).toContain('data-focus-oop="50"');
+    expect(html).toContain('data-add-oop="50"');
+    // A referrer that is itself a class can go to the Explorer instead.
+    expect(html).toContain('data-reveal-oop="51"');
+    // And it says what it is not showing.
+    expect(html).toContain('12');
+  });
+});
+
+describe('telling a metaclass referrer from an ordinary one', () => {
+  // GemStone spells a metaclass `Foo class`, and a referrer of that shape means the
+  // referrer IS the class Foo — so the Explorer becomes a useful offer beside another hop.
+  // Both helpers are exported precisely so the row's offer and the host's action agree.
+  it('recognises the way GemStone spells a metaclass', () => {
+    expect(isMetaclassName('LibcFcntl class')).toBe(true);
+    expect(isMetaclassName('LibcFcntl')).toBe(false);
+    // Not merely "contains the word class".
+    expect(isMetaclassName('GraphDemoClassRegistry')).toBe(false);
+    expect(isMetaclassName('class')).toBe(false);
+  });
+
+  it('answers the class a metaclass row refers to', () => {
+    expect(classNameFromMetaclass('LibcFcntl class')).toBe('LibcFcntl');
   });
 });

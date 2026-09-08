@@ -109,6 +109,15 @@ interface Visited {
 const SOLE_AUTO_LIMIT = 8;
 
 export class ObjectGraphWalk {
+  /** Every OOP this walk holds a pin on, so pinning is idempotent and `releaseAll`
+   *  releases exactly what was taken.
+   *
+   *  The host counts pins per session, because two graph tabs can hold the same object.
+   *  That makes a double pin from ONE tab a permanent leak: `centreOn` pinned on every
+   *  entry while `releaseAll` released each distinct OOP once, so re-centring on a box
+   *  already on the canvas — the feature's primary gesture — left it pinned in the
+   *  session's export set until logout. The ledger is what makes the two sides agree. */
+  private pinned = new Set<string>();
   /** Visited objects, oldest first. The last is the centre. */
   private trail: Visited[] = [];
   /** The class row currently expanded, if any. Cleared on every hop, because it belongs
@@ -160,7 +169,7 @@ export class ObjectGraphWalk {
     this.dismissedGroups.clear();
     for (const step of inherited) {
       const stepOop = BigInt(step.oop);
-      this.deps.pin(stepOop);
+      this.pinOnce(stepOop);
       this.trail.push({
         oop: stepOop,
         label: step.label,
@@ -171,17 +180,29 @@ export class ObjectGraphWalk {
     await this.centreOn(oop);
   }
 
-  /** Release every pinned object. Called when the walk restarts or the panel closes, so a
-   *  long exploration does not leave a hundred objects pinned in the session. */
+  /** Release every pinned object. Called when the panel closes — nothing restarts a walk;
+   *  a second graph is a second walk in its own tab — so that a long exploration does not
+   *  leave a hundred objects pinned in the session. */
+  /** Pin `oop` unless this walk already holds it. */
+  private pinOnce(oop: bigint): void {
+    const key = oop.toString();
+    if (this.pinned.has(key)) return;
+    this.pinned.add(key);
+    this.deps.pin(oop);
+  }
+
+  /** Drop this walk's pin on `oop`, if it holds one. */
+  private release(oop: string): void {
+    if (!this.pinned.delete(oop)) return;
+    this.deps.unpin(BigInt(oop));
+  }
+
   releaseAll(): void {
-    // The CANVAS as well as the trail. Every box is pinned when it is put on the graph, and
-    // most boxes are never centred on, so releasing the trail alone left the majority of a
-    // long exploration's objects pinned in the session's export set for as long as it
-    // lasted — which is the exact thing this method's name promises not to do.
-    const released = new Set<string>();
-    for (const step of this.trail) released.add(step.oop.toString());
-    for (const node of this.canvasNodes) released.add(node.oop);
-    for (const oop of released) this.deps.unpin(BigInt(oop));
+    // Drains the ledger, so this releases exactly what was pinned — no more (the trail and
+    // the canvas overlap, and releasing both lists double-counted) and no less (most boxes
+    // are never centred on, and releasing only the trail left the majority of a long
+    // exploration pinned for the life of the session).
+    for (const oop of [...this.pinned]) this.release(oop);
     this.trail = [];
     this.canvasNodes = [];
     this.canvasEdges = [];
@@ -196,7 +217,7 @@ export class ObjectGraphWalk {
     // Pinned before the scan and kept pinned while the walk can return to it: the scan
     // aborts the session, and an abort can scavenge an unreferenced object and reuse its
     // OOP number. Without the pin a breadcrumb could quietly point at a different object.
-    this.deps.pin(oop);
+    this.pinOnce(oop);
 
     const result = await this.deps.withCleanSession(() =>
       this.deps.withProgress(`Scanning references to ${described.className}…`, () =>
@@ -206,15 +227,21 @@ export class ObjectGraphWalk {
     if (!result) {
       // The user declined to commit or abort. Leave the walk exactly as it was — and drop
       // the pin we just took, since this object never joined the trail.
-      if (!this.trail.some((s) => s.oop === oop)) this.deps.unpin(oop);
+      if (!this.trail.some((s) => s.oop === oop)) this.release(oop.toString());
       return;
     }
     if (result.kind === 'unavailable') {
-      if (!this.trail.some((s) => s.oop === oop)) this.deps.unpin(oop);
-      void vscode.window.showErrorMessage(`Object graph unavailable: ${result.reason}`);
+      if (!this.trail.some((s) => s.oop === oop)) this.release(oop.toString());
+      void vscode.window.showErrorMessage(`Reference Graph unavailable: ${result.reason}`);
       return;
     }
 
+    // Re-centring on somewhere the walk has already been RETURNS to it rather than
+    // appending it again. Pushing unconditionally rendered a breadcrumb reading `A > A`
+    // — Restore removed boxes re-centres on the current centre, so one click produced it
+    // and every further click added another crumb.
+    const already = this.trail.findIndex((step) => step.oop === oop);
+    if (already !== -1) this.trail = this.trail.slice(0, already);
     this.trail.push({
       oop,
       label: described.className,
@@ -249,7 +276,7 @@ export class ObjectGraphWalk {
       if (!group.soleOop) continue;
       if (this.dismissed.has(group.soleOop)) continue;
       if (this.canvasNodes.some((n) => n.oop === group.soleOop)) continue;
-      this.deps.pin(BigInt(group.soleOop));
+      this.pinOnce(BigInt(group.soleOop));
       this.canvasNodes = [
         ...this.canvasNodes,
         {
@@ -264,7 +291,7 @@ export class ObjectGraphWalk {
     }
     await this.recomputeCanvasEdges();
     logInfo(
-      `Object graph: ${result.groups.length} referrer class(es) for oop ${oop} in ` +
+      `Reference Graph: ${result.groups.length} referrer class(es) for oop ${oop} in ` +
         `${result.scanMillis}ms (walk depth ${this.trail.length})`,
     );
     this.render();
@@ -398,7 +425,9 @@ export class ObjectGraphWalk {
    *  what came after rather than keeping a forward stack the trail cannot show. */
   private async goTo(index: number): Promise<void> {
     if (!Number.isInteger(index) || index < 0 || index >= this.trail.length - 1) return;
-    for (const dropped of this.trail.slice(index + 1)) this.deps.unpin(dropped.oop);
+    // The dropped crumbs keep their pins: `centreOn` puts every centre on the canvas and
+    // `goTo` does not take it off, so releasing here unpinned boxes still on the picture —
+    // and the next scan aborts, which is exactly when a released OOP can be reused.
     const target = this.trail[index];
     this.trail = this.trail.slice(0, index);
     await this.centreOn(target.oop);
@@ -439,7 +468,7 @@ export class ObjectGraphWalk {
     this.dismissed.delete(oop);
     const described = this.deps.describe(BigInt(oop));
     const centre = this.current();
-    this.deps.pin(BigInt(oop));
+    this.pinOnce(BigInt(oop));
     this.canvasNodes = [
       ...this.canvasNodes,
       {
@@ -501,7 +530,7 @@ export class ObjectGraphWalk {
       for (const key of [...this.positions.keys()]) {
         if (key.startsWith(`g:${gone}:`)) this.positions.delete(key);
       }
-      this.deps.unpin(BigInt(gone));
+      this.release(gone);
       this.dismissed.add(gone);
     }
     this.trail = this.trail.filter((step) => !doomed.has(step.oop.toString()));
@@ -555,8 +584,12 @@ export class ObjectGraphWalk {
     // that focusing moves the centre around without disturbing the canvas.
     const centre = this.current();
     const keep = centre ? centre.oop.toString() : this.canvasNodes[0]?.oop;
+    // Anything still in the breadcrumb keeps its pin. Releasing it here unpinned an object
+    // the user can still click back to, and the scan that click performs aborts the session
+    // — which is precisely how a released OOP gets reused under a live breadcrumb.
+    const inTrail = new Set(this.trail.map((step) => step.oop.toString()));
     for (const node of this.canvasNodes) {
-      if (node.oop !== keep) this.deps.unpin(BigInt(node.oop));
+      if (node.oop !== keep && !inTrail.has(node.oop)) this.release(node.oop);
     }
     this.canvasNodes = this.canvasNodes.filter((n) => n.oop === keep);
     this.canvasEdges = [];
@@ -596,7 +629,7 @@ export class ObjectGraphWalk {
   private inspectObject(oop: string): void {
     const target = BigInt(oop);
     const { className } = this.deps.describe(target);
-    this.deps.pin(target);
+    this.pinOnce(target);
     this.deps.inspect(target, className);
   }
 
@@ -628,7 +661,7 @@ export class ObjectGraphWalk {
     }
 
     const collectionOop = BigInt(result.oop);
-    this.deps.pin(collectionOop);
+    this.pinOnce(collectionOop);
     const capped =
       result.returned < result.total ? ` (first ${result.returned} of ${result.total})` : '';
     this.deps.inspect(collectionOop, `${className} → ${centre.className}${capped}`);

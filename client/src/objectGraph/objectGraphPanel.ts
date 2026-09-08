@@ -119,10 +119,21 @@ export class ObjectGraphPanel {
   private readonly panel: vscode.WebviewPanel;
   /** Handlers for the render currently on screen. Replaced on every render. */
   private actions: ObjectGraphActions | undefined;
-  /** Serialises clicks within this panel. A scan is a blocking GCI call; overlapping them
-   *  on one session would trip the session-busy check and surface as an error the user did
-   *  not cause. Per-panel rather than global, since two panels may be on two sessions. */
+  /** Serialises clicks within this panel. A scan is a blocking GCI call, and two of them
+   *  at once trip GemStone's own session-busy check, which surfaces as an error the user
+   *  did not cause.
+   *
+   *  Per-panel, which covers the common case of clicking twice in one graph. It does NOT
+   *  cover two graph tabs on the same session — stepping into a referrer opens a sibling
+   *  tab holding the same `ActiveSession` — so a click in each can still collide. Gating
+   *  per session instead would need the flag to live beside the pin counts on
+   *  CodeExecutor, which already keys by `session.id`. */
   private busy = false;
+  /** Set when the tab closes. An action can outlive its panel — a scan is 20-150 ms and
+   *  the commit prompt in front of it is modal and unbounded — and the walk behind it has
+   *  already released its objects by then. Drawing into a disposed webview throws, which
+   *  surfaced as a spurious `Reference Graph: Webview is disposed`. */
+  private disposed = false;
 
   /** Open a new panel. `onClose` fires when the user closes the tab, so the walk behind it
    *  can release its pinned objects. */
@@ -134,19 +145,20 @@ export class ObjectGraphPanel {
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
     );
     this.panel.onDidDispose(() => {
+      this.disposed = true;
       this.actions = undefined;
       onClose();
     });
     this.panel.webview.onDidReceiveMessage((message: ViewMessage) => {
       void (async () => {
         const handlers = this.actions;
-        if (!handlers || this.busy) return;
+        if (!handlers || this.busy || this.disposed) return;
         this.busy = true;
         try {
           await route(message, handlers);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
-          void vscode.window.showErrorMessage(`Object graph: ${msg}`);
+          void vscode.window.showErrorMessage(`Reference Graph: ${msg}`);
         } finally {
           this.busy = false;
         }
@@ -156,6 +168,7 @@ export class ObjectGraphPanel {
 
   /** Draw `view`, and bind the controls in it to `actions`. */
   render(view: ObjectGraphWalkView, actions: ObjectGraphActions): void {
+    if (this.disposed) return;
     this.actions = actions;
     const nonce = crypto.randomBytes(16).toString('hex');
     this.panel.title = `Reference Graph: ${view.targetClass}`;

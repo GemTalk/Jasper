@@ -169,6 +169,24 @@ describe('the reference-graph MCP tools', () => {
       expect(text).toContain('  DemoEmployee\t[UserGlobals]\t1200');
     });
 
+    it('states what it cut rather than reading as the whole census', async () => {
+      vi.mocked(queries.classCensus).mockReturnValue({
+        kind: 'ok',
+        scanMillis: 43,
+        classes: Array.from({ length: 593 }, (_, i) => ({
+          className: `C${i}`,
+          classOop: String(i),
+          dictionary: 'Globals',
+          instanceCount: 593 - i,
+        })),
+      });
+
+      const text = await say('class_census', {});
+
+      expect(text).toContain('593 class(es)');
+      expect(text).toContain('… 393 more class(es) not listed');
+    });
+
     it('declines the same way when the session is dirty', async () => {
       vi.mocked(queries.classCensus).mockReturnValue({ kind: 'needsCommit' });
 
@@ -211,6 +229,26 @@ describe('the reference-graph MCP tools', () => {
 
       expect(text).toContain('Inbound references from classes outside the requested set');
       expect(text).toContain('  (elsewhere) --> Product\t26837');
+    });
+
+    it('states what it cut rather than reading as the whole ERD', async () => {
+      vi.mocked(queries.referenceEdges).mockReturnValue({
+        kind: 'ok',
+        scanMillis: 39,
+        edges: Array.from({ length: 250 }, (_, i) => ({
+          from: `A${i}`,
+          fromOop: String(i),
+          to: 'Product',
+          toOop: '2',
+          count: 1,
+        })),
+        unattributed: [],
+      });
+
+      const text = await say('reference_edges', { classNames: ['Product'] });
+
+      expect(text).toContain('250 edge(s)');
+      expect(text).toContain('… 50 more edge(s) not listed');
     });
 
     it('says plainly when nothing references anything', async () => {

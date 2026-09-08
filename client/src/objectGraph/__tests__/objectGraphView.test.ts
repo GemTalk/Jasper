@@ -37,7 +37,12 @@ const chain = (depth: number, targetOop = String(depth)): ObjectGraphView => {
     ];
   }
   return {
-    trail: [{ oop: targetOop, label: 'DemoEmployee' }] as ObjectGraphView['trail'],
+    // Two steps, so the breadcrumb actually renders. With one, renderBreadcrumb returns ''
+    // and any test that looks for a crumb quietly tests nothing.
+    trail: [
+      { oop: '1', label: 'DemoEmployee' },
+      { oop: targetOop, label: 'DemoEmployee' },
+    ] as ObjectGraphView['trail'],
     targetLabel: 'Emp',
     targetClass: 'DemoEmployee',
     targetOop,
@@ -238,9 +243,17 @@ describe('dragging a box', () => {
    *  the svg is drawn 1:1 with its viewBox. */
   const dragBy = (page: Loaded, box: Element, dx: number, dy: number): void => {
     const grip = box.querySelector('[data-drag-handle]')!;
+    // `buttons: 1` because a real pointermove mid-drag has the button held; the view uses
+    // that to notice a release it never saw (one that happened outside the webview).
     const at = (type: string, x: number, y: number, target: Element): void => {
       target.dispatchEvent(
-        new page.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }),
+        new page.window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          clientX: x,
+          clientY: y,
+        }),
       );
     };
     at('pointerdown', 100, 100, grip);
@@ -376,12 +389,26 @@ describe('hiding a line', () => {
     expect(edge.querySelector(':scope > title')).toBeNull();
   });
 
-  it('offers no × until a line is selected', () => {
-    // An × on every edge would be exactly the clutter it exists to relieve; it is CSS-
-    // hidden until then, and the bar stays away while nothing is hidden.
+  it('keeps the “N hidden” bar away until something is', () => {
     const page = load(chain(4));
 
     expect(page.doc.getElementById('edgebar')!.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('reveals the × only on the edge that is selected', () => {
+    // An × on every edge would be exactly the clutter it exists to relieve. The rule is
+    // CSS (`.edgedrop{display:none}` / `.edgewrap.hl .edgedrop`), which jsdom does not
+    // compute — so this asserts the class the rule keys on, which is what the view owns.
+    const page = load(chain(4));
+    const edge = page.doc.querySelector('[data-edge][data-tip]')!;
+
+    expect(edge.querySelector('[data-edge-hide]')).not.toBeNull();
+    expect(edge.classList.contains('hl')).toBe(false);
+
+    click(page, edge.querySelector('.edgehit')!);
+
+    expect(edge.classList.contains('hl')).toBe(true);
+    expect(page.doc.querySelectorAll('[data-edge].hl')).toHaveLength(1);
   });
 });
 
@@ -389,9 +416,9 @@ describe('the other controls', () => {
   it('walks back along the breadcrumb without opening a tab', () => {
     const page = load(chain(4));
     const crumb = page.doc.querySelector('[data-goto]');
-    if (!crumb) return; // a one-step trail has no way back, which is itself correct
 
-    click(page, crumb);
+    expect(crumb).not.toBeNull();
+    click(page, crumb!);
 
     expect(posted).toEqual([{ command: 'goTo', index: 0 }]);
   });
@@ -431,5 +458,78 @@ describe('the other controls', () => {
     click(page, remove);
 
     expect(posted).toEqual([{ command: 'removeFromCanvas', oop: '3' }]);
+  });
+});
+
+describe('a drag that ends where the view cannot see it', () => {
+  // Release the grip outside the webview frame and no pointerup arrives. Without a way to
+  // notice, the box stayed glued to the pointer with no button held, and the next
+  // unrelated click committed a move the user never made.
+  it('abandons the drag rather than committing a position nobody chose', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+    const grip = box.querySelector('[data-drag-handle]')!;
+    const at = (type: string, x: number, buttons: number): void => {
+      grip.dispatchEvent(
+        new page.window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          buttons,
+          clientX: x,
+          clientY: 100,
+        }),
+      );
+    };
+
+    at('pointerdown', 100, 1);
+    at('pointermove', 140, 1);
+    // The pointer comes back with nothing held: the release happened elsewhere.
+    at('pointermove', 300, 0);
+    at('pointerup', 300, 0);
+
+    expect(posted).toEqual([]);
+    expect(box.classList.contains('dragging')).toBe(false);
+    expect(box.hasAttribute('transform')).toBe(false);
+  });
+
+  it('gives the box back to the layout when the gesture is cancelled', () => {
+    const page = load(chain(4));
+    const box = page.doc.querySelector('[data-box="o:3"]')!;
+    const grip = box.querySelector('[data-drag-handle]')!;
+    grip.dispatchEvent(
+      new page.window.MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        buttons: 1,
+        clientX: 100,
+        clientY: 100,
+      }),
+    );
+    grip.dispatchEvent(
+      new page.window.MouseEvent('pointermove', {
+        bubbles: true,
+        buttons: 1,
+        clientX: 140,
+        clientY: 120,
+      }),
+    );
+    grip.dispatchEvent(new page.window.Event('pointercancel', { bubbles: true }));
+
+    expect(posted).toEqual([]);
+    expect(box.classList.contains('dragging')).toBe(false);
+  });
+});
+
+describe('an OOP that is not one', () => {
+  it('does not throw out of wire() and cost the page its scroll handling', () => {
+    // The value reaches querySelector as part of an attribute selector, and it came from a
+    // reply the stone streamed rather than from anything that validated it.
+    const page = load(chain(4));
+    page.wrap.scrollLeft = 220;
+    stored = { growFrom: 'o:3"] , [data-box="o:2', scrollLeft: 220 };
+
+    const next = load(chain(4));
+
+    expect(next.wrap.scrollLeft).toBe(220);
   });
 });

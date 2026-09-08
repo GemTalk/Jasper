@@ -189,14 +189,42 @@ describe('ObjectGraphPanel', () => {
     });
 
     it('ignores a click that arrives before anything has been drawn', async () => {
+      // The handlers belong to a render; before the first one there is nothing to act on,
+      // and a click must be dropped rather than reaching a stale or absent closure.
+      const own = { ...actions, focusNode: vi.fn(async () => undefined) };
       const fresh = new ObjectGraphPanel(vi.fn());
       const its = (vscode.window.createWebviewPanel as Mock).mock.results[1].value;
 
       its.webview.onDidReceiveMessage.mock.calls[0][0]({ command: 'focusNode', oop: '10' });
       await Promise.resolve();
+      expect(own.focusNode).not.toHaveBeenCalled();
+
+      // And once it HAS been drawn, the very same message lands.
+      fresh.render(view(), own);
+      its.webview.onDidReceiveMessage.mock.calls[0][0]({ command: 'focusNode', oop: '10' });
+      await Promise.resolve();
+      expect(own.focusNode).toHaveBeenCalledWith('10');
+
+      fresh.dispose();
+    });
+
+    it('ignores a click that arrives after the tab has gone', async () => {
+      // An action can outlive its panel: a scan is 20-150 ms and the commit prompt in
+      // front of it is modal. The walk has already released its objects by then.
+      created().onDidDispose.mock.calls[0][0]();
+
+      await send({ command: 'focusNode', oop: '10' });
 
       expect(actions.focusNode).not.toHaveBeenCalled();
-      fresh.dispose();
+    });
+
+    it('does not draw into a webview that has been disposed', () => {
+      created().onDidDispose.mock.calls[0][0]();
+      const before = created().webview.html;
+
+      panel.render(view({ targetClass: 'Something else' }), actions);
+
+      expect(created().webview.html).toBe(before);
     });
   });
 
@@ -237,7 +265,7 @@ describe('ObjectGraphPanel', () => {
 
       await send({ command: 'focusNode', oop: '11' });
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-        'Object graph: the session went away',
+        'Reference Graph: the session went away',
       );
 
       await send({ command: 'focusNode', oop: '12' });

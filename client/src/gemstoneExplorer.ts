@@ -1797,8 +1797,11 @@ export class ExplorerController {
   private resolveClassDict(
     className: string,
     dictName?: string,
+    /** Resolve against this session rather than whichever one the panes are showing.
+     *  Callers outside the Explorer — the reference graph — may be on another one. */
+    against?: ActiveSession,
   ): { dictName: string; dictIndex: number } | undefined {
-    const session = this.session();
+    const session = against ?? this.session();
     if (!session) return undefined;
     if (dictName) {
       const index = queries.getDictionaryNames(session).indexOf(dictName) + 1;
@@ -4409,9 +4412,6 @@ export class ExplorerController {
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
   }
 
-  // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
-  // Search). Resolves the 1-based symbol-list index from the live list, cascades
-  // the panes to that dictionary, and highlights its row. Warns on an unknown name.
   /** Reveal+select a class by name, resolving its home dictionary first.
    *
    *  The public door onto `revealClass`, which needs a dictionary index the caller of
@@ -4420,9 +4420,16 @@ export class ExplorerController {
    *  dictionaries resolves. Used by the object-graph panel, where a `Foo class` referrer
    *  row means the referrer IS the class Foo and the useful move is to open it here.
    *
-   *  Warns rather than throwing when the name does not resolve: the caller is a click. */
-  async revealClassByName(className: string): Promise<void> {
-    const resolved = this.resolveClassDict(className);
+   *  Warns rather than throwing when the name does not resolve: the caller is a click.
+   *
+   *  `sessionId` matters here, as it does for `revealDictionaryByName`: a graph tab can be
+   *  on a different session from the one the Explorer is showing, and resolving against
+   *  the Explorer's session would either fail to find the class or, worse, reveal a
+   *  same-named class belonging to another database. */
+  async revealClassByName(className: string, sessionId?: number): Promise<void> {
+    const session = await this.resolveSessionFor(sessionId);
+    if (!session) return;
+    const resolved = this.resolveClassDict(className, undefined, session);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${className}.`);
       return;
@@ -4430,6 +4437,9 @@ export class ExplorerController {
     await this.revealClass(resolved.dictName, resolved.dictIndex, className);
   }
 
+  // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
+  // Search). Resolves the 1-based symbol-list index from the live list, cascades
+  // the panes to that dictionary, and highlights its row. Warns on an unknown name.
   async revealDictionaryByName(name: string, sessionId?: number): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
@@ -6814,8 +6824,9 @@ export interface ExplorerHandle {
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
   /** Navigate the panes to a class by name, resolving its home dictionary. Used by the
-   *  object-graph panel, where a `Foo class` referrer row means the referrer IS class Foo. */
-  revealClassByName(className: string): Promise<void>;
+   *  reference-graph panel, where a `Foo class` referrer row means the referrer IS class
+   *  Foo — and where the graph's session may not be the one the Explorer is showing. */
+  revealClassByName(className: string, sessionId?: number): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -7607,6 +7618,6 @@ export function registerGemStoneExplorer(
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
-    revealClassByName: (className) => ctl.revealClassByName(className),
+    revealClassByName: (className, sessionId) => ctl.revealClassByName(className, sessionId),
   };
 }

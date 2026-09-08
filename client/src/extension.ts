@@ -1369,7 +1369,7 @@ export function activate(context: vscode.ExtensionContext) {
     inspectorProvider,
     commit: (session) => commitSession(session),
     abort: (session) => abortSession(session),
-    revealClass: (className) => explorer.revealClassByName(className),
+    revealClass: (className, sessionId) => explorer.revealClassByName(className, sessionId),
   };
 
   const abortSession = async (session: ActiveSession): Promise<void> => {

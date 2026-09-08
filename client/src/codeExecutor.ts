@@ -96,22 +96,22 @@ function toBigInt(value: number | bigint): bigint {
   return typeof value === 'bigint' ? value : BigInt(value);
 }
 
-/** What the object-graph feature needs from the rest of the extension.
- *
- *  Injected rather than imported so committing goes through extension.ts's own
- *  `commitSession` / `abortSession` — which also warn about unsaved .gs edits, refresh
- *  the export mirror and rebuild GemStone Search's corpora. A second commit path here
- *  would silently skip all of that. */
 /** A scan result with the `needsCommit` case removed — what {@link CodeExecutor.withCleanSession}
  *  hands back once it has resolved the dirty-session question, so callers narrow to the
  *  outcomes they actually have to handle. */
 type Clean<T> = Exclude<T, { kind: 'needsCommit' }>;
 
+/** What the reference-graph feature needs from the rest of the extension.
+ *
+ *  Injected rather than imported so committing goes through extension.ts's own
+ *  `commitSession` / `abortSession` — which also warn about unsaved .gs edits, refresh
+ *  the export mirror and rebuild GemStone Search's corpora. A second commit path here
+ *  would silently skip all of that. */
 export interface ObjectGraphDeps {
   inspectorProvider: InspectorTreeProvider;
   commit: (session: ActiveSession) => Promise<void>;
   abort: (session: ActiveSession) => Promise<void>;
-  revealClass: (className: string) => Promise<void>;
+  revealClass: (className: string, sessionId?: number) => Promise<void>;
 }
 
 export class CodeExecutor {
@@ -935,21 +935,17 @@ export class CodeExecutor {
     return second.kind === 'needsCommit' ? undefined : (second as Clean<T>);
   }
 
-  /** Scan for `oop`'s referrers and show them, or explain why we can't.
-   *
-   *  The object is pinned into the session's export set for the duration. The scan
-   *  aborts the session, and an abort can scavenge an unreferenced object and reuse
-   *  its OOP number — without the pin, a result the user is still looking at could be
-   *  reclaimed mid-question and the panel would describe a different object.
-   *
-   *  Immediates are screened out here rather than in the query: a SmallInteger has no
-   *  identity to scan for and the kernel answers "argument is not a Pom oop", which is
-   *  true but unhelpful. */
   /** Show what points at `oop`, and let the user walk the graph from there.
    *
    *  The walk itself — the breadcrumb, the expanded class, the hops — belongs to
-   *  ObjectGraphWalk. This method's job is to screen out what cannot be scanned and then
-   *  open the first walk; each step into a referrer opens another one in its own tab. */
+   *  ObjectGraphWalk, which is also what pins: an object stays in the session's export set
+   *  for as long as a box or a breadcrumb can act on it, because the scan aborts and an
+   *  abort can scavenge an unreferenced object and reuse its OOP number.
+   *
+   *  This method's job is to screen out what cannot be scanned and then open the first
+   *  walk; each step into a referrer opens another one in its own tab. Immediates are
+   *  screened here rather than in the query: a SmallInteger has no identity to scan for and
+   *  the kernel answers "argument is not a Pom oop", which is true but unhelpful. */
   async presentObjectGraph(
     session: ActiveSession,
     oop: bigint,
@@ -984,7 +980,8 @@ export class CodeExecutor {
         printString: getObjectPrintString(session, target, OBJECT_GRAPH_PRINT_LIMIT),
       }),
       inspect: (target, label) => routeInspect(session, target, label, deps.inspectorProvider),
-      revealClass: (className) => deps.revealClass(className),
+      // The graph's OWN session, which need not be the one the Explorer is showing.
+      revealClass: (className) => deps.revealClass(className, session.id),
       withCleanSession: (run) => this.withCleanSession(session, deps, run),
       // Window location, not Notification: a scan is ~150 ms on a large stone, and a
       // notification that appears and vanishes that fast is worse than none. This shows
@@ -1012,7 +1009,7 @@ export class CodeExecutor {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, msg);
-      vscode.window.showErrorMessage(`Object graph failed: ${msg}`);
+      vscode.window.showErrorMessage(`Reference Graph failed: ${msg}`);
       walk.releaseAll();
       panel?.dispose();
     }
@@ -1037,7 +1034,7 @@ export class CodeExecutor {
       try {
         saveObjs(session, [oop]);
       } catch (e: unknown) {
-        logError(session.id, `Object graph: couldn't pin oop ${oop}: ${String(e)}`);
+        logError(session.id, `Reference Graph: couldn't pin oop ${oop}: ${String(e)}`);
         return;
       }
     }

@@ -106,6 +106,7 @@ pairs do: [:pair |
         ws nextPut: (c isSeparator ifTrue: [Character space] ifFalse: [c])]]
     ifFalse: [ws nextPutAll: '0'; tab].
   ws lf].
+${emitReplyEnd('pairs size')}
 ws contents`;
 
   return code;
@@ -122,19 +123,26 @@ export function parseReferrersOf(raw: string): ReferrersResult {
   const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
   const groups: ReferrerGroup[] = [];
-  for (const line of parsed.body.split('\n')) {
-    if (!line) continue;
+  for (const line of complete.rows) {
     // `class <TAB> classOop <TAB> count <TAB> soleOop <TAB> solePrintString`, with the
     // printString last and flattened server-side, so a plain split is unambiguous: a
     // class name holds no tab, and the free-text field cannot shift a column.
     const f = line.split('\t');
     if (f.length < 4) continue;
-    const sole = f[3];
+    // Digits or nothing. An OOP reaches BigInt() in the walk, and a half-line left by a
+    // cut would otherwise become a real-looking hop target.
+    if (!/^\d+$/.test(f[1])) continue;
+    const count = Number(f[2]);
+    if (!Number.isInteger(count)) continue;
+    const sole = /^\d+$/.test(f[3]) ? f[3] : '0';
     groups.push({
       referrerClass: f[0],
       referrerClassOop: f[1],
-      count: Number(f[2]),
+      count,
       ...(sole && sole !== '0' ? { soleOop: sole, solePrintString: f.slice(4).join(' ') } : {}),
     });
   }
@@ -202,8 +210,11 @@ sl := System myUserProfile symbolList.
         seen at: v put: true.
         classes add: v.
         dicts add: dn]]]].
-classes isEmpty ifTrue: [^ 'ok
-'].
+classes isEmpty ifTrue: [
+  ws := WriteStream on: String new.
+  ws nextPutAll: 'ok'; tab; nextPutAll: '0'; lf.
+  ${emitReplyEnd('0')}
+  ^ ws contents].
 ms := System millisecondsToRun: [
   counts := [SystemRepository countInstances: classes asArray]
     on: Error do: [:ex | ^ 'unavailable
@@ -217,15 +228,18 @@ ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
      nextPutAll: c asOop printString; tab;
      nextPutAll: (dicts at: i); tab;
      nextPutAll: (counts at: i) printString; lf].
+${emitReplyEnd('classes size')}
 ws contents`;
 
   const raw = execute(code);
   const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
   const classes: ClassPopulation[] = [];
-  for (const line of parsed.body.split('\n')) {
-    if (!line) continue;
+  for (const line of complete.rows) {
     const f = line.split('\t');
     if (f.length < 4) continue;
     classes.push({
@@ -300,7 +314,7 @@ export function referenceEdges(execute: QueryExecutor, classNames: string[]): Re
   // so the doit stays the same length whether the caller asks for 3 classes or 300 —
   // the shape that keeps clear of 3.6.x's CompileError 1001 on long doits.
   const nameLiterals = classNames.map((n) => `#'${n.replace(/'/g, "''")}'`).join(' ');
-  const code = `| ws names classes want pairs ms |
+  const code = `| ws names classes want pairs ms rows |
 System needsCommit ifTrue: [^ 'needsCommit'].
 names := #( ${nameLiterals} ).
 classes := OrderedCollection new.
@@ -318,6 +332,7 @@ ms := System millisecondsToRun: [
     on: Error do: [:ex | ^ 'unavailable
 ', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
 ws := WriteStream on: String new.
+rows := 0.
 ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
 pairs do: [:pair |
   | target bm tally other cursor chunk guard |
@@ -338,24 +353,29 @@ pairs do: [:pair |
         ifFalse: [tally at: c put: (tally at: c ifAbsent: [0]) + 1]].
     cursor := (chunk at: chunk size) asOop].
   tally keysAndValuesDo: [:from :n |
+    rows := rows + 1.
     ws nextPutAll: 'edge'; tab;
        nextPutAll: from name asString; tab; nextPutAll: from asOop printString; tab;
        nextPutAll: target name asString; tab; nextPutAll: target asOop printString; tab;
        nextPutAll: n printString; lf].
   other > 0 ifTrue: [
+    rows := rows + 1.
     ws nextPutAll: 'other'; tab;
        nextPutAll: target name asString; tab; nextPutAll: target asOop printString; tab;
        nextPutAll: other printString; lf]].
+${emitReplyEnd('rows')}
 ws contents`;
 
   const raw = execute(code);
   const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
   const edges: ReferenceEdge[] = [];
   const unattributed: UnattributedReferences[] = [];
-  for (const line of parsed.body.split('\n')) {
-    if (!line) continue;
+  for (const line of complete.rows) {
     const f = line.split('\t');
     if (f[0] === 'edge' && f.length >= 6) {
       edges.push({
@@ -378,6 +398,57 @@ ws contents`;
  *  Kept in one place because all three share the refusal contract: a
  *  repository-wide scan aborts the session, so GemStone declines to run one while
  *  the session holds uncommitted work. */
+/** The last line every streamed reply ends with, and the guard that reads it.
+ *
+ *  The transport truncates. `executeFetchStringNb` fetches a reply with ONE 256 KB
+ *  `GciTsFetchChars` and checks only the error number, so anything longer arrives cut —
+ *  and a repository-wide scan reaches that today: the referrers of `Object` on a 3.7.5
+ *  stone are 3,380 classes and 254 KB of reply, inside a 256 KB buffer.
+ *
+ *  A cut reply is still a well-formed one. The status line is written FIRST, so `ok` and
+ *  the elapsed time survive, and what is lost is rows off the end — which every parser
+ *  here would otherwise read as "there are fewer of these than you thought", or, cut early
+ *  enough, as an empty result. An empty result is a real answer in this feature ("nothing
+ *  points at this object"), so a truncated scan could state, in those words, something
+ *  untrue about the repository. A cut can also land mid-row and leave a short-but-plausible
+ *  line whose fields parse, handing the walk an OOP that is half of a real one.
+ *
+ *  So the stone counts the rows it wrote and says so on a final line. If that line is
+ *  missing, or the count disagrees, the reply was cut and the answer is `unavailable` —
+ *  which the panel already knows how to say honestly. */
+const REPLY_END = 'end';
+
+/** Smalltalk that closes a streamed reply. `rowsExpr` is a Smalltalk expression for the
+ *  number of body rows written. */
+function emitReplyEnd(rowsExpr: string): string {
+  return `ws nextPutAll: '${REPLY_END}'; tab; nextPutAll: (${rowsExpr}) printString; lf.`;
+}
+
+/** Strip and verify the terminator. Answers the body rows, or a reason it cannot. */
+function takeCompleteBody(
+  body: string,
+): { kind: 'ok'; rows: string[] } | { kind: 'unavailable'; reason: string } {
+  const lines = body.split('\n').filter((l) => l !== '');
+  const last = lines.pop();
+  const marker = last?.split('\t');
+  if (!marker || marker[0] !== REPLY_END) {
+    return {
+      kind: 'unavailable',
+      reason:
+        'the stone’s reply was cut short, so this would have been an incomplete answer. ' +
+        'Ask about a less heavily referenced object.',
+    };
+  }
+  const expected = Number(marker[1]);
+  if (!Number.isInteger(expected) || expected !== lines.length) {
+    return {
+      kind: 'unavailable',
+      reason: `the stone’s reply was cut short (${lines.length} of ${marker[1]} rows arrived).`,
+    };
+  }
+  return { kind: 'ok', rows: lines };
+}
+
 function splitStatus(
   raw: string,
 ):
@@ -471,7 +542,8 @@ SessionTemps current at: #'${REFERRER_TEMP_KEY}' put: coll.
 'ok', (String with: Character tab), ms printString, (String with: Character lf),
   total printString, (String with: Character tab),
   coll size printString, (String with: Character tab),
-  coll asOop printString`;
+  coll asOop printString, (String with: Character lf),
+  '${REPLY_END}', (String with: Character tab), '1', (String with: Character lf)`;
 
   return code;
 }
@@ -481,7 +553,10 @@ export function parseReferrerCollectionOf(raw: string): ReferrerCollectionResult
   const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
-  const [total, returned, oop] = parsed.body.trim().split('\t');
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
+  const [total, returned, oop] = (complete.rows[0] ?? '').split('\t');
   if (!oop) {
     return { kind: 'unavailable', reason: 'The stone did not answer a collection' };
   }
@@ -589,6 +664,7 @@ out do: [:o |
     c := str at: i.
     ws nextPut: (c isSeparator ifTrue: [Character space] ifFalse: [c])].
   ws lf].
+${emitReplyEnd('out size + 1')}
 ws contents`;
 
   return code;
@@ -602,15 +678,18 @@ export function parseReferrerObjectsOf(raw: string): ReferrerObjectsResult {
   // First body line is the true total; the rest are `oop<TAB>isClass<TAB>printString`.
   // The printString is flattened server-side, so it holds no tab and no newline — the
   // first two tabs always end the OOP and the flag.
-  const lines = parsed.body.split('\n');
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
+  const lines = complete.rows;
   const total = Number(lines[0]) || 0;
   const objects: ReferrerObject[] = [];
   for (const line of lines.slice(1)) {
-    if (!line) continue;
     const oopTab = line.indexOf('\t');
     if (oopTab === -1) continue;
     const flagTab = line.indexOf('\t', oopTab + 1);
     if (flagTab === -1) continue;
+    if (!/^\d+$/.test(line.slice(0, oopTab))) continue;
     objects.push({
       oop: line.slice(0, oopTab),
       isClass: line.slice(oopTab + 1, flagTab) === '1',
@@ -648,8 +727,11 @@ export type SlotEdgesResult =
 
 /** Raw slots examined per object. A guard, not a real limit: it stops one large
  *  collection on the canvas from turning an interactive redraw into a full traversal
- *  of it. Anything beyond is not reported as an edge — see the truncation note the
- *  caller shows. */
+ *  of it. Anything beyond is simply not reported as an edge, and nothing tells the user
+ *  so — there is no truncation note for this, unlike the referrer page, which carries a
+ *  true `total` alongside its capped list. Reaching it takes a single collection of
+ *  20,000 elements on the canvas, so the honest summary is: rare, silent, and bounded to
+ *  the one object that tripped it rather than the whole scan. */
 const SLOT_SCAN_LIMIT = 20000;
 
 /** Every reference that runs BETWEEN the given objects, with the slot it occupies.
@@ -672,7 +754,7 @@ export function buildSlotEdgesAmong(oops: string[]): string | undefined {
   const literals = oops.map((o) => o.trim()).filter((o) => /^\d+$/.test(o));
   if (literals.length < 2) return undefined;
 
-  const code = `| ws oops want objs |
+  const code = `| ws oops want objs rows |
 oops := #( ${literals.join(' ')} ).
 want := IdentityKeyValueDictionary new.
 objs := OrderedCollection new.
@@ -681,6 +763,7 @@ oops do: [:n |
   o := [Object objectForOop: n] on: Error do: [:ex | ex return: nil].
   o ifNotNil: [want at: o put: n. objs add: o]].
 ws := WriteStream on: String new.
+rows := 0.
 ws nextPutAll: 'ok'; tab; nextPutAll: '0'; lf.
 objs do: [:o |
   | emit names limit |
@@ -688,6 +771,7 @@ objs do: [:o |
     | hit |
     hit := want at: target ifAbsent: [nil].
     (hit notNil and: [target ~~ o]) ifTrue: [
+      rows := rows + 1.
       ws nextPutAll: (want at: o) printString; tab;
          nextPutAll: hit printString; tab;
          nextPutAll: via; lf]].
@@ -700,13 +784,15 @@ objs do: [:o |
       limit := 0.
       [o do: [:each |
         limit := limit + 1.
-        limit > ${SLOT_SCAN_LIMIT} ifTrue: [^ ws contents].
-        emit value: each value: '(element)']] on: Error do: [:ex | ex return: nil]]
+        limit > ${SLOT_SCAN_LIMIT} ifTrue: [Error signal: 'slot scan limit'].
+        emit value: each value: '(element)']]
+        on: Error do: [:ex | ex return: nil]]
     ifFalse: [
       limit := ([o _basicSize] on: Error do: [:ex | ex return: 0]) min: ${SLOT_SCAN_LIMIT}.
       1 to: limit do: [:i |
         emit value: ([o _basicAt: i] on: Error do: [:ex | ex return: nil])
              value: '[', i printString, ']']]].
+${emitReplyEnd('rows')}
 ws contents`;
 
   return code;
@@ -722,11 +808,14 @@ export function parseSlotEdgesAmong(raw: string): SlotEdgesResult {
   }
   if (parsed.kind !== 'ok') return parsed;
 
+  const complete = takeCompleteBody(parsed.body);
+  if (complete.kind !== 'ok') return complete;
+
   const edges: SlotEdge[] = [];
-  for (const line of parsed.body.split('\n')) {
-    if (!line) continue;
+  for (const line of complete.rows) {
     const f = line.split('\t');
     if (f.length < 3) continue;
+    if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) continue;
     edges.push({ fromOop: f[0], toOop: f[1], via: f[2] });
   }
   return { kind: 'ok', edges };

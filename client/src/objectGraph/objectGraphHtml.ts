@@ -329,7 +329,11 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
     const ownerLayer = layerOfObject.get(ownerOop) ?? 0;
     const groups = view.groupsByOop[ownerOop] ?? [];
 
-    for (const g of groups) {
+    // Capped, and the note below the picture says so. Uncapped, an object with many
+    // referrer classes drew one box per class in a single column: `Object` answers 3,380
+    // of them on a 3.7.5 stone, which is a ~145,000px column and no picture at all. The
+    // table below the graph still lists every one of them.
+    for (const g of groups.slice(0, MAX_NODES)) {
       const members = promotedOf(ownerOop, g.referrerClass);
       const listed =
         view.expanded?.ownerOop === ownerOop && view.expanded.classOop === g.referrerClassOop
@@ -565,7 +569,7 @@ function renderGraph(view: ObjectGraphView): string {
       // it is offered only once the edge is selected — see the view's highlight().
       const tip = edgeTip(b, labelOf.get(b.towardOop));
       return (
-        `<g class="edgewrap" data-edge="s${b.id}"` +
+        `<g class="edgewrap" data-edge="s${escapeHtml(b.id)}"` +
         (tip ? ` data-tip="${escapeHtml(tip)}"` : '') +
         `>` +
         `<path class="edgehit" d="${path}"/>` +
@@ -689,7 +693,7 @@ function renderGraph(view: ObjectGraphView): string {
     })
     .join('\n    ');
 
-  return `<svg viewBox="0 0 ${width} ${canvasHeight}" width="${width}" height="${canvasHeight}" role="img"
+  return `<svg viewBox="0 0 ${width} ${canvasHeight}" width="${width}" height="${canvasHeight}" role="group"
      aria-label="Object graph centred on ${escapeHtml(view.targetLabel)}">
     <defs>
       <marker id="ref-arrow" viewBox="0 0 10 8" refX="9" refY="4"
@@ -822,7 +826,6 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .cnode[data-focus-oop] { cursor: pointer; }
     .cnode[data-focus-oop]:hover rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .cnode:focus-visible rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
-    .edge.back { stroke-dasharray: 4 3; opacity: 0.7; }
     /* Click an edge to follow it: a long one is hard to trace across the picture, so the
        selected one goes solid and bold while every other edge fades right back. */
     .edgehit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }

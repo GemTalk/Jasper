@@ -220,7 +220,8 @@ ws contents`)
 
       expect(result.kind).toBe('unavailable');
       if (result.kind !== 'unavailable') return;
-      expect(result.reason).not.toBe('');
+      // The kernel's own words reach the user, so they are the contract.
+      expect(result.reason).toContain('not a Pom oop');
     });
 
     it('answers unavailable for an immediate, which has no identity to scan for', () => {
@@ -228,6 +229,8 @@ ws contents`)
       const result = og.referrersOf(exec, oopOf('7'));
 
       expect(result.kind).toBe('unavailable');
+      if (result.kind !== 'unavailable') return;
+      expect(result.reason).toContain('not a Pom oop');
     });
   });
 

@@ -46,7 +46,9 @@ describe('ObjectGraphWalk', () => {
   let edges: SlotEdge[];
   let rendered: ObjectGraphWalkView[];
   let actions: ObjectGraphActions;
-  let pinned: Set<string>;
+  /** Reference-counted, exactly as the host counts them (codeExecutor's graphPins), so a
+   *  double pin from one walk is visible here instead of being swallowed by a Set. */
+  let pinned: Map<string, number>;
   let deps: ObjectGraphWalkDeps;
   let walk: ObjectGraphWalk;
 
@@ -59,7 +61,7 @@ describe('ObjectGraphWalk', () => {
     groupsFor = {};
     edges = [];
     rendered = [];
-    pinned = new Set();
+    pinned = new Map();
 
     vi.mocked(queries.referrersOfNb).mockImplementation(async (_s, oop) => ({
       kind: 'ok',
@@ -76,8 +78,16 @@ describe('ObjectGraphWalk', () => {
       revealClass: vi.fn(async () => undefined),
       // The user always says yes; the declining path is its own test.
       withCleanSession: vi.fn(async (run) => (await run()) as never),
-      pin: vi.fn((oop: bigint) => pinned.add(oop.toString())),
-      unpin: vi.fn((oop: bigint) => pinned.delete(oop.toString())),
+      pin: vi.fn((oop: bigint) => {
+        const key = oop.toString();
+        pinned.set(key, (pinned.get(key) ?? 0) + 1);
+      }),
+      unpin: vi.fn((oop: bigint) => {
+        const key = oop.toString();
+        const held = pinned.get(key) ?? 0;
+        if (held <= 1) pinned.delete(key);
+        else pinned.set(key, held - 1);
+      }),
       withProgress: vi.fn(async (_title, work) => work()),
       render: vi.fn((v: ObjectGraphWalkView, a: ObjectGraphActions) => {
         rendered.push(v);
@@ -135,8 +145,8 @@ describe('ObjectGraphWalk', () => {
       // hand its OOP number to another -- a breadcrumb would then point somewhere else.
       await startWithOneReferrer();
 
-      expect(pinned).toContain('1');
-      expect(pinned).toContain('2');
+      expect(pinned.has('1')).toBe(true);
+      expect(pinned.has('2')).toBe(true);
     });
 
     it('leaves the walk untouched when the user declines to clean the session', async () => {
@@ -341,7 +351,10 @@ describe('ObjectGraphWalk', () => {
       await startWithOneReferrer();
 
       expect(view().canvas.edges).toEqual([]);
-      expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      // Carrying the stone's reason, not just the fact that something went wrong.
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('nope'),
+      );
     });
   });
 
@@ -377,6 +390,99 @@ describe('ObjectGraphWalk', () => {
     });
   });
 
+  describe('pins, which the panel can still act on', () => {
+    // The host counts pins per session, because two graph tabs can hold the same object.
+    // That makes a double pin from ONE tab a permanent leak, and an early release a live
+    // box the session may reclaim underneath.
+
+    it('does not pin twice when re-centring on a box already on the graph', async () => {
+      // The primary gesture: click a box the last scan promoted. `attach` is skipped
+      // because it is already on the canvas, and `centreOn` used to pin it a second time
+      // while `releaseAll` released it once — so it stayed pinned until logout.
+      await startWithOneReferrer();
+      groupsFor['2'] = [];
+
+      await actions.focusNode('2');
+      expect(pinned.get('2')).toBe(1);
+
+      walk.releaseAll();
+
+      expect([...pinned.keys()]).toEqual([]);
+    });
+
+    it('lets nothing through however far the walk wandered', async () => {
+      groupsFor['1'] = [group('Holder', '90', 1, { oop: '2', printString: 'Holder(2)' })];
+      groupsFor['2'] = [group('Outer', '91', 1, { oop: '3', printString: 'Outer(3)' })];
+      groupsFor['3'] = [];
+      await walk.start(1n);
+      await actions.focusNode('2');
+      await actions.focusNode('3');
+      await actions.focusNode('1');
+      await actions.addToCanvas('3');
+      await actions.restoreRemoved();
+
+      walk.releaseAll();
+
+      expect([...pinned.keys()]).toEqual([]);
+    });
+
+    it('keeps the pin on a box the breadcrumb can still walk back to', async () => {
+      // `goTo` used to release the crumbs it dropped, but `centreOn` puts every centre on
+      // the canvas and `goTo` does not take it off — so those boxes stayed on the picture
+      // unpinned, and the very next scan aborts, which is when an OOP can be reused.
+      groupsFor['1'] = [group('Holder', '90', 1, { oop: '2', printString: 'Holder(2)' })];
+      groupsFor['2'] = [group('Outer', '91', 1, { oop: '3', printString: 'Outer(3)' })];
+      groupsFor['3'] = [];
+      await walk.start(1n);
+      await actions.focusNode('2');
+      await actions.focusNode('3');
+
+      await actions.goTo(0);
+
+      expect(nodeOops()).toContain('3');
+      expect(pinned.has('3')).toBe(true);
+    });
+
+    it('keeps the pin on a breadcrumb object when the canvas is stripped', async () => {
+      groupsFor['1'] = [group('Holder', '90', 1, { oop: '2', printString: 'Holder(2)' })];
+      groupsFor['2'] = [];
+      await walk.start(1n);
+      await actions.focusNode('2');
+
+      await actions.clearCanvas();
+
+      // 1 is still the first crumb, so it must still be pinned even though its box went.
+      expect(view().trail.map((t) => t.oop.toString())).toContain('1');
+      expect(pinned.has('1')).toBe(true);
+    });
+  });
+
+  describe('the breadcrumb', () => {
+    it('returns to an earlier step rather than repeating it', async () => {
+      // Restore re-centres on the object already centred. Pushing unconditionally made the
+      // breadcrumb read `A > A`, and every further click added another crumb.
+      await startWithOneReferrer();
+      const before = view().trail.length;
+
+      await actions.restoreRemoved();
+      await actions.restoreRemoved();
+
+      expect(view().trail.length).toBe(before);
+    });
+
+    it('does not grow a second entry for an object already behind you', async () => {
+      groupsFor['1'] = [group('Holder', '90', 1, { oop: '2', printString: 'Holder(2)' })];
+      groupsFor['2'] = [];
+      await walk.start(1n);
+      await actions.focusNode('2');
+      expect(view().trail.map((t) => t.oop.toString())).toEqual(['1', '2']);
+
+      await actions.focusNode('1');
+
+      expect(view().trail.map((t) => t.oop.toString())).toEqual(['1']);
+    });
+  });
+
   describe('releasing the session', () => {
     it('lets go of every OOP it pinned', async () => {
       await startWithOneReferrer();
@@ -385,6 +491,157 @@ describe('ObjectGraphWalk', () => {
       walk.releaseAll();
 
       expect(pinned.size).toBe(0);
+    });
+  });
+
+  describe('the actions nothing covered', () => {
+    // dive, goTo, removeGroup, revealClassByOop, inspectObject, inspectCollection and the
+    // inherited-trail form of start could all be gutted with the suite still green.
+
+    it('seeds the breadcrumb from the tab it was opened from', async () => {
+      // A referrer opened in its own tab still shows the path that led there, and those
+      // crumbs are history: clicking one re-centres THIS tab rather than opening another.
+      groupsFor['3'] = [];
+
+      await walk.start(3n, [{ oop: '1', label: 'First' }]);
+
+      expect(view().trail.map((t) => t.oop.toString())).toEqual(['1', '3']);
+      expect(pinned.has('1')).toBe(true);
+    });
+
+    it('walks back to an earlier crumb and drops what came after', async () => {
+      groupsFor['1'] = [group('Holder', '90', 1, { oop: '2', printString: 'Holder(2)' })];
+      groupsFor['2'] = [group('Outer', '91', 1, { oop: '3', printString: 'Outer(3)' })];
+      groupsFor['3'] = [];
+      await walk.start(1n);
+      await actions.focusNode('2');
+      await actions.focusNode('3');
+
+      await actions.goTo(0);
+
+      expect(view().trail.map((t) => t.oop.toString())).toEqual(['1']);
+      expect(centre()).toBe('1');
+    });
+
+    it('ignores a breadcrumb index that is not one', async () => {
+      await startWithOneReferrer();
+      const before = view().trail.length;
+
+      await actions.goTo(-1);
+      await actions.goTo(99);
+      await actions.goTo(1.5);
+
+      expect(view().trail.length).toBe(before);
+    });
+
+    it('steps into a referrer in its own tab, keeping this graph', async () => {
+      // `dive` is the ↗ tab control: the only one that opens a second tab.
+      await startWithOneReferrer();
+
+      await actions.dive('2');
+
+      expect(deps.openWalk).toHaveBeenCalledWith(2n, expect.any(Array));
+      expect(centre()).toBe('1');
+    });
+
+    it('takes a class box off with everything shown under it', async () => {
+      groupsFor['1'] = [group('Holder', '90', 2)];
+      await walk.start(1n);
+      // Two members of the class arrive on the canvas.
+      vi.mocked(queries.referrerObjectsOfNb).mockResolvedValue({
+        kind: 'ok',
+        total: 2,
+        scanMillis: 1,
+        objects: [
+          { oop: '2', printString: 'H(2)', isClass: false },
+          { oop: '3', printString: 'H(3)', isClass: false },
+        ],
+      });
+      await actions.expand('1', '90', 'Holder');
+      await actions.addToCanvas('2');
+      expect(nodeOops()).toContain('2');
+
+      await actions.removeGroup('1', 'Holder');
+
+      expect(nodeOops()).not.toContain('2');
+      expect(view().removedCount).toBeGreaterThan(0);
+    });
+
+    it('opens a class referrer in the Explorer by name', async () => {
+      // A `Foo class` referrer means the referrer IS the class Foo, so the Explorer is the
+      // useful destination rather than another hop.
+      deps.describe = vi.fn(() => ({ className: 'Metaclass3', printString: 'GraphDemoOrder' }));
+      await startWithOneReferrer();
+
+      await actions.revealClassByOop('2');
+
+      expect(deps.revealClass).toHaveBeenCalledWith('GraphDemoOrder');
+    });
+
+    it('strips the metaclass suffix before asking the Explorer', async () => {
+      deps.describe = vi.fn(() => ({
+        className: 'Metaclass3',
+        printString: 'GraphDemoOrder class',
+      }));
+      await startWithOneReferrer();
+
+      await actions.revealClassByOop('2');
+
+      expect(deps.revealClass).toHaveBeenCalledWith('GraphDemoOrder');
+    });
+
+    it('declines rather than guessing when the print is not a class name', async () => {
+      deps.describe = vi.fn(() => ({ className: 'Array', printString: 'anArray( 1, 2 )' }));
+      await startWithOneReferrer();
+
+      await actions.revealClassByOop('2');
+
+      expect(deps.revealClass).not.toHaveBeenCalled();
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Can't tell which class this is"),
+      );
+    });
+
+    it('opens an inspector on a single object, and keeps it alive', async () => {
+      await startWithOneReferrer();
+
+      await actions.inspectObject('2');
+
+      expect(deps.inspect).toHaveBeenCalledWith(2n, 'Class2');
+      expect(pinned.has('2')).toBe(true);
+    });
+
+    it('gathers a whole class of referrers into one inspectable collection', async () => {
+      vi.mocked(queries.referrerCollectionOfNb).mockResolvedValue({
+        kind: 'ok',
+        oop: '900',
+        total: 40,
+        returned: 40,
+        scanMillis: 3,
+      });
+      await startWithOneReferrer();
+
+      await actions.inspectCollection('90', 'Holder');
+
+      expect(deps.inspect).toHaveBeenCalledWith(900n, expect.stringContaining('Holder'));
+    });
+
+    it('says when the collection it opened is only part of the answer', async () => {
+      vi.mocked(queries.referrerCollectionOfNb).mockResolvedValue({
+        kind: 'ok',
+        oop: '900',
+        total: 9000,
+        returned: 5000,
+        scanMillis: 3,
+      });
+      await startWithOneReferrer();
+
+      await actions.inspectCollection('90', 'Holder');
+
+      expect(deps.inspect).toHaveBeenCalledWith(
+        900n,
+        expect.stringContaining('first 5000 of 9000'),
+      );
     });
   });
 });

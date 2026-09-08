@@ -48,7 +48,7 @@ describe('the non-blocking reference-graph queries', () => {
   });
 
   it('sends the referrer scan and reads its groups back', async () => {
-    reply = 'ok\t24\nGsNMethod\t144897\t496\t0\n';
+    reply = 'ok\t24\nGsNMethod\t144897\t496\t0\nend\t1\n';
 
     await expect(q.referrersOfNb(session, 66817n)).resolves.toEqual({
       kind: 'ok',
@@ -60,7 +60,7 @@ describe('the non-blocking reference-graph queries', () => {
   });
 
   it('sends the referrer listing and reads its page back', async () => {
-    reply = 'ok\t12\n496\n100\t0\tanArray( 1, 2 )\n';
+    reply = 'ok\t12\n496\n100\t0\tanArray( 1, 2 )\nend\t2\n';
 
     await expect(q.referrerObjectsOfNb(session, 1n, 2n)).resolves.toMatchObject({
       kind: 'ok',
@@ -70,7 +70,7 @@ describe('the non-blocking reference-graph queries', () => {
   });
 
   it('sends the collection scan and reads back what to open', async () => {
-    reply = 'ok\t30\n4096\t4096\t31553793';
+    reply = 'ok\t30\n4096\t4096\t31553793\nend\t1\n';
 
     await expect(q.referrerCollectionOfNb(session, 1n, 2n)).resolves.toMatchObject({
       kind: 'ok',
@@ -80,7 +80,7 @@ describe('the non-blocking reference-graph queries', () => {
   });
 
   it('sends the slot read and reads the edges back', async () => {
-    reply = 'ok\t0\n10\t20\tpartner\n';
+    reply = 'ok\t0\n10\t20\tpartner\nend\t1\n';
 
     await expect(q.slotEdgesAmongNb(session, ['10', '20'])).resolves.toEqual({
       kind: 'ok',
@@ -106,5 +106,18 @@ describe('the non-blocking reference-graph queries', () => {
     session.gci.GciTsCallInProgress = vi.fn(() => ({ result: 1, err: { number: 0 } })) as never;
 
     await expect(q.referrersOfNb(session, 1n)).rejects.toThrow(/busy/i);
+  });
+
+  it('refuses a reply the transport cut short', async () => {
+    // This is the layer where truncation happens: one 256 KB GciTsFetchChars, no check for
+    // an overrun. The referrers of `Object` are ~254 KB on a 3.7.5 stone, so a slightly
+    // bigger one arrives with rows missing and a perfectly valid `ok` header.
+    reply = 'ok\t24\nGsNMethod\t144897\t496\t0\n';
+
+    const result = await q.referrersOfNb(session, 66817n);
+
+    expect(result.kind).toBe('unavailable');
+    if (result.kind !== 'unavailable') return;
+    expect(result.reason).toContain('cut short');
   });
 });

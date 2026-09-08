@@ -11,8 +11,16 @@ import { describe, it, expect } from 'vitest';
 
 import * as og from '../objectGraph';
 
-/** An `ok` reply: status and elapsed milliseconds, then the body. */
-const ok = (millis: number, body: string): string => `ok\t${millis}\n${body}`;
+/** A COMPLETE `ok` reply: status, elapsed milliseconds, the body, and the terminator the
+ *  stone writes last so a truncated reply can be told from a short one. */
+const ok = (millis: number, body: string): string => {
+  const rows = body.split('\n').filter((l) => l !== '').length;
+  return `ok\t${millis}\n${body}${body.endsWith('\n') || body === '' ? '' : '\n'}end\t${rows}\n`;
+};
+
+/** The same reply as the transport actually delivers it when it overruns the fetch
+ *  buffer: status line intact, body cut, terminator gone. */
+const cutShort = (millis: number, body: string): string => `ok\t${millis}\n${body}`;
 
 describe('buildReferrersOf', () => {
   it('refuses before scanning rather than after, so no work can be lost', () => {
@@ -246,5 +254,81 @@ describe('parseReferrerCollectionOf', () => {
       kind: 'unavailable',
       reason: 'The stone did not answer a collection',
     });
+  });
+});
+
+// A reply that the transport cut short.
+//
+// `executeFetchStringNb` fetches with ONE 256 KB `GciTsFetchChars` and checks only the
+// error number, so a longer reply arrives truncated with no signal. That is reachable
+// today: the referrers of `Object` on a 3.7.5 stone are 3,380 classes and ~254 KB.
+//
+// The status line is written first, so a cut reply still says `ok`. Everything below is
+// about the one outcome that must never happen — a cut scan reporting, in so many words,
+// that nothing in the repository points at the object.
+describe('a truncated reply', () => {
+  it('is not read as “nothing points at this object”', () => {
+    // Cut immediately after the header: the body is empty and perfectly well formed.
+    const result = og.parseReferrersOf(cutShort(24, ''));
+
+    expect(result.kind).toBe('unavailable');
+    if (result.kind !== 'unavailable') return;
+    expect(result.reason).toContain('cut short');
+  });
+
+  it('is not read as a shorter list of referrers', () => {
+    const result = og.parseReferrersOf(cutShort(24, 'GsNMethod\t144897\t496\t0\n'));
+
+    expect(result.kind).toBe('unavailable');
+  });
+
+  it('is caught even when the cut lands on a row boundary', () => {
+    // The terminator carries a count, so losing whole rows is detectable too, not just
+    // losing the marker.
+    const complete = ok(24, 'A\t1\t2\t0\nB\t2\t3\t0\n');
+    const missingARow = complete.replace('B\t2\t3\t0\n', '');
+
+    expect(og.parseReferrersOf(missingARow).kind).toBe('unavailable');
+  });
+
+  it('cannot fabricate a referrer from half a line', () => {
+    // A cut lands mid-row and leaves a line whose fields still parse. Without the OOP
+    // check that half-OOP becomes a hop target the walk pins and offers to the user.
+    const result = og.parseReferrersOf(ok(24, 'Association\t67073\t1\t31\n'));
+
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    // '31' is a plausible-looking OOP, so it is kept — the guard that matters is that a
+    // NON-numeric fragment never reaches BigInt() in the walk.
+    expect(result.groups[0].soleOop).toBe('31');
+    const mangled = og.parseReferrersOf(ok(24, 'Association\t67073\t1\t3155379\u0000\n'));
+    expect(mangled.kind === 'ok' && mangled.groups[0].soleOop).toBeUndefined();
+  });
+
+  it('never lets a non-numeric OOP through to the walk', () => {
+    // Every OOP here reaches BigInt() in objectGraphWalk, which throws on junk.
+    const groups = og.parseReferrersOf(ok(1, 'A\tnot-an-oop\t2\t0\nB\t2\t3\t0\n'));
+    expect(groups.kind === 'ok' && groups.groups.map((g) => g.referrerClass)).toEqual(['B']);
+
+    const objects = og.parseReferrerObjectsOf(ok(1, '2\nnope\t0\tlabel\n101\t0\tok\n'));
+    expect(objects.kind === 'ok' && objects.objects.map((o) => o.oop)).toEqual(['101']);
+
+    const edges = og.parseSlotEdgesAmong(ok(0, 'x\t20\tpartner\n10\t20\tpartner\n'));
+    expect(edges.kind === 'ok' && edges.edges).toHaveLength(1);
+  });
+
+  it('is caught by every parser that streams rows, not just one', () => {
+    expect(og.parseReferrerObjectsOf(cutShort(1, '496\n')).kind).toBe('unavailable');
+    expect(og.parseSlotEdgesAmong(cutShort(0, '10\t20\tpartner\n')).kind).toBe('unavailable');
+    expect(og.parseReferrerCollectionOf(cutShort(30, '4096\t4096\t31553793')).kind).toBe(
+      'unavailable',
+    );
+  });
+
+  it('still lets a genuinely empty answer through', () => {
+    // "Nothing points at this" is a real, useful answer — the terminator is what makes it
+    // distinguishable from a scan that was cut off before it could say anything.
+    expect(og.parseReferrersOf(ok(3, ''))).toEqual({ kind: 'ok', groups: [], scanMillis: 3 });
+    expect(og.parseSlotEdgesAmong(ok(0, ''))).toEqual({ kind: 'ok', edges: [] });
   });
 });
