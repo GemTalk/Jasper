@@ -50,8 +50,11 @@ const output = renderOptionalFunctionsModule(entries, revisions);
 let previous;
 try {
   previous = readFileSync(OUTPUT_PATH, 'utf8');
-} catch {
-  // First generation: no existing file to compare against.
+} catch (error) {
+  // A missing file is the first-ever generation: nothing to compare against.
+  // Any other read failure (permissions, I/O) must NOT be mistaken for that, or
+  // we would overwrite the committed file unconditionally and mask the error.
+  if (error.code !== 'ENOENT') throw error;
 }
 
 const summary = `${entries.length} optional function(s) from ${revisions.length} vendored revision(s)`;
