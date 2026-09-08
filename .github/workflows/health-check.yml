@@ -276,7 +276,11 @@ jobs:
           enableCrossOsArchive: true
       - name: Setup GemStone in Windows
         if: runner.os == 'Windows'
-        uses: ./.github/actions/setup-gemstone-in-windows
+        # actionlint 1.7.12 (latest release) doesn't recognize GitHub's
+        # newer '$/...' self-repository syntax yet, so it rejects that form
+        # as a malformed remote reference. './...' is understood by both
+        # linters; it's just not zizmor's preferred pinning form.
+        uses: ./.github/actions/setup-gemstone-in-windows # zizmor: ignore[self-repository]
         with:
           gemstone-version: ${{ matrix.gemstone-version }}
       - name: Configure macOS shared memory
