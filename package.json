@@ -3466,6 +3466,8 @@
     "//dev:fresh:keep-installs": "Like dev:fresh but reuses your real ~/Documents/GemStone so you can connect to servers/stones you've already downloaded.",
     "dev:fresh:keep-installs": "bash scripts/dev-fresh.sh --keep-installs",
     "serve:seaside": "bash scripts/serve-seaside.sh",
+    "//docs:fetch": "Optional, human-run: downloads GemTalk's official GemStone manuals (PDF) into a shared local cache and links it as gs-docs/. Nothing else invokes this, and no agent tooling downloads on its own; see .claude/skills/gemstone-docs/.",
+    "docs:fetch": "node scripts/fetch-gs-docs.mjs",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
     "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
     "//lint:gci-headers": "Asserts vendor/gci-headers/versions.md matches the committed header files (hashes, folder links, and no unreferenced folders). Run after adding a row.",

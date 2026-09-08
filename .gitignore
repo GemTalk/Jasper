@@ -49,3 +49,8 @@ gs-src/refactoring/design/
 # test fails — so they can linger as untracked files. Never commit them.
 gci*trace.log
 .gci-trace-keep
+
+# Optional local download of GemTalk's official GemStone manuals (PDF), fetched
+# on demand by `npm run docs:fetch`. A symlink to a shared cache outside the
+# repo.
+gs-docs
