@@ -130,9 +130,11 @@ Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted
 
 A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
-### MCP Server view
+### MCP Server
 
-The **MCP Server** view shows which Jasper window is currently serving MCP tool calls, the active session it's bound to, the socket path, and the HTTPS URL when available. Click **Socket:** or **HTTPS:** to copy the value to the clipboard. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
+Jasper can serve MCP tool calls so Claude Code and Claude Desktop work directly against your GemStone session. It runs against the **active session of whichever window owns the server**, so that is where its state is reported: in **Logins & Sessions**, the session being served is marked `· MCP`, and every other session row offers **Serve MCP from This Session**, which selects that session and claims the server in one step.
+
+`GemStone: Claim MCP Server`, `Copy MCP Server URL`, `Copy MCP Socket Path`, `Install MCP TLS Certificate` and `Open MCP Inspector` are in the Command Palette. Turn the whole thing off with the **`jasper.mcp.enabled`** setting — no socket, no HTTPS listener, no client configuration written, and those commands and the session-row button leave the UI rather than failing when used. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
 
 ## IDE Features
 
@@ -151,6 +153,7 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 
 - **Commit** / **Abort** — transaction control
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
+- **Serve MCP from This Session** (robot) — make this the session Claude Code and Claude Desktop run their GemStone tools against; see [MCP Server](#mcp-server). Hidden when `jasper.mcp.enabled` is off, and absent from the row already being served (which is marked `· MCP`)
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
 

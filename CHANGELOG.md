@@ -4,6 +4,18 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP is set up on the session it serves, not in a pane of its own.** The **MCP Server** section has left the GemStone sidebar. It was a permanent slot in a container people scroll every day, spent on a readout most of them looked at once; and what it reported — which window owns the server, which session its tools act on — is a property of a session, so it belonged next to the sessions. In **Logins & Sessions**, the session being served is now marked `· MCP` in its row, and every other session row carries **Serve MCP from This Session** (the robot icon), which selects that session *and* claims the server in one gesture. That is the part the pane got wrong: claiming ownership there and choosing the active session elsewhere were two steps, and tools follow the active session, so claiming alone routinely left Claude talking to a session nobody meant. When another window holds the server the button says so on hover and the takeover still selects the session here, so this window serves the moment the other one lets go. `Claim MCP Server`, `Copy MCP Server URL`, `Copy MCP Socket Path`, `Install MCP TLS Certificate` and `Open MCP Inspector` are unchanged in the Command Palette. ([#578](https://github.com/GemTalk/Jasper/issues/578))
+
+### Added
+
+- **`jasper.mcp.enabled` turns the MCP server off entirely.** Jasper claimed an MCP socket, started an HTTPS/SSE listener and wrote `mcpServers.jasper` into Claude Code's and Claude Desktop's global configs on every activation, whether or not you use Claude with GemStone at all — and the only way to stop it was to disable the extension. Setting `jasper.mcp.enabled` to false does none of it: no socket, no port, no client configuration written, and the MCP commands and the session row's button out of the UI rather than left there to fail when used. On by default, so nothing changes for anyone already using it. Read once at activation, so it takes effect on window reload — which is how a claimed socket behaves anyway, staying bound for the rest of the VS Code run. ([#578](https://github.com/GemTalk/Jasper/issues/578))
+
+### Removed
+
+- **The Rowan section is gone from the GemStone sidebar.** It was a permanent slot in a container scrolled all day, and the least often opened one in it. The Rowan surface people actually use is unaffected: **GemStone Rowan** in the file Explorer, which lists the open workspace's project and its Tonel packages, is untouched, and **New Rowan Project…**, **Create Rowan Project**, **Load Rowan Project…**, **Load Rowan Project from Git…**, **Unload Rowan Project…**, **Add Dependency…**, **Find Class's Rowan Package** and **Search Rowan Classes** are all still in the Command Palette. What the section held and nothing else did — the list of tracked repositories, and **Load into Image**, **Update from Git**, **Stop Tracking**, **Open Diff Against Disk** and **Export Copy…** on its rows — has no entry point for now; the registry keeps its contents and every one of those commands keeps its implementation, so restoring a surface for them is a matter of contributing one. ([#578](https://github.com/GemTalk/Jasper/issues/578))
+
 ## [1.9.0] - 2026-09-04
 
 ### Added

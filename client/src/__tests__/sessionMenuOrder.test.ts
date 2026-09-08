@@ -50,11 +50,15 @@ describe('session row inline button order', () => {
     //
     // Ping is absent too — it lives on a session row in the Databases & Versions
     // panel, which has the room to show its answer beside the row that asked.
+    //
+    // Serve MCP from This Session sits beside Session Configuration: both are
+    // "point something at this session" rather than acts on the session's data.
     expect(order).toEqual([
       'gemstone.fileIn',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
       'gemstone.showSessionConfiguration',
+      'gemstone.sessionServeMcp',
       'gemstone.sessionLogout',
     ]);
   });

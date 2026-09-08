@@ -60,16 +60,20 @@ All three speak the same MCP wire protocol; the difference is just whether the t
 
 The socket and HTTPS port are global resources, so only one Jasper window can serve MCP at a time. Ownership is decided lazily:
 
-- **On activation**, every Jasper window writes the well-known
-  `mcpServers.jasper` entry into `~/.claude.json` and into Claude Desktop's
-  global config. Both entries point at the **fixed** socket path, so they're
-  correct no matter which window ends up owning it. No ownership claim is made
-  here — a window that opens but never logs in stays passive.
+- **On activation**, every Jasper window with `jasper.mcp.enabled` set writes
+  the well-known `mcpServers.jasper` entry into `~/.claude.json` and into
+  Claude Desktop's global config. Both entries point at the **fixed** socket
+  path, so they're correct no matter which window ends up owning it. No
+  ownership claim is made here — a window that opens but never logs in stays
+  passive. With the setting off, the window does none of this: no config is
+  written, no socket or port is claimed, and the MCP commands and the session
+  row's button are gated out of the UI (`jasper.mcpAvailable`, which also
+  covers the no-folder-open case) rather than left to fail when used.
 - **On the first GemStone login**, the window that just acquired a session
   attempts to bind the socket and HTTPS port. The successful claimant becomes
   the **MCP owner** for the rest of that VS Code run and writes a sidecar file
-  at `~/.jasper/mcp.owner.json` so other Jasper windows can display "Owned by
-  /path/to/that/workspace" in their **MCP Server** view.
+  at `~/.jasper/mcp.owner.json` so other Jasper windows can tell that someone
+  else holds the role.
 - **Once owned, the socket stays bound across logout/login cycles.** Tool calls
   during a logged-out gap return "no session selected"; the moment the user
   logs back in, tools resume working. Claude Code's MCP connection never sees
@@ -86,8 +90,11 @@ the owning window has two logins, MCP tools act on whichever one is active
 *right now*. Switching sessions in the owning window changes which database
 the AI sees on the next tool call.
 
-The **MCP Server** view in the GemStone sidebar always shows the live answer:
-ownership state, active session, socket path, HTTPS URL.
+The **Logins & Sessions** view shows the live answer on the session itself:
+the row MCP is serving is marked `· MCP`, and every other session row offers
+**Serve MCP from This Session** (the robot icon), which selects that session
+and claims the server in one step. There is no separate MCP pane — ownership is
+a property of a session, so it is reported where the sessions are.
 
 ## Client registration
 
@@ -172,8 +179,9 @@ Trusting the cert is per-machine, not per-workspace. You only do it once.
 ## Multiple VS Code windows
 
 Several Jasper windows can run side-by-side, but only one serves MCP at a
-time. The passive windows show **"Owned by /path/to/that/workspace"** in their
-MCP Server view. To run two MCP-serving windows simultaneously:
+time. In a passive window no session row is marked `· MCP`, and the
+**Serve MCP from This Session** button's tooltip says another window owns the
+server. To run two MCP-serving windows simultaneously:
 
 - The stdio surface is one-per-machine (fixed socket path).
 - Override `jasper.mcp.httpPort` in the second workspace's
@@ -227,8 +235,8 @@ a human looking at the Browser/Inspector would see.
 - [`client/src/mcpSocketServer.ts`](../client/src/mcpSocketServer.ts) — socket listener, ownership claim, config writers, sidecar.
 - [`client/src/mcpHttpServer.ts`](../client/src/mcpHttpServer.ts) — HTTPS/SSE listener, TLS cert plumbing.
 - [`client/src/mcpTools.ts`](../client/src/mcpTools.ts) — tool registration; the one place every tool is declared.
-- [`client/src/mcpOwnerSidecar.ts`](../client/src/mcpOwnerSidecar.ts) — sidecar read/write/PID-liveness check used by the MCP Server view.
-- [`client/src/mcpServerTreeProvider.ts`](../client/src/mcpServerTreeProvider.ts) — the **MCP Server** sidebar view.
+- [`client/src/mcpOwnerSidecar.ts`](../client/src/mcpOwnerSidecar.ts) — sidecar read/write/PID-liveness check behind the ownership readout.
+- [`client/src/mcpServerTreeProvider.ts`](../client/src/mcpServerTreeProvider.ts) — `resolveOwnership`, which reduces socket state + sidecar to the three-state answer the session rows render. (The tree provider in this file is no longer contributed as a view; see [`loginTreeProvider.ts`](../client/src/loginTreeProvider.ts) for what renders the answer now.)
 - [`client/src/claudeCodeUserMcpConfig.ts`](../client/src/claudeCodeUserMcpConfig.ts) — `~/.claude.json` writer.
 - [`mcp-server/src/index.ts`](../mcp-server/src/index.ts) — the stdio proxy script that clients launch.
 - [`client/src/tlsCert.ts`](../client/src/tlsCert.ts) — TLS cert generation and on-disk layout.

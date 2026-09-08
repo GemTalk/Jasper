@@ -174,7 +174,7 @@ export class McpSocketServer {
   /**
    * Re-write the sidecar with the current session label. Call after a session
    * selection change in the owning window so passive Jasper windows see the
-   * new session in their MCP Server panel. No-op when not owner.
+   * new session on their own session rows. No-op when not owner.
    */
   refreshSidecar(): void {
     if (!this._isOwner) return;

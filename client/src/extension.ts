@@ -174,7 +174,7 @@ import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
-import { McpServerTreeProvider } from './mcpServerTreeProvider';
+import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
 import { DEFAULT_MCP_HTTP_PORT, McpHttpServer } from './mcpHttpServer';
 import { readMcpSetting } from './mcpSettings';
 import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
@@ -703,7 +703,12 @@ export function activate(context: vscode.ExtensionContext) {
   // Must run after sessionManager exists (the reaper checks for a live session).
   context.subscriptions.push(installStaleGemstoneTabReaper(sessionManager));
 
-  const treeProvider = new LoginTreeProvider(storage, sessionManager);
+  // Answers "is this window serving MCP, and for which session" for the session
+  // rows. Assigned by the MCP block later in activate(); until then — and for
+  // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
+  // returns undefined and the rows show no MCP state at all.
+  let mcpOwnership: () => McpOwnership | undefined = () => undefined;
+  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
 
   const treeView = vscode.window.createTreeView('gemstoneLogins', {
     treeDataProvider: treeProvider,
@@ -2963,6 +2968,12 @@ export function activate(context: vscode.ExtensionContext) {
   // user-scope config on every activation — the configs always point at the
   // same well-known socket, regardless of which Jasper window owns it.
   //
+  // The whole surface is off when `jasper.mcp.enabled` is false: no socket is
+  // claimed, no HTTPS listener starts, no client config is written, and the MCP
+  // commands are not registered. The setting is read once here, so changing it
+  // takes effect on the next window reload — matching how a claimed socket
+  // behaves anyway (it stays bound for the rest of the VS Code run).
+  //
   // Ownership of the live socket (and the HTTPS port) is claimed on the
   // first GemStone login in this window, not on activation. That way the
   // window MCP talks to is the one actually working with GemStone — a window
@@ -2976,7 +2987,16 @@ export function activate(context: vscode.ExtensionContext) {
   // Claude Code:    user-scope `mcpServers.jasper` in `~/.claude.json`.
   // Claude Desktop: `mcpServers.jasper` in `claude_desktop_config.json`.
   const workspaceRoots = vscode.workspace.workspaceFolders;
-  if (workspaceRoots && workspaceRoots.length > 0) {
+  const mcpEnabled = readMcpSetting<boolean>('enabled', true);
+  // Gates the session row's "Serve MCP from This Session" button. False when the
+  // setting is off and when no folder is open, which are exactly the cases where
+  // gemstone.sessionServeMcp is not registered.
+  void vscode.commands.executeCommand(
+    'setContext',
+    'jasper.mcpAvailable',
+    mcpEnabled && !!workspaceRoots && workspaceRoots.length > 0,
+  );
+  if (mcpEnabled && workspaceRoots && workspaceRoots.length > 0) {
     const workspacePath = workspaceRoots[0].uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
@@ -3035,31 +3055,27 @@ export function activate(context: vscode.ExtensionContext) {
     let httpServer: McpHttpServer | undefined;
     let httpStarted = false;
 
-    // Tree view that exposes who owns the MCP server right now. Reads its
-    // state on demand from the socket server + sidecar file, so a refresh is
-    // all that's needed when ownership or session selection changes.
-    const mcpTreeProvider = new McpServerTreeProvider({
+    // Who owns the MCP server, and which session it answers for, is reported on
+    // the session rows in Logins & Sessions rather than in a pane of its own:
+    // the answer is a property of a session, and that is where the user already
+    // is. resolveOwnership reads it on demand from the socket server + sidecar
+    // file, so redrawing the tree is all that's needed when either changes.
+    const mcpDeps: McpServerTreeDeps = {
       isOwner: () => mcpSocketServer.isOwner,
       socketPath: mcpSocketServer.socketPath,
       httpsUrl: () => (httpStarted && httpServer ? httpServer.url : undefined),
       getSession: () => sessionManager.getSelectedSession(),
       sidecarPath: mcpSocketServer.sidecarPath,
-    });
-    const mcpTreeView = vscode.window.createTreeView('jasperMcpServer', {
-      treeDataProvider: mcpTreeProvider,
-      showCollapseAll: false,
-    });
-    context.subscriptions.push(mcpTreeView);
-    context.subscriptions.push(
-      sessionManager.onDidChangeSelection(() => mcpTreeProvider.refresh()),
-    );
+    };
+    mcpOwnership = () => resolveOwnership(mcpDeps);
+    treeProvider.refresh();
     // Watch the sidecar file so passive windows pick up ownership changes
     // from elsewhere without polling.
     const sidecarWatcher = fs.watch(
       path.dirname(mcpSocketServer.sidecarPath),
       (_event, filename) => {
         if (!filename || filename === path.basename(mcpSocketServer.sidecarPath)) {
-          mcpTreeProvider.refresh();
+          treeProvider.refresh();
         }
       },
     );
@@ -3082,7 +3098,7 @@ export function activate(context: vscode.ExtensionContext) {
       claimAttemptInFlight = true;
       try {
         const claimed = await mcpSocketServer.start();
-        mcpTreeProvider.refresh();
+        treeProvider.refresh();
         if (!claimed) return;
 
         const tls = await ensureSelfSignedCert(context.globalStorageUri.fsPath);
@@ -3111,7 +3127,7 @@ export function activate(context: vscode.ExtensionContext) {
             appendSysadmin(`MCP HTTPS server failed to start: ${e.message}`);
           }
         }
-        mcpTreeProvider.refresh();
+        treeProvider.refresh();
       } catch (err) {
         appendSysadmin(`MCP claim failed: ${(err as Error).message}`);
       } finally {
@@ -3123,12 +3139,12 @@ export function activate(context: vscode.ExtensionContext) {
     // new session immediately (via getSession), and the sidecar needs an
     // update so passive Jasper windows can show what's currently selected.
     // When we're not owner, the change still triggers a re-render of the
-    // local panel (which displays "(none)") and a re-claim attempt for the
-    // case where a prior owner released ownership while we were idle.
+    // session rows (none of which claim to serve MCP) and a re-claim attempt
+    // for the case where a prior owner released ownership while we were idle.
     context.subscriptions.push(
       sessionManager.onDidChangeSelection(() => {
         mcpSocketServer.refreshSidecar();
-        mcpTreeProvider.refresh();
+        treeProvider.refresh();
         void tryClaimMcpOwnership();
       }),
     );
@@ -3148,6 +3164,32 @@ export function activate(context: vscode.ExtensionContext) {
           );
         }
       }),
+      // The session-row action that replaced the MCP pane's Claim button. Two
+      // steps in one gesture, because the pane's two-step version ("claim here,
+      // then remember that tools follow the selected session") is the part
+      // people got wrong: select the session, then own the server.
+      vscode.commands.registerCommand(
+        'gemstone.sessionServeMcp',
+        async (item?: GemStoneSessionItem) => {
+          const session = item ? item.activeSession : await sessionManager.resolveSession();
+          if (!session) return;
+          sessionManager.selectSession(session.id);
+          await tryClaimMcpOwnership();
+          if (mcpSocketServer.isOwner) {
+            vscode.window.showInformationMessage(
+              `MCP tools now run against session ${session.id} (${loginLabel(session.login)}).`,
+            );
+          } else {
+            // selectSession still took effect, so this window is ready to serve
+            // the moment the other one lets go.
+            vscode.window.showWarningMessage(
+              'Another VS Code window owns the MCP server, so tools still run against its ' +
+                'session. Close or disable Jasper there, then try again.',
+            );
+          }
+          treeProvider.refresh();
+        },
+      ),
       vscode.commands.registerCommand('jasper.copyMcpUrl', async () => {
         if (!httpStarted || !httpServer) {
           vscode.window.showWarningMessage(
@@ -3250,6 +3292,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Rowan: tracked repositories (registry persists in globalState — stones are
   // disposable, the registry isn't) + package-manager operations.
+  // No tree view is contributed for this provider: the Rowan section is gone from
+  // the GemStone sidebar. It is still the source of truth for which projects are
+  // loaded in the image, which is what the Explorer's Rowan section renders, and
+  // its repo commands are still registered — they just have no UI entry point.
   const rowanRegistry = new RowanRepoRegistry(context.globalState);
   const rowanProvider = new RowanTreeProvider(rowanRegistry, {
     getSession: () => sessionManager.getSelectedSession() ?? null,
@@ -3257,8 +3303,8 @@ export function activate(context: vscode.ExtensionContext) {
   // The Rowan project at the open workspace root, shown as a section in the
   // Explorer (contributed only when gemstone.workspaceIsRowanProject). Its
   // packages are read from disk — co-located with the file tree, no stone.
-  // Fed by the Rowan view's own image query, so "loaded" is decided in one place
-  // rather than asked of the stone twice.
+  // Fed by the Rowan provider's own image query, so "loaded" is decided in one
+  // place rather than asked of the stone twice.
   const rowanProjectProvider = new RowanProjectTreeProvider(rowanProvider);
   const rowanProjectView = vscode.window.createTreeView('gemstoneRowanProject', {
     treeDataProvider: rowanProjectProvider,
@@ -3299,10 +3345,12 @@ export function activate(context: vscode.ExtensionContext) {
       'gemstone.workspaceIsRowanProject',
       !!root && isRowanProjectRoot(root),
     );
-    // Gate the "isn't a Rowan project" welcome on having actually looked. Until
-    // the extension activates, workspaceIsRowanProject is undefined — which a
-    // `!` clause reads as "not a project", flashing that welcome over a project
-    // we simply hadn't checked yet. Set last, so it never precedes the answer.
+    // Says the check above has actually run, as distinct from not having run
+    // yet: until the extension activates, workspaceIsRowanProject is undefined,
+    // which a `!` clause reads as "not a project". Nothing consumes this now
+    // that the Rowan sidebar section and its welcomes are gone — it is kept
+    // because any `when` clause negating workspaceIsRowanProject needs it, and
+    // set last so it can never precede the answer it qualifies.
     vscode.commands.executeCommand('setContext', 'gemstone.rowanProjectChecked', true);
   };
   refreshRowanWorkspaceContext();
@@ -3311,10 +3359,10 @@ export function activate(context: vscode.ExtensionContext) {
   activeEditorDecorations.setActiveEditor(vscode.window.activeTextEditor?.document.uri);
   context.subscriptions.push(
     rowanProjectView,
-    vscode.window.createTreeView('gemstoneRowan', {
-      treeDataProvider: rowanProvider,
-    }),
-    // Git-view-style M/A/D badges + label tinting for Rowan rows.
+    // Git-view-style M/A/D badges + label tinting for the rows RowanTreeProvider
+    // builds. Nothing renders those rows now that the Rowan sidebar section is
+    // gone, so this decorates nothing; it stays registered so that restoring the
+    // section is a package.json change and nothing more.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
     // Tints the Methods-pane / Open-Editors row backing the active editor, so the
     // selected method reads as connected to its source even when the tree isn't
