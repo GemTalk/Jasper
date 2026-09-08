@@ -42,6 +42,7 @@ describe('editor/context menu', () => {
       'gemstone.breakpoints.disableAtCursor',
       'gemstone.breakpoints.clearMethod',
       'gemstone.breakpoints.toggleStepPoints',
+      'gemstone.fileInFile',
     ]);
   });
 

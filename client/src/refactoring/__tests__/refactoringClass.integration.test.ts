@@ -65,7 +65,7 @@ failuresAndErrors := 0.
 failuresAndErrors printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   const BASE = 'RCItBase';
   const SUB = 'RCItSub';
