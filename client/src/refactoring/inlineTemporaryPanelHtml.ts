@@ -12,7 +12,7 @@
  * unit-tests directly.
  */
 import { InlineTemporaryChange, InlineTemporaryOutOfScope } from './inlineTemporaryPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s
