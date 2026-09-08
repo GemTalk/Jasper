@@ -132,7 +132,7 @@ describe('the Actions & Navigation pane', () => {
     }
   });
 
-  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, undo, the label toggle and a workspace', () => {
+  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, the label toggle, a workspace and undo last', () => {
     expect(toolbarCommands()).toEqual([
       'gemstone.navigateBack',
       'gemstone.navigateForward',
@@ -141,12 +141,12 @@ describe('the Actions & Navigation pane', () => {
       'gemstone.explorer.refresh',
       'gemstone.explorer.commit',
       'gemstone.explorer.abort',
-      // Undo sits with Commit and Abort, the other two controls that act on uncommitted
-      // work, rather than among the navigation arrows (#434, review of #507).
-      'gemstone.undoLast',
       'gemstone.explorer.showNavigationSelectorsOnly',
       'gemstone.explorer.showNavigationFullLocations',
       'gemstone.openWorkspace',
+      // Last, at the far right: an edge target is easier to hit, and it keeps Undo away
+      // from Abort, whose glyph it used to be mistaken for (#434, review of #507).
+      'gemstone.undoLast',
     ]);
   });
 

@@ -6,8 +6,8 @@
  * separate Undo buttons, each covering half of what the user just did, would be worse
  * than one that covers everything.
  *
- * The BUTTON itself lives in the Explorer's Actions & Navigation pane, beside Commit and
- * Abort, which are the other two controls that act on uncommitted work. It went there on
+ * The BUTTON itself lives at the far right of the Explorer's Actions & Navigation pane --
+ * an edge target, and clear of Abort, whose glyph it used to be mistaken for. It went there on
  * the review of #507: there had been five ways to reach this one action — a status-bar
  * item, an icon on the Explorer's Methods pane, one on the editor title bar, the palette
  * entry and the toast — and a reviewer who went looking found three of them and wanted one.
