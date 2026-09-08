@@ -2,7 +2,12 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./out",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // TS 6 no longer auto-includes every @types package it can find, and this
+    // is the only project with no other path to the Node globals and builtin
+    // modules — no dependency here happens to `/// <reference types="node" />`
+    // (the way @vscode/debugadapter does for client), so ask for it directly.
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"]
 }
