@@ -145,12 +145,33 @@ export class SysadminStorage {
     const content = wslReadFileSync(yamlPath);
     if (content === undefined) return undefined;
     // Simple YAML parser for our known format
-    const version = content.match(/^version:\s*"?([^"\n]+)"?/m)?.[1];
-    const stoneName = content.match(/^stoneName:\s*"?([^"\n]+)"?/m)?.[1];
-    const ldiName = content.match(/^ldiName:\s*"?([^"\n]+)"?/m)?.[1];
-    const baseExtent = content.match(/^baseExtent:\s*"?([^"\n]+)"?/m)?.[1];
-    if (!version || !stoneName || !ldiName || !baseExtent) return undefined;
-    return { version, stoneName, ldiName, baseExtent };
+    const field = (name: string): string | undefined =>
+      content.match(new RegExp(`^${name}:\\s*"?([^"\\n]+)"?`, 'm'))?.[1];
+    const version = field('version');
+    const stoneName = field('stoneName');
+    const ldiName = field('ldiName');
+    const baseExtent = field('baseExtent');
+    const registered = field('registered') === 'true';
+    if (!version || !stoneName || !ldiName) return undefined;
+    // A created database is defined by the extent it was copied from, so a
+    // record without one is incomplete and better ignored than half-read. A
+    // registered database has no base extent by definition (see
+    // registeredDatabase.ts), and requiring one would make every one of them
+    // invisible.
+    if (!registered && !baseExtent) return undefined;
+    if (!registered) return { version, stoneName, ldiName, baseExtent };
+    const port = field('netldiPort');
+    const netldiPort = port !== undefined && /^\d+$/.test(port) ? parseInt(port, 10) : undefined;
+    return {
+      version,
+      stoneName,
+      ldiName,
+      registered: true,
+      productPath: field('productPath'),
+      confPath: field('confPath'),
+      globalDir: field('globalDir'),
+      ...(netldiPort !== undefined ? { netldiPort } : {}),
+    };
   }
 
   /** Get the next available db-N number within the given directory */

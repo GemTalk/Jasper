@@ -1,4 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
+import { classOrganizerExpr } from '../../queries/classOrganizer';
 import { classLookupExpr } from '../../queries/util';
 
 // The immediate SIBLINGS of a class: the other immediate subclasses of its superclass (the anchor
@@ -27,7 +28,7 @@ sup := cls superclass.
 sup isNil ifTrue: [^ ''].
 tracked := sup subclasses ifNil: [#()].
 out := WriteStream on: String new.
-((ClassOrganizer new subclassesOf: sup) asSortedCollection: [:a :b | a name <= b name]) do: [:c |
+((${classOrganizerExpr()} subclassesOf: sup) asSortedCollection: [:a :b | a name <= b name]) do: [:c |
   (c == cls or: [(tracked detect: [:t | t == c] ifNone: [nil]) isNil])
     ifFalse: [out nextPutAll: c name asString; lf]].
 out contents`;

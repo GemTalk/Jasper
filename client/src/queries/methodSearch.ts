@@ -1,4 +1,5 @@
 import { QueryExecutor } from './types';
+import { classOrganizerExpr } from './classOrganizer';
 import { classLookupExpr, escapeString } from './util';
 
 export interface MethodSearchResult {
@@ -103,7 +104,8 @@ export function searchMethodSource(
   ignoreCase: boolean,
 ): MethodSearchResult[] {
   const code = `| results methods stream limit classDict sl |
-results := ClassOrganizer new substringSearch: '${escapeString(term)}' ignoreCase: ${ignoreCase}.
+results := ${classOrganizerExpr(0)}
+  substringSearch: '${escapeString(term)}' ignoreCase: ${ignoreCase}.
 methods := results at: 1.
 ${methodSerialization(0)}`;
 
@@ -116,7 +118,7 @@ export function sendersOf(
   environmentId: number = 0,
 ): MethodSearchResult[] {
   const code = `| methods stream limit classDict sl |
-methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
+methods := (${classOrganizerExpr(environmentId)}
   sendersOf: #'${escapeString(selector)}') at: 1.
 ${methodSerialization(environmentId)}`;
 
@@ -129,7 +131,7 @@ export function implementorsOf(
   environmentId: number = 0,
 ): MethodSearchResult[] {
   const code = `| methods stream limit classDict sl |
-methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
+methods := (${classOrganizerExpr(environmentId)}
   implementorsOf: #'${escapeString(selector)}') asArray.
 ${methodSerialization(environmentId)}`;
 
@@ -176,7 +178,7 @@ ${methodSerialization(environmentId)}`;
 // in the symbol list. A dictionary that does not bind the name answers nothing.
 //
 // The environment goes on the ORGANIZER, not just on the serialization: a bare
-// `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a class
+// an organizer collects its classes under one environment, so a class
 // referenced only from a method in another environment would come back unreferenced —
 // and a safe delete would then report that nothing referenced it. Verified on a live
 // stone: with the same method compiled into environments 0 and 1, the bare organizer
@@ -190,7 +192,7 @@ export function referencesToClassInDict(
   const code = `| cls methods stream limit classDict sl |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
-methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
+methods := (${classOrganizerExpr(environmentId)}
   referencesToObject: cls) asArray.
 ${methodSerialization(environmentId)}`;
 
@@ -203,7 +205,7 @@ export function referencesToObject(
   environmentId: number = 0,
 ): MethodSearchResult[] {
   const code = `| methods stream limit classDict sl |
-methods := (ClassOrganizer new referencesToObject:
+methods := (${classOrganizerExpr(0)} referencesToObject:
   (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')).
 ${methodSerialization(environmentId)}`;
 
@@ -236,8 +238,8 @@ export function literalSymbolReferences(
   const needle = escapeString(symbolExpr);
   const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
-lit := (ClassOrganizer new referencesToLiteral: symLit) at: 1.
-candidates := (ClassOrganizer new substringSearch: '${needle}' ignoreCase: false) at: 1.
+lit := (${classOrganizerExpr(0)} referencesToLiteral: symLit) at: 1.
+candidates := (${classOrganizerExpr(0)} substringSearch: '${needle}' ignoreCase: false) at: 1.
 methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
@@ -262,7 +264,7 @@ export function stringLiteralReferences(
   const code = `| ic needle candidates methods stream limit classDict sl |
 ic := ${ignoreCase}.
 needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
-candidates := (ClassOrganizer new substringSearch: '${esc}' ignoreCase: ic) at: 1.
+candidates := (${classOrganizerExpr(0)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
 methods := candidates select: [:m |
   (m literals detect: [:l |
     (l isKindOf: String) and: [l isSymbol not and: [

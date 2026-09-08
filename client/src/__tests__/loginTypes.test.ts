@@ -6,6 +6,7 @@ import {
   dataCuratorLoginToCreate,
   gemNrsFor,
   loginLabel,
+  loginNetldiTarget,
   loginTargetKey,
   netldiNameFromGemNrs,
   parseStoneNrs,
@@ -204,5 +205,39 @@ describe('dataCuratorLoginToCreate', () => {
     const created = dataCuratorLoginToCreate([otherUser], config);
 
     expect(created?.gs_user).toBe('DataCurator');
+  });
+});
+
+describe('loginNetldiTarget', () => {
+  it('uses the NetLDI name when that is all the database knows', () => {
+    expect(loginNetldiTarget({ version: '3.7.5', stoneName: 's', ldiName: 'gs64ldi' })).toBe(
+      'gs64ldi',
+    );
+  });
+
+  it('prefers a recorded port, which resolves where a name may not', () => {
+    // A NetLDI name only resolves through /etc/services. A database registered
+    // from someone else's installation routinely uses a name nobody added
+    // there, and the login then fails to resolve the service rather than
+    // failing to connect — which reads as a broken stone.
+    expect(
+      loginNetldiTarget({
+        version: '3.7.5',
+        stoneName: 's',
+        ldiName: 'gregldi',
+        netldiPort: 46717,
+      }),
+    ).toBe('46717');
+  });
+
+  it('is what the DataCurator login for such a database is built with', () => {
+    const login = buildDataCuratorLogin({
+      version: '3.7.5.1',
+      stoneName: 'theirstone',
+      ldiName: 'gregldi',
+      netldiPort: 46717,
+    });
+    expect(login.netldi).toBe('46717');
+    expect(gemNrsFor(login)).toBe('!tcp@localhost#netldi:46717#task!gemnetobject');
   });
 });

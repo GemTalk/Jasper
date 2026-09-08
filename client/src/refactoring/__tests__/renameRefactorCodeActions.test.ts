@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
-import { RefactorCodeActionProvider } from '../renameRefactorCodeActions';
+import {
+  REFACTOR_CODE_ACTION_SELECTOR,
+  RefactorCodeActionProvider,
+} from '../renameRefactorCodeActions';
+import { CLASS_COMMENT_LANGUAGE, METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../../languageIds';
 
 function docWith(line: string): vscode.TextDocument {
   return {
@@ -112,5 +116,32 @@ describe('refactor code actions', () => {
     expect(RefactorCodeActionProvider.providedCodeActionKinds).toContain(
       vscode.CodeActionKind.Refactor,
     );
+  });
+});
+
+// Which documents get a "Refactor…" menu at all. Every action above runs a
+// command that funnels through `resolveMethodEditor`, so anywhere the selector
+// reaches beyond a saved, compiled method is a menu that can only decline.
+describe('REFACTOR_CODE_ACTION_SELECTOR', () => {
+  it('attaches to the source of a compiled method alone', () => {
+    expect(REFACTOR_CODE_ACTION_SELECTOR).toEqual({
+      scheme: 'gemstone',
+      language: METHOD_LANGUAGE,
+    });
+  });
+
+  it('does not attach to the language every other gemstone:// document carries', () => {
+    // A class definition, a new-method template, a new-class template and the
+    // read-only override diff view all share SMALLTALK_LANGUAGE behind the same
+    // scheme. This registration named that id before the language split, so all
+    // four offered the menu, and every action in it declined.
+    expect(REFACTOR_CODE_ACTION_SELECTOR.language).not.toBe(SMALLTALK_LANGUAGE);
+    expect(REFACTOR_CODE_ACTION_SELECTOR.language).not.toBe(CLASS_COMMENT_LANGUAGE);
+  });
+
+  it('names a language rather than matching the whole scheme', () => {
+    // A scheme-only filter is how the over-reach happened; naming the language
+    // is what keeps the menu where the commands can act.
+    expect(REFACTOR_CODE_ACTION_SELECTOR.language).toBeDefined();
   });
 });

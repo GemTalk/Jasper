@@ -87,8 +87,11 @@ export interface NbRunOptions {
  * native fault in the GCI library, not an error that can be caught — so a second
  * cancel arriving too soon is deferred rather than obeyed. Found by an
  * integration test that pressed both at once and took the worker down with it.
+ *
+ * Exported so the tests wait out the real gap instead of a magic number that has
+ * to be remembered if this one ever changes.
  */
-const MIN_HARD_BREAK_GAP_MS = 300;
+export const MIN_HARD_BREAK_GAP_MS = 300;
 
 /** How long to keep collecting the result of a hard-broken call, and how often. */
 const DRAIN_ATTEMPTS = 40;
@@ -166,7 +169,11 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
  * and rejects with `NbCancelledError`. A second cancel that lands within
  * `MIN_HARD_BREAK_GAP_MS` of the soft break isn't obeyed immediately — the hard
  * break is deferred until that gap has elapsed, because sending both back-to-back
- * crashes the client.
+ * crashes the client. If the gem services the soft break while the hard one is
+ * still deferred, the call settles first and the hard break is dropped: the run
+ * then reports whatever the gem answered (a `Break` error, typically) instead of
+ * rejecting. How fast the gem gets to a soft break varies by an order of
+ * magnitude, so both endings are normal and a caller cannot pick which it gets.
  */
 export function pollNbToCompletion<T>(
   session: ActiveSession,
