@@ -129,7 +129,7 @@ export class ObjectGraphPanel {
   constructor(onClose: () => void) {
     this.panel = vscode.window.createWebviewPanel(
       'gemstoneObjectGraph',
-      'Object Graph',
+      'Reference Graph',
       vscode.ViewColumn.Active,
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
     );
@@ -158,7 +158,7 @@ export class ObjectGraphPanel {
   render(view: ObjectGraphWalkView, actions: ObjectGraphActions): void {
     this.actions = actions;
     const nonce = crypto.randomBytes(16).toString('hex');
-    this.panel.title = `Object Graph: ${view.targetClass}`;
+    this.panel.title = `Reference Graph: ${view.targetClass}`;
     this.panel.webview.html = renderObjectGraphHtml({ ...view, nonce, script: panelJs });
     this.panel.reveal(this.panel.viewColumn ?? vscode.ViewColumn.Active, false);
   }

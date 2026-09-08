@@ -475,7 +475,7 @@ export class ObjectGraphWalk {
       void vscode.window.showInformationMessage(
         doomed.size === 1
           ? 'That is the only object on the graph — removing it would leave nothing to ' +
-              'show. Run Show Object Graph on something else instead.'
+              'show. Run Show Reference Graph on something else instead.'
           : `That would take the whole graph with it (${doomed.size} objects). Use ` +
               '"Remove all but the focused object" if that is what you want.',
       );

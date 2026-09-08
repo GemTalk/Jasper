@@ -272,14 +272,6 @@ const HEADER_H = 34;
 const ROW_H = 24;
 const BOX_PAD = 6;
 const BOX_GAP = 14;
-/** Headroom reserved above the boxes for cross-reference edges, and the height they run
- *  at within it. A cross edge can span several layers, and drawn as a direct curve it went
- *  straight THROUGH whatever boxes lay between — 40 of 91 sampled points of one `order`
- *  edge fell inside an unrelated box, taking its label with them, so the line read as
- *  belonging to the box it crossed and its arrowhead was hidden behind it. Routed over the
- *  top, it belongs to nothing it passes and arrives in the open. */
-const CROSS_LANE_H = 34;
-const CROSS_LANE_Y = 14;
 
 function boxHeight(b: Box): number {
   if (b.kind === 'object') return OBJECT_H;
@@ -453,7 +445,39 @@ function edgeDismiss(x: number, y: number): string {
     </g>`;
 }
 
-/** Render the single layered graph. */
+/** What a selected edge says about itself.
+ *
+ *  This is the ONLY place an object edge names its slot; nothing is printed on the line.
+ *  A tooltip can also say what a line never had room for — `[7]` on its own does not say
+ *  which array holds slot 7 — so it gives the variable the reference sits in and the object
+ *  whose variable it is, untruncated.
+ *
+ *  Only an edge that stands for ONE reference gets one. A class box's edge is a count of
+ *  many references from many objects, so there is no single variable to name and it is
+ *  offered nothing rather than something vague. */
+function edgeTip(b: Box, targetLabel: string | undefined): string | undefined {
+  if (b.kind !== 'object' || !b.via) return undefined;
+  const at = targetLabel ? ` \u2192 ${targetLabel}` : '';
+  const indexed = /^\[(\d+)\]$/.exec(b.via);
+  // An unordered collection's storage has no addressable slot, so there is no variable to
+  // name — say which collection it is instead, and why the slot is missing.
+  if (b.via === '(element)') {
+    return `An element of ${b.title}${at} — unordered storage, so no addressable slot`;
+  }
+  if (indexed) return `Slot ${indexed[1]} of ${b.title}${at}`;
+  return `Instance variable "${b.via}" of ${b.title}${at}`;
+}
+
+/** Render the single layered graph.
+ *
+ *  Lines are drawn ONLY for the references the layout itself expresses: a group to the
+ *  object its members point at, a lone object to its parent, and containment standing in
+ *  for a member's reference to its group's owner. Every other reference among the drawn
+ *  objects is still known — the walk reads them all out of the objects' own slots — but it
+ *  is not lined. Drawing them was tried: they had to be routed over the top of the picture
+ *  to stay out of the boxes they crossed, and a handful of them turned the drawing into a
+ *  thicket of dotted lines above every box, which cost more than the references were worth.
+ *  The count in the canvas bar reports how many there are. */
 function renderGraph(view: ObjectGraphView): string {
   const boxes = layoutBoxes(view);
   if (boxes.length === 0) return '';
@@ -465,50 +489,26 @@ function renderGraph(view: ObjectGraphView): string {
   const layerHeight = (list: Box[]) =>
     list.reduce((sum, b) => sum + boxHeight(b) + BOX_GAP, 0) - BOX_GAP;
 
-  // Which references the layout already expresses; anything else is a cross edge that has
-  // to be routed over the top, so the headroom must be known before the boxes are placed.
-  const structural = new Set<string>();
-  const drawnOops = new Set<string>();
-  for (const b of boxes) {
-    if (b.kind === 'object' && b.oop) {
-      drawnOops.add(b.oop);
-      if (b.towardOop) structural.add(`${b.oop}->${b.towardOop}`);
-    }
-    for (const r of b.rows ?? []) {
-      drawnOops.add(r.oop);
-      if (b.oop) structural.add(`${r.oop}->${b.oop}`);
-    }
-  }
-  const crossRefs = view.canvas.edges.filter(
-    (e) =>
-      e.fromOop !== e.toOop &&
-      drawnOops.has(e.fromOop) &&
-      drawnOops.has(e.toOop) &&
-      !structural.has(`${e.fromOop}->${e.toOop}`),
-  );
-  const lane = crossRefs.length ? CROSS_LANE_H : 0;
-
-  const height = lane + TOP * 2 + Math.max(...[...perLayer.values()].map(layerHeight));
+  const height = TOP * 2 + Math.max(...[...perLayer.values()].map(layerHeight));
   const maxLayer = Math.max(...boxes.map((b) => b.layer));
   const autoWidth = 32 + (maxLayer + 1) * LAYER_W;
 
   // Place every box, and record where each OBJECT sits — the centre and lone objects at
   // their box, a group member at its row — so an edge can aim at the object itself.
   const pos = new Map<string, { x: number; y: number }>();
-  // Both sides of every drawn object, because a cross-reference can run in either
-  // direction across the picture and has to leave from the correct edge.
-  const anchor = new Map<string, { left: number; right: number; y: number }>();
+  // Where an arrow lands on each drawn object — the right-hand edge, since every drawn
+  // reference runs leftward into the thing it points at.
+  const anchor = new Map<string, { right: number; y: number }>();
   for (const [layer, list] of perLayer) {
-    let y = lane + TOP + (height - lane - TOP * 2 - layerHeight(list)) / 2;
+    let y = TOP + (height - TOP * 2 - layerHeight(list)) / 2;
     for (const b of list) {
       const x = 16 + layer * LAYER_W;
       pos.set(b.id, { x, y });
       if (b.kind === 'object' && b.oop) {
-        anchor.set(b.oop, { left: x, right: x + BOX_W, y: y + OBJECT_H / 2 });
+        anchor.set(b.oop, { right: x + BOX_W, y: y + OBJECT_H / 2 });
       }
       b.rows?.forEach((r, i) => {
         anchor.set(r.oop, {
-          left: x + 8,
           right: x + BOX_W - 8,
           y: y + HEADER_H + i * ROW_H + ROW_H / 2,
         });
@@ -532,15 +532,21 @@ function renderGraph(view: ObjectGraphView): string {
     if (!moved) continue;
     // Anchors must follow the box, or its edges keep pointing at where it used to be.
     if (b.kind === 'object' && b.oop) {
-      anchor.set(b.oop, { left: at.x, right: at.x + BOX_W, y: at.y + OBJECT_H / 2 });
+      anchor.set(b.oop, { right: at.x + BOX_W, y: at.y + OBJECT_H / 2 });
     }
     b.rows?.forEach((r, i) => {
       anchor.set(r.oop, {
-        left: at.x + 8,
         right: at.x + BOX_W - 8,
         y: at.y + HEADER_H + i * ROW_H + ROW_H / 2,
       });
     });
+  }
+
+  // Every object drawn, by oop, so an edge's tooltip can name what it arrives at.
+  const labelOf = new Map<string, string>();
+  for (const b of boxes) {
+    if (b.kind === 'object' && b.oop) labelOf.set(b.oop, b.title);
+    for (const r of b.rows ?? []) labelOf.set(r.oop, r.label);
   }
 
   const edges = boxes
@@ -555,52 +561,27 @@ function renderGraph(view: ObjectGraphView): string {
       const path = `M ${from.x} ${sy} C ${midX} ${sy}, ${midX} ${to.y}, ${tx} ${to.y}`;
       // Each edge is wrapped with a fat transparent twin. A 1.4px line is close to
       // unclickable, and following a long one across the picture is what needed help.
+      // The tooltip rides on the group as an attribute rather than as a <title>, because
+      // it is offered only once the edge is selected — see the view's highlight().
+      const tip = edgeTip(b, labelOf.get(b.towardOop));
       return (
-        `<g class="edgewrap" data-edge="s${b.id}">` +
+        `<g class="edgewrap" data-edge="s${b.id}"` +
+        (tip ? ` data-tip="${escapeHtml(tip)}"` : '') +
+        `>` +
         `<path class="edgehit" d="${path}"/>` +
         `<path class="edge" marker-end="url(#ref-arrow)" stroke-width="1.4" d="${path}"/>` +
-        (b.via
+        // Only a class box's edge carries text, and what it carries is a COUNT. A slot name
+        // printed on the line was three or four floating words with no visible owner —
+        // `value`, `destClass`, `[1]` scattered between the boxes, each near two lines and
+        // belonging to one. The name is not lost: it is what the tooltip on the selected
+        // edge says, in full, which the line never had room for anyway.
+        (b.kind === 'group' && b.via
           ? `<text class="count" x="${midX}" y="${(sy + to.y) / 2 - 4}" text-anchor="middle">` +
-            `${escapeHtml(b.via)}</text>` +
-            edgeDismiss(midX, (sy + to.y) / 2 - 4)
+            `${escapeHtml(b.via)}</text>`
           : '') +
-        `</g>`
-      );
-    })
-    .join('\n    ');
-
-  // Every OTHER reference between two objects on the picture.
-  //
-  // The structural edges above only draw a box's own placement — a group to the object it
-  // points at, a lone object to its parent — and containment stands in for a member's
-  // reference to its group's owner. Anything else is a real reference between two things
-  // on screen that nothing would otherwise show: a line item pointing at both a product
-  // and that product's order, once both are drawn. Leaving those out does not simplify the
-  // picture, it makes it wrong, so they are drawn as thinner dotted links.
-  const crossEdges = crossRefs
-    .map((e) => {
-      const from = anchor.get(e.fromOop);
-      const to = anchor.get(e.toOop);
-      if (!from || !to) return '';
-      // Up out of the source, across the lane, down onto the target. Orthogonal rather than
-      // a curve so the vertical runs sit in the gaps BETWEEN layers, where no box lives:
-      // that is what keeps the line, its label and its arrowhead all in the open.
-      const goingRight = to.left > from.right;
-      const sx = goingRight ? from.right : from.left;
-      const cx1 = goingRight ? from.right + 12 : from.left - 12;
-      const cx2 = goingRight ? to.left - 12 - ARROW_GAP : to.right + 12 + ARROW_GAP;
-      const tx = goingRight ? to.left - ARROW_GAP : to.right + ARROW_GAP;
-      const midX = (cx1 + cx2) / 2;
-      const path =
-        `M ${sx} ${from.y} L ${cx1} ${from.y} L ${cx1} ${CROSS_LANE_Y} ` +
-        `L ${cx2} ${CROSS_LANE_Y} L ${cx2} ${to.y} L ${tx} ${to.y}`;
-      return (
-        `<g class="edgewrap" data-edge="x${e.fromOop}-${e.toOop}">` +
-        `<path class="edgehit" d="${path}"/>` +
-        `<path class="edge cross" marker-end="url(#ref-arrow)" stroke-width="1.2" d="${path}"/>` +
-        `<text class="count cross" x="${midX}" y="${CROSS_LANE_Y - 4}" ` +
-        `text-anchor="middle">${escapeHtml(e.via)}</text>` +
-        edgeDismiss(midX, CROSS_LANE_Y - 4) +
+        // Offered on every edge now, not only a labelled one: an unlabelled line is just as
+        // worth hiding, and it had nowhere to put the control before.
+        edgeDismiss(midX, (sy + to.y) / 2 - 4) +
         `</g>`
       );
     })
@@ -721,7 +702,6 @@ function renderGraph(view: ObjectGraphView): string {
       </marker>
     </defs>
     ${edges}
-    ${crossEdges}
     ${drawn}
   </svg>`;
 }
@@ -777,13 +757,13 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
          a single object is drawn as that object straight away, and objects you promote from
          a group sit <em>inside</em> it — that containment is what says they are its
          referrers, so no line has to run back past the box. A
-         <strong>solid</strong> box is a single object, its edge labelled with the slot the
-         reference sits in; click one to ask what points at <em>it</em>, keeping everything
-         already drawn. Each box has a <strong>grip</strong> at its top-left — drag it to
-         place the box by hand. A <strong>dotted</strong> edge is a further reference between two
-         objects already on the picture — every reference among them is drawn, not only the
-         ones you followed. <strong>Click any edge</strong> to follow it: it goes solid and
-         the rest fade back; click it again to restore them.</p>`;
+         <strong>solid</strong> box is a single object; click one to ask what points at
+         <em>it</em>, keeping everything already drawn. Each box has a <strong>grip</strong> at its top-left — drag it to
+         place the box by hand. <strong>Click any edge</strong> to follow it: it goes solid and
+         the rest fade back; click it again to restore them. Nothing is printed on an object's
+         edge: <strong>select it and hover</strong> to be told the variable the reference
+         sits in, or which slot of which array. A class box's edge is the one that carries
+         text, and what it carries is how many objects point that way.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -791,7 +771,7 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${view.nonce}';">
-  <title>Object Graph</title>
+  <title>Reference Graph</title>
   <style>
     body {
       font-family: var(--vscode-font-family);
@@ -843,13 +823,8 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .cnode[data-focus-oop]:hover rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .cnode:focus-visible rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .edge.back { stroke-dasharray: 4 3; opacity: 0.7; }
-    /* A reference between two drawn objects that the layout does not already express.
-       Dotted and dimmer so the structure still reads first, but present, because a
-       reference left undrawn makes the picture wrong. */
-    .edge.cross { stroke-dasharray: 2 3; opacity: 0.7; }
-    /* Click an edge to follow it. The dotted cross-references in particular are hard to
-       trace across the picture, so the selected one goes solid and bold while every other
-       edge fades right back. */
+    /* Click an edge to follow it: a long one is hard to trace across the picture, so the
+       selected one goes solid and bold while every other edge fades right back. */
     .edgehit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
     .edgewrap.hl .edge {
       stroke: var(--vscode-charts-orange, #d18616);
@@ -873,7 +848,6 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .edgedrop rect { fill: var(--vscode-editor-background); stroke: var(--vscode-panel-border, rgba(127,127,127,0.5)); }
     .edgedrop text { font-size: 11px; fill: var(--vscode-descriptionForeground); }
     .edgedrop:hover text { fill: var(--vscode-foreground); }
-    .count.cross { font-style: italic; opacity: 0.85; }
     .cnode rect {
       fill: var(--vscode-editor-background);
       stroke: var(--vscode-foreground);

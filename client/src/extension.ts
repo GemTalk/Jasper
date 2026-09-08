@@ -2356,14 +2356,14 @@ export function activate(context: vscode.ExtensionContext) {
       await codeExecutor.inspectIt(inspectorProvider);
     }),
 
-    vscode.commands.registerCommand('gemstone.showObjectGraph', async () => {
-      await codeExecutor.showObjectGraphIt(objectGraphDeps);
+    vscode.commands.registerCommand('gemstone.showReferenceGraph', async () => {
+      await codeExecutor.showReferenceGraphIt(objectGraphDeps);
     }),
 
     // Acts on the focused Enhanced Inspector's object rather than an editor selection, so
     // it is a panel title-bar action and is withheld from the Command Palette (where
     // there would be no inspector to read).
-    vscode.commands.registerCommand('gemstone.showObjectGraphForInspected', async () => {
+    vscode.commands.registerCommand('gemstone.showReferenceGraphForInspected', async () => {
       const target = EnhancedInspector.activeTarget();
       if (!target) {
         vscode.window.showInformationMessage('No Enhanced Inspector is focused.');

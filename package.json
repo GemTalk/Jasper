@@ -1045,14 +1045,14 @@
         "icon": "$(eye)"
       },
       {
-        "command": "gemstone.showObjectGraph",
-        "title": "Show Object Graph",
+        "command": "gemstone.showReferenceGraph",
+        "title": "Show Reference Graph",
         "category": "GemStone",
         "icon": "$(type-hierarchy)"
       },
       {
-        "command": "gemstone.showObjectGraphForInspected",
-        "title": "Show Object Graph",
+        "command": "gemstone.showReferenceGraphForInspected",
+        "title": "Show Reference Graph",
         "category": "GemStone",
         "icon": "$(type-hierarchy)"
       },
@@ -2051,7 +2051,7 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "gemstone.showObjectGraphForInspected",
+          "command": "gemstone.showReferenceGraphForInspected",
           "when": "false"
         },
         {
@@ -3072,7 +3072,7 @@
       ],
       "editor/title": [
         {
-          "command": "gemstone.showObjectGraphForInspected",
+          "command": "gemstone.showReferenceGraphForInspected",
           "when": "activeWebviewPanelId == gemstoneEnhancedInspector",
           "group": "navigation@0"
         },
@@ -3099,8 +3099,8 @@
           "group": "1_gemstone@1"
         },
         {
-          "command": "gemstone.showObjectGraph",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "command": "gemstone.showReferenceGraph",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@2"
         },
         {
@@ -3252,7 +3252,7 @@
         "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
       },
       {
-        "command": "gemstone.showObjectGraph",
+        "command": "gemstone.showReferenceGraph",
         "key": "ctrl+k g",
         "mac": "cmd+k g",
         "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"

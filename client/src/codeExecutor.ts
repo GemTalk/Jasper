@@ -858,7 +858,7 @@ export class CodeExecutor {
    *
    *  Shares Inspect It's selection handling deliberately: the question "what points
    *  at this?" is asked about the same thing Inspect It would open. */
-  async showObjectGraphIt(deps: ObjectGraphDeps): Promise<void> {
+  async showReferenceGraphIt(deps: ObjectGraphDeps): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
@@ -1066,7 +1066,7 @@ export class CodeExecutor {
 
   /** Evaluate `code` and hand the result's OOP to `onResult`.
    *
-   *  The shared body of Inspect It and Show Object Graph: start the execution
+   *  The shared body of Inspect It and Show Reference Graph: start the execution
    *  non-blocking so a halt is steppable in the debugger, dim the selection while it
    *  runs, poll to completion, and route the result. If it halts and the user resumes
    *  to completion, `onResult` still fires — a debugged execution should end up where

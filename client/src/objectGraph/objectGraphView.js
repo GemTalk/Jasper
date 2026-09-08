@@ -28,6 +28,11 @@
  * Two gestures never leave the view at all, because they decorate the drawing rather than
  * change the walk: clicking an edge selects it, and `data-edge-hide` trims one out.
  *
+ * The one thing kept between renders is where you were looking: the horizontal scroll of
+ * the graph, and which object the last action grew the picture from. Both live in the
+ * webview's own store rather than in the walk, because they describe the viewport and not
+ * the graph — see the note above the scroll handling in `wire`.
+ *
  * Dragging a box is a third case, and a mixed one: the movement is local, but the position
  * has to outlive the next redraw, so on release it goes up as
  * `{ command: 'moveBox', boxId, x, y }` and `[data-reset-layout]` clears them all.
@@ -127,7 +132,50 @@
     },
   ];
 
+  // Actions that add boxes. A referrer is drawn one column OUT from the object it points
+  // at, so every one of these makes the picture wider to the right.
+  var GROWS = { focusNode: 1, addToCanvas: 1, dive: 1 };
+
   function wire(doc, vscode) {
+    // ── Keeping your place when the picture grows ────────────────────────────────
+    //
+    // The host re-renders the whole document on every action, so the graph wrapper comes
+    // back scrolled hard left. On a picture already wider than the panel that put the new
+    // boxes -- the only thing you actually asked for -- off the right-hand edge, and the
+    // click read as having done nothing at all.
+    //
+    // Two rules. An action that GROWS the graph scrolls the object it grew from to the
+    // left edge, which is precisely where its new column is visible beside it. Anything
+    // else keeps the scroll you already had. The state rides in the webview's own store,
+    // which survives the host replacing the HTML; a `vscode` without one -- the stub the
+    // tests pass -- simply gets neither behaviour.
+    function readState() {
+      if (!vscode || typeof vscode.getState !== 'function') return {};
+      return vscode.getState() || {};
+    }
+
+    function remember(patch) {
+      if (!vscode || typeof vscode.setState !== 'function') return;
+      var next = readState();
+      for (var k in patch) {
+        if (Object.prototype.hasOwnProperty.call(patch, k)) next[k] = patch[k];
+      }
+      vscode.setState(next);
+    }
+
+    // Where the box holding this object sits. An object promoted onto the graph gets a box
+    // of its own; one that is still only a row inside a class box has to answer with that
+    // box, since the row has no x of its own. Oops are digit strings, so they go into an
+    // attribute selector as they are.
+    function boxLeftOf(oop) {
+      var box = doc.querySelector('[data-box="o:' + oop + '"]');
+      if (!box) {
+        var row = doc.querySelector('[data-focus-oop="' + oop + '"]');
+        box = row && row.closest ? row.closest('[data-box]') : null;
+      }
+      var x = box ? Number(box.getAttribute('data-bx')) : NaN;
+      return isFinite(x) ? x : null;
+    }
     // One delegated listener rather than a listener per control: a class Object scan draws
     // 20 nodes over a table of 284 rows, each with its own buttons, and an expanded class
     // adds up to a hundred more.
@@ -146,7 +194,9 @@
       while (el && el.hasAttribute) {
         for (var i = 0; i < ROUTES.length; i++) {
           if (el.hasAttribute(ROUTES[i].attr)) {
-            vscode.postMessage(ROUTES[i].build(el));
+            var msg = ROUTES[i].build(el);
+            remember({ growFrom: GROWS[msg.command] && msg.oop ? msg.oop : null });
+            vscode.postMessage(msg);
             return true;
           }
         }
@@ -158,9 +208,32 @@
     // Selecting an edge to follow, and hiding one to unclutter, are local visual matters —
     // they change nothing about the walk, so they are handled here and cost no round trip.
     // Both are checked before dispatch, because neither may post a message.
+    // The tooltip is a <title> put INTO the selected edge and taken out again when it is
+    // let go. A <title> left on every edge would fire on any accidental sweep of the
+    // pointer across the picture, which is the sort of chatter the dotted cross-links were
+    // removed for; making it follow the selection means it only ever answers a line you
+    // have deliberately picked. An edge with no data-tip -- a class box's, which stands for
+    // many references and so has no one variable to name -- is given none.
+    function tipOff(wrap) {
+      var t = wrap.querySelector(':scope > title');
+      if (t) wrap.removeChild(t);
+    }
+
+    function tipOn(wrap) {
+      var text = wrap.getAttribute('data-tip');
+      if (!text || wrap.querySelector(':scope > title')) return;
+      var t = doc.createElementNS('http://www.w3.org/2000/svg', 'title');
+      t.textContent = text;
+      // First child: a <title> is the tooltip for its parent only when it leads it.
+      wrap.insertBefore(t, wrap.firstChild);
+    }
+
     function clearHighlight() {
       var all = doc.querySelectorAll('[data-edge].hl');
-      for (var i = 0; i < all.length; i++) all[i].classList.remove('hl');
+      for (var i = 0; i < all.length; i++) {
+        all[i].classList.remove('hl');
+        tipOff(all[i]);
+      }
       var svgs = doc.querySelectorAll('svg.dim');
       for (var j = 0; j < svgs.length; j++) svgs[j].classList.remove('dim');
     }
@@ -200,6 +273,7 @@
       clearHighlight();
       if (!already) {
         wrap.classList.add('hl');
+        tipOn(wrap);
         if (svg) svg.classList.add('dim');
       }
       return true;
@@ -324,6 +398,21 @@
     var opened = doc.querySelector('tr.row.open');
     if (opened && typeof opened.scrollIntoView === 'function') {
       opened.scrollIntoView({ block: 'center' });
+    }
+
+    // Read the saved scroll BEFORE wiring the listener, since restoring it fires one.
+    var wrap = doc.querySelector('.graphwrap');
+    if (wrap) {
+      var saved = readState();
+      var grewAt = saved.growFrom ? boxLeftOf(saved.growFrom) : null;
+      // A margin, so the object you grew from is not flush against the panel edge.
+      wrap.scrollLeft = grewAt === null ? saved.scrollLeft || 0 : Math.max(0, grewAt - 24);
+      remember({ growFrom: null, scrollLeft: wrap.scrollLeft });
+      // One listener rather than a save beside every postMessage: a drag, a reset and an
+      // edge trimmed all redraw too, and all of them should land where you left off.
+      wrap.addEventListener('scroll', function () {
+        remember({ scrollLeft: wrap.scrollLeft });
+      });
     }
   }
 

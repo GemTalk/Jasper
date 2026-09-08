@@ -31,7 +31,7 @@ describe('editor/context menu', () => {
     expect(commands).toEqual([
       'gemstone.displayIt',
       'gemstone.inspectIt',
-      'gemstone.showObjectGraph',
+      'gemstone.showReferenceGraph',
       'gemstone.executeIt',
       'gemstone.debugIt',
       'gemstone.runInNewGem',
@@ -70,9 +70,12 @@ describe('editor/context menu', () => {
     );
   });
 
-  it('shows "Show Object Graph" in gemstone documents when code execution is available', () => {
-    expect(getMenuItem('gemstone.showObjectGraph')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+  it('shows "Show Reference Graph" in gemstone documents when code execution is available', () => {
+    // The same gate as Inspect It, which it sits beside. Naming only gemstone-smalltalk
+    // dropped it out of the context menu in method editors, where a selection is just as
+    // worth asking about — and where these actions are used most.
+    expect(getMenuItem('gemstone.showReferenceGraph')?.when).toBe(
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE}) && !gemstone.executing`,
     );
   });
 
