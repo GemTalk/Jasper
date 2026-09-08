@@ -30,8 +30,8 @@ import { categoryChildNodes, categoryParentPath, categoryMatches } from './explo
 import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
-import { composeFileOut, fileOutFileName, saveFileOut } from './fileOut';
-import { fileInCommand } from './fileIn';
+import { composeFileOut, fileOutFileName, saveFileOut } from './fileTransfer/fileOut';
+import { fileInCommand } from './fileTransfer/fileIn';
 import { isClassNotFound } from './queries/fileOutClass';
 import {
   RenamePreview,
@@ -5317,7 +5317,7 @@ export class ExplorerController {
   // Every Explorer level the issue asks for writes a Topaz `.gs` file, the same
   // artifact Jadeite's "File Out …" menu items produce, to a directory the user
   // picks on their OWN machine (#539). The pieces are shared: one header per file
-  // (see fileOut.ts), then one or more bodies from the file-out queries.
+  // (see fileTransfer/fileOut.ts), then one or more bodies from the file-out queries.
   //
   // Each command asks for the destination first and only then runs the queries, so
   // cancelling the dialog costs no round trips — filing out a dictionary is a single
@@ -5389,6 +5389,20 @@ export class ExplorerController {
         const ordered = queries
           .getDictionaryClassFileOutOrder(session, dictIndex)
           .filter((name) => inCategory.has(name));
+        // The order query answers nothing at all for a dictionary that no longer
+        // resolves — a `state.dictIndex` gone stale because the dictionary was removed
+        // in another session, or a tree not yet refreshed — and answers a short list
+        // when only some of the pane's classes are still there. Either way the filter
+        // above quietly drops what it can't order, so without this the user is told
+        // "Filed out Animals" over a file that is header-only or missing classes.
+        // Raise instead, naming them, exactly as classFileOutBody does for one class.
+        if (ordered.length !== inCategory.size) {
+          const missing = [...inCategory].filter((name) => !ordered.includes(name)).sort();
+          throw new Error(
+            `Could not file out ${missing.length === 1 ? 'class' : 'classes'} ` +
+              `${missing.join(', ')} — no longer in this dictionary. Refresh and try again.`,
+          );
+        }
         return composeFileOut(
           queries.fileOutHeader(session),
           ordered.map((name) => this.classFileOutBody(session, name, dictIndex)),

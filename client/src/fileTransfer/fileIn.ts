@@ -18,10 +18,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ActiveSession, SessionManager } from './sessionManager';
-import * as queries from './browserQueries';
-import { parseTopazScript } from './topazFileIn';
-import { rememberDirectory, rememberedDirectory } from './fileTransferDirectory';
+import { ActiveSession, SessionManager } from '../sessionManager';
+import * as queries from '../browserQueries';
+import { parseTopazScript } from '../topazFileIn';
+import { rememberDirectory, rememberedDirectory } from './directory';
 
 /** File types the open dialog offers. Topaz writes `.gs`; `.tpz` is the same syntax. */
 export const FILE_IN_FILTERS: Record<string, string[]> = {
@@ -213,6 +213,13 @@ export async function fileInCommand(
   // exactly one session. Without it the user is asked, as any other write is.
   session?: ActiveSession,
 ): Promise<void> {
+  // Which session, before which files: resolving is free (no round trip), so asking
+  // first costs nothing, and it means nothing connected is said before the user has
+  // browsed and picked rather than after. File Out warns in the same order, and it
+  // keeps this route and fileInUris asking the question at the same point.
+  const target = session ?? (await sessionManager.resolveSession());
+  if (!target) return;
+
   const uris = await vscode.window.showOpenDialog({
     title: 'File In',
     openLabel: 'File In',
@@ -221,7 +228,7 @@ export async function fileInCommand(
     filters: FILE_IN_FILTERS,
   });
   if (!uris || uris.length === 0) return;
-  await fileInUris(sessionManager, uris, store, session);
+  await fileInUris(sessionManager, uris, store, target);
 }
 
 /**
@@ -238,7 +245,9 @@ export async function fileInUris(
   if (uris.length === 0) return;
   // resolveSession, not getSelectedSession: filing in is a write, and with several
   // sessions open the user is asked which one it lands in — unless the caller has
-  // already answered that (a session row, or the Explorer's current session).
+  // already answered that: a session row, the Explorer's current session, or
+  // fileInCommand, which resolves before it opens the picker and hands the answer
+  // down here.
   const session = target ?? (await sessionManager.resolveSession());
   if (!session) return;
 

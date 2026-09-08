@@ -184,7 +184,7 @@ import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost, sessionsOnDatabase } from './databaseForLogin';
 import { describeHolder, isExtentLocked, sessionHolders, ExtentHolder } from './extentHolders';
 import { runQuickSetup } from './quickSetup';
-import { fileInCommand, fileInUris } from './fileIn';
+import { fileInCommand, fileInUris } from './fileTransfer/fileIn';
 import {
   isWindows,
   getWslInfoAsync,
@@ -2273,9 +2273,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Read a Topaz `.gs` file on this machine back into the session (issue #539).
-    // The palette entry picks the file; the resource entry takes the one(s) already
-    // selected in VS Code's Explorer, the file in the active editor, or the one whose
-    // "File In to GemStone" lens was clicked (gemstoneCodeLensProvider).
+    // The palette entry picks the file; the resource entry (gemstone.fileInFile, below)
+    // takes the one(s) already selected in VS Code's Explorer, the one an open editor
+    // names from its title bar or context menu, or the one whose "File In to GemStone"
+    // lens was clicked (gemstoneCodeLensProvider).
     // Also the ⤓ on a session row in Logins & Sessions, and the one on the GemStone
     // Explorer's Dictionaries pane (gemstone.explorer.fileIn): both already name a
     // session, so they file straight into it instead of asking. From the palette
@@ -2288,8 +2289,13 @@ export function activate(context: vscode.ExtensionContext) {
       'gemstone.fileInFile',
       async (uri?: vscode.Uri, selected?: vscode.Uri[]) => {
         // VS Code hands an Explorer context command the clicked resource AND the whole
-        // selection; the editor title bar passes only the one resource. Falling back to
-        // the active editor covers the palette-shaped call with no argument at all.
+        // selection; the editor title bar, the editor context menu and the code lens
+        // each pass a single resource. Every route this command is wired to therefore
+        // arrives with a URI — the manifest keeps it out of the Command Palette
+        // (`"when": "false"`), since there it would have no file to act on. The
+        // active-editor fallback and the warning below are defence for a call from
+        // somewhere else — a user keybinding, or another extension's
+        // `executeCommand` — not for a palette entry.
         const active = vscode.window.activeTextEditor?.document.uri;
         const uris =
           selected && selected.length > 0

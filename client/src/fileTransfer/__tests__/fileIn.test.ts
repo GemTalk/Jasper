@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('fs', () => ({
   readFileSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(true),
   writeFileSync: vi.fn(),
 }));
-vi.mock('../browserQueries', () => ({
+vi.mock('../../browserQueries', () => ({
   fileInChunk: vi.fn(() => 'ok'),
   compileMethod: vi.fn(() => 'Compiled'),
   removeAllMethods: vi.fn(() => 'ok'),
@@ -15,9 +15,9 @@ vi.mock('../browserQueries', () => ({
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import * as queries from '../browserQueries';
+import * as queries from '../../browserQueries';
 import { fileInFile, fileInUris, fileInCommand } from '../fileIn';
-import type { ActiveSession, SessionManager } from '../sessionManager';
+import type { ActiveSession, SessionManager } from '../../sessionManager';
 
 /**
  * Filing a Topaz `.gs` file back into a session (issue #539).
@@ -191,7 +191,7 @@ describe('fileInFile', () => {
     expect(outcome.skipped[0].message).toContain('wibble');
   });
 
-  it('runs a topaz script s chunks and leaves its topaz commands alone', () => {
+  it("runs a topaz script's chunks and leaves its topaz commands alone", () => {
     withFiles({
       [TPZ]: [
         'set gemstone gs64stone',
@@ -334,7 +334,7 @@ describe('the File In command', () => {
     expect(queries.fileInChunk).toHaveBeenCalledWith(named, expect.stringContaining('subclass:'));
   });
 
-  it('passes the caller s session through the file picker to the file-in', async () => {
+  it("passes the caller's session through the file picker to the file-in", async () => {
     const named = { id: 7 } as ActiveSession;
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
 
@@ -347,6 +347,33 @@ describe('the File In command', () => {
       'accessing',
       expect.any(String),
       0,
+    );
+  });
+
+  it('asks which session BEFORE opening the file picker, not after', async () => {
+    // Nothing connected: resolveSession answers undefined and says so. Asking
+    // after the dialog would make the user browse and pick for nothing — and
+    // resolving costs no round trip, so there is nothing to defer it for.
+    const none = { resolveSession: () => Promise.resolve(undefined) } as unknown as SessionManager;
+
+    await fileInCommand(none, memento);
+
+    expect(vscode.window.showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it('resolves the session once, and files into the one it resolved', async () => {
+    // fileInUris asks for itself when the caller names nobody; the picker route
+    // has already answered, so it must hand its answer down rather than re-ask.
+    const resolved = { id: 11 } as ActiveSession;
+    const resolveSession = vi.fn().mockResolvedValue(resolved);
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+
+    await fileInCommand({ resolveSession } as unknown as SessionManager, memento);
+
+    expect(resolveSession).toHaveBeenCalledTimes(1);
+    expect(queries.fileInChunk).toHaveBeenCalledWith(
+      resolved,
+      expect.stringContaining('subclass:'),
     );
   });
 

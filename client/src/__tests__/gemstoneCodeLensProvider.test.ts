@@ -135,6 +135,21 @@ true
       // Nothing to count senders of — but the file is still one File In can read.
       expect(methodLenses(lenses)).toHaveLength(0);
     });
+
+    it('returns no method lenses for a workspace, which evaluates code rather than defining it', () => {
+      // A workspace is a scratch pad of expressions. There is no method
+      // definition for a lens to sit above, so none is drawn.
+      const doc = createMockDocument('| x |\nx := Array new: 3.\nx size', 'untitled');
+      expect(methodLenses(provider.provideCodeLenses(doc))).toHaveLength(0);
+    });
+
+    it('returns no method lenses for Tonel source, which this parser does not read', () => {
+      // Only a Topaz `method:`/`classmethod:` block yields a lens. Tonel states
+      // its methods in a different syntax, so nothing is found — worth pinning,
+      // since the provider IS registered for .st files and silently finds none.
+      const doc = createMockDocument('Object subclass: #MyClass\n\nMyClass >> name [\n  ^ name\n]');
+      expect(methodLenses(provider.provideCodeLenses(doc))).toHaveLength(0);
+    });
   });
 
   // A user holding a `.gs` had only an icon in the title bar, an entry in a
@@ -205,21 +220,6 @@ true
       expect(lenses[0].range.start.line).toBe(0);
       expect(methodLenses(lenses).length).toBeGreaterThan(0);
       for (const m of methodLenses(lenses)) expect(m.range.start.line).toBeGreaterThan(0);
-    });
-
-    it('returns no lenses for a workspace, which evaluates code rather than defining it', () => {
-      // A workspace is a scratch pad of expressions. There is no method
-      // definition for a lens to sit above, so none is drawn.
-      const doc = createMockDocument('| x |\nx := Array new: 3.\nx size', 'untitled');
-      expect(provider.provideCodeLenses(doc)).toHaveLength(0);
-    });
-
-    it('returns no lenses for Tonel source, which this parser does not read', () => {
-      // Only a Topaz `method:`/`classmethod:` block yields a lens. Tonel states
-      // its methods in a different syntax, so nothing is found — worth pinning,
-      // since the provider IS registered for .st files and silently finds none.
-      const doc = createMockDocument('Object subclass: #MyClass\n\nMyClass >> name [\n  ^ name\n]');
-      expect(provider.provideCodeLenses(doc)).toHaveLength(0);
     });
   });
 

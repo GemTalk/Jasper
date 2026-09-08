@@ -131,7 +131,7 @@ describe('fileOutDictionary', () => {
     expect(text).toContain('BODY');
   });
 
-  it('puts the dictionary-creating preamble in front of the organizer s output', () => {
+  it("puts the dictionary-creating preamble in front of the organizer's output", () => {
     const e = exec('Zoo\nBODY');
 
     const text = fileOutDictionary(e, 2);

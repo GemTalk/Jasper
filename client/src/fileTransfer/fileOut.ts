@@ -7,12 +7,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { rememberDirectory, rememberedDirectory } from './fileTransferDirectory';
+import { rememberDirectory, rememberedDirectory } from './directory';
 
-/** Save-dialog file types. `.gs` first — a Topaz file-out is what these commands write. */
+/**
+ * Save-dialog file types, deliberately the same set File In offers (`FILE_IN_FILTERS`).
+ *
+ * A file-out is Topaz chunk format whatever it is named, but `.st` is mapped to the
+ * `gemstone-tonel` language, and every route back in is gated on `gemstone-topaz`:
+ * the "File In to GemStone" lens, the editor title-bar and context-menu entries, the
+ * VS Code Explorer entry, and the File In open dialog's own filters. Saving through an
+ * `.st` filter would therefore write a file none of the other half of this feature can
+ * see — so the only extensions offered are the ones that file back in.
+ */
 export const FILE_OUT_FILTERS: Record<string, string[]> = {
-  'GemStone Files': ['gs'],
-  'Smalltalk Files': ['st'],
+  'GemStone Files': ['gs', 'tpz'],
   'All Files': ['*'],
 };
 

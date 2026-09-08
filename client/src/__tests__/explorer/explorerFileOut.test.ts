@@ -114,7 +114,7 @@ describe('Explorer file out', () => {
   });
 
   describe('dictionary', () => {
-    it('writes the organizer s whole-dictionary file-out under one header', async () => {
+    it("writes the organizer's whole-dictionary file-out under one header", async () => {
       const ctl = makeController();
 
       await ctl.fileOutDictionary(DICT_NODE);
@@ -136,7 +136,7 @@ describe('Explorer file out', () => {
   });
 
   describe('class category', () => {
-    it('files out the category s classes superclass-first, in ONE file', async () => {
+    it("files out the category's classes superclass-first, in ONE file", async () => {
       const ctl = makeController();
       setEntries(ctl, [
         { category: 'Fauna', className: 'Dog', hasComment: false },
@@ -175,6 +175,38 @@ describe('Explorer file out', () => {
         expect.stringContaining('Fauna'),
       );
       expect(vscode.window.showSaveDialog).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the dictionary no longer resolves, rather than writing a header alone', async () => {
+      // A stale state.dictIndex — the dictionary removed in another session, or a
+      // tree not yet refreshed — makes the order query answer nothing, and the
+      // filter then has nothing to keep. Without the check that is a header-only
+      // `.gs` reported as "Filed out Fauna".
+      const ctl = makeController();
+      setEntries(ctl, [{ category: 'Fauna', className: 'Dog', hasComment: false }]);
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue([]);
+
+      await ctl.fileOutClassCategory(CATEGORY_NODE);
+
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Dog'));
+    });
+
+    it('names the classes the order query dropped instead of filing out a short file', async () => {
+      // The quieter half: the dictionary still resolves, but one of the pane's
+      // classes is no longer in it. Filing out the rest would write a file that
+      // looks complete and is not.
+      const ctl = makeController();
+      setEntries(ctl, [
+        { category: 'Fauna', className: 'Dog', hasComment: false },
+        { category: 'Fauna', className: 'Cat', hasComment: false },
+      ]);
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue(['Dog']);
+
+      await ctl.fileOutClassCategory(CATEGORY_NODE);
+
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Cat'));
     });
   });
 

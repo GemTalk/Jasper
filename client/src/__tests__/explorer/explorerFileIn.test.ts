@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // The controller pulls in the whole query module; nothing here reaches the stone.
 vi.mock('../../browserQueries', () => ({}));
-vi.mock('../../fileIn', () => ({ fileInCommand: vi.fn() }));
+vi.mock('../../fileTransfer/fileIn', () => ({ fileInCommand: vi.fn() }));
 
 import { ExplorerController } from '../../gemstoneExplorer';
-import { fileInCommand } from '../../fileIn';
+import { fileInCommand } from '../../fileTransfer/fileIn';
 import type * as vscode from 'vscode';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 

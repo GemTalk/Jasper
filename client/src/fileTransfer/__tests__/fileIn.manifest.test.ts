@@ -24,7 +24,7 @@ interface MenuEntry {
 }
 
 const pkg = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
+  fs.readFileSync(path.resolve(__dirname, '..', '..', '..', '..', 'package.json'), 'utf-8'),
 ) as {
   contributes: {
     commands: Command[];
@@ -57,9 +57,9 @@ describe('File In command declarations', () => {
   });
 
   it('registers a handler for each', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '..', 'extension.ts'), 'utf-8');
+    const src = fs.readFileSync(path.resolve(__dirname, '..', '..', 'extension.ts'), 'utf-8');
     const explorerSrc = fs.readFileSync(
-      path.resolve(__dirname, '..', 'gemstoneExplorer.ts'),
+      path.resolve(__dirname, '..', '..', 'gemstoneExplorer.ts'),
       'utf-8',
     );
 

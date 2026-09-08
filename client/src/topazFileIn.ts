@@ -162,6 +162,21 @@ export function parseTopazDocument(text: string): TopazRegion[] {
 
 // ── File-In Logic ──────────────────────────────────────────────
 
+/**
+ * The category name from a topaz `category: 'Name'` line, or `undefined` if the line
+ * is not one.
+ *
+ * One scanner for all three readers of this file — the class mirror's `fileInClass`,
+ * its `parseFileStructure` sibling, and `parseTopazScript` for the File In command —
+ * so a file cannot land its methods in one protocol when read one way and another
+ * when read the other. Topaz doubles an embedded quote, so `'Bob''s methods'` is one
+ * category named `Bob's methods`, not one named `Bob`.
+ */
+export function parseCategoryDirective(line: string): string | undefined {
+  const match = line.trim().match(/^category:\s*'(.*)'\s*$/i);
+  return match ? match[1].replace(/''/g, "'") : undefined;
+}
+
 export interface FileInError {
   message: string;
   /** 0-based line in the .gs file */
@@ -197,10 +212,8 @@ export function fileInClass(
     if (region.kind === 'topaz') {
       // Scan for category: 'Name' commands
       for (const line of region.text.split('\n')) {
-        const catMatch = line.match(/^category:\s*'([^']*)'/i);
-        if (catMatch) {
-          currentCategory = catMatch[1];
-        }
+        const category = parseCategoryDirective(line);
+        if (category !== undefined) currentCategory = category;
       }
       continue;
     }
@@ -405,9 +418,9 @@ export function parseTopazScript(text: string): FileInStep[] {
         // section headings — nothing to run.
         if (trimmed.length === 0 || trimmed.startsWith('!')) return;
 
-        const cat = trimmed.match(/^category:\s*'(.*)'\s*$/i);
-        if (cat) {
-          category = cat[1].replace(/''/g, "'");
+        const cat = parseCategoryDirective(trimmed);
+        if (cat !== undefined) {
+          category = cat;
           return;
         }
         const env = trimmed.match(/^set\s+compile_env:\s*(\d+)/i);
@@ -522,8 +535,8 @@ export function parseFileStructure(content: string): ParsedFile {
   for (const region of regions) {
     if (region.kind === 'topaz') {
       for (const line of region.text.split('\n')) {
-        const catMatch = line.match(/^category:\s*'([^']*)'/i);
-        if (catMatch) currentCategory = catMatch[1];
+        const category = parseCategoryDirective(line);
+        if (category !== undefined) currentCategory = category;
       }
       continue;
     }

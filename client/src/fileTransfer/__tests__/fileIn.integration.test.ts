@@ -2,18 +2,18 @@ import { describe, it, expect, afterAll, vi } from 'vitest';
 
 // Real GCI and a real filesystem, but stub the `vscode` module the query layer pulls
 // in via gciLog.
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { useIntegrationTest } from './useIntegrationTest';
-import { GciLibrary } from '../gciLibrary';
-import * as q from '../browserQueries';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
 import { fileInFile } from '../fileIn';
-import { parseTopazScript } from '../topazFileIn';
+import { parseTopazScript } from '../../topazFileIn';
 import { composeFileOut } from '../fileOut';
-import type { ActiveSession } from '../sessionManager';
+import type { ActiveSession } from '../../sessionManager';
 
 /**
  * File In against a live stone, and the round trip that is the point of it (#539):
@@ -123,7 +123,7 @@ describe('file in (integration)', () => {
       expect(categoryOfMethod(WIDGET, 'size')).toBe('accessing');
     });
 
-    it('skips nothing it does not understand in GemStone s own file-out', () => {
+    it("skips nothing it does not understand in GemStone's own file-out", () => {
       defineWidget();
       const file = write(
         `${WIDGET}-skip.gs`,
@@ -461,7 +461,7 @@ describe('file in (integration)', () => {
       expect(q.fileInChunk(session(), '| d | d := IdentityBag new. d add: 1. d')).toBe('ok');
     });
 
-    it('lets GemStone s error through instead of folding it into a string', () => {
+    it("lets GemStone's error through instead of folding it into a string", () => {
       expect(() => q.fileInChunk(session(), 'nil noSuchMessageAtAll')).toThrow();
     });
   });

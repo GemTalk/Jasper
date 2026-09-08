@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   existsSync: vi.fn().mockReturnValue(true),
@@ -10,8 +10,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { composeFileOut, fileOutFileName, sanitizeFileNameStem, saveFileOut } from '../fileOut';
-import { LAST_DIRECTORY_KEY } from '../fileTransferDirectory';
+import {
+  composeFileOut,
+  fileOutFileName,
+  sanitizeFileNameStem,
+  saveFileOut,
+  FILE_OUT_FILTERS,
+} from '../fileOut';
+import { FILE_IN_FILTERS } from '../fileIn';
+import { LAST_DIRECTORY_KEY } from '../directory';
 
 describe('sanitizeFileNameStem', () => {
   it('leaves an ordinary class name alone', () => {
@@ -26,7 +33,7 @@ describe('sanitizeFileNameStem', () => {
     expect(sanitizeFileNameStem('Animal-instance creation')).toBe('Animal-instance_creation');
   });
 
-  it('falls back rather than naming a file after a binary selector s punctuation', () => {
+  it("falls back rather than naming a file after a binary selector's punctuation", () => {
     expect(sanitizeFileNameStem('<=')).toBe('fileOut');
   });
 
@@ -69,6 +76,23 @@ describe('composeFileOut', () => {
  * a rooted literal like `/out/A.gs` has none and matches `path.normalize` as-is.
  */
 const at = (p: string): string => vscode.Uri.file(p).fsPath;
+
+describe('FILE_OUT_FILTERS', () => {
+  it('offers only extensions File In will take back', () => {
+    // A file-out saved through a filter File In does not list is unreachable from
+    // every route the other half of this feature adds — the code lens, the editor
+    // title bar and context menu, VS Code's own Explorer menu, and the File In
+    // open dialog all name `.gs`/`.tpz` (via the gemstone-topaz language).
+    const out = Object.values(FILE_OUT_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    const back = Object.values(FILE_IN_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+
+    expect(new Set(out)).toEqual(new Set(back));
+  });
+});
 
 describe('saveFileOut', () => {
   const memento = {

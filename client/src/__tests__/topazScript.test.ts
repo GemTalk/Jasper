@@ -155,7 +155,7 @@ describe('parseTopazScript', () => {
   });
 
   describe('a hand-written .tpz script', () => {
-    it('recognises the connection preamble as topaz s own, not as code', () => {
+    it("recognises the connection preamble as topaz's own, not as code", () => {
       const steps = parseTopazScript(
         [
           'set gemstone gs64stone',
