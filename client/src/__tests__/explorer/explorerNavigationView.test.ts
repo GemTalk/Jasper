@@ -63,6 +63,8 @@ const state = (over: Partial<NavigationViewState> = {}): NavigationViewState => 
   back: true,
   forward: false,
   clear: true,
+  undo: true,
+  undoLabel: 'Undo: Save Account>>#balance (Ctrl+K U)',
   mode: 'full',
   trail: trail(2),
   ...over,
@@ -130,7 +132,7 @@ describe('the Actions & Navigation pane', () => {
     }
   });
 
-  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, the label toggle and a workspace', () => {
+  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, undo, the label toggle and a workspace', () => {
     expect(toolbarCommands()).toEqual([
       'gemstone.navigateBack',
       'gemstone.navigateForward',
@@ -139,10 +141,40 @@ describe('the Actions & Navigation pane', () => {
       'gemstone.explorer.refresh',
       'gemstone.explorer.commit',
       'gemstone.explorer.abort',
+      // Undo sits with Commit and Abort, the other two controls that act on uncommitted
+      // work, rather than among the navigation arrows (#434, review of #507).
+      'gemstone.undoLast',
       'gemstone.explorer.showNavigationSelectorsOnly',
       'gemstone.explorer.showNavigationFullLocations',
       'gemstone.openWorkspace',
     ]);
+  });
+
+  it('runs the one undo command, not the per-verb pair the palette needs', () => {
+    // undoLast and revertLast are one dispatcher under two names, and the second name exists
+    // only so a CONTRIBUTED entry's fixed title can say "Revert". This button writes its own
+    // tooltip, so it needs no second command — and offering both would put two buttons in
+    // the row for one action, which is what the review asked to be rid of.
+    expect(toolbarCommands()).toContain('gemstone.undoLast');
+    expect(toolbarCommands()).not.toContain('gemstone.revertLast');
+  });
+
+  it('dims Undo when there is nothing to reverse, and names the change when there is', () => {
+    const { view, posted } = fakeView();
+    const provider = new NavigationViewProvider(() => {});
+    provider.resolveWebviewView(view as never);
+
+    provider.setState(state({ undo: false, undoLabel: 'Nothing to undo yet (Ctrl+K U)' }));
+    expect(posted.at(-1)).toMatchObject({
+      undo: false,
+      undoLabel: 'Nothing to undo yet (Ctrl+K U)',
+    });
+
+    provider.setState(state({ undo: true, undoLabel: 'Revert: Remove class Account (Ctrl+K U)' }));
+    expect(posted.at(-1)).toMatchObject({
+      undo: true,
+      undoLabel: 'Revert: Remove class Account (Ctrl+K U)',
+    });
   });
 
   it('carries both halves of the label toggle, and shows only the one that applies', () => {
@@ -262,19 +294,41 @@ describe('the Actions & Navigation pane', () => {
     expect(navigation?.size).toBeGreaterThan(1);
   });
 
-  it('starts Back, Forward and Clear greyed out, and leaves the rest live', () => {
+  it('starts Back, Forward, Clear and Undo greyed out, and leaves the rest live', () => {
     const html = renderNavigationViewHtml('test-nonce');
     const disabled = [...html.matchAll(/data-cmd="([^"]+)"[^>]*?\sdisabled/g)].map((m) => m[1]);
     expect(disabled).toEqual([
       'gemstone.navigateBack',
       'gemstone.navigateForward',
       'gemstone.explorer.clearHistory',
+      // Dimmed rather than absent, like the other three: a control that comes and goes
+      // cannot be learned, and undo is empty until the session's first edit (#434).
+      'gemstone.undoLast',
     ]);
   });
 
-  it('re-gates Clear along with Back and Forward on every state push', () => {
+  it('re-gates Clear and Undo along with Back and Forward on every state push', () => {
     const html = renderNavigationViewHtml('test-nonce');
     expect(html).toContain("setEnabled('gemstone.explorer.clearHistory', state.clear)");
+    expect(html).toContain("setEnabled('gemstone.undoLast', state.undo)");
+  });
+
+  it('rewrites the Undo tooltip on every state push, since it names the change', () => {
+    const html = renderNavigationViewHtml('test-nonce');
+    expect(html).toContain("setTooltip('gemstone.undoLast', state.undoLabel)");
+  });
+
+  it('sets the Undo tooltip as an attribute, never as markup', () => {
+    // It carries a class and selector read out of the stone — the same reason the trail rows
+    // are built with textContent. Scoped to the function's own body: the page uses innerHTML
+    // elsewhere quite legitimately, so a search of the whole document would prove nothing.
+    const html = renderNavigationViewHtml('test-nonce');
+    const body = /function setTooltip\(cmd, text\) \{([\s\S]*?)\n {4}\}/.exec(html)?.[1];
+
+    expect(body).toBeDefined();
+    expect(body).toContain('button.title = text;');
+    expect(body).toContain("button.setAttribute('aria-label', text)");
+    expect(body).not.toContain('innerHTML');
   });
 
   it('wears the same glyph for Open Workspace as the manifest gives the command', () => {
@@ -496,7 +550,16 @@ describe('the Actions & Navigation pane', () => {
 
     send({ kind: 'ready' });
     expect(posted).toEqual([
-      { kind: 'state', back: true, forward: true, clear: true, mode: 'full', trail: trail(1) },
+      {
+        kind: 'state',
+        back: true,
+        forward: true,
+        clear: true,
+        undo: true,
+        undoLabel: 'Undo: Save Account>>#balance (Ctrl+K U)',
+        mode: 'full',
+        trail: trail(1),
+      },
     ]);
     expect(executeCommand).not.toHaveBeenCalled();
   });

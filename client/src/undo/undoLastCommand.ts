@@ -1,6 +1,6 @@
 /**
- * "Undo" — the one entry point behind the status-bar button, the Explorer title-bar
- * button, the palette entry and the post-apply toast (issue #434).
+ * "Undo" — the one entry point behind the Actions & Navigation pane's button, the palette
+ * entry, the keybinding and the post-apply toast (issue #434).
  *
  * Its whole job is to take the top entry off the session's stack and hand it to the
  * reverser for its kind. This is the ONLY module in `undo/` that knows the refactoring

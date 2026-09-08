@@ -24,8 +24,8 @@
  * Nothing here awaits the user.
  *
  * If the toast is missed or dismissed the undo is NOT lost: it stays on the stack until it
- * is used, and the status-bar button, the Explorer title-bar button and the palette
- * command all reach it just as well.
+ * is used, and the Actions & Navigation pane's button, the palette command and the
+ * keybinding all reach it just as well.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -59,8 +59,8 @@ export function notifyRefactoringApplied(
       return;
     }
     logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
-    // Pushing is all it takes: the stack's change listener is what makes the status-bar
-    // button and the Explorer item appear, so no recording site updates the UI itself.
+    // Pushing is all it takes: the stack's change listener is what lights the pane's Undo
+    // button and writes its tooltip, so no recording site updates the UI itself.
     pushUndoEntry({
       kind: 'refactoring',
       sessionId: session.id,

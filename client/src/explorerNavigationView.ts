@@ -59,6 +59,20 @@ interface ToolbarButton {
 const CHEVRON =
   'M6.14601 3.14579C5.95101 3.34079 5.95101 3.65779 6.14601 3.85279L10.292 7.99879L6.14601 12.1448C5.95101 12.3398 5.95101 12.6568 6.14601 12.8518C6.34101 13.0468 6.65801 13.0468 6.85301 12.8518L11.353 8.35179C11.548 8.15679 11.548 7.83979 11.353 7.64478L6.85301 3.14479C6.65801 2.94979 6.34101 2.95079 6.14601 3.14579Z';
 
+/**
+ * The step-back arrow — the glyph the contributed Undo/Revert menu entries wore before this
+ * pane became their one home.
+ *
+ * It used to be a standalone SVG asset with the purple baked into its `fill`, because a
+ * contributed menu icon cannot be themed from the manifest and the action was meant to stand
+ * out from the neutral icons beside it. Inline here it is drawn with `currentColor` like
+ * every other glyph in the row, which is both what the review asked for (a single button,
+ * uncoloured, since the rest of the row is uncoloured) and what VS Code's own guidance wants
+ * of a toolbar. The asset went with the menu entries that were its only remaining reader.
+ */
+const UNDO_ARROW =
+  'M7.5 3.5V1L3 5l4.5 4V6.5c2.2 0 4 1.8 4 4s-1.8 4-4 4H5v1.5h2.5c3 0 5.5-2.5 5.5-5.5S10.5 5 7.5 5V3.5z';
+
 const BUTTONS: ToolbarButton[] = [
   {
     command: 'gemstone.navigateBack',
@@ -112,6 +126,21 @@ const BUTTONS: ToolbarButton[] = [
     label: 'Abort',
     glyph:
       '<path d="M3.00098 2.5C3.00098 2.22386 3.22483 2 3.50098 2C3.77712 2 4.00098 2.22386 4.00098 2.5V6.34262L7.17202 3.17157C8.73412 1.60948 11.2668 1.60948 12.8289 3.17157C14.391 4.73367 14.391 7.26633 12.8289 8.82843L7.80375 13.8536C7.60849 14.0488 7.2919 14.0488 7.09664 13.8536C6.90138 13.6583 6.90138 13.3417 7.09664 13.1464L12.1218 8.12132C13.2933 6.94975 13.2933 5.05025 12.1218 3.87868C10.9502 2.70711 9.0507 2.70711 7.87913 3.87868L4.75781 7H8.50098C8.77712 7 9.00098 7.22386 9.00098 7.5C9.00098 7.77614 8.77712 8 8.50098 8H3.60098C3.26961 8 3.00098 7.73137 3.00098 7.4V2.5Z"/>',
+  },
+  {
+    // Beside Commit and Abort rather than among the arrows: all three act on the
+    // uncommitted work in the session, which is not navigation.
+    //
+    // ONE command, not the undoLast/revertLast pair the palette and keybinding still need.
+    // That pair exists only because a contributed menu title is a fixed string, so the only
+    // way for such an entry to say "Revert" for a class edit was to have a second command
+    // whose title said it. A webview button has no such limit: `undoLabel` below is written
+    // per state, so this button names the verb AND the change it would reverse — which is
+    // what the status-bar item used to be the only affordance able to do.
+    command: 'gemstone.undoLast',
+    label: 'Undo Last Change',
+    gated: true,
+    glyph: `<path d="${UNDO_ARROW}"/>`,
   },
   {
     command: 'gemstone.explorer.showNavigationSelectorsOnly',
@@ -201,6 +230,15 @@ export interface NavigationViewState {
   forward: boolean;
   /** Whether there is any history to clear. */
   clear: boolean;
+  /** Whether the session has anything to reverse — the Undo button dims when it does not. */
+  undo: boolean;
+  /**
+   * The Undo button's tooltip, naming the verb and the change: `Undo: Save Account>>#balance
+   * (Ctrl+K U)`. Written per state rather than fixed, because this is the affordance that
+   * CAN name the change — the reason the pane replaced a row of contributed menu entries
+   * that could not.
+   */
+  undoLabel: string;
   /** Which of the two label-mode buttons the row shows, and how the labels read. */
   mode: TrailLabelMode;
   /**
@@ -351,6 +389,15 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
       if (button) button.disabled = !on;
     }
 
+    // Set as an attribute, never as markup: the Undo tooltip carries a class and selector
+    // read out of the stone, the same reason the trail rows are built with textContent.
+    function setTooltip(cmd, text) {
+      const button = document.querySelector('[data-cmd="' + cmd + '"]');
+      if (!button || !text) return;
+      button.title = text;
+      button.setAttribute('aria-label', text);
+    }
+
     // Rows are built with textContent, never innerHTML: the labels are class and
     // selector names read out of the stone, and a stone is not a place to trust
     // markup from.
@@ -406,6 +453,8 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
       setEnabled('gemstone.navigateBack', state.back);
       setEnabled('gemstone.navigateForward', state.forward);
       setEnabled('gemstone.explorer.clearHistory', state.clear);
+      setEnabled('gemstone.undoLast', state.undo);
+      setTooltip('gemstone.undoLast', state.undoLabel);
       document.querySelector('.toolbar').dataset.mode = state.mode;
       drawLocation(state.location);
       drawTrail(state.trail);
@@ -435,6 +484,8 @@ export class NavigationViewProvider implements vscode.WebviewViewProvider {
     back: false,
     forward: false,
     clear: false,
+    undo: false,
+    undoLabel: 'Undo Last Change',
     mode: 'full',
     trail: [],
   };

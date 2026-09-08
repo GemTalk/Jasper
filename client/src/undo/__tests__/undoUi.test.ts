@@ -3,321 +3,230 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
 import {
-  createUndoStatusBarItem,
-  setUndoStatusBarItem,
   refreshUndoUi,
+  undoStateChangedCommand,
+  undoVerb,
   REVERT_AVAILABLE_CONTEXT_KEY,
   UNDO_AVAILABLE_CONTEXT_KEY,
-  UNDO_COMMAND,
 } from '../undoUi';
 import { pushUndoEntry, resetUndoStacks } from '../undoStack';
+import type { NewUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
- * The status-bar button (#434).
+ * What says whether there is anything to undo (#434).
  *
- * The Explorer title-bar button is easy to miss unless you are already looking at the Explorer, so
- * the action also sits in the status bar. What these pin is what makes it findable and honest:
- * it STAYS PUT while a session is connected — dimmed rather than gone when there is nothing to
- * undo, because a control that is usually absent cannot be learned — it is coloured so it stands
- * out from the neutral items around it, and its tooltip says both GEMSTONE and WHICH change would
- * be undone, the latter being something a contributed menu title can never do, since those are
- * static.
+ * The BUTTON is the Actions & Navigation pane's, and what it draws is pinned in
+ * `explorerNavigationView.test.ts` — it took over from a status-bar item on the review of
+ * #507, which wanted one button where there had been five affordances. This module kept the
+ * two halves that are not the button: the VERB, and the pair of context keys the palette
+ * entries and the keybinding gate on.
+ *
+ * The verb matters because a class edit is reversed by binding an earlier version, which is a
+ * revert and not a rollback — every message that action produces says so, and an affordance
+ * that promised an Undo and handed over a Revert would be worse than one that names what it
+ * will do. Every other kind is an exact undo, and these pin which is which.
  */
 
 const session = { id: 1 } as ActiveSession;
 
-function fakeItem() {
-  return {
-    text: '',
-    tooltip: '' as string | undefined,
-    color: undefined as unknown,
-    command: undefined as unknown,
-    show: vi.fn(),
-    hide: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
+const setContextCalls = () =>
+  vi.mocked(vscode.commands.executeCommand).mock.calls.filter((c) => c[0] === 'setContext');
 
-function recordSomething(label: string): void {
-  pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label, sequence: 1 });
-}
+const contextValue = (key: string): unknown =>
+  setContextCalls()
+    .filter((c) => c[1] === key)
+    .at(-1)?.[2];
+
+const classEdit: NewUndoEntry = {
+  kind: 'classEdit',
+  sessionId: session.id,
+  label: 'Redefine class Account',
+  slots: [],
+  before: [],
+  after: [],
+  stashKeys: [],
+};
+
+const methodEdit: NewUndoEntry = {
+  kind: 'methodEdit',
+  sessionId: session.id,
+  label: 'Save Account>>#balance',
+  slots: [],
+  before: [],
+  after: [],
+};
+
+const classComment: NewUndoEntry = {
+  kind: 'classComment',
+  sessionId: session.id,
+  label: 'Save comment for Account',
+  slot: { dict: 7, className: 'Account' },
+  before: 'was',
+  after: 'is',
+};
+
+const classVarEdit: NewUndoEntry = {
+  kind: 'classVarEdit',
+  sessionId: session.id,
+  label: 'Add class variable Registry to Account',
+  slot: { dict: 7, className: 'Account', varName: 'Registry' },
+  before: { defined: false },
+  after: { defined: true },
+  accessorSlots: [],
+  accessorBefore: [],
+  accessorAfter: [],
+};
+
+const methodCategoryEdit: NewUndoEntry = {
+  kind: 'methodCategoryEdit',
+  sessionId: session.id,
+  label: "Rename category 'accessing' to 'reading' in Account",
+  slot: { dict: 7, className: 'Account', isMeta: false },
+  before: 'accessing',
+  after: 'reading',
+};
+
+const classCategoryEdit: NewUndoEntry = {
+  kind: 'classCategoryEdit',
+  sessionId: session.id,
+  label: 'Rename class category Old to New',
+  dict: 3,
+  changes: [{ className: 'A', before: 'Old', after: 'New' }],
+};
+
+const dictionaryEdit: NewUndoEntry = {
+  kind: 'dictionaryEdit',
+  sessionId: session.id,
+  label: 'Remove dictionary Reports',
+  before: { present: true, name: 'Reports', index: 2 },
+  after: { present: false, name: 'Reports', index: 2 },
+  stashKey: 'k1',
+};
+
+const refactoring: NewUndoEntry = {
+  kind: 'refactoring',
+  sessionId: session.id,
+  label: 'Rename #total to #sum',
+  sequence: 1,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
 });
 
-describe('the undo status-bar button', () => {
-  it('is wired to the undo command and coloured to stand out', () => {
-    const created = fakeItem();
-    vi.mocked(vscode.window.createStatusBarItem).mockReturnValue(created as never);
-
-    const item = createUndoStatusBarItem();
-
-    expect(item.command).toBe(UNDO_COMMAND);
-    // A real theme colour, so it renders correctly in light and dark rather than a hardcoded hex.
-    expect(item.color).toBeInstanceOf(vscode.ThemeColor);
-    expect((item.color as { id: string }).id).toBe('charts.purple');
+describe('the verb an entry is reversed under', () => {
+  it('calls a class edit a REVERT', () => {
+    // Binding an earlier class version is not a rollback: the class keeps its history and
+    // anything written on the newer version is left behind on it.
+    expect(undoVerb(pushUndoEntry(classEdit))).toBe('Revert');
   });
 
-  it('calls a class edit a REVERT, in the button and the tooltip', () => {
-    // Every message that action goes on to produce says "Revert" — binding an earlier class
-    // version is not a rollback. Promising an Undo and handing over a Revert would be worse
-    // than one button that names what it will do.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'classEdit',
-      sessionId: session.id,
-      label: 'Redefine class Account',
-      slots: [],
-      before: [],
-      after: [],
-      stashKeys: [],
-    });
+  it.each<[string, NewUndoEntry]>([
+    ['a method edit', methodEdit],
+    // Neither of these re-versions the class, so nothing is left behind on an older version
+    // and there is nothing a "revert" would be warning about.
+    ['a class comment', classComment],
+    ['an added class variable', classVarEdit],
+    // Nothing here is versioned either — a category is a label, not a version.
+    ['a method-category rename', methodCategoryEdit],
+    ['a class-category change', classCategoryEdit],
+    ['a symbol-list change', dictionaryEdit],
+    ['a refactoring', refactoring],
+  ])('calls %s an UNDO', (_what, entry) => {
+    expect(undoVerb(pushUndoEntry(entry))).toBe('Undo');
+  });
+});
+
+describe('the context keys the palette and the keybinding gate on', () => {
+  it('offers UNDO for a method edit, and not REVERT', () => {
+    pushUndoEntry(methodEdit);
 
     refreshUndoUi(session);
 
-    expect(item.text).toContain('Revert');
-    expect(item.text).not.toContain('Undo');
-    expect(item.tooltip).toBe('GemStone — Revert: Redefine class Account (Ctrl+K U)');
+    expect(contextValue(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(true);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
   });
 
-  it('calls a class comment and a class variable an UNDO, not a revert', () => {
-    // Neither re-versions the class, so nothing is left behind on an older version and there
-    // is nothing a "revert" would be warning about.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'classComment',
-      sessionId: session.id,
-      label: 'Save comment for Account',
-      slot: { dict: 7, className: 'Account' },
-      before: 'was',
-      after: 'is',
-    });
-
-    refreshUndoUi(session);
-    expect(item.tooltip).toBe('GemStone — Undo: Save comment for Account (Ctrl+K U)');
-
-    pushUndoEntry({
-      kind: 'classVarEdit',
-      sessionId: session.id,
-      label: 'Add class variable Registry to Account',
-      slot: { dict: 7, className: 'Account', varName: 'Registry' },
-      before: { defined: false },
-      after: { defined: true },
-      accessorSlots: [],
-      accessorBefore: [],
-      accessorAfter: [],
-    });
-
-    refreshUndoUi(session);
-    expect(item.text).toContain('Undo');
-    expect(item.tooltip).toBe('GemStone — Undo: Add class variable Registry to Account (Ctrl+K U)');
-  });
-
-  it('calls a category rename and a symbol-list change an UNDO too', () => {
-    // Nothing here is versioned, so nothing is left behind and there is no revert to warn of.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'methodCategoryEdit',
-      sessionId: session.id,
-      label: "Rename category 'accessing' to 'reading' in Account",
-      slot: { dict: 7, className: 'Account', isMeta: false },
-      before: 'accessing',
-      after: 'reading',
-    });
-
-    refreshUndoUi(session);
-    expect(item.text).toContain('Undo');
-    expect(item.tooltip).toContain("Undo: Rename category 'accessing' to 'reading' in Account");
-
-    pushUndoEntry({
-      kind: 'dictionaryEdit',
-      sessionId: session.id,
-      label: 'Remove dictionary Reports',
-      before: { present: true, name: 'Reports', index: 2 },
-      after: { present: false, name: 'Reports', index: 2 },
-      stashKey: 'k1',
-    });
-
-    refreshUndoUi(session);
-    expect(item.tooltip).toBe('GemStone — Undo: Remove dictionary Reports (Ctrl+K U)');
-  });
-
-  it('calls a class-category change an UNDO — a category is a label, not a version', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'classCategoryEdit',
-      sessionId: session.id,
-      label: 'Rename class category Old to New',
-      dict: 3,
-      changes: [{ className: 'A', before: 'Old', after: 'New' }],
-    });
+  it('offers REVERT for a class edit, so nothing promises an undo', () => {
+    pushUndoEntry(classEdit);
 
     refreshUndoUi(session);
 
-    expect(item.text).toContain('Undo');
-    expect(item.tooltip).toBe('GemStone — Undo: Rename class category Old to New (Ctrl+K U)');
-  });
-
-  it('separates the verb from the label, so two verbs do not run together', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'methodEdit',
-      sessionId: session.id,
-      label: 'Delete Account>>#balance',
-      slots: [],
-      before: [],
-      after: [],
-    });
-
-    refreshUndoUi(session);
-
-    expect(item.tooltip).toBe('GemStone — Undo: Delete Account>>#balance (Ctrl+K U)');
-  });
-
-  it('names its keybinding, which is how the shortcut gets learned', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    recordSomething('Rename #total to #sum');
-
-    refreshUndoUi(session);
-
-    expect(item.tooltip).toContain('Ctrl+K U');
-  });
-
-  it('appears when there is something to undo, naming GemStone and the change', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    recordSomething('Rename #total to #sum');
-
-    refreshUndoUi(session);
-
-    expect(item.show).toHaveBeenCalled();
-    expect(item.tooltip).toContain('GemStone');
-    // The specific change — the thing a static menu title cannot say.
-    expect(item.tooltip).toContain('Rename #total to #sum');
-    expect(item.text).toContain('Undo');
-  });
-
-  it('names the most recent change, not the first one recorded', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushUndoEntry({
-      kind: 'methodEdit',
-      sessionId: session.id,
-      label: 'Save Account>>#balance',
-      slots: [],
-      before: [],
-      after: [],
-    });
-    recordSomething('Rename #total to #sum');
-
-    refreshUndoUi(session);
-
-    expect(item.tooltip).toContain('Rename #total to #sum');
-  });
-
-  it('stays put, dimmed, when there is nothing to undo', () => {
-    // The whole point: a button that vanishes when it is not usable can be found once, by
-    // accident, and then never again — there is nowhere to look when it is not there.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-
-    refreshUndoUi(session);
-
-    expect(item.show).toHaveBeenCalled();
-    expect(item.hide).not.toHaveBeenCalled();
-    expect((item.color as { id: string }).id).toBe('disabledForeground');
-    // Dimmed still says what it is for, so clicking it is not a mystery.
-    expect(item.tooltip).toContain('nothing to undo');
-  });
-
-  it('dims for a session that recorded nothing, even when another one did', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    recordSomething('Rename #total to #sum');
-
-    refreshUndoUi({ id: 2 } as ActiveSession);
-
-    expect((item.color as { id: string }).id).toBe('disabledForeground');
-  });
-
-  it('goes away entirely when no session is selected', () => {
-    // Undo is per session; with none there is nothing GemStone-ish to offer.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-
-    refreshUndoUi(undefined);
-
-    expect(item.hide).toHaveBeenCalled();
-    expect(item.show).not.toHaveBeenCalled();
-  });
-
-  /** What `setContext` was last told about a key. */
-  const contextKey = (key: string): unknown => {
-    const calls = vi
-      .mocked(vscode.commands.executeCommand)
-      .mock.calls.filter((c) => c[0] === 'setContext' && c[1] === key);
-    return calls.length > 0 ? calls[calls.length - 1][2] : undefined;
-  };
-
-  const pushClassEdit = (): void => {
-    pushUndoEntry({
-      kind: 'classEdit',
-      sessionId: session.id,
-      label: 'Redefine class Account',
-      slots: [{ dict: 'UserGlobals', className: 'Account' }],
-      before: [{ bound: true, oop: '1', selectors: [] }],
-      after: [{ bound: true, oop: '2', selectors: [] }],
-      stashKeys: ['k1'],
-    });
-  };
-
-  it('offers the UNDO icon for a method edit, and not the revert one', () => {
-    // A contributed menu title is a fixed string, so the title-bar icons and the palette
-    // cannot name the change. The verb is the part they CAN follow: one command per verb,
-    // gated on these two booleans, so exactly one icon is ever showing.
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    recordSomething('x');
-
-    refreshUndoUi(session);
-
-    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(true);
-    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
-  });
-
-  it('offers the REVERT icon for a class edit, so no affordance promises an undo', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
-    pushClassEdit();
-
-    refreshUndoUi(session);
-
-    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(true);
-    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(true);
+    expect(contextValue(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
   });
 
   it('offers neither when there is nothing to reverse', () => {
-    const item = fakeItem();
-    setUndoStatusBarItem(item as never);
+    refreshUndoUi(session);
+
+    expect(contextValue(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
+  });
+
+  it('offers neither when no session is selected', () => {
+    // The stack is per session, so there is nothing GemStone-ish to offer without one.
+    pushUndoEntry(methodEdit);
+
+    refreshUndoUi(undefined);
+
+    expect(contextValue(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
+  });
+
+  it('reads the most recent change, not the first one recorded', () => {
+    pushUndoEntry(methodEdit);
+    pushUndoEntry(classEdit);
 
     refreshUndoUi(session);
 
-    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
-    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(true);
   });
 
-  it('does not fall over when no status item has been created', () => {
-    setUndoStatusBarItem(undefined);
-    recordSomething('x');
+  it('offers neither for a session that recorded nothing, even when another one did', () => {
+    pushUndoEntry(methodEdit);
+
+    refreshUndoUi({ id: 2 } as ActiveSession);
+
+    expect(contextValue(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextValue(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
+  });
+});
+
+describe('redrawing the pane that holds the button', () => {
+  it('asks the Explorer to redraw, since the tooltip names the change', () => {
+    pushUndoEntry(methodEdit);
+
+    refreshUndoUi(session);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(undoStateChangedCommand);
+  });
+
+  it('survives the Explorer not being registered', () => {
+    // Best-effort by design: the pane may not be resolved yet, or at all, and a refresh of
+    // the context keys must not fail because of it.
+    const executeCommand = vi.mocked(vscode.commands.executeCommand);
+    const original = executeCommand.getMockImplementation();
+    executeCommand.mockImplementation(((command: string) =>
+      command === undoStateChangedCommand
+        ? Promise.reject(new Error(`command '${command}' not found`))
+        : Promise.resolve(undefined)) as never);
+
+    try {
+      expect(() => refreshUndoUi(session)).not.toThrow();
+    } finally {
+      // The tests shuffle, and clearAllMocks leaves implementations in place, so this has to
+      // be put back or whichever test runs next inherits a rejecting executeCommand.
+      executeCommand.mockImplementation(original as never);
+    }
+  });
+
+  it('survives a command registry that answers with no promise at all', () => {
+    // The API returns a Thenable, but this call is fire-and-forget from a synchronous
+    // function: reaching for .then on whatever comes back is how it broke under test, and
+    // would break the same way against any host that answered undefined.
+    vi.mocked(vscode.commands.executeCommand).mockReturnValue(undefined as never);
 
     expect(() => refreshUndoUi(session)).not.toThrow();
   });

@@ -23,94 +23,88 @@ const menus: Record<string, MenuItem[]> = pkg.contributes.menus;
 const command = (id: string): Command | undefined => commands.find((c) => c.command === id);
 const entry = (menu: string, id: string): MenuItem | undefined =>
   menus[menu].find((m) => m.command === id);
+const placements = (id: string): string[] =>
+  Object.entries(menus)
+    .filter(([, items]) => items.some((m) => m.command === id))
+    .map(([menu]) => menu);
 
 /**
- * The undo affordances outside the status bar (#434).
+ * The undo affordances the MANIFEST contributes (#434).
  *
- * The status-bar tooltip names the exact change — "GemStone — Revert: Remove class Account
- * (Ctrl+K U)" — because a status-bar item's tooltip is set at runtime. A CONTRIBUTED menu
- * title is a fixed string in `package.json`, so the title-bar icons and the palette entry
- * cannot name the change no matter what. What they can do is choose between two commands on
- * a pair of context keys, so at least the VERB agrees: a class edit is reversed by binding an
- * earlier version, and every affordance has to call that a revert rather than promise an undo.
+ * There is one Undo BUTTON, and it is not here: it is a button in the Explorer's Actions &
+ * Navigation pane, drawn by `explorerNavigationView` and covered by that module's tests. It
+ * got there on the review of #507, which found three of the five affordances that existed —
+ * a status-bar item, an icon on the Methods pane title bar, one on the editor title bar, the
+ * palette entry and the toast — and asked for a single button instead.
  *
- * These pin that the pairing is complete and symmetric — one Undo and one Revert wherever the
- * action appears, on the two keys `refreshUndoUi` keeps mutually exclusive, so exactly one is
- * ever visible. Plain BOOLEAN conditions: they are what every other `when` in this manifest
- * uses, and a `when` that compares a key to a quoted string is one syntax question too many
- * for something whose failure mode is an icon that silently never appears.
+ * The pane's button is a webview button, which is what makes it the right one to keep: it
+ * writes its own tooltip, so it can name the verb AND the change. A CONTRIBUTED entry's
+ * title is a fixed string in `package.json` and can never do that, which is why the two
+ * commands still exist — the palette and the keybinding have no other way to say "Revert"
+ * for a class edit, so there is one command per verb, gated on a pair of context keys that
+ * `refreshUndoUi` keeps mutually exclusive.
+ *
+ * What these pin, then, is that the manifest offers the verbs through the PALETTE and the
+ * CHORD only, and that no icon placement has crept back in.
  */
 describe('undo / revert menu contributions', () => {
-  it('contributes a command per verb, both with the undo icon', () => {
+  it('contributes a command per verb, each naming its own verb', () => {
     expect(command('gemstone.undoLast')).toMatchObject({
-      title: 'Undo Last Change… (the status bar names it)',
+      title: 'Undo Last Change…',
       category: 'GemStone',
-      icon: 'resources/undo.svg',
     });
     expect(command('gemstone.revertLast')).toMatchObject({
-      title: 'Revert Last Class Change… (the status bar names it)',
+      title: 'Revert Last Class Change…',
       category: 'GemStone',
-      icon: 'resources/undo.svg',
     });
   });
 
-  it.each(['commandPalette', 'view/title', 'editor/title'])(
-    'gates each verb on its own boolean key in %s',
-    (menu) => {
-      const undo = entry(menu, 'gemstone.undoLast');
-      const revert = entry(menu, 'gemstone.revertLast');
-
-      expect(undo?.when).toContain('gemstone.undoAvailable');
-      expect(revert?.when).toContain('gemstone.revertAvailable');
-      // Same placement, so swapping verbs does not move the icon.
-      expect(revert?.group).toBe(undo?.group);
-    },
-  );
-
-  it.each(['view/title', 'editor/title'])(
-    'keeps the rest of the %s condition identical between the two',
-    (menu) => {
-      const undo = entry(menu, 'gemstone.undoLast');
-      const revert = entry(menu, 'gemstone.revertLast');
-
-      expect(revert?.when.replace('gemstone.revertAvailable', 'gemstone.undoAvailable')).toBe(
-        undo?.when,
-      );
-    },
-  );
-
-  it('shows the editor title-bar icon on any editor, not only a GemStone one', () => {
-    // `resourceScheme` is per-editor, so gating on it put the icon on the title bar of GemStone
-    // tabs ONLY — look at anything else and the action vanished while the status-bar button was
-    // still lit. Availability is the whole condition: the two affordances say the same thing or
-    // the user learns to distrust both.
+  it('no longer points either title at an affordance that names the change', () => {
+    // The titles used to end "(the status bar names it)", because neither could say what it
+    // would reverse and the status-bar tooltip was the only place that could. The status bar
+    // is gone, and it is no longer needed as a pointer: the pane's button names the change in
+    // its tooltip, and the confirmation the dispatcher now raises names it before acting.
     for (const id of ['gemstone.undoLast', 'gemstone.revertLast']) {
-      expect(entry('editor/title', id)?.when).not.toContain('resourceScheme');
+      expect(command(id)?.title).not.toContain('status bar');
     }
+  });
+
+  it('carries no icon, since nothing in the manifest renders one', () => {
+    // Both wore `resources/undo.svg` for the two title-bar placements. Those are gone, and
+    // the palette does not draw command icons, so an icon here would be an asset kept alive
+    // by nothing. The glyph lives inline in the pane instead, where it can take its colour
+    // from the theme rather than having purple baked into the file.
+    for (const id of ['gemstone.undoLast', 'gemstone.revertLast']) {
+      expect(command(id)?.icon).toBeUndefined();
+    }
+    expect(JSON.stringify(pkg.contributes)).not.toContain('undo.svg');
+  });
+
+  it('offers both verbs in the palette and nowhere else', () => {
+    // One button, in the pane. A title-bar icon creeping back in is exactly the regression
+    // the review asked to be rid of, so the placement list is asserted whole.
+    expect(placements('gemstone.undoLast')).toEqual(['commandPalette']);
+    expect(placements('gemstone.revertLast')).toEqual(['commandPalette']);
+  });
+
+  it('gates each verb on its own boolean key in the palette', () => {
+    const undo = entry('commandPalette', 'gemstone.undoLast');
+    const revert = entry('commandPalette', 'gemstone.revertLast');
+
+    expect(undo?.when).toContain('gemstone.undoAvailable');
+    expect(revert?.when).toContain('gemstone.revertAvailable');
   });
 
   it('states both conditions as plain booleans, never as a quoted comparison', () => {
-    // The rest of the manifest never compares a context key to a quoted string; an icon that
+    // The rest of the manifest never compares a context key to a quoted string; an entry that
     // silently never appears is too quiet a failure to risk being the first place that does.
-    for (const menu of ['commandPalette', 'view/title', 'editor/title']) {
-      for (const id of ['gemstone.undoLast', 'gemstone.revertLast']) {
-        expect(entry(menu, id)?.when).not.toContain("'");
-      }
-    }
-  });
-
-  it('points both titles at the one affordance that CAN name the change', () => {
-    // The whole reason two titles exist is that neither can say what it would reverse. Saying
-    // where that is written turns a dead end into a pointer.
     for (const id of ['gemstone.undoLast', 'gemstone.revertLast']) {
-      expect(command(id)?.title).toContain('the status bar names it');
+      expect(entry('commandPalette', id)?.when).not.toContain("'");
     }
   });
 
   it('binds the same chord to both, on mutually exclusive conditions', () => {
-    // One chord, always live, and VS Code appends it to a title-bar tooltip only for a command
-    // that actually carries a binding -- so both need one or the Revert hover loses the chord
-    // the Undo hover shows. The conditions cannot overlap, or the chord is a conflict.
+    // One chord, always live. The conditions cannot overlap, or the chord is a conflict.
     const bound: { command: string; key: string; when: string }[] =
       pkg.contributes.keybindings.filter(
         (k: { command: string }) =>

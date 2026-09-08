@@ -91,7 +91,7 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
-import { refreshUndoUi, createUndoStatusBarItem } from './undo/undoUi';
+import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
@@ -1183,10 +1183,8 @@ export function activate(context: vscode.ExtensionContext) {
       refreshUndoUi(sessionManager.getSelectedSession());
     }),
   );
-  // The status-bar button is created before the first refresh, so that refresh can show it.
-  context.subscriptions.push(createUndoStatusBarItem());
   // Every recording site pushes onto the stack and nothing else; this is what turns a
-  // push into a visible button, so no site has to remember to update the UI.
+  // push into a live button, so no site has to remember to update the UI.
   context.subscriptions.push(
     new vscode.Disposable(
       onUndoStackChanged(() => refreshUndoUi(sessionManager.getSelectedSession())),
@@ -1557,17 +1555,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Undo the last thing done in this session -- a method edit or an applied refactoring
     // (#434). Reached five ways: the purple status-bar button, the Undo button on the
-    // post-apply toast, the palette entry, the Explorer title-bar button and the one on an
-    // open method editor -- all of which land in the one dispatcher.
+    // post-apply toast, the palette entry and the Actions & Navigation pane's button -- all
+    // of which land in the one dispatcher.
     vscode.commands.registerCommand('gemstone.undoLast', async () => {
       await undoLastCommand(sessionManager);
     }),
 
-    // The same dispatcher under a second name, so the title-bar icon and the palette can say
-    // "Revert" for a class edit (#434). A contributed menu title is a fixed string, so the
-    // only way for those affordances to agree with the status bar on the VERB is to have one
-    // command per verb and gate them on `gemstone.undoVerb`. Nothing else differs: whichever
-    // is invoked reverses whatever is on top of the stack.
+    // The same dispatcher under a second name, so the palette entry and the keybinding can
+    // say "Revert" for a class edit (#434). A contributed entry's title is fixed text, so the
+    // only way for those two to name the VERB is one command per verb, gated on the pair of
+    // context keys `refreshUndoUi` keeps mutually exclusive. The pane's own button needs no
+    // such trick -- it writes its tooltip per state -- so it runs `undoLast` whatever the
+    // verb. Nothing else differs: whichever is invoked reverses whatever is on top.
     vscode.commands.registerCommand('gemstone.revertLast', async () => {
       await undoLastCommand(sessionManager);
     }),

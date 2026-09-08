@@ -13,6 +13,8 @@ import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
 import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
 import { beginMethodCategoryAdd, beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
+import { peekUndoEntry } from './undo/undoStack';
+import { undoStateChangedCommand, undoVerb } from './undo/undoUi';
 import {
   beginDictionaryRemoval,
   beginDictionaryRename,
@@ -4725,10 +4727,19 @@ export class ExplorerController {
     const mode = this.trailLabelMode();
     const here = this.history.current();
     const hereKey = here && landingKey(here);
+    // The Undo button names the change it would reverse, which is why the pane took over
+    // from the status-bar item: a contributed menu entry's title is fixed text, but this
+    // tooltip is written per state. The chord is spelled out because the button is no longer
+    // beside a label that could carry it.
+    const undoEntry = peekUndoEntry(this.session()?.id);
     this.navigation?.setState({
       back: this.history.canGoBack(),
       forward: this.history.canGoForward(),
       clear: !this.history.isEmpty(),
+      undo: undoEntry !== undefined,
+      undoLabel: undoEntry
+        ? `${undoVerb(undoEntry)}: ${undoEntry.label} (Ctrl+K U)`
+        : 'Nothing to undo yet (Ctrl+K U)',
       mode,
       location: here && landingPath(here),
       // The trail lists methods only. A dictionary, class category or class you
@@ -7592,6 +7603,11 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
+    // The undo stack moved, or the selected session changed under it. Internal, and
+    // deliberately not contributed in package.json: the Actions & Navigation pane's Undo
+    // button carries the verb and the change in its tooltip, so it has to be redrawn
+    // whenever either could have changed (#434).
+    vscode.commands.registerCommand(undoStateChangedCommand, () => ctl.syncNavigationState()),
     // An undo put a dictionary back on the symbol list, or renamed one back. Internal, and
     // deliberately not contributed in package.json: a pane refresh is not enough, because
     // the Dictionaries pane IS the symbol list and every index below the change has moved,

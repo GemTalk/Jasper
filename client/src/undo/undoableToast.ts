@@ -3,7 +3,7 @@
  *
  * This is the affordance that actually gets used, and the only one with no discovery cost:
  * it appears where the user is already looking, at the moment they would want it. Every
- * other way in — the status-bar button, the Explorer title bar, the palette entry, the
+ * other way in — the Actions & Navigation pane's button, the palette entry, the
  * keybinding — exists for the case where this one was missed or dismissed.
  *
  * Refactorings had this from the start (`refactoring/refactoringAppliedToast.ts`, which
