@@ -313,6 +313,44 @@ describe('the Actions & Navigation pane', () => {
     expect(html).toContain("setEnabled('gemstone.undoLast', state.undo)");
   });
 
+  it('inlines the codicon reply path verbatim, and not the one Abort wears', () => {
+    // Two things worth pinning. The path is split across five source lines to stay inside
+    // the line limit, and a dropped character would still render -- just as a garbled arrow.
+    // And the glyph has to stay DIFFERENT from Abort's: Abort declares $(discard), which is
+    // itself VS Code's undo/revert glyph, and the two read as one shape at 16px. That is the
+    // clash this icon was chosen to end, so a well-meant change back to a swoosh should fail
+    // here rather than in the toolbar.
+    const codicon = (name: string): string | undefined => {
+      const svg = fs.readFileSync(
+        path.join(
+          __dirname,
+          '..',
+          '..',
+          '..',
+          '..',
+          'node_modules',
+          '@vscode',
+          'codicons',
+          'src',
+          'icons',
+          `${name}.svg`,
+        ),
+        'utf8',
+      );
+      return /d="([^"]+)"/.exec(svg)?.[1];
+    };
+    const html = renderNavigationViewHtml('test-nonce');
+    const reply = codicon('reply');
+    const discard = codicon('discard');
+
+    expect(reply).toBeDefined();
+    expect(discard).toBeDefined();
+    expect(reply).not.toBe(discard);
+    expect(html).toContain(reply);
+    // Abort still wears discard, so the row really does carry two different shapes.
+    expect(html).toContain(discard);
+  });
+
   it('rewrites the Undo tooltip on every state push, since it names the change', () => {
     const html = renderNavigationViewHtml('test-nonce');
     expect(html).toContain("setTooltip('gemstone.undoLast', state.undoLabel)");

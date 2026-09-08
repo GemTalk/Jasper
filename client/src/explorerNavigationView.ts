@@ -60,18 +60,35 @@ const CHEVRON =
   'M6.14601 3.14579C5.95101 3.34079 5.95101 3.65779 6.14601 3.85279L10.292 7.99879L6.14601 12.1448C5.95101 12.3398 5.95101 12.6568 6.14601 12.8518C6.34101 13.0468 6.65801 13.0468 6.85301 12.8518L11.353 8.35179C11.548 8.15679 11.548 7.83979 11.353 7.64478L6.85301 3.14479C6.65801 2.94979 6.34101 2.95079 6.14601 3.14579Z';
 
 /**
- * The step-back arrow — the glyph the contributed Undo/Revert menu entries wore before this
- * pane became their one home.
+ * The undo arrow: codicon `reply` — an arrowhead pointing left, a shaft, and a quarter-turn
+ * down. An OPEN HOOK, which is the whole point of choosing it.
  *
- * It used to be a standalone SVG asset with the purple baked into its `fill`, because a
- * contributed menu icon cannot be themed from the manifest and the action was meant to stand
- * out from the neutral icons beside it. Inline here it is drawn with `currentColor` like
- * every other glyph in the row, which is both what the review asked for (a single button,
- * uncoloured, since the rest of the row is uncoloured) and what VS Code's own guidance wants
- * of a toolbar. The asset went with the menu entries that were its only remaining reader.
+ * What it replaced was a hand-drawn loop carried over from the standalone SVG asset the
+ * contributed Undo/Revert menu entries used to wear. That read as the same picture as ABORT
+ * two buttons along, and not by coincidence: Abort declares `$(discard)`, and `$(discard)` IS
+ * VS Code's undo/revert glyph — a counter-clockwise arrow around a circular footprint. The old
+ * undo arrow was a second drawing of that same idea at the same weight in the same footprint,
+ * so at 16px in a packed row the two were one shape. (The codicon set gives the game away:
+ * `redo` is `discard` mirrored.) A hook shares no outline with a closed sweep.
+ *
+ * The cousin it is closer to now is GO BACK, also a left-pointing arrowhead on a shaft; the
+ * turned-down tail is what separates them. If that proves too subtle, the alternative with no
+ * shared outline at all is `debug-step-back` — a dot under an arc — whose meaning also matches
+ * pressing Ctrl+K U repeatedly.
+ *
+ * Drawn with `currentColor` like every other glyph in the row. The asset it replaced had
+ * purple baked into its `fill`, because a contributed menu icon cannot be themed from the
+ * manifest and the action was meant to stand out; a single uncoloured button in a row of
+ * uncoloured buttons is what the review asked for, and what VS Code's guidance wants of a
+ * toolbar.
  */
 const UNDO_ARROW =
-  'M7.5 3.5V1L3 5l4.5 4V6.5c2.2 0 4 1.8 4 4s-1.8 4-4 4H5v1.5h2.5c3 0 5.5-2.5 5.5-5.5S10.5 5 7.5 5V3.5z';
+  'M6.35355 3.64645C6.54882 3.84171 6.54882 4.15829 6.35355 4.35355L3.70711 7H8.5C11.5376 7 ' +
+  '14 9.46243 14 12.5C14 12.7761 13.7761 13 13.5 13C13.2239 13 13 12.7761 13 12.5C13 10.0147 ' +
+  '10.9853 8 8.5 8H3.70711L6.35355 10.6464C6.54882 10.8417 6.54882 11.1583 6.35355 ' +
+  '11.3536C6.15829 11.5488 5.84171 11.5488 5.64645 11.3536L2.14645 7.85355C1.95118 7.65829 ' +
+  '1.95118 7.34171 2.14645 7.14645L5.64645 3.64645C5.84171 3.45118 6.15829 3.45118 6.35355 ' +
+  '3.64645Z';
 
 const BUTTONS: ToolbarButton[] = [
   {
