@@ -17,7 +17,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { fileInFile, fileInUris, fileInCommand } from '../fileIn';
-import type { ActiveSession, SessionManager } from '../../sessionManager';
+import { SessionManager } from '../../sessionManager';
+import type { ActiveSession } from '../../sessionManager';
 
 /**
  * Filing a Topaz `.gs` file back into a session (issue #539).
@@ -287,6 +288,27 @@ describe('the File In command', () => {
       resolveSession: () => Promise.reject(new Error('should not have asked')),
     }) as unknown as SessionManager;
 
+  /**
+   * A REAL SessionManager holding `count` sessions with `selected` current.
+   *
+   * Sessions are placed directly rather than logged in, so this needs none of the GCI
+   * machinery — but resolveSession, the thing these tests are about, is the real one.
+   * Confining the cast here is the convention for partial mocks of an internal shape
+   * (see .claude/rules/client/tests.md).
+   */
+  const managerWithSessions = (count: number, selected: number): SessionManager => {
+    const manager = new SessionManager();
+    const sessions = (manager as unknown as { sessions: Map<number, ActiveSession> }).sessions;
+    for (let id = 1; id <= count; id++) {
+      sessions.set(id, {
+        id,
+        login: { gs_user: `User${id}`, stone: 'seaside', gem_host: 'localhost' },
+      } as ActiveSession);
+    }
+    manager.selectSession(selected);
+    return manager;
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(queries.fileInChunk).mockReturnValue('ok');
@@ -377,39 +399,74 @@ describe('the File In command', () => {
     );
   });
 
-  it('asks which session even when one is already selected', async () => {
-    // Every other write files into whichever session is current without a word. A
-    // file-in can redefine classes across a whole dictionary, so the route with no
-    // session of its own asks rather than inheriting whatever the window happens to
-    // be showing.
-    const resolveSession = vi.fn().mockResolvedValue({ id: 3 });
+  it('puts the question on screen when a session is already selected', async () => {
+    // Against the REAL SessionManager, and asserting the quick pick itself rather
+    // than the call that should produce it. A stubbed resolveSession cannot see this:
+    // the rule that went wrong lives inside resolveSession — a selected session
+    // short-circuits the prompt — so a fake standing in for it would have had to
+    // reproduce the very rule under test, and asserting "resolveSession was called"
+    // passes just as happily when no one is ever asked anything.
+    const manager = managerWithSessions(2, 2);
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
-    await fileInCommand({ resolveSession } as unknown as SessionManager, memento);
+    await fileInCommand(manager, memento);
 
-    expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
+    expect(vscode.window.showQuickPick).toHaveBeenCalled();
+  });
+
+  it('files into the session picked, not the one that was selected', async () => {
+    const manager = managerWithSessions(2, 2);
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+    vi.mocked(vscode.window.showQuickPick).mockImplementation((items) =>
+      Promise.resolve((items as unknown as vscode.QuickPickItem[])[1]),
+    );
+
+    await fileInCommand(manager, memento);
+
+    // Two sessions, 2 selected, so 2 leads the list and 1 is the other row.
+    expect(vi.mocked(queries.fileInChunk).mock.calls[0][0].id).toBe(1);
+  });
+
+  it('files in nothing when the question is dismissed', async () => {
+    const manager = managerWithSessions(2, 2);
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    await fileInCommand(manager, memento);
+
+    expect(vscode.window.showOpenDialog).not.toHaveBeenCalled();
+    expect(queries.fileInChunk).not.toHaveBeenCalled();
   });
 
   it('asks on the right-clicked-file route too, which names no session either', async () => {
-    const resolveSession = vi.fn().mockResolvedValue({ id: 3 });
+    const manager = managerWithSessions(2, 2);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
-    await fileInUris(
-      { resolveSession } as unknown as SessionManager,
-      [vscode.Uri.file(A_GS)],
-      memento,
-    );
+    await fileInUris(manager, [vscode.Uri.file(A_GS)], memento);
 
-    expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
+    expect(vscode.window.showQuickPick).toHaveBeenCalled();
   });
 
-  it('still asks nothing when the caller named a session', async () => {
-    const resolveSession = vi.fn();
+  it('asks nothing when only one session is logged in — there is no question', async () => {
+    const manager = managerWithSessions(1, 1);
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
+
+    await fileInCommand(manager, memento);
+
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(queries.fileInChunk).toHaveBeenCalled();
+  });
+
+  it('asks nothing when the caller named a session, however many are logged in', async () => {
+    const manager = managerWithSessions(3, 1);
     const named = { id: 7 } as ActiveSession;
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
 
-    await fileInCommand({ resolveSession } as unknown as SessionManager, memento, named);
+    await fileInCommand(manager, memento, named);
 
-    expect(resolveSession).not.toHaveBeenCalled();
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(vi.mocked(queries.fileInChunk).mock.calls[0][0]).toBe(named);
   });
 
   it('says what went in, and that it is not committed', async () => {
