@@ -1927,6 +1927,18 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.methodHistory",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.methodHistoryFromEditor",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -2348,6 +2360,14 @@
         {
           "command": "gemstone.explorer.classHistory",
           "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
@@ -2969,6 +2989,11 @@
           "group": "3_refactor@3"
         },
         {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@4"
+        },
+        {
           "command": "gemstone.explorer.pushUpMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
@@ -3246,6 +3271,11 @@
       ],
       "editor/title": [
         {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "navigation@0"
+        },
+        {
           "command": "gemstone.fileInFile",
           "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
           "group": "navigation@0"
@@ -3306,6 +3336,11 @@
           "command": "gemstone.implementorsOf",
           "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@1"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "2_navigation@2"
         },
         {
           "command": "gemstone.breakpoints.toggleAtCursor",
@@ -3493,6 +3528,8 @@
     "compile:mcp": "tsc -p mcp-server/tsconfig.json",
     "bundle": "node esbuild.mjs",
     "watch": "tsc -b -w client/tsconfig.json server/tsconfig.json",
+    "//generate:gci-optional-functions": "Regenerates client/src/gciLibrary/optionalFunctions.generated.ts from vendor/gci-headers/ and Prettier-formats it. Run after vendoring a header revision; CI's Lint & Format job reruns it and fails on any diff.",
+    "generate:gci-optional-functions": "tsx scripts/generate-gci-optional-functions.mjs && prettier --write client/src/gciLibrary/optionalFunctions.generated.ts",
     "//dev:fresh": "Launch a fresh, isolated dev editor window: isolates gemstone.rootPath to an empty dir so it opens in a clean brand-new-user state (no downloaded servers or stones). Leaves HOME untouched, so the jasper MCP integration keeps working.",
     "dev:fresh": "bash scripts/dev-fresh.sh",
     "//dev:fresh:keep-installs": "Like dev:fresh but reuses your real ~/Documents/GemStone so you can connect to servers/stones you've already downloaded.",
