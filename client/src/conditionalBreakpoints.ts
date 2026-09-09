@@ -21,13 +21,15 @@ import { logError } from './gciLog';
  * work here is deciding, after the fact, whether this particular stop is one the
  * developer asked for — and resuming when it is not.
  *
- * Each skipped hit therefore costs exactly **two** GCI round trips: one doit
- * that evaluates the condition in the suspended frame, and one
- * `GciTsContinueWith` that resumes. Everything the evaluation needs — the
- * receiver, the frame's names and values, the symbol list, the `evaluateInContext:`
- * — happens inside that one doit rather than as the 15-20 separate calls it
- * would take to assemble a frame's variables from here (measured at 1.9-2.7 ms
- * per skipped hit locally, and every one of them scaling with network latency).
+ * Each skipped hit therefore costs exactly **two** GCI round trips: one
+ * `perform:` on a decider block that judges the stop in the suspended frame, and
+ * one `GciTsContinueWith` that resumes. Everything the judgement needs — the
+ * receiver, the frame's names and values, the symbol list, the
+ * `evaluateInContext:` — happens inside that block rather than as the 15-20
+ * separate calls it would take to assemble a frame's variables from here
+ * (measured at 1.9-2.7 ms per skipped hit locally, and every one of them
+ * scaling with network latency). Measured end to end at **~0.25 ms per skipped
+ * hit** against a local stone: 900 skips in 215-256 ms.
  *
  * **Why not do the whole loop inside the gem.** `GsProcess>>_continue` resumes a
  * suspended process and returns control to its *Smalltalk* caller, which would
@@ -43,8 +45,10 @@ import { logError } from './gciLog';
  * same on both releases, so the loop lives here and pays for the round trips.
  *
  * The developer's code is never touched either way: not wrapped, not recompiled,
- * its step points untouched. Nothing is installed in the stone and there is
- * nothing to clean up.
+ * its step points untouched. Nothing is written to the repository: the only
+ * thing left behind is the decider block in the session's own temporaries, under
+ * one key that each run overwrites, which is never committed and goes away with
+ * the session — the same lifetime as the breakpoints it serves.
  */
 export interface ConditionSpec {
   /**
@@ -109,13 +113,37 @@ function literal(text: string): string {
 }
 
 /**
- * The doit that decides one stop: `{ decision. message }`.
+ * The key the compiled decider is parked under, in the session's temporaries.
  *
- * The stop is identified from the frame itself rather than assumed to be the one
- * we started at, because a resume can land on a *different* breakpoint — one
- * with another condition, or none at all. A stop matching no spec is an
- * unconditional breakpoint (or a `halt`) and answers Stop, which is what keeps a
- * plain breakpoint working while a conditional one is being skipped.
+ * `SessionTemps` is per-session VM state, exactly like the breakpoints this
+ * serves: it is never committed, is invisible to every other session, and goes
+ * away at logout. One key, overwritten by each run, so a session accumulates at
+ * most one of these however many times it is used.
+ */
+const DECIDER_KEY = 'JasperConditionalBreakpointDecider';
+
+/**
+ * A doit that compiles the decision logic **once** and answers the block.
+ *
+ * Compiled once and then performed, rather than sent as a doit per hit, because
+ * the source below is ~1.8 KB and GemStone compiles a doit every time it is
+ * executed: measured against a live stone, a ~1.2 KB doit that does no work at
+ * all costs 0.21 ms, while a `perform:` on an already-compiled block costs
+ * 0.048 ms. At 900 skipped hits that is the difference between ~330 ms and
+ * ~45 ms spent deciding, on top of the ~0.32 ms per hit the resume itself
+ * costs and which no amount of cleverness here can avoid.
+ *
+ * The specs are baked in rather than passed per call: the armed conditional
+ * breakpoints cannot change while a single run is being skipped, and a block
+ * that closes over them needs no argument but the process.
+ *
+ * **Every stop is re-identified from its own frame.** A resume can land on a
+ * *different* breakpoint — another condition, or none at all — so the block
+ * looks up which spec, if any, claims the step point it actually stopped at. A
+ * stop that matches none is an unconditional breakpoint (or a `halt`) and
+ * answers Stop, which is what keeps a plain breakpoint working while a
+ * conditional one is being skipped, and what lets several conditional
+ * breakpoints be armed at once with each judged on its own condition.
  *
  * The receiver a condition is evaluated against comes from the breakpoint's
  * **home** frame, not the frame that stopped. For a breakpoint inside a
@@ -126,8 +154,12 @@ function literal(text: string): string {
  * the block's `homeMethod` recovers the real receiver. Names and values still
  * come from the stopped frame, which is where the block's own arguments and
  * temporaries live.
+ *
+ * Written without `^`: a non-local return from a block whose home doit has
+ * already finished is an error, so each exit assigns `answerArray` and the
+ * steps after it are guarded on its being nil.
  */
-export function decisionSource(processOop: bigint, specs: ConditionSpec[]): string {
+export function deciderSource(specs: ConditionSpec[]): string {
   const specLines = specs
     .map(
       (spec) =>
@@ -136,48 +168,60 @@ export function decisionSource(processOop: bigint, specs: ConditionSpec[]): stri
     )
     .join('\n');
 
-  return `| p specs fc frameMethod home sp spec rcvr found lvl depth names dict sl answer |
-p := Object _objectForOop: ${processOop}.
+  return `| specs decider |
 specs := Array new.
 ${specLines}
-fc := p _frameContentsAt: 1.
-fc isNil ifTrue: [ ^ Array with: ${DECISION.Stop} with: nil ].
-frameMethod := fc at: 1.
-home := frameMethod isMethodForBlock
-          ifTrue: [ frameMethod homeMethod ]
-          ifFalse: [ frameMethod ].
-sp := p _stepPointAt: 1.
-spec := specs detect: [:e | ((e at: 1) == home) and: [ (e at: 2) = sp ]] ifNone: [ nil ].
-spec isNil ifTrue: [ ^ Array with: ${DECISION.Stop} with: nil ].
-rcvr := fc at: 10.
-frameMethod isMethodForBlock ifTrue: [
-  found := false.
-  lvl := 2.
-  depth := p localStackDepth.
-  [ found not and: [ lvl <= depth ] ] whileTrue: [ | outer |
-    outer := p _frameContentsAt: lvl.
-    (outer notNil and: [ (outer at: 1) == home ]) ifTrue: [
-      rcvr := outer at: 10.
-      found := true ].
-    lvl := lvl + 1 ] ].
-names := fc at: 9.
-dict := SymbolDictionary new.
-names ifNotNil: [
-  1 to: names size do: [:k | | nm |
-    nm := (names at: k) asString.
-    (nm isEmpty or: [ (nm at: 1) == $. ]) ifFalse: [
-      dict at: nm asSymbol put: (fc at: 10 + k) ] ] ].
-sl := (SymbolList with: dict), System myUserProfile symbolList.
-answer := [ (spec at: 3) evaluateInContext: rcvr symbolList: sl ]
-            on: Error
-            do: [:ex | ^ Array with: ${DECISION.Failed}
-                             with: (ex messageText ifNil: [ ex class name asString ]) ].
-(answer == true or: [ answer == false ]) ifFalse: [
-  ^ Array with: ${DECISION.Failed}
-         with: ('the condition answered ',
-                ([ answer printString ] on: Error do: [:ex | answer class name asString ]),
-                ', not true or false') ].
-^ Array with: (answer ifTrue: [ ${DECISION.Stop} ] ifFalse: [ ${DECISION.Go} ]) with: nil`;
+decider := [:p | | answerArray fc frameMethod home sp spec rcvr found lvl depth names dict sl answer |
+  answerArray := nil.
+  fc := p _frameContentsAt: 1.
+  fc isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ].
+  answerArray isNil ifTrue: [
+    frameMethod := fc at: 1.
+    home := frameMethod isMethodForBlock
+              ifTrue: [ frameMethod homeMethod ]
+              ifFalse: [ frameMethod ].
+    sp := p _stepPointAt: 1.
+    spec := specs detect: [:e | ((e at: 1) == home) and: [ (e at: 2) = sp ]] ifNone: [ nil ].
+    spec isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ] ].
+  answerArray isNil ifTrue: [
+    rcvr := fc at: 10.
+    frameMethod isMethodForBlock ifTrue: [
+      found := false.
+      lvl := 2.
+      depth := p localStackDepth.
+      [ found not and: [ lvl <= depth ] ] whileTrue: [ | outer |
+        outer := p _frameContentsAt: lvl.
+        (outer notNil and: [ (outer at: 1) == home ]) ifTrue: [
+          rcvr := outer at: 10.
+          found := true ].
+        lvl := lvl + 1 ] ].
+    names := fc at: 9.
+    dict := SymbolDictionary new.
+    names ifNotNil: [
+      1 to: names size do: [:k | | nm |
+        nm := (names at: k) asString.
+        (nm isEmpty or: [ (nm at: 1) == $. ]) ifFalse: [
+          dict at: nm asSymbol put: (fc at: 10 + k) ] ] ].
+    sl := (SymbolList with: dict), System myUserProfile symbolList.
+    answer := [ (spec at: 3) evaluateInContext: rcvr symbolList: sl ]
+                on: Error
+                do: [:ex |
+                  answerArray := Array with: ${DECISION.Failed}
+                                       with: (ex messageText ifNil: [ ex class name asString ]).
+                  nil ].
+    answerArray isNil ifTrue: [
+      (answer == true or: [ answer == false ])
+        ifTrue: [
+          answerArray := Array with: (answer ifTrue: [ ${DECISION.Stop} ] ifFalse: [ ${DECISION.Go} ])
+                               with: nil ]
+        ifFalse: [
+          answerArray := Array with: ${DECISION.Failed}
+                               with: ('the condition answered ',
+                                      ([ answer printString ] on: Error do: [:ex | answer class name asString ]),
+                                      ', not true or false') ] ] ].
+  answerArray ].
+SessionTemps current at: #'${DECIDER_KEY}' put: decider.
+decider`;
 }
 
 /** One stop's verdict, as the loop reads it. */
@@ -201,15 +245,40 @@ export function decodeDecision(decision: number, message: string): Decision {
   }
 }
 
-/** Ask the gem whether the stop `processOop` is parked at should stop. */
-function decide(session: ActiveSession, processOop: bigint, specs: ConditionSpec[]): Decision {
-  const { result: arrayOop, err } = session.gci.GciTsExecute(
+/**
+ * Compile the decider for `specs` and answer the block.
+ *
+ * One doit per run of skipping, however many hits it goes on to judge.
+ */
+function installDecider(session: ActiveSession, specs: ConditionSpec[]): bigint {
+  const { result, err } = session.gci.GciTsExecute(
     session.handle,
-    decisionSource(processOop, specs),
+    deciderSource(specs),
     session.gci.utf8ClassOop(session.handle),
     OOP_ILLEGAL,
     OOP_NIL,
-    0, // debug OFF: the decision must not break on the breakpoints it is judging
+    0, // debug OFF: the decider must not break on the breakpoints it is judging
+    0,
+  );
+  if (err.number !== 0) throw new Error(err.message || `GemStone error ${err.number}`);
+  return result;
+}
+
+/**
+ * Ask the compiled decider what to do about the stop `process` is parked at.
+ *
+ * A `perform:` rather than a doit, so nothing is compiled per hit — see
+ * `deciderSource`. The process is handed over as the object it is, so the block
+ * needs no oop lookup either.
+ */
+function decideWith(session: ActiveSession, decider: bigint, process: bigint): Decision {
+  const { result: arrayOop, err } = session.gci.GciTsPerform(
+    session.handle,
+    decider,
+    OOP_ILLEGAL,
+    'value:',
+    [process],
+    0,
     0,
   );
   if (err.number !== 0) throw new Error(err.message || `GemStone error ${err.number}`);
@@ -245,6 +314,7 @@ export async function skipUntilConditionMet(
   processOop: bigint,
   specs: ConditionSpec[],
 ): Promise<ConditionOutcome> {
+  const decider = installDecider(session, specs);
   let process = processOop;
   let skipped = 0;
   let cancelled = false;
@@ -272,7 +342,7 @@ export async function skipUntilConditionMet(
 
   try {
     for (;;) {
-      const decision = decide(session, process, specs);
+      const decision = decideWith(session, decider, process);
       if (decision.kind === 'stop') return { kind: 'stopped', skipped };
       if (decision.kind === 'failed') {
         return { kind: 'conditionFailed', message: decision.message, skipped };

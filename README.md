@@ -339,12 +339,12 @@ the thing it was set in goes away:
   stops the process and tells the client — so Jasper evaluates the condition
   afterwards and resumes the process when it does not hold. A skipped hit costs
   two round trips to the stone (one to judge the condition in the suspended
-  frame, one to resume), which measured **0.5–0.8 ms per skipped hit** against a
-  local stone on 3.6.2 and 3.7.5 alike; over a slower link it grows with the
-  latency, so a condition that skips tens of thousands of hits will be felt. Past
-  a second and a half a cancellable progress notification appears, and cancelling
-  stops at whatever hit it has reached. Your code is never rewritten or
-  recompiled to make any of this work, and nothing is left behind in the stone. A
+  frame, one to resume), which measured **about 0.25 ms per skipped hit** against
+  a local stone — 900 skips in a quarter of a second. Over a slower link it grows
+  with the latency, so a condition that skips tens of thousands of hits will be
+  felt. Past a second and a half a cancellable progress notification appears, and
+  cancelling stops at whatever hit it has reached. Your code is never rewritten or
+  recompiled to make any of this work, and nothing is written to the repository. A
   breakpoint reached while skipping still stops if *it* has no condition, and an
   error raised by your code while skipping opens the debugger on the error
 - **Not honoured: hit counts and log messages.** VS Code's *Edit Breakpoint*

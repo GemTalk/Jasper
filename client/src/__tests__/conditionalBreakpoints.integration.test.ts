@@ -265,6 +265,60 @@ describe('conditional breakpoints (integration)', () => {
     release(process);
   });
 
+  it('judges several conditional breakpoints, each on its own condition', async () => {
+    // The decider is compiled once with every armed condition baked in, so this
+    // is the case that would break if it only ever consulted the spec for the
+    // stop it started at.
+    fixture();
+    const loopStep = stepPointAt('countTo:', 'total := total + i');
+    const returnStep = stepPointAt('countTo:', '^ total');
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', loopStep, 0);
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', returnStep, 0);
+
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+    const { err } = exec(
+      `${TEST_CLASS} new countTo: 20`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    expect(err.number).toBe(6005);
+    const process = BigInt(err.context);
+
+    // The loop's condition never holds; the one on `^ total` always does. The
+    // run must skip all twenty loop hits and stop at the second breakpoint.
+    const outcome = await skipUntilConditionMet(session(), process, [
+      { methodExpr, stepPoint: loopStep, condition: 'i >= 9999' },
+      { methodExpr, stepPoint: returnStep, condition: 'total > 0' },
+    ]);
+
+    expect(outcome).toEqual({ kind: 'stopped', skipped: 20 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(returnStep);
+    release(process);
+  });
+
+  it('lets one condition hold while another never does', async () => {
+    fixture();
+    const loopStep = stepPointAt('countTo:', 'total := total + i');
+    const returnStep = stepPointAt('countTo:', '^ total');
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', loopStep, 0);
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', returnStep, 0);
+
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+    const { err } = exec(
+      `${TEST_CLASS} new countTo: 200`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    const process = BigInt(err.context);
+
+    const outcome = await skipUntilConditionMet(session(), process, [
+      { methodExpr, stepPoint: loopStep, condition: 'i >= 150' },
+      { methodExpr, stepPoint: returnStep, condition: 'total > 999999' },
+    ]);
+
+    expect(outcome).toEqual({ kind: 'stopped', skipped: 149 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
+    release(process);
+  });
+
   it('reports an error the code raises while being skipped', async () => {
     // The resume answers an error rather than a result here, which is what
     // separates a run that raised from one that finished.

@@ -1765,7 +1765,9 @@ describe('CodeExecutor', () => {
             context: PROCESS_OOP,
           },
         })),
-        GciTsExecute: vi.fn(() => ({ result: 500n, err: { number: 0, message: '' } })),
+        // One execute compiles the decider; every hit after is a perform on it.
+        GciTsExecute: vi.fn(() => ({ result: 400n, err: { number: 0, message: '' } })),
+        GciTsPerform: vi.fn(() => ({ result: 500n, err: { number: 0, message: '' } })),
         GciTsFetchOops: vi.fn(() => {
           const decision = decisions[Math.min(decisionIndex, decisions.length - 1)];
           decisionIndex += 1;
@@ -1824,10 +1826,10 @@ describe('CodeExecutor', () => {
       const outcome = await executor.executeWithDebugger(session, '3 + 4', 'run');
 
       expect(outcome.raised).toBe(true);
-      // The condition was judged, and nothing was resumed past.
-      expect(mockOf(gci, 'GciTsExecute').mock.calls[0][1]).toContain(
-        `p := Object _objectForOop: ${PROCESS_OOP}.`,
-      );
+      // The decider was compiled and asked about this stop, and nothing was
+      // resumed past.
+      expect(mockOf(gci, 'GciTsExecute').mock.calls[0][1]).toContain('decider := [:p |');
+      expect(mockOf(gci, 'GciTsPerform').mock.calls[0][4]).toEqual([PROCESS_OOP]);
       expect(mockOf(gci, 'GciTsContinueWithAsync')).not.toHaveBeenCalled();
     });
 

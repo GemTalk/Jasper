@@ -5,7 +5,7 @@ import {
   BREAKPOINT_ERROR,
   ConditionSpec,
   DECISION,
-  decisionSource,
+  deciderSource,
   decodeDecision,
   skipUntilConditionMet,
 } from '../conditionalBreakpoints';
@@ -19,13 +19,30 @@ const spec = (over: Partial<ConditionSpec> = {}): ConditionSpec => ({
   ...over,
 });
 
-describe('decisionSource', () => {
-  it('reads the stop from the suspended process by oop', () => {
-    expect(decisionSource(29451009n, [spec()])).toContain('p := Object _objectForOop: 29451009.');
+describe('deciderSource', () => {
+  it('compiles once and parks the block in the session temps', () => {
+    // Compiled once and performed per hit: a doit is recompiled every time it
+    // is executed, and this source is ~1.8 KB of it.
+    const source = deciderSource([spec()]);
+    expect(source).toContain("SessionTemps current at: #'JasperConditionalBreakpointDecider' put:");
+    expect(source).toContain('decider := [:p |');
+  });
+
+  it('takes the suspended process as the block’s argument', () => {
+    // No `_objectForOop:` per hit — the process is handed over as the object it
+    // already is.
+    expect(deciderSource([spec()])).toContain('fc := p _frameContentsAt: 1.');
+  });
+
+  it('never returns non-locally from the block', () => {
+    // The home doit has finished by the time the block runs, so a `^` in it is
+    // an error rather than an early exit.
+    const body = deciderSource([spec()]);
+    expect(body.slice(body.indexOf('decider := [:p |'))).not.toMatch(/\^/);
   });
 
   it('carries one spec per conditional breakpoint', () => {
-    const source = decisionSource(1n, [
+    const source = deciderSource([
       spec({ stepPoint: 3, condition: 'i > 5' }),
       spec({ stepPoint: 9, condition: 'each isNil' }),
     ]);
@@ -36,7 +53,7 @@ describe('decisionSource', () => {
   it("doubles a quote in the developer's condition", () => {
     // Otherwise `name = 'ada'` would close the literal early and the doit would
     // fail to compile — reported as if the breakpoint itself were broken.
-    expect(decisionSource(1n, [spec({ condition: "name = 'ada'" })])).toContain(
+    expect(deciderSource([spec({ condition: "name = 'ada'" })])).toContain(
       "with: 'name = ''ada'''",
     );
   });
@@ -45,7 +62,7 @@ describe('decisionSource', () => {
     // Recompiling or removing the method makes `compiledMethodAt:` raise. A spec
     // that cannot resolve must degrade to "no condition here" — which stops —
     // rather than taking the decision down.
-    expect(decisionSource(1n, [spec()])).toContain(
+    expect(deciderSource([spec()])).toContain(
       'specs add: (Array with: ([ (Account compiledMethodAt: #deposit: environmentId: 0) ] ' +
         'on: Error do: [:ex | nil ])',
     );
@@ -54,7 +71,7 @@ describe('decisionSource', () => {
   it('matches a block frame against its home method', () => {
     // A breakpoint inside a non-inlined block reports the block's own method,
     // while the breakpoint was set on the home method's step point.
-    const source = decisionSource(1n, [spec()]);
+    const source = deciderSource([spec()]);
     expect(source).toContain('frameMethod isMethodForBlock');
     expect(source).toContain('ifTrue: [ frameMethod homeMethod ]');
   });
@@ -62,7 +79,7 @@ describe('decisionSource', () => {
   it('evaluates the condition against the home frame receiver', () => {
     // The stopped frame's receiver is the ExecBlock itself, so `self` and every
     // instance variable would otherwise fail to resolve (GemTalk/Jasper#561).
-    const source = decisionSource(1n, [spec()]);
+    const source = deciderSource([spec()]);
     expect(source).toContain('depth := p localStackDepth.');
     expect(source).toContain('(outer notNil and: [ (outer at: 1) == home ])');
     expect(source).toContain('rcvr := outer at: 10.');
@@ -70,8 +87,8 @@ describe('decisionSource', () => {
 
   it('stops at a step point no condition claims', () => {
     // An unconditional breakpoint, or a `halt`, reached while skipping.
-    expect(decisionSource(1n, [spec()])).toContain(
-      `spec isNil ifTrue: [ ^ Array with: ${DECISION.Stop} with: nil ]`,
+    expect(deciderSource([spec()])).toContain(
+      `spec isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ]`,
     );
   });
 
@@ -79,11 +96,33 @@ describe('decisionSource', () => {
     // Left alone, `each` (rather than `each > 3`) would never equal true and the
     // run would silently go to completion — a breakpoint that quietly does
     // nothing is the worst answer available.
-    expect(decisionSource(1n, [spec()])).toContain('(answer == true or: [ answer == false ])');
+    expect(deciderSource([spec()])).toContain('(answer == true or: [ answer == false ])');
   });
 
   it('sends no spec lines when nothing is conditional', () => {
-    expect(decisionSource(1n, [])).toContain('specs := Array new.');
+    expect(deciderSource([])).toContain('specs := Array new.');
+  });
+
+  it('bakes in every conditional breakpoint, and judges each on its own', () => {
+    // Several can be armed at once; the block picks whichever claims the step
+    // point the process actually stopped at.
+    const source = deciderSource([
+      spec({
+        methodExpr: '(Account compiledMethodAt: #a environmentId: 0)',
+        stepPoint: 3,
+        condition: 'x > 1',
+      }),
+      spec({
+        methodExpr: '(Order compiledMethodAt: #b environmentId: 0)',
+        stepPoint: 9,
+        condition: 'y isNil',
+      }),
+    ]);
+    expect(source).toContain("with: 3 with: 'x > 1'");
+    expect(source).toContain("with: 9 with: 'y isNil'");
+    expect(source).toContain(
+      'spec := specs detect: [:e | ((e at: 1) == home) and: [ (e at: 2) = sp ]] ifNone: [ nil ]',
+    );
   });
 });
 
@@ -125,12 +164,18 @@ function stubSession(
   let decisionIndex = 0;
   let resumeIndex = 0;
   const executed: string[] = [];
+  const performed: { receiver: bigint; selector: string }[] = [];
   const continues: { process: bigint; flags: number }[] = [];
   const gci = {
     utf8ClassOop: () => 74n,
+    // One execute per run: compiling the decider. Everything after is a perform.
     GciTsExecute: (_h: unknown, code: string) => {
       executed.push(code);
-      return { result: 500n + BigInt(decisionIndex), err: { number: 0, message: '' } };
+      return { result: 400n, err: { number: 0, message: '' } };
+    },
+    GciTsPerform: (_h: unknown, receiver: bigint, _c: bigint, selector: string) => {
+      performed.push({ receiver, selector });
+      return { result: 500n, err: { number: 0, message: '' } };
     },
     GciTsFetchOops: () => {
       const decision = decisions[Math.min(decisionIndex, decisions.length - 1)];
@@ -161,6 +206,7 @@ function stubSession(
   return {
     session: { id: 1, gci, handle: {} } as unknown as ActiveSession,
     executed,
+    performed,
     continues,
   };
 }
@@ -180,8 +226,8 @@ describe('skipUntilConditionMet', () => {
     expect(continues).toHaveLength(0);
   });
 
-  it('judges the decision with debug flags off', async () => {
-    // The decision doit must not break on the very breakpoints it is judging.
+  it('compiles the decider with debug flags off', async () => {
+    // It must not break on the very breakpoints it is judging.
     const { session } = stubSession([DECISION.Stop], []);
     const execute = vi.spyOn(
       session.gci as unknown as { GciTsExecute: (...args: unknown[]) => unknown },
@@ -191,6 +237,23 @@ describe('skipUntilConditionMet', () => {
     await skipUntilConditionMet(session, 7n, [spec()]);
 
     expect(execute.mock.calls[0][5]).toBe(0);
+  });
+
+  it('compiles once and then performs, however many hits it judges', async () => {
+    // The whole point of the compile-once shape: a doit is recompiled on every
+    // execution, and this one is ~1.8 KB.
+    const { session, executed, performed } = stubSession(
+      [DECISION.Go, DECISION.Go, DECISION.Go, DECISION.Stop],
+      [hitsBreakpoint(8n), hitsBreakpoint(9n), hitsBreakpoint(10n)],
+    );
+
+    await skipUntilConditionMet(session, 7n, [spec()]);
+
+    expect(executed).toHaveLength(1);
+    expect(performed).toHaveLength(4);
+    expect(performed.every((p) => p.selector === 'value:')).toBe(true);
+    // …on the block the compile answered.
+    expect(performed.every((p) => p.receiver === 400n)).toBe(true);
   });
 
   it('resumes past a false condition and stops at the next hit that holds', async () => {
