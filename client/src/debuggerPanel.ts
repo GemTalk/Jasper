@@ -1845,8 +1845,14 @@ export class DebuggerPanel {
    * The target is resolved by method lookup on the receiver (`getBrowseTarget`),
    * so an inherited method opens on its DEFINING class — the source that's really
    * executing — rather than the receiver's concrete class. Degrades to an
-   * in-panel message for a doit frame, a receiver we can't resolve, a selector
-   * not found in the chain, or a class outside the user's symbol list.
+   * in-panel message for a receiver we can't resolve, a selector not found in
+   * the chain, or a class outside the user's symbol list.
+   *
+   * A doit frame normally never gets here at all: it carries `browsable: false`,
+   * and the webview hides the Browse item for such a frame (see buildFrame and
+   * debuggerView's context-menu handler) — there is no class>>selector to land
+   * on, so withholding the action beats offering one that only apologises. The
+   * check below is the backstop for the two ever disagreeing.
    */
   private async browseFrame(displayLevel: number): Promise<void> {
     const frame = this.frames.find((f) => f.level === displayLevel);

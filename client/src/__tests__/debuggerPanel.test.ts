@@ -1033,6 +1033,27 @@ describe('DebuggerPanel', () => {
       expect(findClassCalls()).toEqual([]);
     });
 
+    it('marks a doit frame unbrowsable, and refuses to browse it if asked anyway', () => {
+      // A doit has no class>>selector to land on. The webview hides the Browse
+      // item for a frame whose `browsable` is false (its own test covers that),
+      // so this is the host's backstop: asked to browse one regardless, it says
+      // so rather than navigating the Explorer somewhere misleading.
+      vi.mocked(debug.getMethodInfo).mockImplementation(() => {
+        throw new Error('doit: no class');
+      });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      sendReady(panel);
+
+      const stack = initPayload(panel).stack as Array<{ level: number; browsable?: boolean }>;
+      expect(stack.every((f) => f.browsable === false)).toBe(true);
+
+      sendMessage(panel, { command: 'browseFrame', level: stack[0].level });
+
+      expect(findClassCalls()).toEqual([]);
+      expect(lastPosted(panel, 'init').errorMessage).toContain('no class or method');
+    });
+
     it('shows a message instead of browsing when the selector cannot be located', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce(undefined);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
