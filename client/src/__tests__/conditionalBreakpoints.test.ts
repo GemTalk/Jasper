@@ -306,6 +306,36 @@ describe('skipUntilConditionMet', () => {
     });
   });
 
+  it('lets timers run during a long skip, so it stays interruptible', async () => {
+    // The resume does not necessarily yield a macrotask — where the binding has
+    // no koffi `.async` its promise is already resolved, and awaiting that
+    // drains only the microtask queue. Without a yield of its own the loop
+    // starves setTimeout, so the progress notification never appears and there
+    // is nothing to cancel with.
+    const decisions: number[] = Array.from({ length: 400 }, () => DECISION.Go);
+    decisions.push(DECISION.Stop);
+    const { session } = stubSession(decisions, [hitsBreakpoint(8n)]);
+
+    // A stubbed hit is far faster than a real one (~0.25 ms against a stone), so
+    // drive the clock rather than the wall: one millisecond per call is what the
+    // loop is deciding against.
+    let clock = 0;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1));
+
+    let timerRan = false;
+    setTimeout(() => {
+      timerRan = true;
+    }, 0);
+
+    try {
+      await skipUntilConditionMet(session, 7n, [spec()]);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(timerRan).toBe(true);
+  });
+
   it('answers a condition that could not be evaluated', async () => {
     const { session, continues } = stubSession([DECISION.Failed], [], 'undefined symbol  nope');
 

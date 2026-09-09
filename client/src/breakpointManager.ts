@@ -1181,8 +1181,8 @@ export class BreakpointManager {
   refreshDecorations(editor: vscode.TextEditor): void {
     if (editor.document.uri.scheme !== 'gemstone') return;
 
-    const applied = this.applied.get(editor.document.uri.toString());
-    if (!applied || applied.length === 0) {
+    const applied = this.appliedFor(editor.document.uri);
+    if (applied.length === 0) {
       editor.setDecorations(enabledDecoration, []);
       editor.setDecorations(disabledDecoration, []);
       editor.setDecorations(conditionDecoration, []);
@@ -1226,9 +1226,38 @@ export class BreakpointManager {
     editor.setDecorations(conditionDecoration, conditions);
   }
 
-  /** What we last applied to `uri`, for the breakpoint manager view. */
+  /**
+   * What is applied to the METHOD `uri` names — for the hover, the token
+   * markers and the condition label.
+   *
+   * Looked up by method rather than by URI string. One compiled method can be
+   * addressed by more than one `gemstone://` URI (the Explorer scopes its URIs
+   * to a dictionary index, revealing a breakpoint from the Breakpoints view
+   * builds one from what the gem reports), and only the URI last applied through
+   * holds the record — see `dropAliasRecords`. Keyed by string, an editor open
+   * on the *other* URI would show a red dot with no marker, no condition and a
+   * hover claiming there is no breakpoint, while the gem has one right there.
+   */
   appliedFor(uri: vscode.Uri): AppliedBreakpoint[] {
-    return this.applied.get(uri.toString()) ?? [];
+    const direct = this.applied.get(uri.toString());
+    if (direct) return direct;
+
+    const method = methodSourceRef(uri);
+    if (!method) return [];
+    for (const [key, applied] of this.applied) {
+      const other = methodSourceRef(vscode.Uri.parse(key));
+      if (!other) continue;
+      if (
+        other.sessionId === method.sessionId &&
+        other.className === method.className &&
+        other.isMeta === method.isMeta &&
+        other.selector === method.selector &&
+        other.environmentId === method.environmentId
+      ) {
+        return applied;
+      }
+    }
+    return [];
   }
 
   // ── Internals ────────────────────────────────────────────

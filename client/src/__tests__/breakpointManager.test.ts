@@ -1158,7 +1158,10 @@ describe('BreakpointManager', () => {
        */
       const OTHER_URI = `${METHOD_URI}?dict=4`;
 
-      it('keeps one record, not one per URI', () => {
+      it('answers the live record whichever URI asks', () => {
+        // An editor left open on the other URI still shows a red dot, so it must
+        // show the live marker, condition and hover — not nothing, and not the
+        // condition that was replaced.
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI), [
           { line: 2, enabled: true, condition: 'index = 900' },
@@ -1167,8 +1170,8 @@ describe('BreakpointManager', () => {
           { line: 2, enabled: true, condition: 'index > 1001' },
         ]);
 
-        expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(0);
         expect(manager.appliedFor(Uri.parse(OTHER_URI))[0].condition).toBe('index > 1001');
+        expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBe('index > 1001');
       });
 
       it('sends the gem one condition — the live one', () => {

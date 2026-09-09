@@ -1052,6 +1052,11 @@ export class GciLibrary {
     if (typeof call.async !== 'function') {
       // Nothing is logged from here: this module is deliberately free of
       // `vscode` so plain Node scripts can load it (see `testActiveSession`).
+      //
+      // Resolved inline, which means a caller awaiting this in a loop yields
+      // only to the microtask queue — timers do not get a turn. A caller that
+      // resumes thousands of times must therefore yield a macrotask of its own
+      // periodically or it will starve them; see `skipUntilConditionMet`.
       const raw = this._GciTsContinueWith(
         session,
         gsProcess,

@@ -107,6 +107,25 @@ const MAX_MESSAGE = 4096;
 /** How long a skip runs before it is worth telling the developer about. */
 const PROGRESS_AFTER_MS = 1500;
 
+/**
+ * How long the loop may hold the event loop before yielding a macrotask.
+ *
+ * Resuming does not necessarily yield one: where the GCI binding has no koffi
+ * `.async` the resume is a blocking call whose promise is already resolved, and
+ * awaiting that drains only the *microtask* queue. A loop of thousands of hits
+ * then starves `setTimeout` outright — the progress notification never appears,
+ * cancellation never runs, and the editor sits still for the whole run with no
+ * way out of it. Yielding on elapsed time rather than every N hits keeps the
+ * cost proportional however fast or slow a hit turns out to be: about one
+ * timer's minimum delay per 25 ms of work.
+ */
+const YIELD_EVERY_MS = 25;
+
+/** Let pending timers — the progress notification, and its Cancel — run. */
+function yieldToTimers(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** A Smalltalk string literal for `text`. */
 function literal(text: string): string {
   return `'${escapeString(text)}'`;
@@ -317,6 +336,7 @@ export async function skipUntilConditionMet(
   const decider = installDecider(session, specs);
   let process = processOop;
   let skipped = 0;
+  let lastYield = Date.now();
   let cancelled = false;
   let report: ((skipped: number) => void) | undefined;
   let closeProgress: (() => void) | undefined;
@@ -362,6 +382,11 @@ export async function skipUntilConditionMet(
       );
       skipped += 1;
       report?.(skipped);
+
+      if (Date.now() - lastYield >= YIELD_EVERY_MS) {
+        await yieldToTimers();
+        lastYield = Date.now();
+      }
 
       if (err.number === 0) return { kind: 'completed', resultOop: result, skipped };
       if (err.number !== BREAKPOINT_ERROR) {
