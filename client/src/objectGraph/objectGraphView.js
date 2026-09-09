@@ -446,8 +446,16 @@
       remember({ growFrom: null, scrollLeft: wrap.scrollLeft });
       // One listener rather than a save beside every postMessage: a drag, a reset and an
       // edge trimmed all redraw too, and all of them should land where you left off.
+      // Trailing-edge only: scroll fires at frame rate, and remember() is a read, a clone
+      // and a write of the whole state object each time — for one integer nothing reads
+      // back until the next redraw.
+      var scrollSave = null;
       wrap.addEventListener('scroll', function () {
-        remember({ scrollLeft: wrap.scrollLeft });
+        if (scrollSave !== null) clearTimeout(scrollSave);
+        scrollSave = setTimeout(function () {
+          scrollSave = null;
+          remember({ scrollLeft: wrap.scrollLeft });
+        }, 150);
       });
     }
   }

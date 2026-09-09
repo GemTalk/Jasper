@@ -42,9 +42,6 @@ import {
   referrersOf as sharedReferrersOf,
   classCensus as sharedClassCensus,
   referenceEdges as sharedReferenceEdges,
-  referrerCollectionOf as sharedReferrerCollectionOf,
-  referrerObjectsOf as sharedReferrerObjectsOf,
-  slotEdgesAmong as sharedSlotEdgesAmong,
   buildReferrersOf,
   parseReferrersOf,
   buildReferrerObjectsOf,
@@ -2513,30 +2510,6 @@ export function classCensus(session: ActiveSession, dictionary?: string): ClassC
 
 export function referenceEdges(session: ActiveSession, classNames: string[]): ReferenceEdgesResult {
   return sharedReferenceEdges(defaultQueryExecutorUsing(session), classNames);
-}
-
-export function referrerCollectionOf(
-  session: ActiveSession,
-  targetOop: bigint,
-  referrerClassOop: bigint,
-): ReferrerCollectionResult {
-  return sharedReferrerCollectionOf(
-    defaultQueryExecutorUsing(session),
-    targetOop,
-    referrerClassOop,
-  );
-}
-
-export function referrerObjectsOf(
-  session: ActiveSession,
-  targetOop: bigint,
-  referrerClassOop: bigint,
-): ReferrerObjectsResult {
-  return sharedReferrerObjectsOf(defaultQueryExecutorUsing(session), targetOop, referrerClassOop);
-}
-
-export function slotEdgesAmong(session: ActiveSession, oops: string[]): SlotEdgesResult {
-  return sharedSlotEdgesAmong(defaultQueryExecutorUsing(session), oops);
 }
 
 // ── Object graph, non-blocking ────────────────────────────────────────────

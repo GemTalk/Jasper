@@ -1,4 +1,5 @@
 import { QueryExecutor } from './types';
+import { escapeString } from './util';
 
 /** One class of referrer, with how many of its instances point at the target object.
  *
@@ -79,13 +80,11 @@ export function buildReferrersOf(oop: bigint): string {
   const code = `| ws obj pairs ms |
 System needsCommit ifTrue: [^ 'needsCommit'].
 obj := [Object objectForOop: ${oop}]
-  on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])].
+  ${RESCUE_UNAVAILABLE}.
 pairs := nil.
 ms := System millisecondsToRun: [
   pairs := [SystemRepository allReferencesByParentClass: (Array with: obj)]
-    on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
+    ${RESCUE_UNAVAILABLE}].
 ws := WriteStream on: String new.
 ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
 pairs do: [:pair |
@@ -193,7 +192,7 @@ export function classCensus(execute: QueryExecutor, dictionary?: string): ClassC
   const filter =
     dictionary === undefined
       ? 'true'
-      : `(d name asString asSymbol == #'${dictionary.replace(/'/g, "''")}')`;
+      : `(d name asString asSymbol == #'${escapeString(dictionary)}')`;
   const code = `| ws sl classes dicts seen counts ms |
 System needsCommit ifTrue: [^ 'needsCommit'].
 classes := OrderedCollection new.
@@ -217,8 +216,7 @@ classes isEmpty ifTrue: [
   ^ ws contents].
 ms := System millisecondsToRun: [
   counts := [SystemRepository countInstances: classes asArray]
-    on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
+    ${RESCUE_UNAVAILABLE}].
 ws := WriteStream on: String new.
 ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
 1 to: classes size do: [:i |
@@ -313,7 +311,7 @@ export function referenceEdges(execute: QueryExecutor, classNames: string[]): Re
   // Names go over as a Symbol array literal and are resolved server-side in a loop,
   // so the doit stays the same length whether the caller asks for 3 classes or 300 —
   // the shape that keeps clear of 3.6.x's CompileError 1001 on long doits.
-  const nameLiterals = classNames.map((n) => `#'${n.replace(/'/g, "''")}'`).join(' ');
+  const nameLiterals = classNames.map((n) => `#'${escapeString(n)}'`).join(' ');
   const code = `| ws names classes want pairs ms rows |
 System needsCommit ifTrue: [^ 'needsCommit'].
 names := #( ${nameLiterals} ).
@@ -329,8 +327,7 @@ classes isEmpty ifTrue: [^ 'unavailable
 None of the named classes resolved to a class in this user''s symbol list'].
 ms := System millisecondsToRun: [
   pairs := [SystemRepository allReferencesToInstancesOfClasses: classes asArray]
-    on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
+    ${RESCUE_UNAVAILABLE}].
 ws := WriteStream on: String new.
 rows := 0.
 ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
@@ -417,6 +414,49 @@ ws contents`;
  *  missing, or the count disagrees, the reply was cut and the answer is `unavailable` —
  *  which the panel already knows how to say honestly. */
 const REPLY_END = 'end';
+
+/** The prologue both drill-downs share: resolve the target and the referrer class, scan
+ *  the repository once, take that class's bitmap, and stream its first `limit` referrers
+ *  into `out`. Leaves `ms`, `total` and `out` set for whichever tail the caller emits.
+ *
+ *  The caller's own `| ... |` line must declare every temp named here — `obj`, `cls`,
+ *  `pairs`, `bm`, `total`, `out`, `cursor`, `chunk`, `guard`, `ms` — alongside its own. */
+function streamReferrersPrologue(
+  targetOop: bigint,
+  referrerClassOop: bigint,
+  limit: number,
+): string {
+  return `System needsCommit ifTrue: [^ 'needsCommit'].
+obj := [Object objectForOop: ${targetOop}]
+  ${RESCUE_UNAVAILABLE}.
+cls := [Object objectForOop: ${referrerClassOop}]
+  ${RESCUE_UNAVAILABLE}.
+ms := System millisecondsToRun: [
+  pairs := [SystemRepository allReferencesByParentClass: (Array with: obj)]
+    ${RESCUE_UNAVAILABLE}].
+bm := nil.
+pairs do: [:pair | (pair at: 1) == cls ifTrue: [bm := pair at: 2]].
+total := bm isNil ifTrue: [0] ifFalse: [bm size].
+out := OrderedCollection new.
+bm isNil ifFalse: [
+  cursor := 0.
+  guard := 0.
+  [out size < ${limit} and: [
+    guard := guard + 1.
+    guard <= ${STREAM_CHUNK_LIMIT} and: [
+      chunk := bm enumerateWithLimit: ${STREAM_CHUNK} startingAfter: cursor.
+      chunk size > 0]]] whileTrue: [
+    chunk do: [:o | out size < ${limit} ifTrue: [out add: o]].
+    cursor := (chunk at: chunk size) asOop]].
+`;
+}
+
+/** The handler every doit here uses at any point it can fail: answer the `unavailable`
+ *  reply {@link splitStatus} reads, carrying the stone's own message. The continuation
+ *  line starts at column 0 deliberately — it closes a string literal that spans the
+ *  newline, so indenting it would put spaces inside the reply. */
+const RESCUE_UNAVAILABLE = `on: Error do: [:ex | ^ 'unavailable
+', (ex messageText ifNil: ['GemStone error ', ex number printString])]`;
 
 /** Smalltalk that closes a streamed reply. `rowsExpr` is a Smalltalk expression for the
  *  number of body rows written. */
@@ -512,32 +552,7 @@ export function buildReferrerCollectionOf(
   limit: number = REFERRER_COLLECTION_LIMIT,
 ): string {
   const code = `| obj cls pairs bm total out cursor chunk guard ms coll |
-System needsCommit ifTrue: [^ 'needsCommit'].
-obj := [Object objectForOop: ${targetOop}]
-  on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])].
-cls := [Object objectForOop: ${referrerClassOop}]
-  on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])].
-ms := System millisecondsToRun: [
-  pairs := [SystemRepository allReferencesByParentClass: (Array with: obj)]
-    on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
-bm := nil.
-pairs do: [:pair | (pair at: 1) == cls ifTrue: [bm := pair at: 2]].
-total := bm isNil ifTrue: [0] ifFalse: [bm size].
-out := OrderedCollection new.
-bm isNil ifFalse: [
-  cursor := 0.
-  guard := 0.
-  [out size < ${limit} and: [
-    guard := guard + 1.
-    guard <= ${STREAM_CHUNK_LIMIT} and: [
-      chunk := bm enumerateWithLimit: ${STREAM_CHUNK} startingAfter: cursor.
-      chunk size > 0]]] whileTrue: [
-    chunk do: [:o | out size < ${limit} ifTrue: [out add: o]].
-    cursor := (chunk at: chunk size) asOop]].
-coll := Array withAll: out.
+${streamReferrersPrologue(targetOop, referrerClassOop, limit)}coll := Array withAll: out.
 SessionTemps current at: #'${REFERRER_TEMP_KEY}' put: coll.
 'ok', (String with: Character tab), ms printString, (String with: Character lf),
   total printString, (String with: Character tab),
@@ -625,32 +640,7 @@ export function buildReferrerObjectsOf(
   limit: number = REFERRER_PAGE_SIZE,
 ): string {
   const code = `| ws obj cls pairs bm total out cursor chunk guard ms |
-System needsCommit ifTrue: [^ 'needsCommit'].
-obj := [Object objectForOop: ${targetOop}]
-  on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])].
-cls := [Object objectForOop: ${referrerClassOop}]
-  on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])].
-ms := System millisecondsToRun: [
-  pairs := [SystemRepository allReferencesByParentClass: (Array with: obj)]
-    on: Error do: [:ex | ^ 'unavailable
-', (ex messageText ifNil: ['GemStone error ', ex number printString])]].
-bm := nil.
-pairs do: [:pair | (pair at: 1) == cls ifTrue: [bm := pair at: 2]].
-total := bm isNil ifTrue: [0] ifFalse: [bm size].
-out := OrderedCollection new.
-bm isNil ifFalse: [
-  cursor := 0.
-  guard := 0.
-  [out size < ${limit} and: [
-    guard := guard + 1.
-    guard <= ${STREAM_CHUNK_LIMIT} and: [
-      chunk := bm enumerateWithLimit: ${STREAM_CHUNK} startingAfter: cursor.
-      chunk size > 0]]] whileTrue: [
-    chunk do: [:o | out size < ${limit} ifTrue: [out add: o]].
-    cursor := (chunk at: chunk size) asOop]].
-ws := WriteStream on: String new.
+${streamReferrersPrologue(targetOop, referrerClassOop, limit)}ws := WriteStream on: String new.
 ws nextPutAll: 'ok'; tab; nextPutAll: ms printString; lf.
 ws nextPutAll: total printString; lf.
 out do: [:o |

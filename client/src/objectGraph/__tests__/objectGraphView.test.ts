@@ -90,6 +90,14 @@ const load = (view: ObjectGraphView): Loaded => {
       wrap.dispatchEvent(new dom.window.Event('scroll'));
     },
   });
+  // The script debounces its scroll save through the window's own setTimeout. Run it
+  // straight away here: these tests are about WHERE the page ends up, and a real delay
+  // would only make them wait for it.
+  (dom.window as unknown as { setTimeout: unknown }).setTimeout = (fn: () => void) => {
+    fn();
+    return 0;
+  };
+  (dom.window as unknown as { clearTimeout: unknown }).clearTimeout = () => {};
   dom.window.eval(SOURCE);
   (
     dom.window as unknown as { ObjectGraphView: { wire: (d: Document, v: unknown) => void } }

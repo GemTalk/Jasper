@@ -46,8 +46,8 @@ describe('ObjectGraphWalk', () => {
   let edges: SlotEdge[];
   let rendered: ObjectGraphWalkView[];
   let actions: ObjectGraphActions;
-  /** Reference-counted, exactly as the host counts them (codeExecutor's graphPins), so a
-   *  double pin from one walk is visible here instead of being swallowed by a Set. */
+  /** Reference-counted, the way `exportSetPins` counts a holder's claims, so a double
+   *  pin from one walk is visible here instead of being swallowed by a Set. */
   let pinned: Map<string, number>;
   let deps: ObjectGraphWalkDeps;
   let walk: ObjectGraphWalk;

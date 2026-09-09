@@ -38,6 +38,7 @@ vi.mock('../objectGraph/objectGraphWalk', () => ({
 
 import * as vscode from 'vscode';
 import { CodeExecutor, ObjectGraphDeps } from '../codeExecutor';
+import { forgetSession as forgetSessionPins } from '../exportSetPins';
 import type { ObjectGraphWalkDeps } from '../objectGraph/objectGraphWalk';
 import { SessionManager, ActiveSession } from '../sessionManager';
 
@@ -89,6 +90,10 @@ describe('Show Reference Graph, from a selection to an open graph', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     walks.length = 0;
+    // Export-set pins are ref-counted per session in module state, so a test that pins
+    // without releasing would leave a claim standing and stop the next test's pin from
+    // reaching the stone.
+    forgetSessionPins(1);
     gci = makeGci();
     session = {
       id: 1,

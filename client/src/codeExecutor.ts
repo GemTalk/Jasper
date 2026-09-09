@@ -10,14 +10,8 @@ import {
 import { logError, logInfo } from './gciLog';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
-import {
-  clearStack,
-  getObjectPrintString,
-  getObjectClassName,
-  isSpecialOop,
-  saveObjs,
-  releaseObjs,
-} from './debugQueries';
+import { clearStack, getObjectPrintString, getObjectClassName, isSpecialOop } from './debugQueries';
+import * as pins from './exportSetPins';
 import { ObjectGraphPanel } from './objectGraph/objectGraphPanel';
 import { ObjectGraphWalk } from './objectGraph/objectGraphWalk';
 import { WalkStep } from './objectGraph/objectGraphHtml';
@@ -126,11 +120,6 @@ export class CodeExecutor {
   // The selection the overlay was anchored on, i.e. where Enter inserts the
   // full result if the user chooses to materialize it in place.
   private overlaySelection: vscode.Selection | undefined;
-  // Objects pinned for open object-graph tabs, per session: oop -> how many tabs hold it.
-  // Several tabs legitimately hold the same object, and the GCI pin/release pair is not
-  // reference-counted, so the count lives here.
-  private graphPins = new Map<number, Map<string, number>>();
-
   constructor(private sessionManager: SessionManager) {
     this.diagnostics = vscode.languages.createDiagnosticCollection('gemstone-execute');
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -1008,47 +997,26 @@ export class CodeExecutor {
     }
   }
 
-  /** Pin an object for a graph tab, reference-counted per session.
+  /** Pin an object for a graph tab, through the registry every holder on the session
+   *  shares.
    *
-   *  Several tabs can hold the same object — a walk seeds its breadcrumb from the tab it
-   *  was opened from, so every inherited step is pinned twice over. `GciTsSaveObjs` and
-   *  `GciTsReleaseObjs` are not reference-counted themselves, so one tab closing would
-   *  otherwise unpin an object its siblings still navigate back to, and an abort could
-   *  then scavenge it and reuse its OOP number. The count keeps the release honest. */
+   *  A walk seeds its breadcrumb from the tab it was opened from, so sibling tabs hold
+   *  the same objects — and a debugger or an Inspector on this session can hold them
+   *  too. `exportSetPins` counts each holder's claim and asks the stone once, so no
+   *  one's release unpins an object another still navigates back to. A pin the stone
+   *  refuses is logged and dropped; the graph works without it. */
   private pinGraphObject(session: ActiveSession, oop: bigint): void {
-    let counts = this.graphPins.get(session.id);
-    if (!counts) {
-      counts = new Map<string, number>();
-      this.graphPins.set(session.id, counts);
+    try {
+      pins.pinObject(session, oop);
+    } catch (e: unknown) {
+      logError(session.id, `Reference Graph: couldn't pin oop ${oop}: ${String(e)}`);
     }
-    const key = oop.toString();
-    const held = counts.get(key) ?? 0;
-    if (held === 0) {
-      try {
-        saveObjs(session, [oop]);
-      } catch (e: unknown) {
-        logError(session.id, `Reference Graph: couldn't pin oop ${oop}: ${String(e)}`);
-        return;
-      }
-    }
-    counts.set(key, held + 1);
   }
 
-  /** Drop one reference to a pinned graph object, releasing it at zero. */
+  /** Drop this tab's claim on a pinned graph object. */
   private unpinGraphObject(session: ActiveSession, oop: bigint): void {
-    const counts = this.graphPins.get(session.id);
-    if (!counts) return;
-    const key = oop.toString();
-    const held = counts.get(key) ?? 0;
-    if (held === 0) return;
-    if (held > 1) {
-      counts.set(key, held - 1);
-      return;
-    }
-    counts.delete(key);
-    if (counts.size === 0) this.graphPins.delete(session.id);
     try {
-      releaseObjs(session, [oop]);
+      pins.unpinObjects(session, [oop]);
     } catch {
       // Session gone; nothing to release into.
     }

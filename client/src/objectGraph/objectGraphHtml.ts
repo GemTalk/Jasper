@@ -287,14 +287,18 @@ function boxHeight(b: Box): number {
 function layoutBoxes(view: ObjectGraphView): Box[] {
   const promotedOf = (ownerOop: string, className: string) =>
     view.canvas.nodes.filter((n) => n.parentOop === ownerOop && n.viaClass === className);
-  const slotOf = (fromOop: string, toOop: string) =>
-    view.canvas.edges.find((e) => e.fromOop === fromOop && e.toOop === toOop)?.via;
+  // Indexed once: slotOf is asked for every box and every group row, so a linear scan
+  // of the edge list here is quadratic in the drawing.
+  const viaByEdge = new Map<string, string | undefined>(
+    view.canvas.edges.map((e) => [`${e.fromOop}|${e.toOop}`, e.via]),
+  );
+  const slotOf = (fromOop: string, toOop: string) => viaByEdge.get(`${fromOop}|${toOop}`);
 
   const boxes: Box[] = [];
+  /** Objects that have somewhere to appear — a box of their own, or a row inside a group —
+   *  and which layer they sit on. Anything left over at the end is drawn anyway; see the
+   *  sweep below. */
   const layerOfObject = new Map<string, number>();
-  /** Objects that have somewhere to appear — a box of their own, or a row inside a group.
-   *  Anything left over at the end is drawn anyway; see the sweep below. */
-  const drawn = new Set<string>();
 
   // Laid out from the graph's ROOTS — the objects that arrived without a parent — not from
   // whatever is currently centred. Rooting at the centre meant that focusing an object with
@@ -307,7 +311,6 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
   for (const rootOop of startFrom) {
     const node = view.canvas.nodes.find((n) => n.oop === rootOop);
     layerOfObject.set(rootOop, 0);
-    drawn.add(rootOop);
     boxes.push({
       id: `o:${rootOop}`,
       kind: 'object',
@@ -344,7 +347,6 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
       if (g.count === 1 && members.length === 1) {
         const m = members[0];
         layerOfObject.set(m.oop, ownerLayer + 1);
-        drawn.add(m.oop);
         boxes.push({
           id: `o:${m.oop}`,
           kind: 'object',
@@ -360,10 +362,7 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
         continue;
       }
 
-      for (const m of members) {
-        layerOfObject.set(m.oop, ownerLayer + 1);
-        drawn.add(m.oop);
-      }
+      for (const m of members) layerOfObject.set(m.oop, ownerLayer + 1);
       boxes.push({
         id: `g:${ownerOop}:${g.referrerClass}`,
         kind: 'group',
@@ -395,11 +394,10 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
   // looked as though the wrong object had been removed. Rendering is now total: every
   // node on the graph appears, and no removal can make a bystander vanish.
   for (const n of view.canvas.nodes) {
-    if (drawn.has(n.oop)) continue;
+    if (layerOfObject.has(n.oop)) continue;
     const parentLayer = n.parentOop ? layerOfObject.get(n.parentOop) : undefined;
     const layer = parentLayer === undefined ? 0 : parentLayer + 1;
     layerOfObject.set(n.oop, layer);
-    drawn.add(n.oop);
     boxes.push({
       id: `o:${n.oop}`,
       kind: 'object',
@@ -488,7 +486,9 @@ function renderGraph(view: ObjectGraphView): string {
 
   const perLayer = new Map<number, Box[]>();
   for (const b of boxes) {
-    perLayer.set(b.layer, [...(perLayer.get(b.layer) ?? []), b]);
+    const list = perLayer.get(b.layer);
+    if (list) list.push(b);
+    else perLayer.set(b.layer, [b]);
   }
   const layerHeight = (list: Box[]) =>
     list.reduce((sum, b) => sum + boxHeight(b) + BOX_GAP, 0) - BOX_GAP;
