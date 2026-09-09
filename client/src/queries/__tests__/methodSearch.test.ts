@@ -132,6 +132,31 @@ describe('referencesToObject', () => {
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
   });
+
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    // The organizer gathers its classes under one environment, so a hardwired 0 here
+    // answered environment-0 references however high an environment the caller asked
+    // about — and every caller sweeping 0..maxEnvironment paid for a full image scan
+    // per environment to get that same answer back each time.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'MyGlobal', 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
+  });
+
+  it('normalizes the organizer result to an Array before indexing it', () => {
+    // methodSerialization indexes `methods` with `at: i`, so the collection
+    // referencesToObject: answers has to be an Array first.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'MyGlobal');
+
+    expect(execute.mock.calls[0][0]).toContain('asArray');
+  });
 });
 
 describe('referencesToClassInDict', () => {
@@ -260,7 +285,7 @@ describe('hierarchyImplementorsOf', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('superclass');
     expect(code).toContain('[cur notNil] whileTrue:');
-    expect(code).toContain("includesSelector: #'at:'");
+    expect(code).toContain("compiledMethodAt: #'at:' environmentId: 0 otherwise: nil");
     expect(code).not.toContain('allSubclasses');
   });
 
@@ -269,7 +294,7 @@ describe('hierarchyImplementorsOf', () => {
     hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('allSubclasses do:');
-    expect(code).toContain("includesSelector: #'at:'");
+    expect(code).toContain("compiledMethodAt: #'at:' environmentId: 0 otherwise: nil");
     expect(code).not.toContain('whileTrue:');
   });
 
@@ -302,6 +327,23 @@ describe('hierarchyImplementorsOf', () => {
     expect(code).toContain('symbolList at: 7');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain("#'o''clock'");
+  });
+
+  it('collects in the environment it was given, in both directions', () => {
+    // `includesSelector:` and a bare `compiledMethodAt:` both answer for environment 0
+    // whatever the caller asked, so an implementor compiled only into a higher
+    // environment was invisible — and the caller's sweep over 0..maxEnvironment did N
+    // full walks to re-collect the same environment-0 answer each time.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up', 2);
+    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down', 2);
+
+    for (const [code] of execute.mock.calls) {
+      expect(code).toContain("compiledMethodAt: #'at:' environmentId: 2 otherwise: nil");
+      expect(code).not.toContain('includesSelector:');
+      expect(code).toContain('categoryOfSelector: each selector environmentId: 2');
+    }
   });
 
   it('parses returned rows into MethodSearchResult', () => {

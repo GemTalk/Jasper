@@ -141,6 +141,13 @@ ${methodSerialization(environmentId)}`;
 // Implementations of `selector` in a class's hierarchy: the full superclass
 // chain (direction 'up') or all subclasses (direction 'down'), on the
 // instance or class side. One round trip; reuses the standard result format.
+//
+// The walk collects with `compiledMethodAt:environmentId:otherwise:`, not with
+// `includesSelector:` plus a bare `compiledMethodAt:`: both of those answer for
+// environment 0 whatever the caller asked for, so an implementor compiled only
+// into a higher environment was invisible in either direction — while the caller
+// still paid for one full walk per environment to re-collect the same
+// environment-0 answer each time.
 export function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
@@ -156,12 +163,14 @@ export function hierarchyImplementorsOf(
     direction === 'up'
       ? `cur := (${target}) superclass.
 [cur notNil] whileTrue: [
-  (cur includesSelector: #'${sel}') ifTrue: [methods add: (cur compiledMethodAt: #'${sel}')].
+  m := cur compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m].
   cur := cur superclass].`
       : `class allSubclasses do: [:sub | | tgt |
   tgt := ${isMeta ? 'sub class' : 'sub'}.
-  (tgt includesSelector: #'${sel}') ifTrue: [methods add: (tgt compiledMethodAt: #'${sel}')]].`;
-  const code = `| class methods stream limit classDict sl cur |
+  m := tgt compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m]].`;
+  const code = `| class methods stream limit classDict sl cur m |
 class := (System myUserProfile symbolList at: ${dictIndex}) at: #'${escapeString(className)}'.
 methods := OrderedCollection new.
 ${collect}
@@ -177,8 +186,8 @@ ${methodSerialization(environmentId)}`;
 // means. Compare referencesToObject, which takes the first binding of the name anywhere
 // in the symbol list. A dictionary that does not bind the name answers nothing.
 //
-// The environment goes on the ORGANIZER, not just on the serialization: a bare
-// an organizer collects its classes under one environment, so a class
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer collects its classes under one environment, so a class
 // referenced only from a method in another environment would come back unreferenced —
 // and a safe delete would then report that nothing referenced it. Verified on a live
 // stone: with the same method compiled into environments 0 and 1, the bare organizer
@@ -199,14 +208,22 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer gathers its classes under one environment, so a hardwired 0 here
+// answered environment-0 references however high an environment the caller
+// asked about — and each of the callers sweeping 0..maxEnvironment paid for a
+// full image scan per environment to get that same answer back every time.
+// Compare referencesToClassInDict, which resolves the class by identity through
+// a named dictionary rather than taking the first binding of the name anywhere
+// in the symbol list.
 export function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
   environmentId: number = 0,
 ): MethodSearchResult[] {
   const code = `| methods stream limit classDict sl |
-methods := (${classOrganizerExpr(0)} referencesToObject:
-  (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')).
+methods := (${classOrganizerExpr(environmentId)} referencesToObject:
+  (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
