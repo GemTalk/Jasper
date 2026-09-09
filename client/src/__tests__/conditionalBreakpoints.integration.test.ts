@@ -15,6 +15,11 @@ import {
 import type { ActiveSession } from '../sessionManager';
 import { useIntegrationTest } from './useIntegrationTest';
 import { testActiveSession } from './testActiveSession';
+import { BreakpointManager } from '../breakpointManager';
+import { StepPointModel } from '../stepPointModel';
+import { buildMethodUri } from '../gemstoneFileSystemProvider';
+import type { SessionManager } from '../sessionManager';
+import { debug, Location, Position, SourceBreakpoint } from '../__mocks__/vscode';
 
 /**
  * Pins the GemStone behaviour conditional breakpoints are built on, against a
@@ -338,5 +343,127 @@ describe('conditional breakpoints (integration)', () => {
 
     expect(outcome).toEqual({ kind: 'stopped', skipped: 0 });
     release(process);
+  });
+});
+
+/**
+ * The seam the unit tests could not cover: the breakpoint manager building the
+ * specs, and the gem answering them, over one live session.
+ *
+ * Both halves were tested apart — `conditionSpecsFor` against a mocked VS Code,
+ * `skipUntilConditionMet` against hand-written specs — and a condition that is
+ * recorded but never reaches the gem, or reaches it under a step point the frame
+ * does not report, looks exactly like a breakpoint with no condition at all: it
+ * stops at the first hit and says nothing. Only running the two together catches
+ * that.
+ */
+describe('the manager and the gem, together (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
+
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
+  });
+
+  const session = (): ActiveSession => testActiveSession(gci, handle);
+  const TEST_CLASS = 'VsCodeConditionSpecTest';
+  const SELECTOR = 'countTo:';
+
+  /** A manager wired to the live session, over VS Code's real breakpoint list. */
+  function makeManager() {
+    const live = session();
+    const sessionManager = {
+      getSelectedSession: () => live,
+      getSessions: () => [live],
+      onDidChangeSelection: () => ({ dispose: () => {} }),
+    } as unknown as SessionManager;
+    return new BreakpointManager(sessionManager, new StepPointModel(sessionManager));
+  }
+
+  it('carries a gutter breakpoint’s condition all the way to the gem', async () => {
+    const live = session();
+    queries.compileClassDefinition(
+      live,
+      `Object subclass: '${TEST_CLASS}'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals
+  options: #()`,
+    );
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `${SELECTOR} n\n  | total |\n  total := 0.\n  1 to: n do: [:i |\n    total := total + i ].\n  ^ total`,
+    );
+
+    const uri = buildMethodUri({
+      kind: 'method',
+      sessionId: live.id,
+      dictName: 'UserGlobals',
+      className: TEST_CLASS,
+      isMeta: false,
+      category: 'test',
+      selector: SELECTOR,
+      environmentId: 0,
+    });
+
+    // A gutter click: the line of the loop body, and no column — which means
+    // "the leftmost step point on this line".
+    const source = queries.getMethodSource(live, TEST_CLASS, false, SELECTOR, 0);
+    const bodyLine = source.slice(0, source.indexOf('total := total + i')).split('\n').length - 1;
+    debug.breakpoints = [
+      new SourceBreakpoint(new Location(uri, new Position(bodyLine, 0)), true, 'i >= 150'),
+    ];
+
+    const manager = makeManager();
+    const results = manager.applyToUri(live, uri);
+    expect(results[0].verified).toBe(true);
+
+    // The condition survived being applied…
+    const applied = manager.appliedFor(uri);
+    expect(applied).toHaveLength(1);
+    expect(applied[0].condition).toBe('i >= 150');
+
+    // …and comes back out as a spec naming the method the gem will report.
+    const specs = manager.conditionSpecsFor(live);
+    expect(specs).toEqual([
+      {
+        methodExpr: `(${TEST_CLASS} compiledMethodAt: #'${SELECTOR}' environmentId: 0)`,
+        stepPoint: applied[0].stepPoint,
+        condition: 'i >= 150',
+      },
+    ]);
+
+    // Now run it. The step point the spec names has to be the one the suspended
+    // frame reports, or nothing matches and the breakpoint stops every time.
+    const { err } = gci.GciTsExecute(
+      handle,
+      `${TEST_CLASS} new ${SELECTOR} 200`,
+      gci.utf8ClassOop(handle),
+      OOP_ILLEGAL,
+      OOP_NIL,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+      0,
+    );
+    expect(err.number).toBe(6005);
+    const process = BigInt(err.context);
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(specs[0].stepPoint);
+
+    await expect(skipUntilConditionMet(session(), process, specs)).resolves.toEqual({
+      kind: 'stopped',
+      skipped: 149,
+    });
+
+    try {
+      debugQueries.clearStack(session(), process);
+    } catch {
+      /* already finished */
+    }
+    debug.breakpoints = [];
   });
 });
