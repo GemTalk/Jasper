@@ -224,6 +224,8 @@
     col.editError = null;
     col.stoppedAtLimit = false;
     col.loadAllRows = 0;
+    col.restoreScrollTop = 0;
+    col.restoreSelectedRow = null;
 
     var e = col.el;
     e.objClass.textContent = col.className;
@@ -422,6 +424,43 @@
     html += '</tbody></table></div>';
     if (col.editError) html += '<div class="edit-error">' + esc(col.editError) + '</div>';
     pane.innerHTML = html;
+    restoreRowView(col, pane);
+  }
+
+  /**
+   * Note where the reader is, on the way into a write. Whichever way the write
+   * lands the table is rebuilt — re-read on success, redrawn with the error on
+   * failure — and {@link restoreRowView} puts these back.
+   */
+  function rememberRowView(col, rowIndex) {
+    var scroller = col.el.contentPane.querySelector('.table-wrap');
+    col.restoreScrollTop = scroller ? scroller.scrollTop : 0;
+    col.restoreSelectedRow = rowIndex;
+  }
+
+  /**
+   * Put the reader back where they were after a write redrew the table.
+   *
+   * A successful edit or revert re-reads the tab, because every printString and
+   * OOP on it is stale — and a rebuilt table starts at offset zero with nothing
+   * selected. On a row past the first screenful that means the row you just
+   * edited, the whole reason you were looking, scrolls out of sight, and Enter
+   * has nothing to act on. Both are put back: the offset the table was at, and
+   * the row the edit was on.
+   *
+   * Set only on the way into a write and cleared here, so an ordinary tab
+   * switch still starts at the top, where it should.
+   */
+  function restoreRowView(col, pane) {
+    if (col.restoreScrollTop) {
+      var scroller = pane.querySelector('.table-wrap');
+      if (scroller) scroller.scrollTop = col.restoreScrollTop;
+      col.restoreScrollTop = 0;
+    }
+    if (col.restoreSelectedRow === null || col.restoreSelectedRow === undefined) return;
+    var tr = pane.querySelector('tr[data-row="' + col.restoreSelectedRow + '"]');
+    if (tr) tr.classList.add('selected');
+    col.restoreSelectedRow = null;
   }
 
   /**
@@ -469,6 +508,7 @@
     if (!edit) return;
     col.editing = null;
     col.editError = null;
+    rememberRowView(col, edit.rowIndex);
     post({
       command: 'setSlot',
       columnId: col.id,
@@ -1095,6 +1135,7 @@
         var rows = col.tabData[col.activeTab];
         var row = rows && rows[Number(revert.dataset.revert)];
         if (row) {
+          rememberRowView(col, Number(revert.dataset.revert));
           post({
             command: 'revertSlot',
             columnId: col.id,
@@ -1363,6 +1404,8 @@
           evalVarsRequested: false,
           stoppedAtLimit: false,
           loadAllRows: 0,
+          restoreScrollTop: 0,
+          restoreSelectedRow: null,
           editing: null,
           editError: null,
         };

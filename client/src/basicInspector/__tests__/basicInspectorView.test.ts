@@ -646,13 +646,15 @@ describe('a column’s own history', () => {
 });
 
 describe('editing a value', () => {
-  function openEditor(col: Column) {
+  function openEditorOn(col: Column, rowIndex: number) {
     col.el.contentPane
-      .querySelector('tr[data-row="0"]')!
+      .querySelector(`tr[data-row="${rowIndex}"]`)!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
     document.querySelector<HTMLElement>('[data-action="edit"]')?.click();
     return col.el.contentPane.querySelector<HTMLInputElement>('.row-editor');
   }
+
+  const openEditor = (col: Column) => openEditorOn(col, 0);
 
   beforeEach(() => {
     document
@@ -715,6 +717,66 @@ describe('editing a value', () => {
 
     expect(col.el.contentPane.querySelector('.revert-btn')).not.toBeNull();
     expect(sent('diveHere')).toHaveLength(0);
+  });
+
+  /**
+   * The row worth looking at after a write is the one just written, and on a
+   * paged tab it is routinely well down the table. A rebuilt table starts at
+   * offset zero, which scrolled that row off screen.
+   */
+  it('comes back to the same place after a write, on the row that was edited', () => {
+    const col = openRoot({ itemCount: 500 });
+    const rows = Array.from({ length: 200 }, (_, i) => row({ label: `[${i + 1}]` }));
+    sendRows(0, 'items', rows);
+    (col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop = 900;
+    const input = openEditorOn(col, 5)!;
+    input.value = '42';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    view.handleHostMessage({ command: 'setSlotResult', columnId: 0, ok: true });
+    sendRows(0, 'items', rows);
+
+    expect((col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop).toBe(900);
+    expect(col.el.contentPane.querySelector('tr.selected')!.getAttribute('data-row')).toBe('5');
+  });
+
+  it('holds its place when the write failed, too', () => {
+    const col = openRoot({ itemCount: 500 });
+    sendRows(
+      0,
+      'items',
+      Array.from({ length: 200 }, (_, i) => row({ label: `[${i + 1}]` })),
+    );
+    (col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop = 640;
+    const input = openEditorOn(col, 5)!;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    view.handleHostMessage({
+      command: 'setSlotResult',
+      columnId: 0,
+      ok: false,
+      error: 'doesNotUnderstand',
+    });
+
+    expect((col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop).toBe(640);
+  });
+
+  it('starts an ordinary tab switch at the top, not where a write left off', () => {
+    const col = openRoot({ namedSize: 2, itemCount: 500 });
+    sendRows(0, 'slots', [row()]);
+    openTab(col, 'items');
+    sendRows(
+      0,
+      'items',
+      Array.from({ length: 200 }, (_, i) => row({ label: `[${i + 1}]` })),
+    );
+    (col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop = 900;
+
+    openTab(col, 'slots');
+    sendRows(0, 'slots', [row(), row({ label: 'owner', index: 2 })]);
+
+    expect((col.el.contentPane.querySelector('.table-wrap') as HTMLElement).scrollTop).toBe(0);
+    expect(col.el.contentPane.querySelector('tr.selected')).toBeNull();
   });
 
   it('abandons an edit on Escape without asking the stone for anything', () => {
