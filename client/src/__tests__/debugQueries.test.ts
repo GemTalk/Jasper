@@ -708,6 +708,43 @@ describe('debugQueries', () => {
         false,
       );
     });
+
+    // A frame we could not read is NOT a frame with nothing to offer. The second
+    // still evaluates — the block's own names bind, and a failure through the
+    // missing receiver carries an explanation. The first has nothing to evaluate
+    // against, and evaluating anyway is indistinguishable from a real answer:
+    // `self` prints nil and every name comes back "undefined symbol", each of
+    // which reads as a verdict on the expression the user typed.
+    describe('when the frame contents cannot be read at all', () => {
+      const unreadable = /Could not read the contents of frame 3/;
+
+      it('blames the frame instead of evaluating against an empty context', () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          throw new Error('the gem went away');
+        });
+
+        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+      });
+
+      it('blames the frame when the server answers a payload with no receiver in it', () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockReturnValue('');
+
+        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+      });
+
+      // evaluateInFrameNb is not an `async` function, so a synchronous throw out
+      // of the frame setup would bypass the caller's promise chain entirely.
+      it('rejects the non-blocking evaluation rather than throwing out of the call', async () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockReturnValue('');
+
+        await expect(debug.evaluateInFrameNb(session, GS_PROCESS, 'limit', 3)).rejects.toThrow(
+          unreadable,
+        );
+      });
+    });
   });
 
   // When the frame has *named* args/temps, evaluateInFrame must bind them so a

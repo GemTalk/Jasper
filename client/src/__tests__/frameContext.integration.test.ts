@@ -46,7 +46,9 @@ describe('suspended frame context (integration)', () => {
    * inside a block that never mentions `self` (so the compiler copies no home
    * receiver into it — the case that needs the walk out to the home activation),
    * a sibling whose block does mention `self` (the case slot 8 answers on its
-   * own), and a plain method with one argument and one temporary.
+   * own), a method that RETURNS such a block rather than running it (so the
+   * walk finds no home activation — the degraded case), and a plain method with
+   * one argument and one temporary.
    */
   const defineFixture = (): void => {
     gci.executeAndFetchString(
@@ -76,6 +78,8 @@ total := 0.
 tag := 7.
 coll do: [:each | total := total + each. self error: ''halt in block''].
 ^ total'.
+compile value: 'strandedBlock
+^ [:each | UserGlobals at: #JasperFrameZork put: (1/0)]'.
 compile value: 'haltWithArgAndTemp: anArg
 | aTemp |
 aTemp := anArg * 2.
@@ -174,6 +178,9 @@ cls setup.
         expect(namedValues(rows, 'instvars')).toMatchObject({ limit: '99' });
         // …and the block's own argument and the temp it shares with its home.
         expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1', total: '1' });
+        // …and nothing belonging only to the home activation, which has its own
+        // row in the stack. The eval bar deliberately goes wider — see below.
+        expect(namedValues(rows, 'argtemps')).not.toHaveProperty('coll');
       });
     });
 
@@ -252,6 +259,53 @@ cls setup.
         // `total` is the home method's temporary AND is shared into the block;
         // the block's layer is applied last, so its live value is what shows.
         expect(debug.evaluateInFrame(s, gsProcess, 'total', level)).toBe('1');
+      });
+    });
+  });
+
+  // The one state this feature can be in where `self` genuinely cannot be
+  // recovered: the frame runs a block that never captured `self`, and the home
+  // activation that would have supplied it has already returned. Everything here
+  // is the degradation contract — what still works, what stops working, and that
+  // the user is told which of the two they hit.
+  describe('a block frame whose home activation has already returned', () => {
+    const HALT = `(${TEST_CLASS} new limit: 99; yourself) strandedBlock value: 1`;
+
+    const strandedLevel = (s: ActiveSession, gsProcess: bigint): number =>
+      blockFrameLevel(s, gsProcess, 'strandedBlock');
+
+    it('reports self as unavailable rather than guessing at one', () => {
+      atHalt(HALT, (gsProcess, s) => {
+        const info = debug.getFrameInfo(s, gsProcess, strandedLevel(s, gsProcess));
+        expect(info.homeMethodOop).not.toBe(OOP_NIL);
+        expect(info.selfIsUnavailable).toBe(true);
+        expect(info.selfOop).toBe(OOP_NIL);
+      });
+    });
+
+    it("still binds the block's own argument", () => {
+      atHalt(HALT, (gsProcess, s) => {
+        expect(debug.evaluateInFrame(s, gsProcess, 'each', strandedLevel(s, gsProcess))).toBe('1');
+      });
+    });
+
+    it('degrades `self` to nil instead of resolving it to the ExecBlock', () => {
+      atHalt(HALT, (gsProcess, s) => {
+        const level = strandedLevel(s, gsProcess);
+        // Slot 10 holds the ExecBlock here; binding it would make `self class`
+        // answer ExecBlock1 and `self limit` a doesNotUnderstand — a plausible
+        // looking wrong answer. nil is the honest one.
+        expect(debug.evaluateInFrame(s, gsProcess, 'self class', level)).toBe('UndefinedObject');
+      });
+    });
+
+    it('explains the frame when an expression through the receiver fails', () => {
+      atHalt(HALT, (gsProcess, s) => {
+        const level = strandedLevel(s, gsProcess);
+        // Bare, this is "undefined symbol limit" — which blames the expression.
+        expect(() => debug.evaluateInFrame(s, gsProcess, 'limit', level)).toThrow(
+          /home method has already returned/,
+        );
       });
     });
   });

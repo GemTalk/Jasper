@@ -918,6 +918,18 @@ export function parseFrameVars(data: string): FrameVarRow[] {
  * the home object's instance variables) is what the pane is for. See
  * {@link FRAME_SELF_SMALLTALK}.
  *
+ * The arg/temp rows, though, stay strictly this frame's own — deliberately NOT
+ * matching {@link getFrameEvalContext}, which layers the home method's arguments
+ * and temporaries in as well. So on a block frame the eval bar resolves a home
+ * name the pane never lists. The two want different things: the eval bar has to
+ * make an expression typed at this frame behave the way the same expression would
+ * inside the block, home scope and all, while the pane is a picture of one
+ * activation's own slots — and the home activation has its own row in the stack,
+ * one click away, showing exactly those names. Mixing them in would also cross
+ * the write path: `index` here is an offset into THIS frame's `argAndTempNames`,
+ * and a home name carries the home frame's offset, which `_frameAt:tempAt:put:`
+ * at this level would apply to the wrong slot.
+ *
  * The name filters test with `beginsWith:`. GemStone has no `String>>startsWith:`
  * on 3.6.2 or 3.7.5 — sending it raises a MessageNotUnderstood on the FIRST name,
  * the enclosing `on: Error do: []` swallows it, and the payload ends after the
@@ -1356,6 +1368,11 @@ export function trimStackToLevelNb(
  * than against a receiver we would be guessing at, and a failure that follows
  * says so (see {@link withSelfUnavailableNote}).
  *
+ * Throws when the frame's contents cannot be read at all, which is a different
+ * thing from the frame having no `self`: there is then nothing to evaluate
+ * against, and doing it anyway would answer as confidently as a real evaluation.
+ * See {@link getFrameEvalContext}.
+ *
  * (The earlier `_framePerform:withArgs:onLevel:` primitive does NOT exist on
  * GemStone 3.7.x — and it performed a *selector*, not an expression, so it
  * raised a NameError trying to intern the source as a Symbol.)
@@ -1392,11 +1409,15 @@ export function evaluateInFrameNb(
   level: number,
   opts: NbRunOptions = {},
 ): Promise<string> {
-  const { selfOop, selfIsUnavailable, names, oops } = getFrameEvalContext(
-    session,
-    gsProcess,
-    level,
-  );
+  // Not an `async` function, so a throw from the frame setup would escape the
+  // caller's promise chain instead of rejecting it.
+  let context: FrameEvalContext;
+  try {
+    context = getFrameEvalContext(session, gsProcess, level);
+  } catch (e: unknown) {
+    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+  }
+  const { selfOop, selfIsUnavailable, names, oops } = context;
 
   const { result: exprOop, err: strErr } = session.gci.GciTsNewString(session.handle, expression);
   if (strErr.number !== 0) {
@@ -1479,7 +1500,12 @@ export function evaluateInFrameToOop(
 export interface FrameEvalContext {
   /** OOP to bind as `self`; `OOP_NIL` when the frame has none to offer. */
   selfOop: bigint;
-  /** True when this is a block frame whose home activation has already returned. */
+  /**
+   * True when this is a block frame whose home activation has already returned,
+   * so `selfOop` is `OOP_NIL` and the block's own names are all there is to bind.
+   * Never set for a frame we simply failed to read — that throws; see
+   * {@link getFrameEvalContext}.
+   */
   selfIsUnavailable: boolean;
   /**
    * Names to bind, in binding order: the home method's arguments and temporaries
@@ -1503,11 +1529,19 @@ export interface FrameEvalContext {
  * See {@link getFrameInfo} for the slot layout this reads and why slot 8, not
  * slot 10, is `self`.
  *
+ * THROWS when the frame cannot be read — the doit failed, or it answered a
+ * payload with no `self` record because `_frameContentsAt:` gave it nil. It is
+ * deliberately not best-effort: an empty context still evaluates, and quietly
+ * answers `nil` for `self` and "undefined symbol" for every name, which reads as
+ * a verdict on the expression rather than on the frame. See
+ * {@link frameUnreadable}. A frame that WAS read but has no `self` to offer is a
+ * different thing, and stays best-effort — see {@link FrameEvalContext.selfIsUnavailable}.
+ *
  * Note the roundabout `size = 4 and: [… beginsWith: 'self']` test. A doit's
  * String literals arrive as Unicode strings, and `aString = aUnicodeString`
  * raises ArgumentError 2718, "Unicode argument disallowed in String comparison"
- * — which the enclosing best-effort catch would turn into an empty context and a
- * silently self-less eval bar. `beginsWith:` has no such restriction.
+ * — which would fail the whole doit and make every evaluation in the frame
+ * report itself unreadable. `beginsWith:` has no such restriction.
  */
 export function getFrameEvalContext(
   session: ActiveSession,
@@ -1522,10 +1556,7 @@ tab := String with: Character tab.
 fetch := [:j | [proc _frameContentsAt: j] on: Error do: [:e | nil]].
 arr := fetch value: lvl.
 ${FRAME_SELF_SMALLTALK}
-arr isNil ifTrue: [
-  out nextPutAll: 'self'; nextPutAll: tab; nextPutAll: nil asOop printString;
-      nextPutAll: tab; nextPutAll: '0'; nextPut: Character lf
-] ifFalse: [
+arr notNil ifTrue: [
   depth := proc localStackDepth.
   hArr := homeFrameOf value: fetch value: lvl value: arr value: depth.
   slf := frameSelfOf value: fetch value: lvl value: arr value: depth.
@@ -1547,19 +1578,36 @@ arr isNil ifTrue: [
   emit value: arr ].
 out contents`;
 
-  const fallback: FrameEvalContext = {
-    selfOop: OOP_NIL,
-    selfIsUnavailable: false,
-    names: [],
-    oops: [],
-  };
   let data: string;
   try {
     data = executeAndFetchString(session, code);
-  } catch {
-    return fallback;
+  } catch (e: unknown) {
+    throw new Error(frameUnreadable(level, e instanceof Error ? e.message : String(e)));
   }
-  return parseFrameEvalContext(data) ?? fallback;
+  const context = parseFrameEvalContext(data);
+  if (!context) {
+    // The doit emits nothing at all when `_frameContentsAt:` answers nil, and
+    // any other payload without a `self` record is one we cannot interpret.
+    throw new Error(frameUnreadable(level, 'the server returned no frame contents'));
+  }
+  return context;
+}
+
+/**
+ * Message for a frame whose contents could not be read at all — as opposed to a
+ * frame that was read and simply has no `self` to offer, which is
+ * {@link withSelfUnavailableNote}'s case.
+ *
+ * We report it rather than evaluating against an empty context, because an empty
+ * context is indistinguishable from a real answer: `self` would print `nil` and
+ * a temp would come back as a bare "undefined symbol", both blaming the
+ * expression for a failure that belongs to the frame.
+ */
+function frameUnreadable(level: number, reason: string): string {
+  return (
+    `Could not read the contents of frame ${level}, so this expression has no frame ` +
+    `to evaluate in — no self, no arguments, no temporaries (${reason}).`
+  );
 }
 
 /** Parse {@link getFrameEvalContext}'s payload. Exported for unit testing. */
