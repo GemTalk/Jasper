@@ -802,6 +802,14 @@ export class CodeExecutor {
       errorNumber: BREAKPOINT_ERROR_NUMBER,
     };
     const specs = this.conditions.conditionSpecsFor(session);
+    // Logged even when there are none. "Stopped at a breakpoint" looks identical
+    // whether a condition was consulted and held, or was never seen at all — so
+    // the one place that knows says which, rather than leaving it to be guessed
+    // from the outside.
+    logInfo(
+      `[Session ${session.id}] breakpoint at a stop: ${specs.length} conditional breakpoint(s) armed` +
+        specs.map((s) => `\n  ${s.methodExpr} @${s.stepPoint} if ${s.condition}`).join(''),
+    );
     if (specs.length === 0) return stopHere;
 
     let outcome: ConditionOutcome;
@@ -821,6 +829,10 @@ export class CodeExecutor {
       );
       return stopHere;
     }
+
+    logInfo(
+      `[Session ${session.id}] breakpoint conditions: ${outcome.kind} after ${outcome.skipped} skipped hit(s)`,
+    );
 
     switch (outcome.kind) {
       case 'completed':

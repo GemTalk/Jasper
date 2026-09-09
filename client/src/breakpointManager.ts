@@ -506,18 +506,37 @@ export class BreakpointManager {
    * would show a red dot arming nothing, so it is taken back out and the reason
    * given. `Shift+F9` refuses the same edit for the same reason, one step
    * earlier (`StepPointModel.explain`).
+   *
+   * A **condition** written on a breakpoint that is already armed is the third
+   * case, and the quietest. Nothing is wrong with the breakpoint — it stays
+   * exactly where it was — so there is nothing to take back out, and VS Code
+   * goes on showing the condition in its gutter and in its Breakpoints panel.
+   * But the hold means it never reaches the gem, so execution stops every time
+   * it is reached: a condition that is written down, displayed, and not applied.
+   * That is the same failure the whole feature exists to avoid, so it is said
+   * out loud even though nothing is refused.
    */
-  private holdWhileDirty(uri: vscode.Uri, added: readonly vscode.Breakpoint[]): void {
+  private holdWhileDirty(
+    uri: vscode.Uri,
+    added: readonly vscode.Breakpoint[],
+    changed: readonly vscode.Breakpoint[] = [],
+  ): void {
     this.frozen.add(uri.toString());
 
     const uriStr = uri.toString();
-    const rejected = added.filter(
-      (bp) => bp instanceof vscode.SourceBreakpoint && bp.location.uri.toString() === uriStr,
-    );
-    if (rejected.length === 0) return;
+    const onThisMethod = (bp: vscode.Breakpoint): bp is vscode.SourceBreakpoint =>
+      bp instanceof vscode.SourceBreakpoint && bp.location.uri.toString() === uriStr;
 
-    vscode.debug.removeBreakpoints(rejected);
-    vscode.window.showWarningMessage(DIRTY_REFUSAL);
+    const rejected = added.filter(onThisMethod);
+    if (rejected.length > 0) {
+      vscode.debug.removeBreakpoints(rejected);
+      vscode.window.showWarningMessage(DIRTY_REFUSAL);
+      return;
+    }
+
+    if (changed.filter(onThisMethod).some((bp) => bp.condition?.trim())) {
+      vscode.window.showWarningMessage(HELD_CONDITION_REFUSAL);
+    }
   }
 
   /**
@@ -1213,7 +1232,7 @@ export class BreakpointManager {
       const session = this.sessionForUri(uri);
       if (!session) continue;
       if (isDirty(uri)) {
-        this.holdWhileDirty(uri, event.added);
+        this.holdWhileDirty(uri, event.added, event.changed);
         continue;
       }
       this.applyToUri(session, uri);
@@ -1344,6 +1363,19 @@ const DIRTY_REFUSAL =
   'This method has unsaved edits, so its breakpoints are held as they are — ' +
   'step points come from the compiled method, not the text on screen. ' +
   'Save the method, or run "File: Revert File", and set the breakpoint then.';
+
+/**
+ * Why a condition written while the method's editor is dirty is not in effect.
+ *
+ * Names what is actually true — the breakpoint still stops, every time — rather
+ * than only that something was held, because the developer's next move depends
+ * on knowing the breakpoint is live and the condition is not.
+ */
+const HELD_CONDITION_REFUSAL =
+  'This method has unsaved edits, so its breakpoints are held as they are and ' +
+  'the condition is NOT in effect — the breakpoint will stop every time it is ' +
+  'reached. Save the method, or run "File: Revert File", and the condition ' +
+  'applies from then on.';
 
 /**
  * Why a breakpoint set outside a method editor is refused.

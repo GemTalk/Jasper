@@ -942,6 +942,65 @@ describe('BreakpointManager', () => {
       expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBe('a');
     });
 
+    describe('a condition written while the editor is dirty', () => {
+      /**
+       * The quietest way this feature can fail: the breakpoint is already armed,
+       * so nothing is refused and VS Code goes on showing the condition — but
+       * the hold means it never reaches the gem and the breakpoint stops every
+       * time. Exactly what conditional breakpoints exist to avoid.
+       */
+      const dirtyEditorOn = (uriStr: string) => {
+        workspace.textDocuments = [{ uri: Uri.parse(uriStr), isDirty: true }];
+      };
+
+      function fireChanged(changed: unknown[]) {
+        const manager = makeManager();
+        manager.register({
+          subscriptions: [] as unknown[],
+        } as unknown as vscodeApi.ExtensionContext);
+        const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+        calls[calls.length - 1][0]({ added: [], removed: [], changed });
+        return manager;
+      }
+
+      beforeEach(() => {
+        vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+        vi.mocked(window.showWarningMessage).mockClear();
+      });
+
+      it('says the condition is not in effect', () => {
+        dirtyEditorOn(METHOD_URI);
+        const bp = conditional('index > 3');
+        debug.breakpoints = [bp];
+
+        fireChanged([bp]);
+
+        expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+          expect.stringContaining('condition is NOT in effect'),
+        );
+      });
+
+      it('leaves the breakpoint alone — it is still armed and still stops', () => {
+        dirtyEditorOn(METHOD_URI);
+        const bp = conditional('index > 3');
+        debug.breakpoints = [bp];
+
+        fireChanged([bp]);
+
+        expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+      });
+
+      it('says nothing for a change that carries no condition', () => {
+        dirtyEditorOn(METHOD_URI);
+        const bp = conditional(undefined);
+        debug.breakpoints = [bp];
+
+        fireChanged([bp]);
+
+        expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+      });
+    });
+
     describe('conditionSpecsFor', () => {
       it('answers nothing when no breakpoint is conditional', () => {
         debug.breakpoints = [conditional(undefined)];
