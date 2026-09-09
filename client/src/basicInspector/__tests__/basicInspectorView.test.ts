@@ -27,6 +27,7 @@ interface Header {
   itemCount: number;
   entryCount: number;
   isBytes: boolean;
+  byteSize: number;
   isDictionary: boolean;
   printString: string;
   sizeUnit: string;
@@ -80,6 +81,7 @@ function header(over: Partial<Header> = {}): Header {
     itemCount: 0,
     entryCount: 0,
     isBytes: false,
+    byteSize: 0,
     isDictionary: false,
     printString: 'an Account',
     sizeUnit: '',
@@ -1226,8 +1228,8 @@ describe('the evaluation pane’s hot keys', () => {
 
 describe('reading the bytes of an object', () => {
   const dump = (col: Column) => col.el.contentPane.querySelector('.bytes')!.textContent;
-  const openBytes = (bytes: number[], itemCount = bytes.length) => {
-    const col = openRoot({ isBytes: true, itemCount });
+  const openBytes = (bytes: number[], byteSize = bytes.length) => {
+    const col = openRoot({ isBytes: true, byteSize });
     openTab(col, 'bytes');
     sendBytes(0, bytes);
     return col;
@@ -1259,6 +1261,40 @@ describe('reading the bytes of an object', () => {
     expect(dump(col)).toContain('98 109');
   });
 
+  it('zero-pads a hex byte and leaves a decimal one spaced', () => {
+    // A wide String is every other byte a NUL, so ` 0` for zero cost the dump
+    // its pairing: `61  0 61  0` where `61 00 61 00` shows two bytes to a
+    // character at a glance. Decimal stays spaced — nobody writes `097`.
+    const col = openBytes([97, 0, 97, 0]);
+    expect(dump(col)).toContain('61 00 61 00');
+
+    (col.el.contentPane.querySelector('[data-radix="10"]') as HTMLElement).click();
+
+    expect(dump(col)).toContain('97   0  97   0');
+  });
+
+  it('heads each byte column the way the bytes under it are written', () => {
+    const col = openBytes([97]);
+    const head = () => col.el.contentPane.querySelector('.bytes-head')!.textContent;
+    expect(head()).toContain('00 01 02');
+    expect(head()).toContain('0e 0f');
+
+    (col.el.contentPane.querySelector('[data-radix="10"]') as HTMLElement).click();
+
+    expect(head()).toContain('  0   1   2');
+  });
+
+  it('leaves the cells past the end of a short line blank, not zeroed', () => {
+    const col = openBytes([97, 98]);
+
+    // The blank filler shares padStart with the byte cells; zero-filling it
+    // would invent fourteen `00` bytes the object does not have, running them
+    // together into `000000…`. A real byte cell and a real column header are
+    // both at most two zeroes wide, so three in a row can only be the filler.
+    expect(dump(col)).toContain('61 62');
+    expect(dump(col)).not.toContain('000');
+  });
+
   it('reads the printable bytes out as text, and the rest as dots', () => {
     const col = openBytes([98, 109, 0]);
 
@@ -1277,6 +1313,29 @@ describe('reading the bytes of an object', () => {
     const col = openBytes([98, 109], 500);
 
     expect(col.el.contentPane.querySelector('[data-more="page"]')).not.toBeNull();
+    expect(col.el.contentPane.querySelector('[data-more="all"]')).not.toBeNull();
+  });
+
+  it('counts the object in bytes, not in the characters it holds', () => {
+    // A QuadByteString of 300 characters is 1200 bytes. Counting the total in
+    // characters made the toolbar say "300 of 300" once a single page of 300 had
+    // arrived, and took Load more and Load all away with 900 bytes still
+    // unread.
+    const col = openRoot({
+      className: 'QuadByteString',
+      isBytes: true,
+      itemCount: 300,
+      byteSize: 1200,
+    });
+    openTab(col, 'bytes');
+    sendBytes(
+      0,
+      Array.from({ length: 300 }, () => 98),
+    );
+
+    expect(col.el.contentPane.querySelector('.toolbar-label')!.textContent).toBe(
+      'Showing 300 of 1200 bytes',
+    );
     expect(col.el.contentPane.querySelector('[data-more="all"]')).not.toBeNull();
   });
 
@@ -1377,6 +1436,92 @@ describe('loading the rest of a tab', () => {
     });
 
     expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+  });
+
+  it('keeps a ceiling against the tab that hit it, not against the column', () => {
+    // Items stopped at its ceiling; Bytes then fetched and finished. Held on the
+    // column, the Bytes reply cleared the notice Items had earned, and its own
+    // 20000 overwrote the 5000 one Items click is worth — so switching back to
+    // Items showed the Bytes tab's numbers, or none at all.
+    const col = openRoot({ itemCount: 50000, isBytes: true, byteSize: 400 });
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+
+    openTab(col, 'bytes');
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'bytes',
+      from: 1,
+      bytes: Array.from({ length: 400 }, () => 98),
+      stoppedAtLimit: false,
+      loadAllRows: 20000,
+    });
+    expect(col.el.contentPane.querySelector('.load-note')).toBeNull();
+
+    openTab(col, 'items');
+
+    const note = col.el.contentPane.querySelector('.load-note')!;
+    expect(note.textContent).toContain('5000');
+    expect(note.textContent).not.toContain('20000');
+    expect((col.el.contentPane.querySelector('[data-more="all"]') as HTMLElement).title).toContain(
+      '5000',
+    );
+  });
+
+  it('offers the setting it names as a link, and asks the host to open it', () => {
+    const col = openRoot({ itemCount: 50000 });
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+
+    const link = col.el.contentPane.querySelector('.load-note a[data-setting]') as HTMLElement;
+    expect(link.dataset.setting).toBe('gemstone.inspector.loadAllPageLimit');
+    // A real anchor, so Tab reaches it and Enter activates it.
+    expect(link.tagName).toBe('A');
+    expect(link.textContent).toBe('gemstone.inspector.loadAllPageLimit');
+
+    link.click();
+
+    expect(sent('openSetting').at(-1)).toMatchObject({
+      id: 'gemstone.inspector.loadAllPageLimit',
+    });
+  });
+
+  it('does not dive into the selected row when Enter activates that link', () => {
+    const col = openRoot({ itemCount: 50000 });
+    view.handleHostMessage({
+      command: 'tabData',
+      columnId: 0,
+      tab: 'items',
+      from: 1,
+      rows: [row({ label: '[1]' })],
+      stoppedAtLimit: true,
+      loadAllRows: 5000,
+    });
+    const tr = col.el.contentPane.querySelector('tr[data-row="0"]') as HTMLElement;
+    tr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const link = col.el.contentPane.querySelector('.load-note a[data-setting]') as HTMLElement;
+
+    link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    // Enter on a focused link is the link's; without that guard the document
+    // handler would read it as "dive into the selected row" and replace the
+    // column's object.
+    expect(sent('diveHere')).toHaveLength(0);
   });
 
   it('tells the Load all button how much one click is worth', () => {
@@ -1579,6 +1724,78 @@ describe('acting on a row', () => {
     (document.querySelector('[data-action="browse"]') as HTMLElement).click();
 
     expect(sent('browseClass').at(-1)).toMatchObject({ oop: '900' });
+  });
+
+  it('keeps a measured menu inside the window when the row is near an edge', () => {
+    // jsdom lays nothing out, so the menu has to be given a size for the real
+    // measured path to run at all — without this the clamp only ever exercises
+    // its 80x30 fallback, which is not the arithmetic a webview does.
+    const col = openRoot({ namedSize: 1 });
+    sendRows(0, 'slots', [row()]);
+    const menu = document.getElementById('ctx')!;
+    Object.defineProperty(menu, 'offsetWidth', { configurable: true, value: 200 });
+    Object.defineProperty(menu, 'offsetHeight', { configurable: true, value: 120 });
+
+    col.el.contentPane.querySelector('tr[data-row="0"]')!.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        clientX: window.innerWidth - 2,
+        clientY: window.innerHeight - 2,
+      }),
+    );
+
+    expect(parseInt(menu.style.left, 10)).toBe(window.innerWidth - 204);
+    expect(parseInt(menu.style.top, 10)).toBe(window.innerHeight - 124);
+  });
+
+  it('never places the menu off the top-left, however big it measures', () => {
+    // A menu taller than the window would clamp to a negative top and lose its
+    // first items past the edge, unreachable.
+    const col = openRoot({ namedSize: 1 });
+    sendRows(0, 'slots', [row()]);
+    const menu = document.getElementById('ctx')!;
+    Object.defineProperty(menu, 'offsetWidth', { configurable: true, value: 5000 });
+    Object.defineProperty(menu, 'offsetHeight', { configurable: true, value: 5000 });
+
+    col.el.contentPane
+      .querySelector('tr[data-row="0"]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
+
+    expect(menu.style.left).toBe('0px');
+    expect(menu.style.top).toBe('0px');
+  });
+
+  it('keeps the menu inside the window when the row is near an edge', () => {
+    // jsdom lays nothing out, so offsetWidth/offsetHeight are 0 and the clamp
+    // falls back to the 80x30 the Enhanced Inspector's menu assumes — which is
+    // exactly the path a webview takes on the first right-click, before the
+    // menu has ever been shown.
+    const col = openRoot({ namedSize: 1 });
+    sendRows(0, 'slots', [row()]);
+    const menu = document.getElementById('ctx')!;
+
+    col.el.contentPane.querySelector('tr[data-row="0"]')!.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        clientX: window.innerWidth - 2,
+        clientY: window.innerHeight - 2,
+      }),
+    );
+
+    expect(parseInt(menu.style.left, 10)).toBe(window.innerWidth - 84);
+    expect(parseInt(menu.style.top, 10)).toBe(window.innerHeight - 34);
+  });
+
+  it('closes the menu on Escape, so it can be dismissed from the keyboard', () => {
+    const col = openRoot({ namedSize: 1 });
+    sendRows(0, 'slots', [row()]);
+    openMenuOnFirstRow(col);
+    const menu = document.getElementById('ctx')!;
+    expect(menu.style.display).toBe('block');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(menu.style.display).toBe('none');
   });
 });
 

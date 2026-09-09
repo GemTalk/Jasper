@@ -17,7 +17,9 @@ function executorAnswering(payload: string) {
   return vi.fn((_code: string) => payload);
 }
 
-const HEADER = ['Account', 'Object', '3', '0', '0', 'false', 'false', 'an Account', ''].join('\t');
+const HEADER = ['Account', 'Object', '3', '0', '0', 'false', '0', 'false', 'an Account', ''].join(
+  '\t',
+);
 
 describe('object header', () => {
   it('reads the class, slot counts and format flags of an object', () => {
@@ -30,6 +32,7 @@ describe('object header', () => {
       itemCount: 0,
       entryCount: 0,
       isBytes: false,
+      byteSize: 0,
       isDictionary: false,
       printString: 'an Account',
       sizeUnit: '',
@@ -45,6 +48,7 @@ describe('object header', () => {
         '0',
         '412',
         'false',
+        '0',
         'true',
         'a Sym',
         '',
@@ -62,17 +66,20 @@ describe('object header', () => {
 
   it('treats an unreadable count as zero rather than a broken tab', () => {
     const header = bi.parseObjectHeader(
-      ['Account', 'Object', 'nope', '-4', '', 'false', 'false', 'an Account', ''].join('\t'),
+      ['Account', 'Object', 'nope', '-4', '', 'false', 'nope', 'false', 'an Account', ''].join(
+        '\t',
+      ),
     );
 
     expect(header!.namedSize).toBe(0);
     expect(header!.itemCount).toBe(0);
     expect(header!.entryCount).toBe(0);
+    expect(header!.byteSize).toBe(0);
   });
 
   it('restores a printString that contained tabs and newlines', () => {
     const header = bi.parseObjectHeader(
-      ['Account', 'Object', '0', '0', '0', 'false', 'false', 'a\\tb\\nc\\\\d', ''].join('\t'),
+      ['Account', 'Object', '0', '0', '0', 'false', '0', 'false', 'a\\tb\\nc\\\\d', ''].join('\t'),
     );
 
     expect(header!.printString).toBe('a\tb\nc\\d');
@@ -86,19 +93,78 @@ describe('object header', () => {
       '17',
       '0',
       'true',
+      '17',
       'false',
       "'hi'",
       'characters',
     ];
-    const bytes = ['ByteArray', 'Object', '0', '32', '0', 'true', 'false', 'a ByteArray', 'bytes'];
+    const bytes = [
+      'ByteArray',
+      'Object',
+      '0',
+      '32',
+      '0',
+      'true',
+      '32',
+      'false',
+      'a ByteArray',
+      'bytes',
+    ];
 
     expect(bi.parseObjectHeader(str.join('\t'))!.sizeUnit).toBe('characters');
     expect(bi.parseObjectHeader(bytes.join('\t'))!.sizeUnit).toBe('bytes');
     expect(bi.parseObjectHeader(HEADER)!.sizeUnit).toBe('');
   });
 
+  it('carries the physical byte count apart from the element count', () => {
+    // A wide CharacterCollection stores each character in more than one byte, so
+    // its `size` and its `_basicSize` are different numbers. The Bytes tab pages
+    // by `_basicSize`, so it has to be told that one and not the other.
+    const wide = [
+      'QuadByteString',
+      'CharacterCollection',
+      '0',
+      '300',
+      '0',
+      'true',
+      '1200',
+      'false',
+      "'…'",
+      'characters',
+    ];
+
+    const header = bi.parseObjectHeader(wide.join('\t'));
+
+    expect(header!.itemCount).toBe(300);
+    expect(header!.byteSize).toBe(1200);
+  });
+
+  it('asks the stone for the byte count with the send the Bytes tab pages by', () => {
+    const execute = executorAnswering(HEADER);
+
+    bi.fetchObjectHeader(execute, 42n);
+
+    // `_basicSize` guarded by the same `isBytes` test that decides whether the
+    // Bytes tab exists at all — anything else and the total could not agree with
+    // what fetchBytes can read.
+    expect(execute.mock.calls[0][0]).toContain(
+      'bsize := bytes ifTrue: [[obj _basicSize] on: Error do: [:e | 0]] ifFalse: [0]',
+    );
+  });
+
   it('ignores a size unit it does not know', () => {
-    const odd = ['Account', 'Object', '0', '0', '0', 'false', 'false', 'an Account', 'furlongs'];
+    const odd = [
+      'Account',
+      'Object',
+      '0',
+      '0',
+      '0',
+      'false',
+      '0',
+      'false',
+      'an Account',
+      'furlongs',
+    ];
 
     expect(bi.parseObjectHeader(odd.join('\t'))!.sizeUnit).toBe('');
   });
@@ -284,13 +350,6 @@ describe('method source', () => {
 
     expect(bi.fetchMethodSource(execute, 100n, "foo'; System exit", false)).toBeNull();
     expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('accepts unary, keyword and binary selectors', () => {
-    expect(bi.isValidSelector('size')).toBe(true);
-    expect(bi.isValidSelector('at:put:')).toBe(true);
-    expect(bi.isValidSelector('+')).toBe(true);
-    expect(bi.isValidSelector('foo bar')).toBe(false);
   });
 
   it('asks the class side for a class-side selector', () => {

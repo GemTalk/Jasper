@@ -2,6 +2,20 @@ export function escapeString(s: string): string {
   return s.replace(/'/g, "''");
 }
 
+// A selector that is safe to interpolate into a doit as `#'...'`: a unary or
+// keyword selector, or one or two binary characters. `escapeString` doubles the
+// quotes in a literal but cannot make an arbitrary string a selector, so every
+// caller that builds a `#'...'` from a name it did not itself choose tests it
+// here first and refuses rather than compiling it. Shared by both inspectors'
+// queries: it is one guard against selector injection, so it gets one
+// definition — patched in two places is patched in neither.
+const VALID_SELECTOR =
+  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
+
+export function isValidSelector(selector: string): boolean {
+  return VALID_SELECTOR.test(selector);
+}
+
 // Unicode7 gotcha for generated Smalltalk (GemStone 3.6.x). Every string literal inside a
 // GCI-executed doit compiles to Unicode7, and comparing an image-derived value against one
 // misbehaves: `Symbol = 'lit'` silently answers false, and `String = 'lit'` raises ArgumentError

@@ -55,12 +55,21 @@
     return tabs;
   }
 
-  /** Total rows behind a paged tab, so the toolbar can say "N of M". */
+  /**
+   * Total rows behind a paged tab, so the toolbar can say "N of M".
+   *
+   * Bytes counts `byteSize`, not `itemCount`. The two are the same number for a
+   * ByteArray or a single-byte String, but a wide CharacterCollection stores
+   * each character in two or four bytes, so `DoubleByteString size` is half the
+   * bytes the tab can read and `QuadByteString size` a quarter of them. Taking
+   * the character count as the total made Load more / Load all vanish at the
+   * character count, leaving the rest of the object unreachable.
+   */
   function totalFor(col, tab) {
     if (!col.header) return 0;
     if (tab === 'items') return col.header.itemCount;
     if (tab === 'entries') return col.header.entryCount;
-    if (tab === 'bytes') return col.header.itemCount;
+    if (tab === 'bytes') return col.header.byteSize;
     return 0;
   }
 
@@ -73,9 +82,13 @@
    * The ceiling is in the button's own tooltip, because a "Load all" that
    * quietly stops short of "all" is the kind of thing a user reads as a bug.
    * When a click actually stops there, {@link ceilingNote} says so.
+   *
+   * Both read the ceiling state of the tab named, not of the column: a column's
+   * Items and Bytes tabs page at different sizes and stop at different totals,
+   * and each keeps whatever its own last read reported.
    */
-  function moreButtons(col, remaining) {
-    var cap = col.loadAllRows || 0;
+  function moreButtons(col, tab, remaining) {
+    var cap = col.loadAllRows[tab] || 0;
     var title =
       cap > 0 && remaining > cap
         ? 'Load ' + cap + ' more of the remaining ' + remaining + ' (one click reads ' + cap + ')'
@@ -94,14 +107,39 @@
    * the setting that raises it. Without this the button reads as broken — it
    * says "all" and plainly didn't fetch all.
    */
-  function ceilingNote(col) {
-    if (!col.stoppedAtLimit) return '';
+  function ceilingNote(col, tab) {
+    if (!col.stoppedAtLimit[tab]) return '';
+    var cap = col.loadAllRows[tab] || 0;
     return (
       '<div class="load-note">Load all stopped at ' +
-      (col.loadAllRows || 0) +
+      cap +
       ' — click it again for the next ' +
-      (col.loadAllRows || 0) +
-      '. Raise <code>gemstone.inspector.loadAllPageLimit</code> to read more per click.</div>'
+      cap +
+      '. Raise ' +
+      settingLink(LOAD_ALL_SETTING) +
+      ' to read more per click.</div>'
+    );
+  }
+
+  /** The setting the ceiling note points at. */
+  var LOAD_ALL_SETTING = 'gemstone.inspector.loadAllPageLimit';
+
+  /**
+   * A setting id as a link that opens it in Settings.
+   *
+   * Naming a setting and leaving the reader to find it is the note's weakest
+   * part: it is advice you have to act on somewhere else, and `gemstone.` keys
+   * are numerous enough that finding this one by hand is a search. A real
+   * anchor, so it is reachable by Tab and activated by Enter the way a link is,
+   * rather than a `<code>` with a click handler bolted on.
+   */
+  function settingLink(id) {
+    return (
+      '<a class="setting-link" href="#" data-setting="' +
+      esc(id) +
+      '" title="Open this setting in Settings"><code>' +
+      esc(id) +
+      '</code></a>'
     );
   }
 
@@ -206,9 +244,10 @@
     // header, where "what produced this" is the useful thing to know.
     col.title = titleFor(col);
     col.activeTab = null;
-    // Prototype-less: both are keyed by the tab name the host sends, and
-    // methodSource by a selector, so a plain object would let `__proto__`
-    // through to Object.prototype. See makeState below.
+    // Prototype-less: tabData, loadedRows, stoppedAtLimit and loadAllRows are
+    // all keyed by the tab name the host sends, and methodSource by a selector,
+    // so a plain object would let `__proto__` through to Object.prototype. See
+    // makeState below.
     col.tabData = Object.create(null);
     col.loadedRows = Object.create(null);
     col.evalText = '';
@@ -222,8 +261,8 @@
     col.evalVarsRequested = false;
     col.editing = null;
     col.editError = null;
-    col.stoppedAtLimit = false;
-    col.loadAllRows = 0;
+    col.stoppedAtLimit = Object.create(null);
+    col.loadAllRows = Object.create(null);
     col.restoreScrollTop = 0;
     col.restoreSelectedRow = null;
 
@@ -368,9 +407,9 @@
         ' of ' +
         total +
         '</span>' +
-        moreButtons(col, total - rows.length) +
+        moreButtons(col, tab, total - rows.length) +
         '</div>' +
-        ceilingNote(col);
+        ceilingNote(col, tab);
     }
     html += '<div class="table-wrap"><table class="rows"><thead><tr>';
     // On Slots the Name header is the sort control, the way a table's header
@@ -557,14 +596,23 @@
    * columns line up under the header; `Dec` shows the same values as the
    * integers they are. The choice is per column and costs no round trip — the
    * bytes are already here, only their formatting changes.
+   *
+   * Hex is zero-padded, decimal space-padded, and the column headers follow
+   * whichever is showing. `00` is what a zero byte looks like in every hex dump
+   * there has ever been; space-padded, a NUL came out as ` 0`, which reads as a
+   * one-digit number that has drifted off its column — and on a wide String,
+   * where every other byte is a NUL, that turned the whole line into
+   * `61  0 61  0` instead of the `61 00 61 00` that shows the pairing at a
+   * glance. Decimal keeps its spaces: `097` is not a number anyone writes.
    */
   function renderBytes(col, pane, bytes) {
     var radix = col.bytesRadix === 10 ? 10 : 16;
     var width = radix === 16 ? 2 : 3;
+    var fill = radix === 16 ? '0' : ' ';
     var total = totalFor(col, 'bytes');
     var head = padStart('Index', INDEX_WIDTH) + ' ';
     for (var c = 0; c < BYTES_PER_LINE; c++) {
-      head += ' ' + padStart(c.toString(radix), width);
+      head += ' ' + padStart(c.toString(radix), width, fill);
     }
     head += '  Text';
 
@@ -575,7 +623,7 @@
       for (var j = 0; j < BYTES_PER_LINE; j++) {
         if (i + j < bytes.length) {
           var b = bytes[i + j];
-          values += ' ' + padStart(b.toString(radix), width);
+          values += ' ' + padStart(b.toString(radix), width, fill);
           text += b >= 32 && b < 127 ? String.fromCharCode(b) : '.';
         } else {
           values += padStart('', width + 1);
@@ -599,7 +647,7 @@
       ' of ' +
       total +
       ' bytes</span>' +
-      (total > bytes.length ? moreButtons(col, total - bytes.length) : '') +
+      (total > bytes.length ? moreButtons(col, 'bytes', total - bytes.length) : '') +
       '<span class="toolbar-gap"></span>' +
       '<button class="btn' +
       (radix === 16 ? ' active' : '') +
@@ -608,7 +656,7 @@
       (radix === 10 ? ' active' : '') +
       '" data-radix="10" title="Show each byte as the integer it is">Dec</button>' +
       '</div>' +
-      ceilingNote(col) +
+      ceilingNote(col, 'bytes') +
       '<div class="bytes">' +
       (lines.length
         ? '<div class="bytes-head">' + head + '</div>' + lines.join('<br>')
@@ -620,9 +668,9 @@
   var BYTES_PER_LINE = 16;
   var INDEX_WIDTH = 7;
 
-  function padStart(s, width) {
+  function padStart(s, width, fill) {
     s = String(s);
-    while (s.length < width) s = ' ' + s;
+    while (s.length < width) s = (fill || ' ') + s;
     return s;
   }
 
@@ -1069,13 +1117,25 @@
     };
   }
 
+  /**
+   * Open the row menu at the cursor, clamped so it stays inside the window.
+   *
+   * The clamp is not cosmetic: right-clicking a row near the right or bottom
+   * edge — which is most of the rows in a short column, and every row in the
+   * rightmost one — placed part or all of the menu outside the webview, where
+   * it cannot be clicked. Measured after `display` is set, because an element
+   * that is still `none` has no size to clamp against. The Enhanced Inspector's
+   * menu does the same, with the same 4px margin.
+   */
   function showCtxMenu(x, y, target) {
     ctxTarget = target;
     var edit = ctxMenu.querySelector('[data-action="edit"]');
     if (edit) edit.style.display = target.editable ? '' : 'none';
     ctxMenu.style.display = 'block';
-    ctxMenu.style.left = x + 'px';
-    ctxMenu.style.top = y + 'px';
+    var w = ctxMenu.offsetWidth || 80;
+    var h = ctxMenu.offsetHeight || 30;
+    ctxMenu.style.left = Math.max(0, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    ctxMenu.style.top = Math.max(0, Math.min(y, window.innerHeight - h - 4)) + 'px';
   }
 
   function hideCtxMenu() {
@@ -1145,6 +1205,14 @@
             keyOop: row.keyOop,
           });
         }
+        return;
+      }
+      var setting = ev.target.closest('[data-setting]');
+      if (setting) {
+        // An anchor, so stop the browser following its own `#` and scrolling
+        // the column to the top under the note the user just clicked.
+        ev.preventDefault();
+        post({ command: 'openSetting', id: setting.dataset.setting });
         return;
       }
       var more = ev.target.closest('[data-more]');
@@ -1241,12 +1309,19 @@
     });
 
     // Enter dives in place — the Jadeite idiom, kept distinct from the
-    // double-click that opens a new column.
+    // double-click that opens a new column. Escape closes the row menu, so it
+    // can be dismissed without clicking somewhere that means something else.
     document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') {
+        hideCtxMenu();
+        return;
+      }
       if (ev.key !== 'Enter') return;
-      // Enter inside any field belongs to that field, not to the row behind it.
+      // Enter inside any field, or on a focused link, belongs to that and not
+      // to the row behind it — a link activated from the keyboard raises a
+      // click of its own, which is what opens the setting.
       var tag = ev.target && ev.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'A') return;
       var col = Columns.get(Columns.focusedId());
       if (!col || col.editing) return;
       var tr = col.el.contentPane.querySelector('tr.selected[data-row]');
@@ -1343,11 +1418,15 @@
 
   /** Merge a page into the tab's accumulated data, then draw it. */
   function applyTabData(col, msg) {
-    // Whether THIS read stopped at the ceiling, and what one click is worth —
-    // replaced by every reply, so the note disappears as soon as a later click
-    // reaches the end of the object.
-    col.stoppedAtLimit = msg.stoppedAtLimit === true;
-    if (msg.loadAllRows) col.loadAllRows = msg.loadAllRows;
+    // Whether THIS read stopped at the ceiling, and what one click is worth,
+    // recorded against the tab the reply is FOR. Replaced by every reply for
+    // that tab, so the note disappears as soon as a later click reaches the end
+    // of the object — and kept per tab, because a column's tabs page at
+    // different sizes and hit their ceilings independently: the Items tab must
+    // not come back from a switch showing what the Bytes tab stopped at. Keyed
+    // by a tab name off the wire, hence prototype-less; see populateColumn.
+    col.stoppedAtLimit[msg.tab] = msg.stoppedAtLimit === true;
+    if (msg.loadAllRows) col.loadAllRows[msg.tab] = msg.loadAllRows;
     if (msg.tab === 'print') {
       col.tabData.print = msg.text;
     } else if (msg.tab === 'meta') {
@@ -1402,8 +1481,8 @@
           bytesRadix: 16,
           chordArmed: false,
           evalVarsRequested: false,
-          stoppedAtLimit: false,
-          loadAllRows: 0,
+          stoppedAtLimit: Object.create(null),
+          loadAllRows: Object.create(null),
           restoreScrollTop: 0,
           restoreSelectedRow: null,
           editing: null,

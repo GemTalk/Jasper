@@ -126,6 +126,7 @@ const HEADER = {
   itemCount: 0,
   entryCount: 0,
   isBytes: false,
+  byteSize: 0,
   isDictionary: false,
   printString: 'an Account',
   sizeUnit: '',
@@ -684,6 +685,28 @@ describe('acting on a row', () => {
     send({ command: 'copyText', text: '900', what: 'OOP' });
 
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('900');
+  });
+
+  it('opens the setting the ceiling note links to', () => {
+    send({ command: 'openSetting', id: 'gemstone.inspector.loadAllPageLimit' });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'workbench.action.openSettings',
+      'gemstone.inspector.loadAllPageLimit',
+    );
+  });
+
+  /**
+   * `workbench.action.openSettings` takes a search query, not an identifier, so
+   * an id straight off the webview wire would let the panel open Settings on
+   * anything at all — including another extension's secrets-shaped keys.
+   */
+  it('ignores a request to open any setting it does not itself link to', () => {
+    send({ command: 'openSetting', id: 'gemstone' });
+    send({ command: 'openSetting', id: 'files.autoSave' });
+    send({ command: 'openSetting', id: '' });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });
 });
 

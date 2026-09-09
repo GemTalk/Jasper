@@ -56,6 +56,14 @@ const MIN_COLUMN_WIDTH = 280;
 const LOAD_ALL_MAX_PAGES = 50;
 
 /**
+ * Settings the webview may ask to open, by exact id. The panel renders these as
+ * links in the notes that name them; anything else arriving under `openSetting`
+ * is ignored rather than passed to `workbench.action.openSettings`, whose
+ * argument is a search query and not an identifier.
+ */
+const OPENABLE_SETTINGS = ['gemstone.inspector.loadAllPageLimit'];
+
+/**
  * The user's ceiling for one "Load all", in pages. Read per request rather than
  * latched, so changing the setting takes effect on the next click.
  */
@@ -138,6 +146,7 @@ type BasicInspectorMessage =
     }
   | { command: 'browseClass'; oop: string }
   | { command: 'copyText'; text: string; what: string }
+  | { command: 'openSetting'; id: string }
   | { command: 'setTitle'; title: string }
   | { command: 'closePanel' };
 
@@ -312,6 +321,16 @@ export class BasicInspector {
           void vscode.env.clipboard.writeText(msg.text).then(() => {
             vscode.window.setStatusBarMessage(`${msg.what} copied`, 2000);
           });
+          return;
+        case 'openSetting':
+          // The ceiling note names a setting; this is that name clicked. Only
+          // this panel's own settings are reachable — the id comes off the
+          // webview wire, and `workbench.action.openSettings` takes a free-text
+          // query, so an unfiltered one would let the webview open Settings on
+          // anything it liked.
+          if (OPENABLE_SETTINGS.includes(msg.id)) {
+            void vscode.commands.executeCommand('workbench.action.openSettings', msg.id);
+          }
           return;
         case 'setTitle':
           this.panel.title = msg.title ? `Inspector: ${msg.title}` : 'Inspector';
@@ -1005,6 +1024,10 @@ export class BasicInspector {
       padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border);
     }
     .load-note code { font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+    .setting-link { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: pointer; }
+    .setting-link:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+    .setting-link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+    .setting-link code { color: inherit; }
     .ctx-menu {
       position: fixed; display: none;
       background: var(--vscode-menu-background, var(--vscode-editor-background));
@@ -1058,6 +1081,7 @@ function unreadableHeader(): ObjectHeader {
     itemCount: 0,
     entryCount: 0,
     isBytes: false,
+    byteSize: 0,
     isDictionary: false,
     printString: '<could not read this object>',
     sizeUnit: '',

@@ -23,7 +23,7 @@
  * `(code: string) => string`) so it can be unit-tested without a stone.
  */
 import { QueryExecutor } from '../../queries/types';
-import { escapeString, homeDictionaryNameExpr } from '../../queries/util';
+import { escapeString, homeDictionaryNameExpr, isValidSelector } from '../../queries/util';
 import {
   DUMP_PAYLOAD_TEMPS,
   dumpPayloadPrelude,
@@ -33,14 +33,6 @@ import {
 
 /** Rows fetched per page of Items, Entries or Bytes. */
 export const PAGE_SIZE = 100;
-
-const VALID_SELECTOR =
-  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
-
-/** Guards a selector before it is interpolated into a doit as `#'...'`. */
-export function isValidSelector(selector: string): boolean {
-  return VALID_SELECTOR.test(selector);
-}
 
 /**
  * Run a doit, returning null rather than throwing when the stone refuses it.
@@ -75,6 +67,14 @@ export interface ObjectHeader {
   entryCount: number;
   /** Byte-format object (String, Symbol, ByteArray, …) — drives the Bytes tab. */
   isBytes: boolean;
+  /**
+   * Physical byte count — the Bytes tab's total. Read with `_basicSize`, the
+   * same send {@link fetchBytes} pages by, and NOT derivable from
+   * {@link itemCount}: a wide CharacterCollection stores each character in two
+   * or four bytes, so `DoubleByteString size` is half its `_basicSize` and
+   * `QuadByteString size` a quarter of it. Zero when the object isn't bytes.
+   */
+  byteSize: number;
   /** Understands `keys` + `keysAndValuesDo:` — routed to Entries, not Items. */
   isDictionary: boolean;
   /** printString, capped. The full text lives on the Print tab. */
@@ -104,7 +104,7 @@ const IS_DICTIONARY = `(dictCls isNil
  * the old tree's "expandable only when it has slots" rule.
  */
 export function fetchObjectHeader(execute: QueryExecutor, oop: bigint): ObjectHeader | null {
-  const code = `| obj cls dictCls out ${DUMP_PAYLOAD_TEMPS} isDict named items entries bytes unit |
+  const code = `| obj cls dictCls out ${DUMP_PAYLOAD_TEMPS} isDict named items entries bytes bsize unit |
 obj := Object _objectForOop: ${oop}.
 cls := obj class.
 dictCls := Globals at: #AbstractDictionary otherwise: nil.
@@ -118,6 +118,7 @@ items := isDict
       ifTrue: [obj size]
       ifFalse: [obj _basicSize]] on: Error do: [:e | [obj _basicSize] on: Error do: [:e2 | 0]]].
 bytes := [cls isBytes] on: Error do: [:e | false].
+bsize := bytes ifTrue: [[obj _basicSize] on: Error do: [:e | 0]] ifFalse: [0].
 unit := [(obj isKindOf: CharacterCollection)
   ifTrue: ['characters']
   ifFalse: [(obj isKindOf: ByteArray) ifTrue: ['bytes'] ifFalse: ['']]]
@@ -128,6 +129,7 @@ out nextPutAll: (esc value: cls name asString); nextPutAll: tab;
     nextPutAll: items printString; nextPutAll: tab;
     nextPutAll: entries printString; nextPutAll: tab;
     nextPutAll: bytes printString; nextPutAll: tab;
+    nextPutAll: bsize printString; nextPutAll: tab;
     nextPutAll: isDict printString; nextPutAll: tab;
     nextPutAll: (psOf value: obj); nextPutAll: tab;
     nextPutAll: unit.
@@ -139,7 +141,7 @@ out contents`;
 
 /** Exported for unit testing. */
 export function parseObjectHeader(data: string): ObjectHeader | null {
-  const [f] = splitDumpRows(data, 9);
+  const [f] = splitDumpRows(data, 10);
   if (!f) return null;
   return {
     className: unescapeDumpField(f[0]),
@@ -148,9 +150,10 @@ export function parseObjectHeader(data: string): ObjectHeader | null {
     itemCount: toCount(f[3]),
     entryCount: toCount(f[4]),
     isBytes: f[5] === 'true',
-    isDictionary: f[6] === 'true',
-    printString: unescapeDumpField(f[7]),
-    sizeUnit: f[8] === 'characters' || f[8] === 'bytes' ? f[8] : '',
+    byteSize: toCount(f[6]),
+    isDictionary: f[7] === 'true',
+    printString: unescapeDumpField(f[8]),
+    sizeUnit: f[9] === 'characters' || f[9] === 'bytes' ? f[9] : '',
   };
 }
 

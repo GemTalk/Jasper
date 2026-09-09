@@ -1,12 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString, homeDictionaryNameExpr } from '../../queries/util';
-
-const VALID_SELECTOR =
-  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
-
-export function isValidSelector(selector: string): boolean {
-  return VALID_SELECTOR.test(selector);
-}
+import { escapeString, homeDictionaryNameExpr, isValidSelector } from '../../queries/util';
 
 export interface EnhancedInspectorViewSpec {
   viewName: string;

@@ -160,6 +160,27 @@ describe('inspect it routing (integration)', () => {
     expect(bi.fetchBytes(exec(), bytesOop, 1, 16)).toEqual([104, 101, 108, 108, 111]);
   });
 
+  it('the fallback inspector counts a wide String in bytes, not in characters', (ctx) => {
+    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+
+    // A DoubleByteString stores each character in two bytes, so `size` is half
+    // what `_basicSize` — and so the Bytes tab — can read. The header carries
+    // both counts for exactly this reason: with the Bytes total taken from the
+    // character count, Load more and Load all vanished with half the object
+    // still unread. A QuadByteString is the same case at four bytes a character.
+    const wideOop = gci.execute(
+      handle,
+      '| s | s := DoubleByteString new: 3. s at: 1 put: (Character value: 16r0410). s',
+    );
+    const header = bi.fetchObjectHeader(exec(), wideOop);
+
+    expect(header!.className).toBe('DoubleByteString');
+    expect(header!.isBytes).toBe(true);
+    expect(header!.itemCount).toBe(3);
+    expect(header!.byteSize).toBe(6);
+    expect(bi.fetchBytes(exec(), wideOop, 1, 16)).toHaveLength(6);
+  });
+
   it('the fallback inspector evaluates an expression with the object bound to self', (ctx) => {
     requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
