@@ -480,6 +480,23 @@ describe('the New Database form', () => {
     );
   });
 
+  // The form is taller than the panel on a normal window, so Create Database used
+  // to render below the fold with nothing on screen saying how to commit the form.
+  // It is now in a pinned row (.cf-submit, sized by CSS), and the note explaining
+  // what a create produces travels with it rather than staying in the flow below —
+  // it answers "what do I get", which is wanted before pressing, not after
+  // scrolling past it. CSS position cannot be observed in jsdom, so what is pinned
+  // here is the structural contract the stylesheet hangs off.
+  it('keeps Create Database and its explanatory note in the pinned submit row', () => {
+    mount();
+    click('beginCreate');
+    const submit = root.querySelector('.cf-submit');
+    expect(submit).not.toBeNull();
+    expect(submit?.querySelector('[data-action="submitCreate"]')).not.toBeNull();
+    expect(submit?.querySelector('[data-action="cancelCreate"]')).not.toBeNull();
+    expect(submit?.querySelector('.cf-note')?.textContent).toContain('DataCurator login');
+  });
+
   it('refuses a name with characters a stone name cannot carry', () => {
     mount();
     click('beginCreate');
@@ -1413,6 +1430,27 @@ describe('the Register Existing form', () => {
     expect(submit?.disabled).toBe(true);
     // And it says which answer is missing, rather than a dead button.
     expect(root.textContent).toContain('Choose the GemStone product directory');
+  });
+
+  // Same pinned submit row as the New Database form, and the same reason. The
+  // mid-form "Choose Folder…" row is deliberately NOT pinned: it is a control that
+  // belongs beside the field it fills in, which is why the pinned row has a class
+  // of its own rather than the styling hanging off every .cf-actions.
+  it('pins its submit row without pinning the mid-form Choose Folder row', () => {
+    mount();
+    click('beginRegister');
+    const submit = root.querySelector('.cf-submit');
+    expect(submit).not.toBeNull();
+    expect(submit?.querySelector('[data-action="submitRegister"]')).not.toBeNull();
+    expect(submit?.querySelector('[data-action="cancelRegister"]')).not.toBeNull();
+    expect(submit?.querySelector('.cf-note')?.textContent).toContain(
+      'records where this installation lives',
+    );
+    // The folder picker is in a plain .cf-actions row, outside the pinned one.
+    const picker = root.querySelector('[data-action="pickProduct"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.closest('.cf-submit')).toBeNull();
+    expect(picker?.closest('.cf-actions')).not.toBeNull();
   });
 
   it('asks the host for the directory, since a webview cannot open one', () => {

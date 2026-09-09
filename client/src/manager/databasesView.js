@@ -1217,11 +1217,13 @@
       ${field('stoneName', 'Stone name', takenStones, `<input id="cf-stoneName" class="cf-input" type="text" data-create-field="stoneName" value="${esc(createForm.stoneName)}" spellcheck="false" autocomplete="off">`, problems.stoneName)}
       ${field('ldiName', 'NetLDI name', `${takenLdis} The NetLDI is the small service a login talks to on its way to the stone.`, `<input id="cf-ldiName" class="cf-input" type="text" data-create-field="ldiName" value="${esc(createForm.ldiName)}" spellcheck="false" autocomplete="off">`, problems.ldiName)}
       ${nfs}
-      <div class="cf-actions">
-        ${btn('submitCreate', 'Create Database', 'plus', 'btn-primary', blocked ? { disabled: true } : undefined)}
-        ${btn('cancelCreate', 'Cancel', 'close', 'btn-secondary')}
+      <div class="cf-submit">
+        <div class="cf-actions">
+          ${btn('submitCreate', 'Create Database', 'plus', 'btn-primary', blocked ? { disabled: true } : undefined)}
+          ${btn('cancelCreate', 'Cancel', 'close', 'btn-secondary')}
+        </div>
+        <div class="cf-note dim">A DataCurator login is created with it, so you can connect straight away.</div>
       </div>
-      <div class="cf-note dim">A DataCurator login is created with it, so you can connect straight away.</div>
     </div>`;
 
     return section({ key: 'create', title: 'New Database', open: true }, body);
@@ -1319,12 +1321,14 @@
       ${field('ldiName', 'NetLDI name', ldiHint, `<input id="cf-ldiName" class="cf-input" type="text" data-register-field="ldiName" value="${esc(registerForm.ldiName)}" spellcheck="false" autocomplete="off">`, problems.ldiName)}
       ${field('netldiPort', 'NetLDI port (optional)', 'Given, logins address the NetLDI by port. Worth filling in: a NetLDI name only resolves through /etc/services, and an installation Jasper did not set up often uses a name that was never added there.', `<input id="cf-netldiPort" class="cf-input" type="text" inputmode="numeric" data-register-field="netldiPort" value="${esc(String(registerForm.netldiPort || ''))}" spellcheck="false" autocomplete="off">`, problems.netldiPort)}
       ${found}
-      <div class="cf-actions">
-        ${btn('submitRegister', 'Register Database', 'plus', 'btn-primary', blocked ? { disabled: true } : undefined)}
-        ${btn('cancelRegister', 'Cancel', 'close', 'btn-secondary')}
+      <div class="cf-submit">
+        <div class="cf-actions">
+          ${btn('submitRegister', 'Register Database', 'plus', 'btn-primary', blocked ? { disabled: true } : undefined)}
+          ${btn('cancelRegister', 'Cancel', 'close', 'btn-secondary')}
+        </div>
+        <div class="cf-note dim">Jasper records where this installation lives so it can list, start,
+          stop and log in to it. It never deletes, backs up or re-extents a database it did not create.</div>
       </div>
-      <div class="cf-note dim">Jasper records where this installation lives so it can list, start,
-        stop and log in to it. It never deletes, backs up or re-extents a database it did not create.</div>
     </div>`;
 
     return section({ key: 'register', title: 'Register Existing Database', open: true }, body);

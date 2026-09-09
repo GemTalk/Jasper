@@ -1711,7 +1711,13 @@ body {
 .badge-state.state-available { color: var(--vscode-descriptionForeground, #9d9d9d); }
 
 /* ── Sections (native disclosure) ─────────────────────────────────────────── */
-.section { margin: 0 0 18px; border: 1px solid var(--gm-line); border-radius: 6px; overflow: hidden; }
+/* overflow is "clip", not "hidden": both clip the header's background to the
+   rounded border, but "hidden" makes the section a scroll container — and a
+   sticky element resolves against its nearest scrolling ancestor, so the submit
+   rows inside the New Database / Register forms would have had nothing to stick
+   to (see .cf-submit). "clip" clips without becoming a scrollport, so those rows
+   resolve against the page scroller, which is what keeps them on screen. */
+.section { margin: 0 0 18px; border: 1px solid var(--gm-line); border-radius: 6px; overflow: clip; }
 .section > .section-head { list-style: none; cursor: pointer; user-select: none;
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
   gap: 8px; padding: 10px 12px;
@@ -2047,6 +2053,23 @@ th.v-num { text-align: right; }
 .cf-check { display: block; margin: 8px 0 4px; }
 .cf-check input { margin-right: 6px; vertical-align: middle; }
 .cf-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+/* The form's own submit row, pinned to the bottom of the view while the form is
+   on screen: the New Database form is taller than the panel on a normal window,
+   so Create Database used to open below the fold with nothing on screen saying
+   how to commit the form. The note travels with it rather than staying in the
+   flow below — it answers "what do I get", which is wanted BEFORE pressing.
+   Deliberately a class of its own: .cf-actions is also the mid-form
+   "Choose Folder…" row, which belongs beside its field and must NOT stick. */
+.cf-submit {
+  position: sticky;
+  bottom: 0;
+  margin-top: 4px;
+  padding: 8px 0 2px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border-top: 1px solid var(--gm-line);
+}
+.cf-submit .cf-actions { margin-top: 0; }
+.cf-submit .cf-note { margin-top: 6px; }
 .cf-note { margin-top: 10px; font-size: 0.9em; }
 .btn[disabled] { opacity: 0.5; cursor: default; }
 
