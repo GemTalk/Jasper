@@ -7,7 +7,10 @@
  * The stash is what makes a removal reversible at all. `symbolList remove:` takes the
  * dictionary off the list but does not destroy it, so the very same object — with every
  * class it holds, under the same keys — goes back; SessionTemps is what keeps it reachable
- * in the meantime, exactly as it does for a removed class.
+ * in the meantime, exactly as it does for a removed class. And as there, the key is released
+ * when the entry leaves the stack (see `releaseStash.ts`): a dictionary and everything in it
+ * is the most expensive thing this feature pins, and holding it for the rest of the session
+ * behind an entry nothing can reach is what that release is for.
  *
  * POSITION is captured, not just presence. `insertDictionary:at:` puts it back where it was,
  * because a symbol list is ordered and name resolution walks it in order: appending a

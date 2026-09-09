@@ -23,8 +23,24 @@
  * The stack is process-local and deliberately not persisted: it is discarded on logout
  * (see `clearUndoStack`), matching the session-scoped record the refactoring engine keeps
  * in SessionTemps.
+ *
+ * Entries LEAVING the stack is its own event (`onUndoEntriesReleased`), because for two kinds
+ * of entry the stack is not the only thing holding state: a class edit and a dictionary
+ * removal each pin an object in the stone's SessionTemps, and dropping the entry does not
+ * release it. See `releaseStash.ts`.
  */
 import { NewUndoEntry, UndoEntry } from './undoTypes';
+
+/** Why entries left the stack. Only `cleared` says the SESSION's whole record is gone, which
+ *  is what lets a release listener sweep up state no surviving entry can name. */
+export type UndoReleaseReason = 'evicted' | 'spent' | 'dropped' | 'cleared';
+
+/** Told when entries LEAVE the stack, so whatever an entry was holding can be let go. */
+export type UndoReleaseListener = (
+  sessionId: number,
+  released: UndoEntry[],
+  reason: UndoReleaseReason,
+) => void;
 
 /** How many entries a session keeps. Deep enough that a normal editing burst stays
  *  fully reversible; shallow enough that the retained source never adds up to much. */
@@ -32,6 +48,7 @@ export const MAX_UNDO_DEPTH = 25;
 
 const stacks = new Map<number, UndoEntry[]>();
 const listeners = new Set<() => void>();
+const releaseListeners = new Set<UndoReleaseListener>();
 let nextId = 1;
 
 function notify(): void {
@@ -42,6 +59,33 @@ function notify(): void {
       /* a listener that throws must not break the edit that triggered it */
     }
   }
+}
+
+function released(sessionId: number, entries: UndoEntry[], reason: UndoReleaseReason): void {
+  if (entries.length === 0 && reason !== 'cleared') return;
+  for (const listener of releaseListeners) {
+    try {
+      listener(sessionId, entries, reason);
+    } catch {
+      /* a listener that throws must not break the edit that triggered it */
+    }
+  }
+}
+
+/**
+ * Run `listener` whenever entries leave a session's stack. Answers a disposer.
+ *
+ * The stack itself holds nothing but plain data, but two kinds of entry PIN an object in the
+ * stone: a class edit stashes the version bound before it, and a dictionary removal stashes
+ * the dictionary. Neither is released by the entry going away — SessionTemps is not the
+ * stack's to know about — so an eviction or a clear would otherwise leave those objects held
+ * for the rest of the session with no entry left that could ever use them. This is the hook
+ * `releaseStash.ts` uses to let them go; see there for why it is a hook rather than the stack
+ * doing it itself.
+ */
+export function onUndoEntriesReleased(listener: UndoReleaseListener): () => void {
+  releaseListeners.add(listener);
+  return () => releaseListeners.delete(listener);
 }
 
 function stackFor(sessionId: number): UndoEntry[] {
@@ -69,15 +113,20 @@ export function onUndoStackChanged(listener: () => void): () => void {
  */
 export function pushUndoEntry(entry: NewUndoEntry): UndoEntry {
   const stack = stackFor(entry.sessionId);
+  const gone: UndoEntry[] = [];
   if (entry.kind === 'refactoring') {
     for (let i = stack.length - 1; i >= 0; i -= 1) {
-      if (stack[i].kind === 'refactoring') stack.splice(i, 1);
+      if (stack[i].kind === 'refactoring') gone.push(...stack.splice(i, 1));
     }
   }
   const stored = { ...entry, id: nextId };
   nextId += 1;
   stack.push(stored);
-  while (stack.length > MAX_UNDO_DEPTH) stack.shift();
+  while (stack.length > MAX_UNDO_DEPTH) {
+    const evicted = stack.shift();
+    if (evicted) gone.push(evicted);
+  }
+  released(entry.sessionId, gone, 'evicted');
   notify();
   return stored;
 }
@@ -94,6 +143,7 @@ export function popUndoEntry(sessionId: number): UndoEntry | undefined {
   const stack = stacks.get(sessionId);
   if (!stack || stack.length === 0) return undefined;
   const entry = stack.pop();
+  if (entry) released(sessionId, [entry], 'spent');
   notify();
   return entry;
 }
@@ -105,16 +155,20 @@ export function dropUndoEntry(sessionId: number, id: number): void {
   if (!stack) return;
   const at = stack.findIndex((e) => e.id === id);
   if (at < 0) return;
-  stack.splice(at, 1);
+  released(sessionId, stack.splice(at, 1), 'dropped');
   notify();
 }
 
 /** Forget everything this session recorded — on logout, and on an abort, which rewinds
  *  the stone underneath every entry and leaves them all describing a state that is gone. */
 export function clearUndoStack(sessionId: number): void {
-  const stack = stacks.get(sessionId);
-  if (!stack || stack.length === 0) return;
+  const stack = stacks.get(sessionId) ?? [];
   stacks.delete(sessionId);
+  // Announced even for an empty stack, and this is the one reason `released` lets a
+  // zero-entry call through: a `cleared` is also how anything stashed by a recording that
+  // never made it onto the stack -- an edit that failed after its capture -- gets let go.
+  released(sessionId, stack, 'cleared');
+  if (stack.length === 0) return;
   notify();
 }
 
@@ -127,5 +181,6 @@ export function undoStackDepth(sessionId: number | undefined): number {
 export function resetUndoStacks(): void {
   stacks.clear();
   listeners.clear();
+  releaseListeners.clear();
   nextId = 1;
 }

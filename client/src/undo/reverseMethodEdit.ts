@@ -85,7 +85,14 @@ export async function reverseMethodEdit(
   await refreshSearch(session.id);
   const landOn = succeeded.find((op) => op.kind === 'restore') ?? succeeded[0];
   if (landOn && landOn.kind !== 'remove') {
-    await revealMethod(landOn.slot.className, landOn.slot.selector, landOn.slot.isMeta);
+    // The slot's dictionary goes with it: a class name is not unique in a session, and without
+    // it the Explorer cascades to whichever `Account` comes first on the symbol list.
+    await revealMethod(
+      landOn.slot.className,
+      landOn.slot.selector,
+      landOn.slot.isMeta,
+      landOn.slot.dict,
+    );
   }
   // Before the reload: a method this undo deleted has no source left to re-read, so its
   // tab is closed rather than refreshed.

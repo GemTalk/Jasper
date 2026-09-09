@@ -315,11 +315,17 @@ export async function refreshExplorer(): Promise<void> {
 
 /** Put the Explorer on a method, so what an undo brought back is what the user is
  *  looking at. Best-effort: a row that is not in the rebuilt tree just leaves the panes
- *  where they are. */
+ *  where they are.
+ *
+ *  `dict` is the slot's dictionary, passed on for the same reason `closeEditorsForRemovedMethods`
+ *  matches on it: a class name is not unique in a session, and revealing the `Account` that was
+ *  never touched shows the user a class where nothing happened. The Explorer falls back to first
+ *  match when it is omitted or resolves to nothing. */
 export async function revealMethod(
   className: string,
   selector: string,
   isMeta: boolean,
+  dict?: number | string,
 ): Promise<void> {
   try {
     await vscode.commands.executeCommand(
@@ -327,6 +333,7 @@ export async function revealMethod(
       className,
       selector,
       isMeta,
+      dict,
     );
   } catch {
     /* the Explorer may not be active, or the row may not be in the rebuilt tree */

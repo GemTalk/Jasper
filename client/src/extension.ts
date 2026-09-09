@@ -98,6 +98,7 @@ import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
+import { registerStashRelease } from './undo/releaseStash';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -1213,6 +1214,10 @@ export function activate(context: vscode.ExtensionContext) {
       onUndoStackChanged(() => refreshUndoUi(sessionManager.getSelectedSession())),
     ),
   );
+  // The other half of the same idea for the stone's side: an entry leaving the stack releases
+  // whatever it had pinned in SessionTemps, so a class version or a removed dictionary is not
+  // held live for the rest of the session by an entry nothing can reach any more.
+  context.subscriptions.push(registerStashRelease(sessionManager));
   refreshUndoUi(sessionManager.getSelectedSession());
 
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
@@ -1577,8 +1582,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Undo the last thing done in this session -- a method edit or an applied refactoring
-    // (#434). Reached three ways: the Undo button on the post-apply toast, the Actions &
-    // Navigation pane's button and the palette entry (plus its Ctrl+K U chord) -- all of
+    // (#434). Reached four ways: the Undo button on the notice that follows the action, the
+    // Actions & Navigation pane's button, the palette entry and the Ctrl+K U chord -- all of
     // which land in the one dispatcher.
     vscode.commands.registerCommand('gemstone.undoLast', async () => {
       await undoLastCommand(sessionManager);

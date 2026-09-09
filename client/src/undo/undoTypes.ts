@@ -130,9 +130,11 @@ export interface MethodEditUndoEntry extends UndoEntryBase {
  * written on the newer version since is left behind, and the reversal says so first.
  *
  * The earlier version is held in the stone's SessionTemps for the entry's lifetime —
- * `stashKeys`, parallel to the slots. For a REMOVED class that is what keeps it reachable
- * at all: `deleteClass` unbinds the name, and an unbound, unreferenced class version is
- * eligible to go.
+ * `stashKeys`, parallel to the slots — and let go of when the entry leaves the stack, so the
+ * pin count follows the stack's depth rather than the session's whole history of class edits
+ * (see `releaseStash.ts`). For a REMOVED class the stash is what keeps it reachable at all:
+ * `deleteClass` unbinds the name, and an unbound, unreferenced class version is eligible
+ * to go.
  */
 export interface ClassEditUndoEntry extends UndoEntryBase {
   kind: 'classEdit';
@@ -277,7 +279,8 @@ export interface DictionaryState {
  * A REMOVAL is the case that needs `stashKey`. `symbolList remove:` drops the dictionary
  * from the list but does not destroy it, so the very same object goes back with everything
  * it holds; SessionTemps is what keeps it reachable in the meantime, exactly as it does for
- * a removed class.
+ * a removed class — and, exactly as for a removed class, the key is released once the entry
+ * leaves the stack rather than being held for the rest of the session.
  *
  * CREATING one is the mirror: `before` is absent and the reversal takes it off the list
  * again. It does not need a stash, because nothing is being kept for a later reversal — but

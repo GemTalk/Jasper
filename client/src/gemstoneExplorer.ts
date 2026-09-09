@@ -4846,8 +4846,21 @@ export class ExplorerController {
   /** Reveal+select a method row by class + selector, resolving the class across the whole symbol
    *  list. Used after an UNDO that restored a method (#434): putting a method back and leaving the
    *  Explorer pointed elsewhere makes the user hunt for what just happened. Best-effort — an
-   *  unresolvable class or selector simply leaves the panes as they are. */
-  async revealMethodByName(className: string, selector: string, isMeta: boolean): Promise<void> {
+   *  unresolvable class or selector simply leaves the panes as they are.
+   *
+   *  `dict` is the recorded slot's dictionary — a 1-based symbol-list index when the recording site
+   *  knew one, the dictionary's NAME when it did not — and it matters because a class name is not
+   *  unique in a session. Undo a save on `Account>>#balance` in dictionary 4 and, with `Account`
+   *  also bound in dictionary 1, first-match would cascade the panes to the class where nothing
+   *  happened while the method that came back sits elsewhere. The same hazard
+   *  `closeEditorsForRemovedMethods` guards with `sameDictionary`. First match is the fallback,
+   *  for a caller that has no dictionary or one that resolves to nothing on the live list. */
+  async revealMethodByName(
+    className: string,
+    selector: string,
+    isMeta: boolean,
+    dict?: number | string,
+  ): Promise<void> {
     const session = this.session();
     if (!session) return;
     let entries: queries.ClassNameEntry[];
@@ -4856,8 +4869,15 @@ export class ExplorerController {
     } catch {
       return;
     }
-    const chosen = entries.find((e) => e.className === className);
-    if (!chosen) return;
+    const named = entries.filter((e) => e.className === className);
+    if (named.length === 0) return;
+    const inDict =
+      dict === undefined
+        ? undefined
+        : named.find((e) =>
+            typeof dict === 'number' ? e.dictIndex === dict : e.dictName === dict,
+          );
+    const chosen = inDict ?? named[0];
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
       revealMethod: { selector, isMeta },
     });
@@ -8009,9 +8029,14 @@ export function registerGemStoneExplorer(
     // Reveal+select a method row by class + selector (used by Undo, #434).
     vscode.commands.registerCommand(
       'gemstone.explorer.revealMethodByName',
-      (className?: string, selector?: string, isMeta?: unknown) =>
+      (className?: string, selector?: string, isMeta?: unknown, dict?: unknown) =>
         typeof className === 'string' && typeof selector === 'string'
-          ? ctl.revealMethodByName(className, selector, isMeta === true)
+          ? ctl.revealMethodByName(
+              className,
+              selector,
+              isMeta === true,
+              typeof dict === 'number' || typeof dict === 'string' ? dict : undefined,
+            )
           : undefined,
     ),
     // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId

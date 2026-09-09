@@ -58,9 +58,13 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
   for (;;) {
     const entry = peekUndoEntry(session.id);
     if (!entry) {
-      // Nothing changed here, so the stack has nothing to announce — but reaching this
-      // point at all means a button or menu item was showing over an empty stack. Correct
-      // it, so the refusal is the last time it happens.
+      // Normal, and not evidence of a stale affordance: the Ctrl+K U chord is gated on
+      // `hasActiveSession && !revertAvailable`, and an empty stack leaves BOTH context keys
+      // false — so the chord fires straight into here for anyone pressing it speculatively.
+      // Saying so is better than a chord that silently does nothing. The palette entries are
+      // gated on the keys and the pane's button is gated on the same state, so those two
+      // really cannot reach this. `refreshUndoUi` is a no-op on the chord path and there for
+      // the case it can still fix: a button drawn over a stack that has since emptied.
       refreshUndoUi(session);
       void vscode.window.showWarningMessage(
         'There is nothing to undo in this session. Undo covers the edits and refactorings ' +

@@ -4,11 +4,18 @@ vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../../browserQueries', () => ({ defaultQueryExecutorUsing: vi.fn(() => () => '') }));
 vi.mock('../queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(),
+  releaseStashKeys: vi.fn(),
 }));
 
 import { defaultQueryExecutorUsing } from '../../browserQueries';
-import { captureClassSlots, newStashKey } from '../queries/classSlotQueries';
+import {
+  captureClassSlots,
+  forgetStashKeys,
+  newStashKey,
+  releaseStashKeys,
+} from '../queries/classSlotQueries';
 import { beginClassDeletion, beginClassEdit } from '../recordClassEdit';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import { ClassSlot, ClassSlotState } from '../undoTypes';
@@ -128,6 +135,35 @@ describe('beginClassEdit', () => {
       .mockImplementationOnce(() => {
         throw new Error('session busy');
       });
+
+    expect(beginClassEdit(session, [slot()])?.commit('Redefine class Account')).toBeUndefined();
+  });
+
+  it('lets go of what it pinned when it decides not to record', () => {
+    // The capture has already held a version in the stone. Nothing on the stack will ever
+    // name that key once the recording is declined, so the decline has to free it itself.
+    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+
+    beginClassEdit(session, [slot()])?.commit('Redefine class Account');
+
+    expect(vi.mocked(releaseStashKeys).mock.calls[0][1]).toEqual(['k1']);
+    expect(forgetStashKeys).toHaveBeenCalledWith(session.id, ['k1']);
+  });
+
+  it('frees nothing for a name that had no version bound to pin', () => {
+    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+
+    beginClassEdit(session, [slot()])?.commit('Add class Account');
+
+    expect(releaseStashKeys).not.toHaveBeenCalled();
+    expect(forgetStashKeys).toHaveBeenCalledWith(session.id, ['k1']);
+  });
+
+  it('still declines when the release itself fails', () => {
+    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+    vi.mocked(releaseStashKeys).mockImplementation(() => {
+      throw new Error('session busy');
+    });
 
     expect(beginClassEdit(session, [slot()])?.commit('Redefine class Account')).toBeUndefined();
   });

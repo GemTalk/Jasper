@@ -139,13 +139,17 @@ describe('refreshExplorer and revealMethod', () => {
     await expect(refreshExplorer()).resolves.toBeUndefined();
   });
 
-  it('lands the Explorer on a method, naming its side', async () => {
-    await revealMethod('Account', 'balance', true);
+  it('lands the Explorer on a method, naming its side and its dictionary', async () => {
+    // The dictionary goes with it because a class name is not unique in a session: without
+    // it the Explorer can cascade to the `Account` the undo never touched.
+    await revealMethod('Account', 'balance', true, 4);
+
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.revealMethodByName',
       'Account',
       'balance',
       true,
+      4,
     );
   });
 

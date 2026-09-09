@@ -46,7 +46,9 @@ vi.mock('../undo/queries/methodSlotQueries', () => ({
 vi.mock('../undo/queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(() => []),
   applyClassSlotOps: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(() => 'JasperUndoStash_1'),
+  releaseStashKeys: vi.fn(),
 }));
 
 // Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.

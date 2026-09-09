@@ -12,7 +12,9 @@ vi.mock('../browserQueries', () => ({
 }));
 vi.mock('../undo/queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(() => 'k1'),
+  releaseStashKeys: vi.fn(),
 }));
 
 import * as vscode from 'vscode';

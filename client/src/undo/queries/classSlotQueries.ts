@@ -1,5 +1,5 @@
 /**
- * The two doits a class revert needs (issue #434).
+ * The doits a class revert needs (issue #434).
  *
  * Plain Smalltalk again — `at:ifAbsent:`, `at:put:`, `removeKey:ifAbsent:` on a
  * SymbolDictionary — so reverting a class edit needs nothing installed on the stone, same
@@ -16,9 +16,17 @@
  *    exactly as it was — history, methods, instances and all. Holding it in SessionTemps is
  *    also what keeps it reachable, since an unbound, unreferenced class version can go.
  *
- * The stash lives as long as the session. Entries are capped by the stack (25), so at worst
- * that pins 25 class versions — and for everything except a removal the version is still in
- * the class's own history anyway, so nothing extra is held.
+ * The stash is RELEASED when the entry that needs it leaves the stack — evicted past the
+ * 25-entry cap, spent by a successful reversal, dropped, or cleared by a logout or an abort.
+ * That is what keeps the cap meaningful: without it the pin count would track the number of
+ * class edits and dictionary removals in the whole session, not the depth of the stack, and
+ * a session that removes a lot of classes would hold every one of those versions live in
+ * temporary object memory with no entry left that could ever use them. `releaseStash.ts`
+ * hangs off the stack's release hook and runs `releaseStashKeys` below.
+ *
+ * For everything except a removal the version is in the class's own history anyway, so
+ * releasing the key frees nothing real — it is the removals (a class subtree, a dictionary
+ * and every class it held) where the stash is the only reference and the release matters.
  */
 import { QueryExecutor } from '../../queries/types';
 import { dictLookupExpr, escapeString } from '../../queries/util';
@@ -27,17 +35,71 @@ import { decodeEscaped, SMALLTALK_ESCAPER, SMALLTALK_ESCAPER_TEMPS } from './met
 
 let nextStashSerial = 1;
 
-/** A fresh SessionTemps key. Per session, so a plain serial cannot collide with anything
- *  that matters; the prefix keeps it identifiable in a SessionTemps dump. */
-export function newStashKey(): string {
+/**
+ * Every key this process has handed out and not yet released, per session.
+ *
+ * Kept because a key can be issued and then never reach the stack: a capture straddles the
+ * edit, and an edit that throws leaves a recording nobody commits. Those keys have pinned
+ * something in the stone all the same, and the entry-by-entry release cannot name them —
+ * nothing but this remembers they exist. A `cleared`, which says the session's whole record
+ * is gone, releases the lot.
+ */
+const issued = new Map<number, Set<string>>();
+
+/** A fresh SessionTemps key for `sessionId`, remembered so it can be released later. Per
+ *  session, so a plain serial cannot collide with anything that matters; the prefix keeps it
+ *  identifiable in a SessionTemps dump. */
+export function newStashKey(sessionId: number): string {
   const key = `JasperUndoStash_${nextStashSerial}`;
   nextStashSerial += 1;
+  let keys = issued.get(sessionId);
+  if (!keys) {
+    keys = new Set<string>();
+    issued.set(sessionId, keys);
+  }
+  keys.add(key);
   return key;
 }
 
-/** Test seam: restart the serial so keys are predictable. */
+/** Stop tracking keys that have been released, so the registry does not outgrow the stack. */
+export function forgetStashKeys(sessionId: number, keys: string[]): void {
+  const tracked = issued.get(sessionId);
+  if (!tracked) return;
+  for (const key of keys) tracked.delete(key);
+  if (tracked.size === 0) issued.delete(sessionId);
+}
+
+/** Every key still outstanding for the session, forgetting them on the way out. For a
+ *  `cleared`, where nothing this session stashed can be reached again. */
+export function takeIssuedStashKeys(sessionId: number): string[] {
+  const keys = issued.get(sessionId);
+  if (!keys) return [];
+  issued.delete(sessionId);
+  return [...keys];
+}
+
+/** Test seam: restart the serial and forget every issued key, so keys are predictable. */
 export function resetStashKeys(): void {
   nextStashSerial = 1;
+  issued.clear();
+}
+
+/**
+ * Let go of stashed objects — one `removeKey:ifAbsent:` per key.
+ *
+ * `ifAbsent:` throughout: a key that was issued but never written (a capture that found the
+ * slot unbound, or one whose doit failed part-way) is the normal case, not an error, and a
+ * release must never be the thing that raises.
+ */
+export function releaseStashKeys(execute: QueryExecutor, keys: string[]): void {
+  if (keys.length === 0) return;
+  const removals = keys
+    .map((key) => `st removeKey: #'${escapeString(key)}' ifAbsent: [nil].`)
+    .join('\n');
+  execute(`| st |
+st := SessionTemps current.
+${removals}
+'released'`);
 }
 
 /**

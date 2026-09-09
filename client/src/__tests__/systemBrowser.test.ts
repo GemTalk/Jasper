@@ -32,7 +32,9 @@ vi.mock('../undo/queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn(
 vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
 vi.mock('../undo/queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(() => 'k1'),
+  releaseStashKeys: vi.fn(),
 }));
 
 vi.mock('../globalsBrowser', () => ({

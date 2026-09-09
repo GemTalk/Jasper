@@ -12,7 +12,9 @@ vi.mock('../browserQueries', () => ({
 // The undo recorder's class-binding capture — mocked so the flow records without a stone.
 vi.mock('../undo/queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(() => 'k1'),
+  releaseStashKeys: vi.fn(),
 }));
 vi.mock('../refactoring/classHistoryPanel', () => ({ showClassHistoryPanel: vi.fn() }));
 

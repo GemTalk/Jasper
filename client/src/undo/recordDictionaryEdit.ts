@@ -65,7 +65,7 @@ export function beginDictionaryRemoval(
   session: ActiveSession,
   name: string,
 ): { commit(): UndoEntry | undefined } | undefined {
-  const stashKey = newStashKey();
+  const stashKey = newStashKey(session.id);
   const before = capture(session, name, stashKey);
   if (!before) return undefined;
 

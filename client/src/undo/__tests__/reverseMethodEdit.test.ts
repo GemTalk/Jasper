@@ -46,7 +46,9 @@ function entry(before: MethodSlotState[], after: MethodSlotState[]): MethodEditU
     kind: 'methodEdit',
     sessionId: session.id,
     label: 'Save Account>>#balance',
-    slots: [{ className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 }],
+    slots: [
+      { dict: 4, className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
+    ],
     before,
     after,
   };
@@ -123,12 +125,14 @@ describe('reverseMethodEdit', () => {
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalled();
   });
 
-  it('lands the Explorer on a method it brought back', async () => {
+  it('lands the Explorer on a method it brought back, in the dictionary it came back to', async () => {
+    // Without the dictionary the Explorer takes the first class of that name on the symbol
+    // list, which for a name bound twice is the one the undo never touched.
     vi.mocked(captureMethodSlots).mockReturnValue([gone]);
 
     await reverseMethodEdit(session, entry([has('balance ^1')], [gone]));
 
-    expect(revealMethod).toHaveBeenCalledWith('Account', 'balance', false);
+    expect(revealMethod).toHaveBeenCalledWith('Account', 'balance', false, 4);
   });
 
   it('does not go looking for a method it just removed', async () => {
@@ -147,7 +151,7 @@ describe('reverseMethodEdit', () => {
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
     expect(closeEditorsForRemovedMethods).toHaveBeenCalledWith(session.id, [
-      { className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
+      { dict: 4, className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
     ]);
   });
 

@@ -65,7 +65,12 @@ async function revealWhatCameBack(start: UndoStartPreview): Promise<void> {
     rows.find((c) => c.kind === 'methodAdd' && c.selector !== null) ??
     rows.find((c) => c.selector !== null && c.kind.startsWith('method'));
   if (restored?.selector != null) {
-    await revealMethod(restored.className, restored.selector, restored.isMeta);
+    await revealMethod(
+      restored.className,
+      restored.selector,
+      restored.isMeta,
+      restored.dictName ?? undefined,
+    );
     return;
   }
 

@@ -364,7 +364,7 @@ ws contents`;
       // The reason removing a class is the one exact reversal here.
       defineClass(CLS);
       compile(CLS, 'kept\n  ^ 1');
-      const key = newStashKey();
+      const key = newStashKey(1);
       const before = captureClassSlots(exec, [classSlot()], [key]);
 
       q.deleteClass(session(), DICT, CLS);
@@ -401,13 +401,13 @@ ws contents`;
 
     it('stashes the bound version only when asked to', () => {
       defineClass(CLS);
-      const key = newStashKey();
+      const key = newStashKey(1);
       captureClassSlots(exec, [classSlot()], [key]);
       expect(exec(`(SessionTemps current at: #'${key}' ifAbsent: [nil]) isNil printString`)).toBe(
         'false',
       );
 
-      const unused = newStashKey();
+      const unused = newStashKey(1);
       captureClassSlots(exec, [classSlot()]);
       expect(
         exec(`(SessionTemps current at: #'${unused}' ifAbsent: [nil]) isNil printString`),
@@ -421,7 +421,7 @@ ws contents`;
       compile(CLS, 'inst\n  ^ 1');
       compile(CLS, 'make\n  ^ self new', 'instance creation', true);
       const slots = [classSlot()];
-      const key = newStashKey();
+      const key = newStashKey(1);
       const before = captureClassSlots(exec, slots, [key]);
 
       defineClass(CLS, 'Object', "'balance' 'extra'");
@@ -439,7 +439,7 @@ ws contents`;
       defineClass(CLS);
       compile(CLS, 'original\n  ^ 1');
       const slots = [classSlot()];
-      const key = newStashKey();
+      const key = newStashKey(1);
       const before = captureClassSlots(exec, slots, [key]);
 
       defineClass(CLS, 'Object', "'balance' 'extra'");
@@ -451,7 +451,7 @@ ws contents`;
 
     it('unbinds a class that was created', () => {
       const slots = [classSlot()];
-      const before = captureClassSlots(exec, slots, [newStashKey()]);
+      const before = captureClassSlots(exec, slots, [newStashKey(1)]);
       expect(before[0].bound).toBe(false);
 
       defineClass(CLS);
@@ -467,7 +467,7 @@ ws contents`;
       defineClass(SUB, CLS, "'rate'");
       compile(SUB, 'rate\n  ^ 1');
       const slots = [classSlot(CLS), classSlot(SUB)];
-      const keys = [newStashKey(), newStashKey()];
+      const keys = [newStashKey(1), newStashKey(1)];
       const before = captureClassSlots(exec, slots, keys);
 
       q.deleteClass(session(), DICT, SUB);
@@ -484,7 +484,7 @@ ws contents`;
     it('sees a class rebound since the edit as drift', () => {
       defineClass(CLS);
       const slots = [classSlot()];
-      const key = newStashKey();
+      const key = newStashKey(1);
       const before = captureClassSlots(exec, slots, [key]);
       defineClass(CLS, 'Object', "'balance' 'extra'");
       const after = captureClassSlots(exec, slots);

@@ -3,14 +3,16 @@ import {
   clearUndoStack,
   dropUndoEntry,
   MAX_UNDO_DEPTH,
+  onUndoEntriesReleased,
   onUndoStackChanged,
   peekUndoEntry,
   popUndoEntry,
   pushUndoEntry,
   resetUndoStacks,
   undoStackDepth,
+  UndoReleaseReason,
 } from '../undoStack';
-import type { NewUndoEntry } from '../undoTypes';
+import type { NewUndoEntry, UndoEntry } from '../undoTypes';
 
 /**
  * The stack itself (#434).
@@ -174,5 +176,96 @@ describe('the undo stack', () => {
       throw new Error('boom');
     });
     expect(() => pushUndoEntry(methodEdit(1, 'a'))).not.toThrow();
+  });
+});
+
+/**
+ * Entries LEAVING the stack are announced separately, because for two kinds the stack is not
+ * the only thing holding state: a class edit and a dictionary removal each pin an object in
+ * the stone's SessionTemps, and the entry going away does not release it. Without this the
+ * pin count would track every class edit of the session rather than the depth of the stack.
+ */
+describe('what the stack says when entries leave it', () => {
+  const released: { labels: string[]; reason: UndoReleaseReason }[] = [];
+  const record = (_id: number, entries: UndoEntry[], reason: UndoReleaseReason): void => {
+    released.push({ labels: entries.map((e) => e.label), reason });
+  };
+
+  beforeEach(() => {
+    released.length = 0;
+    onUndoEntriesReleased(record);
+  });
+
+  it('names the entry the cap evicted, which is the case the cap alone does not cover', () => {
+    for (let i = 0; i <= MAX_UNDO_DEPTH; i += 1) pushUndoEntry(methodEdit(1, `edit ${i}`));
+
+    expect(released).toEqual([{ labels: ['edit 0'], reason: 'evicted' }]);
+  });
+
+  it('says nothing while the stack has room', () => {
+    pushUndoEntry(methodEdit(1, 'a'));
+    pushUndoEntry(methodEdit(1, 'b'));
+
+    expect(released).toEqual([]);
+  });
+
+  it('names a displaced refactoring, whose server-side record the next one overwrote', () => {
+    pushUndoEntry(refactoring(1, 'first', 1));
+
+    pushUndoEntry(refactoring(1, 'second', 2));
+
+    expect(released).toEqual([{ labels: ['first'], reason: 'evicted' }]);
+  });
+
+  it('distinguishes a spent entry from a dropped one', () => {
+    const stale = pushUndoEntry(refactoring(1, 'stale', 1));
+    pushUndoEntry(methodEdit(1, 'later'));
+
+    popUndoEntry(1);
+    dropUndoEntry(1, stale.id);
+
+    expect(released).toEqual([
+      { labels: ['later'], reason: 'spent' },
+      { labels: ['stale'], reason: 'dropped' },
+    ]);
+  });
+
+  it('announces a clear even with nothing on the stack', () => {
+    // The one place a zero-entry release is deliberate: a `cleared` is also how a key issued
+    // by a capture whose edit then failed — one that never reached an entry — gets let go.
+    clearUndoStack(1);
+
+    expect(released).toEqual([{ labels: [], reason: 'cleared' }]);
+  });
+
+  it('hands over the whole session on a clear', () => {
+    pushUndoEntry(methodEdit(1, 'a'));
+    pushUndoEntry(methodEdit(1, 'b'));
+    pushUndoEntry(methodEdit(2, 'other session'));
+
+    clearUndoStack(1);
+
+    expect(released).toEqual([{ labels: ['a', 'b'], reason: 'cleared' }]);
+  });
+
+  it('survives a release listener that throws — an edit must not fail because of one', () => {
+    onUndoEntriesReleased(() => {
+      throw new Error('boom');
+    });
+
+    expect(() => clearUndoStack(1)).not.toThrow();
+    expect(released).toEqual([{ labels: [], reason: 'cleared' }]);
+  });
+
+  it('stops telling a release listener once it is disposed', () => {
+    const listener = vi.fn();
+    const dispose = onUndoEntriesReleased(listener);
+    clearUndoStack(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    dispose();
+    clearUndoStack(1);
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

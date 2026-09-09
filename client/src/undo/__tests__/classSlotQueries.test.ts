@@ -2,10 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   applyClassSlotOps,
   captureClassSlots,
+  forgetStashKeys,
   newStashKey,
   parseClassApply,
   parseClassCapture,
+  releaseStashKeys,
   resetStashKeys,
+  takeIssuedStashKeys,
 } from '../queries/classSlotQueries';
 import { ClassSlot, ClassSlotOp } from '../undoTypes';
 
@@ -73,7 +76,62 @@ describe('the class doits', () => {
   });
 
   it('hands out a fresh stash key each time', () => {
-    expect(newStashKey()).not.toBe(newStashKey());
+    expect(newStashKey(1)).not.toBe(newStashKey(1));
+  });
+});
+
+/**
+ * The stash has to be LET GO of, or the pin count tracks every class edit and dictionary
+ * removal of the session rather than the depth of the stack — and for a removed class or a
+ * removed dictionary the stash is the only reference there is.
+ */
+describe('letting go of the stash', () => {
+  it('removes each key without minding one that was never written', () => {
+    // A key issued for a slot that turned out to be unbound was never stored, which is
+    // ordinary rather than an error: a release must not be the thing that raises.
+    const seen: string[] = [];
+
+    releaseStashKeys(
+      (code) => {
+        seen.push(code);
+        return 'released';
+      },
+      ['JasperUndoStash_1', 'JasperUndoStash_2'],
+    );
+
+    expect(seen[0]).toContain("removeKey: #'JasperUndoStash_1' ifAbsent: [nil]");
+    expect(seen[0]).toContain("removeKey: #'JasperUndoStash_2' ifAbsent: [nil]");
+  });
+
+  it('asks for nothing when there is nothing to let go of', () => {
+    const execute = vi.fn();
+
+    releaseStashKeys(execute, []);
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('remembers every key it issued, so one that never reached the stack can still be freed', () => {
+    // A capture straddles the edit, so an edit that throws leaves a key nobody committed.
+    // Nothing but this registry remembers it exists.
+    const first = newStashKey(1);
+    const second = newStashKey(1);
+    newStashKey(2);
+
+    const outstanding = takeIssuedStashKeys(1);
+
+    expect(outstanding).toEqual([first, second]);
+    expect(takeIssuedStashKeys(1)).toEqual([]);
+    expect(takeIssuedStashKeys(2)).toHaveLength(1);
+  });
+
+  it('stops tracking a key once it has been freed', () => {
+    const first = newStashKey(1);
+    const second = newStashKey(1);
+
+    forgetStashKeys(1, [first]);
+
+    expect(takeIssuedStashKeys(1)).toEqual([second]);
   });
 });
 

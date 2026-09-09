@@ -17,7 +17,12 @@
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
 import { logInfo } from '../gciLog';
-import { captureClassSlots, newStashKey } from './queries/classSlotQueries';
+import {
+  captureClassSlots,
+  forgetStashKeys,
+  newStashKey,
+  releaseStashKeys,
+} from './queries/classSlotQueries';
 import { pushUndoEntry } from './undoStack';
 import { ClassSlot, ClassSlotState, classSlotLabel, UndoEntry } from './undoTypes';
 
@@ -47,7 +52,7 @@ export function beginClassEdit(
   slots: ClassSlot[],
 ): ClassEditRecording | undefined {
   if (slots.length === 0) return undefined;
-  const stashKeys = slots.map(() => newStashKey());
+  const stashKeys = slots.map(() => newStashKey(session.id));
 
   // Everything that touches the session goes inside the guard, the executor lookup
   // included: recording must never be the reason an edit fails.
@@ -65,6 +70,21 @@ export function beginClassEdit(
     return undefined;
   }
 
+  // The capture has already pinned a version per bound slot. Nothing on the stack will ever
+  // name those keys if this recording is declined, so the decline releases them itself —
+  // `releaseStash.ts` only sees keys that made it onto an entry.
+  const abandon = (): undefined => {
+    const pinned = stashKeys.filter((_key, i) => before[i].bound);
+    forgetStashKeys(session.id, stashKeys);
+    if (pinned.length === 0) return undefined;
+    try {
+      releaseStashKeys(execute, pinned);
+    } catch (e: unknown) {
+      logInfo(`[undo] could not release the abandoned class stash: ${describe(e)}`);
+    }
+    return undefined;
+  };
+
   return {
     before,
     commit(label: string): UndoEntry | undefined {
@@ -75,11 +95,11 @@ export function beginClassEdit(
         after = captureClassSlots(execute, slots);
       } catch (e: unknown) {
         logInfo(`[undo] not recording "${label}": could not read the result (${describe(e)})`);
-        return undefined;
+        return abandon();
       }
       if (after.length === slots.length && after.every((s, i) => same(s, before[i]))) {
         logInfo(`[undo] not recording "${label}": the edit changed nothing`);
-        return undefined;
+        return abandon();
       }
       const entry = pushUndoEntry({
         kind: 'classEdit',

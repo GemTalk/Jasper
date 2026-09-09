@@ -186,6 +186,7 @@ describe('undoLastRefactoringCommand', () => {
               selector: 'total',
               newName: null,
               category: 'computing',
+              dictName: 'Accounting',
               oldSource: null,
               newSource: 'total ^ 42',
               warning: null,
@@ -211,11 +212,14 @@ describe('undoLastRefactoringCommand', () => {
 
     await undoLastRefactoringCommand(sessionsWith(true));
 
+    // With the dictionary: a class name is not unique in a session, and first-match would
+    // land on the class the undo never touched.
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.revealMethodByName',
       'Account',
       'total',
       false,
+      'Accounting',
     );
   });
 

@@ -15,7 +15,9 @@ vi.mock('../../browserQueries', async (orig) => ({
 vi.mock('../../undo/queries/classSlotQueries', () => ({
   captureClassSlots: vi.fn(),
   applyClassSlotOps: vi.fn(),
+  forgetStashKeys: vi.fn(),
   newStashKey: vi.fn(() => 'k1'),
+  releaseStashKeys: vi.fn(),
 }));
 vi.mock('../../methodResultsPicker', () => ({
   showMethodResults: vi.fn(),

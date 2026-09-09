@@ -31,8 +31,18 @@ import {
 import { ClassEditUndoEntry, classSlotLabel } from './undoTypes';
 import { refreshExplorer, refreshSearch, reloadGemstoneEditors } from './afterUndo';
 
-/** Whether the entry is finished with — true when it was reverted (or found already
- *  reverted), false when the user backed out or it could not run at all. */
+/**
+ * Whether the entry is finished with.
+ *
+ * True when the revert landed, in whole or in part, and when the class was found already
+ * back the way it was. False when the user backed out at a prompt, when the current state
+ * could not be read, and when the reversal was refused outright — nothing was written, so
+ * the entry still describes the stone and stays on offer rather than being spent on a
+ * failure that may have been transient. That matters more here than for a method edit: the
+ * stashed earlier version is the only route back to that class version, where a method
+ * edit's source is on the stack either way. See the note at the failure return below for
+ * where the line between "partial" and "nothing landed" is drawn.
+ */
 export async function reverseClassEdit(
   session: ActiveSession,
   entry: ClassEditUndoEntry,
