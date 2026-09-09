@@ -450,6 +450,73 @@ describe('confirmLogoutWithUncommittedChanges', () => {
   });
 });
 
+describe('sessionActionConfirmation', () => {
+  const LABEL = 'DataCurator on gs64stone (localhost)';
+
+  // A session row, the Databases panel and the Explorer title bar all name the
+  // session by where the click landed, so they only interrupt for a loss.
+  it('puts up nothing when the caller named the session and nothing is at stake', () => {
+    expect(
+      extension.sessionActionConfirmation({
+        action: 'Commit',
+        sessionId: 3,
+        sessionLabel: LABEL,
+        warning: null,
+        ask: false,
+      }),
+    ).toBeNull();
+  });
+
+  // The Command Palette invokes with no argument and acts in the current
+  // session — which the palette does not show — so it says which one.
+  it.each(['Commit', 'Abort'] as const)('asks which session a palette %s will act on', (action) => {
+    expect(
+      extension.sessionActionConfirmation({
+        action,
+        sessionId: 3,
+        sessionLabel: LABEL,
+        warning: null,
+        ask: true,
+      }),
+    ).toEqual({
+      message: `${action} session 3?`,
+      detail: LABEL,
+      confirmLabel: action,
+    });
+  });
+
+  it('keeps the warning under the session it belongs to', () => {
+    expect(
+      extension.sessionActionConfirmation({
+        action: 'Abort',
+        sessionId: 7,
+        sessionLabel: LABEL,
+        warning: 'This discards this session’s uncommitted changes.',
+        ask: true,
+      }),
+    ).toEqual({
+      message: 'Abort session 7?',
+      detail: `${LABEL}\n\nThis discards this session’s uncommitted changes.`,
+      confirmLabel: 'Abort Anyway',
+    });
+  });
+
+  // A row's Abort still warns, and still names the session while doing it.
+  it('warns without being asked to, when the caller named the session', () => {
+    const confirmation = extension.sessionActionConfirmation({
+      action: 'Abort',
+      sessionId: 7,
+      sessionLabel: LABEL,
+      warning: 'This discards this session’s uncommitted changes.',
+      ask: false,
+    });
+
+    expect(confirmation?.message).toBe('Abort session 7?');
+    expect(confirmation?.detail).toContain(LABEL);
+    expect(confirmation?.confirmLabel).toBe('Abort Anyway');
+  });
+});
+
 describe('abortConfirmMessage', () => {
   it('needs no confirmation when the transaction is clean and no editors are dirty', () => {
     expect(extension.abortConfirmMessage(false, false)).toBeNull();

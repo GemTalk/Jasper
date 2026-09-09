@@ -315,6 +315,40 @@ export function abortConfirmMessage(
   return parts.length ? parts.join('\n') : null;
 }
 
+/**
+ * The modal a Commit or Abort should put up first, or `null` for "just do it".
+ *
+ * Two things can call for one. A `warning` from {@link abortConfirmMessage} (or
+ * the commit's own unsaved-editors check) says something is about to be lost.
+ * `ask` says the caller did not name a session: the Command Palette invokes
+ * these commands with no argument and acts in the current session, which is not
+ * something the palette shows you — so it says which one, by number and by
+ * login, before it acts. A session row, the Databases panel and the Explorer's
+ * title bar all name their session by where the click landed, and pass `ask`
+ * false.
+ *
+ * Exported for the same reason `abortConfirmMessage` is: the wording is worth
+ * pinning without standing up a whole activation.
+ */
+export function sessionActionConfirmation(options: {
+  action: 'Commit' | 'Abort';
+  sessionId: number;
+  sessionLabel: string;
+  warning: string | null;
+  ask: boolean;
+}): { message: string; detail: string; confirmLabel: string } | null {
+  const { action, sessionId, sessionLabel, warning, ask } = options;
+  if (!warning && !ask) return null;
+  return {
+    message: `${action} session ${sessionId}?`,
+    // The login under the question, and what stands to be lost under that.
+    detail: warning ? `${sessionLabel}\n\n${warning}` : sessionLabel,
+    // "Anyway" is the answer to a warning; with nothing to warn about it is the
+    // answer to no question at all.
+    confirmLabel: warning ? `${action} Anyway` : action,
+  };
+}
+
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
   if (event.uri.toString() === event.previousUri.toString()) {
     return;
@@ -1349,22 +1383,43 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Commit / Abort a session, with the same confirmations and post-action
-  // refreshes whether invoked from the Sessions tree (a session item) or the
-  // GemStone Explorer toolbar (the currently selected session).
-  const commitSession = async (session: ActiveSession): Promise<void> => {
-    if (fileInManager.hasUnsavedChanges(session)) {
+  /**
+   * Which session a message is about: its number, and the login behind it. The
+   * number alone is a slot in this window's list and says nothing about which
+   * stone the work landed in.
+   */
+  const sessionDescription = (session: ActiveSession): string =>
+    `Session ${session.id} — ${loginLabel(session.login)}`;
+
+  // Commit / Abort a session, with the same post-action refreshes whether
+  // invoked from the Sessions tree (a session item), the Databases panel, the
+  // GemStone Explorer toolbar (the currently selected session) or the Command
+  // Palette — which names no session, and so is the one that asks first.
+  const commitSession = async (
+    session: ActiveSession,
+    options?: { ask?: boolean },
+  ): Promise<void> => {
+    const confirmation = sessionActionConfirmation({
+      action: 'Commit',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: fileInManager.hasUnsavedChanges(session)
+        ? 'Exported .gs files have unsaved edits that will be overwritten.'
+        : null,
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        'Exported .gs files have unsaved edits that will be overwritten.',
-        { modal: true },
-        'Commit Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Commit Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.commit(session.id);
       if (success) {
-        vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
+        vscode.window.showInformationMessage(`${sessionDescription(session)}: Commit succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
@@ -1375,7 +1430,7 @@ export function activate(context: vscode.ExtensionContext) {
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
-          `Session ${session.id}: Commit failed — ${err.message || `error ${err.number}`}`,
+          `${sessionDescription(session)}: Commit failed — ${err.message || `error ${err.number}`}`,
         );
       }
     } catch (e: unknown) {
@@ -1384,23 +1439,32 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  const abortSession = async (session: ActiveSession): Promise<void> => {
-    const message = abortConfirmMessage(
-      queries.sessionNeedsCommit(session),
-      fileInManager.hasUnsavedChanges(session),
-    );
-    if (message) {
+  const abortSession = async (
+    session: ActiveSession,
+    options?: { ask?: boolean },
+  ): Promise<void> => {
+    const confirmation = sessionActionConfirmation({
+      action: 'Abort',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: abortConfirmMessage(
+        queries.sessionNeedsCommit(session),
+        fileInManager.hasUnsavedChanges(session),
+      ),
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        message,
-        { modal: true },
-        'Abort Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Abort Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.abort(session.id);
       if (success) {
-        vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
+        vscode.window.showInformationMessage(`${sessionDescription(session)}: Abort succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
@@ -1411,7 +1475,7 @@ export function activate(context: vscode.ExtensionContext) {
         explorer.onSessionAborted(session.id);
       } else {
         vscode.window.showErrorMessage(
-          `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
+          `${sessionDescription(session)}: Abort failed — ${err.message || `error ${err.number}`}`,
         );
       }
     } catch (e: unknown) {
@@ -1947,21 +2011,24 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // A session row names the session to act in; the Command Palette hands over
-    // nothing, so the active session answers for it. These are the palette's
-    // GemStone: Commit and GemStone: Abort.
+    // nothing, so the active session answers for it — and is named in a modal
+    // first, since the palette does not show which session that is. These are
+    // the palette's GemStone: Commit and GemStone: Abort.
     vscode.commands.registerCommand(
       'gemstone.sessionCommit',
       async (item?: GemStoneSessionItem) => {
-        const session = item ? item.activeSession : await sessionManager.resolveSession();
+        if (item) return commitSession(item.activeSession);
+        const session = await sessionManager.resolveSession();
         if (!session) return;
-        return commitSession(session);
+        return commitSession(session, { ask: true });
       },
     ),
 
     vscode.commands.registerCommand('gemstone.sessionAbort', async (item?: GemStoneSessionItem) => {
-      const session = item ? item.activeSession : await sessionManager.resolveSession();
+      if (item) return abortSession(item.activeSession);
+      const session = await sessionManager.resolveSession();
       if (!session) return;
-      return abortSession(session);
+      return abortSession(session, { ask: true });
     }),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
