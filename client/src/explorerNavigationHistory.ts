@@ -423,7 +423,7 @@ export class ExplorerNavigationHistory {
     // runs; `restoring` keeps the reveals it provokes out of the chain.
     chain.cursor = target;
     this.onChange();
-    let ok: boolean | ExplorerLanding = false;
+    let ok: boolean | ExplorerLanding;
     this.restoring = true;
     try {
       ok = await this.go(landing);

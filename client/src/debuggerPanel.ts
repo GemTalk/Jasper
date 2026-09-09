@@ -2418,7 +2418,7 @@ export class DebuggerPanel {
     // The eval runs non-blocking so a runaway expression doesn't freeze the panel
     // and CAN be cancelled. The in-panel overlay owns cancel (suppressNotification),
     // and onStart marks it cancellable + captures the handle the Cancel button hits.
-    let value = '';
+    let value: string;
     let isError = false;
     try {
       value = await debug.evaluateInFrameNb(this.session, this.gsProcess, expr, serverLevel, {

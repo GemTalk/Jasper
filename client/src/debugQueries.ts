@@ -1513,7 +1513,7 @@ export function evaluateInFrameToOop(
     return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [selfOop, symbolListOop]);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
-    throw new Error(withSelfUnavailableNote(message, selfIsUnavailable));
+    throw new Error(withSelfUnavailableNote(message, selfIsUnavailable), { cause: e });
   }
 }
 
@@ -1603,7 +1603,9 @@ out contents`;
   try {
     data = executeAndFetchString(session, code);
   } catch (e: unknown) {
-    throw new Error(frameUnreadable(level, e instanceof Error ? e.message : String(e)));
+    throw new Error(frameUnreadable(level, e instanceof Error ? e.message : String(e)), {
+      cause: e,
+    });
   }
   const context = parseFrameEvalContext(data);
   if (!context) {

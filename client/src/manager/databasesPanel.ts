@@ -1146,7 +1146,7 @@ export class DatabasesPanel {
     }
     // Reads the host; never the installation. Empty when nothing of it is
     // running, which is a perfectly registerable state.
-    let servers: DiscoveredServer[] = [];
+    let servers: DiscoveredServer[];
     try {
       servers = this.deps.processManager.discoverServersUnder(productPath);
     } catch {

@@ -161,7 +161,7 @@
     const addParam = function () {
       if (!template || !list) return null;
       // jsdom and VS Code both support <template>.content; fall back to innerHTML.
-      let li = null;
+      let li;
       if (template.content && template.content.firstElementChild) {
         li = template.content.firstElementChild.cloneNode(true);
       } else {
