@@ -4,14 +4,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession } from './sessionManager';
 import * as debug from './debugQueries';
+import * as pins from './exportSetPins';
 import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
-import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { InspectorTreeProvider } from './inspectorTreeProvider';
-import { routeInspect } from './inspectRouter';
+import { routeInspect, InspectorHandle } from './inspectRouter';
 import { SystemBrowser } from './systemBrowser';
 import { logError, logInfo } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
@@ -898,15 +897,6 @@ export class DebuggerPanel {
   private static savedStackBasis = '60%';
 
   /**
-   * The classic Inspector tree view, injected once at activation. Used as the
-   * fallback for "Inspect" on a stack variable when the session has no enhanced
-   * inspector installed (else the variable opens in an Enhanced Inspector beside
-   * the debugger). The panel isn't constructed with it — its factory runs deep
-   * inside codeExecutor — so it's a static handle rather than a ctor arg.
-   */
-  static inspectorProvider: InspectorTreeProvider | undefined;
-
-  /**
    * Whether the inline-value overlay (#5) is on. Off by default — it can clutter
    * a large method — and toggled per source pane via the editor-title button.
    * Remembered window-wide (like `savedStackBasis`) so the choice carries from
@@ -1127,10 +1117,11 @@ export class DebuggerPanel {
   /** Low-frequency sampler of the source-group ratio (see savedSourceRatio); cleared on dispose. */
   private layoutSampler: ReturnType<typeof setInterval> | undefined;
   /**
-   * enhanced inspectors opened from this debugger's Variables pane. They're artifacts
-   * of this debugger, so they're closed when it closes (see dispose).
+   * Inspectors opened from this debugger's Variables pane — whichever kind the
+   * session routes to. They're artifacts of this debugger, so they're closed
+   * when it closes (see dispose).
    */
-  private openedInspectors = new Set<EnhancedInspector>();
+  private openedInspectors = new Set<InspectorHandle>();
   /** The editor currently carrying the step-point highlight, if any. */
   private decoratedEditor: vscode.TextEditor | undefined;
   /**
@@ -1304,9 +1295,12 @@ export class DebuggerPanel {
    * `undoOriginals` maps a slot key (`level:kind:index`) → the OOP the slot held
    * before its FIRST edit this halt; `undoDirty` is the subset whose value still
    * differs from that original (drives the ↺ revert icon). `undoPinned` is the
-   * non-immediate originals saved against GC via `saveObjs` — released together
-   * (never per-slot, since the export set isn't ref-counted) by clearUndoState()
-   * on any stack-mutating op and on dispose. See setVariable / revertVariable.
+   * non-immediate originals pinned against GC through `exportSetPins.ts` —
+   * released together (never per-slot, since the export set itself isn't
+   * ref-counted) by clearUndoState() on any stack-mutating op and on dispose.
+   * The pin registry counts claims, so releasing here cannot unpin an object a
+   * basic Inspector on this same session is still holding for its own revert.
+   * See setVariable / revertVariable.
    */
   private undoOriginals = new Map<string, bigint>();
   private undoDirty = new Set<string>();
@@ -1544,19 +1538,13 @@ export class DebuggerPanel {
         return;
       }
       case 'inspectVariable': {
-        // Inspect the clicked variable through the shared router: with the
-        // enhanced inspector installed it opens beside the debugger and is
-        // tracked so it closes with the debugger (it's an artifact of it);
-        // otherwise it falls back to the classic Inspector tree view in the
-        // primary sidebar (which persists on its own).
+        // Inspect the clicked variable through the shared router — the Enhanced
+        // Inspector where the session has it, the basic tabbed one otherwise.
+        // Either way it opens beside the debugger and is tracked here so it
+        // closes with the debugger, being an artifact of it.
         try {
-          const inspector = routeInspect(
-            this.session,
-            BigInt(msg.oop),
-            msg.name,
-            DebuggerPanel.inspectorProvider!,
-          );
-          if (inspector) this.openedInspectors.add(inspector);
+          const inspector = routeInspect(this.session, BigInt(msg.oop), msg.name);
+          this.openedInspectors.add(inspector);
         } catch (e: unknown) {
           logError(this.sessionId, e instanceof Error ? e.message : String(e));
         }
@@ -2625,7 +2613,7 @@ export class DebuggerPanel {
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
     if (!debug.isSpecialOop(this.session, originalOop)) {
-      debug.saveObjs(this.session, [originalOop]);
+      pins.pinObject(this.session, originalOop);
       this.undoPinned.push(originalOop);
     }
   }
@@ -2673,16 +2661,18 @@ export class DebuggerPanel {
   }
 
   /**
-   * Drop all variable-revert state and release every pinned original. Called on
-   * any stack-mutating op (step / resume / restart) and on dispose — once the
-   * stack moves, the stored `{level,index}` slots are no longer valid, and we
-   * must not leak the session's export set. Best-effort release (a failure here
-   * must not break dispose).
+   * Drop all variable-revert state and let go of every pinned original — which
+   * releases it from the export set only if no other panel on this session is
+   * still holding it (see `exportSetPins.ts`). Called on any stack-mutating op
+   * (step / resume / restart) and on dispose — once the stack moves, the stored
+   * `{level,index}` slots are no longer valid, and we must not leak the
+   * session's export set. Best-effort release (a failure here must not break
+   * dispose).
    */
   private clearUndoState(): void {
     if (this.undoPinned.length > 0) {
       try {
-        debug.releaseObjs(this.session, this.undoPinned);
+        pins.unpinObjects(this.session, this.undoPinned);
       } catch (e: unknown) {
         logError(this.sessionId, e instanceof Error ? e.message : String(e));
       }

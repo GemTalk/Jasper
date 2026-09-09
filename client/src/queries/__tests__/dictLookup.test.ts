@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { dictLookupExpr } from '../util';
+import { dictLookupExpr, homeDictionaryNameExpr, symbolListIndexOfClassExpr } from '../util';
 import { classExistsInDictionary } from '../getClassCategory';
 
 describe('dictLookupExpr', () => {
@@ -11,6 +11,29 @@ describe('dictLookupExpr', () => {
     expect(dictLookupExpr("O'Dict")).toBe(
       "System myUserProfile symbolList objectNamed: #'O''Dict'",
     );
+  });
+});
+
+describe('homeDictionaryNameExpr', () => {
+  /**
+   * One rule for "which dictionary owns this class", asked by a class rename's
+   * scope, the debugger's Browse and both inspectors' Browse Class: the
+   * symbol-list slot that binds the class object BY IDENTITY under its own name.
+   * A name-only match picks up an alias entry (Python's #object -> Object sorts
+   * before Globals) and navigates somewhere the user didn't ask for.
+   */
+  it('resolves by identity through the shared symbol-list index', () => {
+    const code = homeDictionaryNameExpr('cls');
+
+    expect(code).toContain(symbolListIndexOfClassExpr('cls'));
+    expect(code).toContain('cls name asSymbol ifAbsent: [nil]) == cls');
+  });
+
+  it('answers a plain string for an unbound class and an unnamed dictionary', () => {
+    const code = homeDictionaryNameExpr('cls');
+
+    expect(code).toContain("slot = 0 ifTrue: ['']");
+    expect(code).toContain("name ifNil: ['']) asString");
   });
 });
 

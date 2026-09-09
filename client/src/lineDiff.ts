@@ -1,7 +1,8 @@
 /**
  * A minimal unified line diff: given two multi-line strings, return the sequence
- * of context / deleted / added lines (Git-unified style). Used to render the
- * before/after of each staged change in the rename preview panel.
+ * of context / deleted / added lines (Git-unified style). A shared client utility —
+ * used to render before/after in the refactoring preview panels and in the method
+ * history viewer.
  *
  * Kept pure (no vscode) so it unit-tests directly and can run in the webview too.
  * The algorithm is a classic longest-common-subsequence over lines — O(m·n) time

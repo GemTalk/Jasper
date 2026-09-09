@@ -84,6 +84,9 @@ import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
+import { BasicInspector } from './basicInspector/basicInspector';
+import { forgetSession as forgetSessionPins } from './exportSetPins';
+import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
   runInstallServerSupport,
@@ -101,14 +104,15 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
-import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
+import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
@@ -758,20 +762,6 @@ export function activate(context: vscode.ExtensionContext) {
   fileInManager = new FileInManager(sessionManager, exportManager);
   fileInManager.register(context);
 
-  // ── Object Inspector ──────────────────────────────────────
-  const inspectorProvider = new InspectorTreeProvider(sessionManager);
-  // The debugger's "Inspect" falls back to this tree view when the session has
-  // no enhanced inspector; give the panel a handle to it (it isn't constructed
-  // with one — its factory is called from deep in codeExecutor).
-  DebuggerPanel.inspectorProvider = inspectorProvider;
-
-  const inspectorView = vscode.window.createTreeView('gemstoneInspector', {
-    treeDataProvider: inspectorProvider,
-    showCollapseAll: true,
-  });
-  inspectorProvider.setView(inspectorView);
-  context.subscriptions.push(inspectorView, inspectorProvider);
-
   // ── GemStone Explorer (cascading navigation panes) ───────────
   // The selector-at-position resolver lets the editor-triggered Rename Method
   // target a SENT selector under the cursor (LSP AST-based, so multi-part keyword
@@ -824,6 +814,11 @@ export function activate(context: vscode.ExtensionContext) {
       isCaseSensitive: true,
     }),
   );
+
+  // ── Method-history side-by-side diff provider ───────────
+  // Serves the read-only virtual documents behind "Diff ⇄ current" in the method
+  // history viewer.
+  registerMethodHistoryDiff(context);
 
   // ── Workspace Symbol Provider (Cmd+T class search) ──────
   const symbolProvider = new GemStoneWorkspaceSymbolProvider(sessionManager);
@@ -944,7 +939,10 @@ export function activate(context: vscode.ExtensionContext) {
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
               if (className !== 'new-class') {
-                explorer.onMethodCompiled(sessionId, className);
+                // parts[5] is the selector when the URI names a method; forwarding it
+                // lets the explorer refresh only that method's history panel instead
+                // of every panel open for the class.
+                explorer.onMethodCompiled(sessionId, className, parts[5]);
               }
             }
           }
@@ -1032,6 +1030,31 @@ export function activate(context: vscode.ExtensionContext) {
       void sunitTestController.ensureTestsForDocument(editor?.document.uri);
     }),
   );
+
+  // In-editor entry to Method History: a title-bar button + context-menu item on a
+  // gemstone method editor, so the history is reachable from the source being
+  // edited without hunting for the row in the Explorer. The context key gates the
+  // menus to method editors only (not class-definition/comment/workspace editors).
+  const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.methodEditorActive',
+      isMethodEditorUri(editor?.document.uri),
+    );
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),
+    vscode.commands.registerCommand('gemstone.methodHistoryFromEditor', () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) return;
+      void explorer.openMethodHistoryForUri(uri).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Method history failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+  );
+  updateMethodEditorContext(vscode.window.activeTextEditor);
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);
@@ -2179,12 +2202,16 @@ export function activate(context: vscode.ExtensionContext) {
         // tabs are already closed when the browser is disposed above.
         void closeGemstoneTabsForSession(session.id);
         EnhancedInspector.disposeForSession(session.id);
+        BasicInspector.disposeForSession(session.id);
         // Dispose before logout so each panel's dispose() can still release its
         // suspended GsProcess against a live handle.
         DebuggerPanel.disposeForSession(session.id);
         sessionManager.logout(session.id);
+        // Every panel that held an export-set pin released it in its dispose()
+        // above; drop the registry's bookkeeping for the session anyway, since
+        // its export set went with it.
+        forgetSessionPins(session.id);
         treeProvider.refresh();
-        inspectorProvider.removeSessionItems(session.id);
         breakpointManager.clearAllForSession(session.id);
         stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
@@ -2358,7 +2385,25 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.inspectIt', async () => {
-      await codeExecutor.inspectIt(inspectorProvider);
+      await codeExecutor.inspectIt();
+    }),
+
+    // Flip between "the basic tabbed one, always" — the default — and
+    // "whichever this session can have", the switch worth having on a keystroke,
+    // since the Enhanced Inspector cannot be conjured onto a session that lacks
+    // its server support, so `enhanced` is only ever a synonym for `auto`. Open
+    // panels are left alone: the choice decides where the NEXT Inspect It goes.
+    vscode.commands.registerCommand('gemstone.switchInspector', async () => {
+      const config = vscode.workspace.getConfiguration('gemstone');
+      const next =
+        config.get<string>('inspector.preferred', 'basic') === 'basic' ? 'auto' : 'basic';
+      await config.update('inspector.preferred', next, vscode.ConfigurationTarget.Global);
+      vscode.window.setStatusBarMessage(
+        next === 'basic'
+          ? 'Inspect It now opens the basic Inspector'
+          : 'Inspect It now opens the Enhanced Inspector where the session has it',
+        4000,
+      );
     }),
 
     vscode.commands.registerCommand('gemstone.showTranscript', () => {
@@ -2442,19 +2487,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.inspectGlobal',
       async (args: { className: string }) => {
-        // The reveal-existing dedup only applies to the classic Inspector tree: when
-        // the session has the Enhanced Inspector, inspectExpression opens a webview
-        // (not a tree root), so findRootByLabel could never match — skip the lookup
-        // and just inspect (a fresh panel, like editor Inspect It).
+        // Inspecting the same global twice from the Globals view focuses the
+        // panel it already opened rather than adding a duplicate editor tab for
+        // the one object — the classic Inspector tree's reveal-existing rule,
+        // which only ever applied to this command. See revealInspect: the
+        // Enhanced Inspector was excluded from it then and still is.
         const selected = sessionManager.getSelectedSession();
-        if (!selected?.enhancedInspectorAvailable) {
-          const existing = inspectorProvider.findRootByLabel(args.className);
-          if (existing) {
-            await inspectorView.reveal(existing, { select: true, focus: true });
-            return;
-          }
-        }
-        await codeExecutor.inspectExpression(inspectorProvider, args.className, args.className);
+        if (selected && revealInspect(selected, args.className)) return;
+        await codeExecutor.inspectExpression(args.className, args.className);
       },
     ),
 
@@ -2547,14 +2587,6 @@ export function activate(context: vscode.ExtensionContext) {
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
-
-    vscode.commands.registerCommand('gemstone.removeInspectorItem', (node?: InspectorNode) => {
-      if (node) inspectorProvider.removeRoot(node);
-    }),
-
-    vscode.commands.registerCommand('gemstone.clearInspector', () => {
-      inspectorProvider.clearAll();
-    }),
 
     vscode.commands.registerCommand('gemstone.searchMethods', async () => {
       const session = await sessionManager.resolveSession();

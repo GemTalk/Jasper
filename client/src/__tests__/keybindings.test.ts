@@ -113,19 +113,18 @@ describe('keybindings', () => {
     expect(['ctrl+enter', 'shift+enter', 'alt+enter']).not.toContain(omni[0].key);
   });
 
-  it('inspector welcome text should match the actual inspectIt chord', () => {
+  // The walkthrough tells a first-time user which keys to press, so it is prose
+  // that goes stale the moment the binding moves.
+  it('the walkthrough teaches the chord that is actually bound to Inspect It', () => {
     const inspectIt = keybindings.find((kb) => kb.command === 'gemstone.inspectIt');
     expect(inspectIt).toBeDefined();
     const letter = inspectIt!.mac.split(' ')[1].toUpperCase();
 
-    const welcomes: Array<{ view: string; contents: string; when?: string }> =
-      pkg.contributes.viewsWelcome;
-    const inspectorWelcomes = welcomes.filter((w) => w.view === 'gemstoneInspector');
-    expect(inspectorWelcomes.length).toBe(2);
+    const walkthrough = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', '..', 'resources', 'walkthrough', 'inspectIt.md'),
+      'utf-8',
+    );
 
-    const mac = inspectorWelcomes.find((w) => w.when === 'isMac');
-    const nonMac = inspectorWelcomes.find((w) => w.when === '!isMac');
-    expect(mac?.contents).toContain(`Cmd+K ${letter} to inspect`);
-    expect(nonMac?.contents).toContain(`Ctrl+K ${letter} to inspect`);
+    expect(walkthrough).toContain(`\`Cmd/Ctrl + K\` then \`${letter}\``);
   });
 });

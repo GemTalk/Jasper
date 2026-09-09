@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { GciLibrary } from '../gciLibrary';
 import { GciTestContext, useIntegrationTest } from './useIntegrationTest';
 import { GciLibraryError } from '../gciLibraryError';
@@ -6,6 +6,10 @@ import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
 } from './support/utf8OopCache';
+import {
+  expectEventLoopToBeBlockedDuring,
+  expectEventLoopToRemainResponsiveDuring,
+} from './support/timers';
 
 describe('GciLibrary', () => {
   let gciLibrary: GciLibrary;
@@ -65,6 +69,38 @@ describe('GciLibrary', () => {
   /** Asserts that `callback` throws a {@link GciLibraryError} with `expectedMessage`. */
   function expectToThrowGciLibraryError(callback: () => unknown, expectedMessage: string) {
     expect(callback).toThrowInstanceOf(GciLibraryError, expectedMessage);
+  }
+
+  /**
+   * Asserts that `promise` rejects with a {@link GciLibraryError} with
+   * `expectedMessage`.
+   *
+   * @param promise - The promise expected to reject.
+   * @param expectedMessage - The expected error message.
+   */
+  async function expectToBeRejectedWithGciLibraryError(
+    promise: Promise<unknown>,
+    expectedMessage: string,
+  ) {
+    await expect(promise).rejects.toThrowInstanceOf(GciLibraryError, expectedMessage);
+  }
+
+  /**
+   * Asserts that `callback` rejects with a {@link GciLibraryError} when
+   * given a Smalltalk snippet that signals a user-defined error (`self
+   * error: 'oops'`).
+   *
+   * The callback receives the Smalltalk snippet as its argument so it can
+   * embed it in any expression under test (e.g. pass it to
+   * `executeAndFetchOop`).
+   */
+  async function expectToBeRejectedWithExpectedGciLibraryError(
+    callback: (signalExpectedErrorExpression: string) => Promise<unknown>,
+  ) {
+    await expectToBeRejectedWithGciLibraryError(
+      callback(`self error: 'oops'`),
+      'a UserDefinedError occurred (error 2318), reason:halt, oops',
+    );
   }
 
   /** Asserts that the session's PureExportSet stays unchanged across `callback`. */
@@ -208,6 +244,172 @@ describe('GciLibrary', () => {
       expectToThrowExpectedGciLibraryError((signalExpectedErrorExpression) => {
         gciLibrary.execute(session, signalExpectedErrorExpression);
       });
+    });
+  });
+
+  describe('evaluating expressions asynchronously', () => {
+    it('returns the result of evaluating an expression', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('uses nil as the receiver for evaluated code', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `self`);
+
+      expectOopToBeNil(resultOop);
+    });
+
+    it('has UserGlobals, Globals, and Published on the symbol list', async () => {
+      // Assert those three standard dictionaries are all on the symbol list, rather
+      // than that they are the *only* ones: an optional payload (e.g. the refactoring
+      // engine's shared GsRefactoring dictionary) may add more without changing that
+      // the standard three resolve.
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `({UserGlobals. Globals. Published} asSet - System myUserProfile symbolList asSet) isEmpty`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('executes code in the default environment', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `
+                "Object class does not understand #'new' outside environment 0, so this
+                would fail if execute runs code in a non-default environment."
+                Object new.
+                true`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('throws when the expression signals an error', async () => {
+      await expectToBeRejectedWithExpectedGciLibraryError((signalExpectedErrorExpression) =>
+        gciLibrary.executeAndFetchOop(session, signalExpectedErrorExpression),
+      );
+    });
+
+    it('does not block the event loop while GemStone evaluates the code', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    it('does not allow to execute a new operation while another is in progress', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      try {
+        await expectToBeRejectedWithGciLibraryError(
+          gciLibrary.executeAndFetchOop(session, ``),
+          'session has a GciTsNb operation in progress',
+        );
+      } finally {
+        await firstOperation;
+      }
+    });
+
+    it('does not affect the result of an ongoing operation when trying to execute another one', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      await gciLibrary.executeAndFetchOop(session, `false`).catch(() => {});
+
+      expectOopToBeTrue(await firstOperation);
+    });
+
+    /**
+     * Makes the next readiness check report a failure via whichever
+     * mechanism this GemStone version's library actually uses: a
+     * `GciTsNbPoll` error result if it's available, or a thrown raw-socket
+     * read otherwise. Only one of the two mocks below is ever exercised in
+     * a given run, per the connected version's own {@link isNbResultReady}
+     * branch -- covering both is what makes this version-agnostic.
+     */
+    function simulatePollFailure() {
+      vi.spyOn(gciLibrary, 'GciTsNbPoll').mockReturnValueOnce({
+        result: -1,
+        err: {
+          number: 0,
+          message: 'Simulated GciTsNbPoll failure',
+          category: 0n,
+          context: 0n,
+          exceptionObj: 0n,
+          args: [],
+          argCount: 0,
+          fatal: 0,
+          reason: '',
+        },
+      });
+      vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrowOnce('oops');
+    }
+
+    it('returns the result when polling for it fails', async () => {
+      simulatePollFailure();
+
+      const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(result);
+    });
+
+    it('returns the result synchronously when polling for it fails', async () => {
+      simulatePollFailure();
+
+      await expectEventLoopToBeBlockedDuring(100, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    describe('Native socket error handling', () => {
+      beforeEach((ctx) => {
+        if (gciLibrary.isPollingSupportedByGCI()) {
+          ctx.skip(
+            'Native socket error handling tests are skipped because the configured GemStone version supports GciTsNbPoll, which is not exercised by these tests.',
+          );
+        }
+      });
+
+      function simulateSessionSocketFailure() {
+        vi.spyOn(gciLibrary, 'socketFor').mockThrowOnce('oops');
+      }
+
+      it('returns the result when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+        expectOopToBeTrue(result);
+      });
+
+      it('returns the result synchronously when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        await expectEventLoopToBeBlockedDuring(100, () =>
+          gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+        );
+      });
+    });
+  });
+
+  describe('identifying the socket for a session', () => {
+    it('returns the file descriptor of the session socket', () => {
+      expect(gciLibrary.socketFor(session)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('throws when the session socket cannot be identified', () => {
+      testContext.logout();
+
+      expectToThrowGciLibraryError(
+        () => gciLibrary.socketFor(session),
+        'argument is not a valid GciSession pointer',
+      );
     });
   });
 

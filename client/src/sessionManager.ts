@@ -5,6 +5,7 @@ import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes'
 import { logInfo } from './gciLog';
 import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
+import { installMethodHistory } from './methodHistory/methodHistoryServer';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough
 // that connect latency is imperceptible, large enough not to busy-spin while the
@@ -23,6 +24,9 @@ export interface ActiveSession {
    *  context key and the Explorer's rename-instance-variable command. Latched at
    *  login (and re-probed after an install) — see refactoringAvailability.ts. */
   rbSupportAvailable?: boolean;
+  /** `System myUserProfile symbolList`, memoized on first use — see
+   *  `sessionSymbolListOop` in debugQueries.ts, which owns this field. */
+  symbolListOop?: bigint;
 }
 
 /**
@@ -320,6 +324,11 @@ export class SessionManager {
     // login, kept alive via SessionTemps, never committed. Non-fatal on
     // failure — the session simply has no Transcript display.
     installTranscriptSink(session);
+
+    // Per-method history helper, installed the same way (SessionTemps, no commit,
+    // no plugin) so method history works on a bare stone. Non-fatal on failure —
+    // capture is soft-guarded, so the session simply records no history.
+    installMethodHistory(session);
 
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a
