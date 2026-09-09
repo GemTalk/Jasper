@@ -679,6 +679,10 @@ const READONLY_SOURCE_SCHEME = 'gemstone-debug';
  */
 const EMPTY_GROUP_SWEEP_DEADLINE_MS = 2000;
 
+/** The webview type of a debugger panel. Shared by the panel it opens and the
+ *  serializer that declines to restore one (see declineRestoredPanels). */
+const DEBUGGER_VIEW_TYPE = 'gemstoneEnhancedDebugger';
+
 /**
  * A fully-resolved stack frame, before display filtering and renumbering.
  * Carries the classification bits the stack filter needs (which `FrameSummary`,
@@ -933,11 +937,14 @@ export class DebuggerPanel {
    *
    * The companion source editor is a real text-editor tab (a `gemstone://`
    * method or our `gemstone-debug:` doc), which VS Code persists and restores
-   * across a window close — unlike the webview panel, which is dropped (we
-   * register no serializer). So if the window is closed while a debugger is
+   * across a window close. So if the window is closed while a debugger is
    * open, `dispose()` → `closeSourceEditors()` can't win the shutdown race (the
    * async tab close isn't persisted), and the source tab comes back next launch
    * orphaned — and broken, since there's no live session to resolve `gemstone://`.
+   *
+   * The panel itself is handled separately, by a serializer that closes whatever
+   * VS Code restores (see declineRestoredPanels) — that is what retires the empty
+   * group the panel came back into. This reap is only about the source tabs.
    *
    * Fix: keep the set of currently-open debugger source URIs in `workspaceState`
    * (rewritten as the union of all live panels whenever it changes; emptied on
@@ -976,6 +983,7 @@ export class DebuggerPanel {
   static initSourceTabCleanup(state: vscode.Memento, extensionPath?: string): void {
     DebuggerPanel.orphanState = state;
     DebuggerPanel.extensionPath = extensionPath;
+    DebuggerPanel.declineRestoredPanels();
     const orphans = state.get<string[]>(DebuggerPanel.ORPHAN_SOURCE_KEY, []);
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
@@ -989,6 +997,49 @@ export class DebuggerPanel {
       }
     }
   }
+
+  /**
+   * Close any debugger panel VS Code restores, so the column it occupied goes with
+   * it instead of coming back as a blank pane.
+   *
+   * A debugger carves its own column out of the editor grid (carveDebuggerColumn):
+   * the panel group on top, the companion source group below. Closing the panel
+   * normally retires both — dispose closes the source tabs and then sweeps its own
+   * groups once empty. Closing the WINDOW with a debugger open is the one path where
+   * none of that runs: dispose cannot win the shutdown race, which is why the
+   * source tab is reaped on the next launch instead (see ORPHAN_SOURCE_KEY).
+   *
+   * The group was the half that reap never covered. VS Code persists the editor
+   * LAYOUT regardless of what was in it, so the panel's group came back — empty,
+   * because a webview is dropped unless a serializer claims it. And VS Code only
+   * retires a group when its last *editor closes*; a group restored empty never had
+   * one close, so nothing took it away. It then survived every later F5, and shifted
+   * the ViewColumn numbers along for the next debugger that tried to carve a column.
+   *
+   * Registering a serializer that immediately disposes what it restores puts that
+   * case back on the ordinary path: the tab is restored, closed, and its group is
+   * retired by VS Code itself — one mechanism instead of a second cleanup that has
+   * to guess at column numbers after the fact.
+   *
+   * It declines rather than revives because there is nothing to revive TO. The panel
+   * showed a process suspended at a halt; that process died with the session when
+   * the window closed, so a restored panel could only be a picture of a stack that
+   * no longer exists, with every button on it broken. Note this disposes the raw
+   * WebviewPanel and never builds a DebuggerPanel around it — the normal dispose
+   * path would try to clear a stack on a session that was never opened.
+   */
+  private static declineRestoredPanels(): void {
+    if (DebuggerPanel.restoreDeclinerRegistered) return;
+    DebuggerPanel.restoreDeclinerRegistered = true;
+    vscode.window.registerWebviewPanelSerializer(DEBUGGER_VIEW_TYPE, {
+      deserializeWebviewPanel(panel: vscode.WebviewPanel): Thenable<void> {
+        panel.dispose();
+        return Promise.resolve();
+      },
+    });
+  }
+  /** Guards against a second registration, which VS Code rejects for one view type. */
+  private static restoreDeclinerRegistered = false;
 
   /**
    * Rewrite the persisted orphan set as the union of every live panel's open
@@ -1328,7 +1379,7 @@ export class DebuggerPanel {
     const shared = DebuggerPanel.liveDebuggerColumns(session.id);
     const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
-      'gemstoneEnhancedDebugger',
+      DEBUGGER_VIEW_TYPE,
       'GemStone Debugger',
       { viewColumn: panelColumn, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },

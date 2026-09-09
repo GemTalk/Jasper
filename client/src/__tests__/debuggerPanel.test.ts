@@ -608,6 +608,15 @@ describe('stackDumpFileName / stackDumpTimestamp (#11)', () => {
   });
 });
 
+// The serializer is registered once per process — VS Code rejects a second
+// registration for one view type — so a test that asserts on the registration has to
+// clear that latch first. Test order is shuffled, so it cannot rely on being the
+// first initSourceTabCleanup call in the file.
+function rearmRestoreDecliner(): void {
+  (DebuggerPanel as unknown as { restoreDeclinerRegistered: boolean }).restoreDeclinerRegistered =
+    false;
+}
+
 describe('DebuggerPanel', () => {
   let session: ActiveSession;
 
@@ -1969,6 +1978,48 @@ describe('DebuggerPanel', () => {
       expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(orphanTab);
       // The set is re-armed (emptied) so this session starts tracking fresh.
       expect(memento.get(ORPHAN_KEY)).toBeUndefined();
+    });
+
+    // Closing the window with a debugger open is the one path where dispose never
+    // runs, so neither half of the debugger's column is cleaned up by it. The source
+    // tab is handled by the reap above. The panel's GROUP was the half nothing
+    // covered: VS Code persists the editor layout whatever was in it, so the group
+    // came back — empty, because a webview is dropped unless a serializer claims it —
+    // and VS Code only retires a group when its last editor CLOSES, which a group
+    // restored empty never does. It survived every later window open and shifted the
+    // ViewColumn numbers along for the next debugger trying to carve a column.
+    it('registers a serializer so a restored panel is closed rather than revived', () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      expect(register).toHaveBeenCalledTimes(1);
+      expect(register.mock.calls[0][0]).toBe('gemstoneEnhancedDebugger');
+    });
+
+    it('disposes what it restores, so the group it came back into is retired', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const restored = { dispose: vi.fn(), webview: { html: '' } };
+
+      await serializer.deserializeWebviewPanel(restored, undefined);
+
+      // Closing the tab is what makes VS Code retire the group; there is nothing to
+      // revive to, since the suspended process died with the session.
+      expect(restored.dispose).toHaveBeenCalledTimes(1);
+      // And no debugger was built around it — the normal dispose path would try to
+      // clear a stack on a session that was never opened.
+      expect(restored.webview.html).toBe('');
     });
 
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
