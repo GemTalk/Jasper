@@ -161,7 +161,7 @@ describe('what leads the panel', () => {
   // Versions used to lead here, on the reasoning that a machine with nothing
   // installed had no database to make yet. Register Existing… adopts an
   // installation from anywhere, so this machine can hold databases and no
-  // installed release at once.
+  // installed version at once.
   it('puts databases first when nothing is installed too', () => {
     mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
     const sections = sectionOrder();
@@ -238,7 +238,7 @@ describe('a login with no database of its own', () => {
   it('says what makes it different, since no database above it does', () => {
     mount(state({ databases: [database()], logins: [remoteLogin()] }));
     const text = root.querySelector('details.section[data-section="otherLogins"]')?.textContent;
-    // The label carries user, stone and host; the NetLDI and release follow it,
+    // The label carries user, stone and host; the NetLDI and version follow it,
     // because no database row above supplies them here.
     expect(text).toContain('DataCurator on gs64stone (berlin)');
     expect(text).toContain('50377');
@@ -311,10 +311,10 @@ describe('a login with no database of its own', () => {
 });
 
 describe('what the header says this machine has', () => {
-  // The header said "No GemStone release on this machine yet" whenever nothing
+  // The header said "No GemStone version on this machine yet" whenever nothing
   // was installed — denying the registered database listed directly beneath it,
   // which read as the registration not having landed.
-  it('counts registered databases even with no release installed here', () => {
+  it('counts registered databases even with no version installed here', () => {
     mount(
       state({
         versions: [],
@@ -324,7 +324,7 @@ describe('what the header says this machine has', () => {
     );
     const lead = root.querySelector('.gm-head-lead')?.textContent;
     expect(lead).toContain('1 database');
-    expect(lead).not.toContain('No GemStone release on this machine yet');
+    expect(lead).not.toContain('No GemStone version on this machine yet');
   });
 
   it('still says the machine is bare when it holds nothing at all', () => {
@@ -336,7 +336,7 @@ describe('what the header says this machine has', () => {
       }),
     );
     const lead = root.querySelector('.gm-head-lead')?.textContent;
-    expect(lead).toContain('No GemStone release on this machine yet');
+    expect(lead).toContain('No GemStone version on this machine yet');
     // ...and names registering as a way forward, not only installing.
     expect(lead).toContain('register a database that already exists');
   });
@@ -371,7 +371,7 @@ describe('a version you built yourself', () => {
     );
   });
 
-  it('says Remove for an installed release too, and deletes the product tree', () => {
+  it('says Remove for an installed version too, and deletes the product tree', () => {
     mount(state({ versions: [INSTALLED] }));
     const remove = root.querySelector('[data-action="uninstallVersion"]');
     expect(remove?.textContent).toContain('Remove');
@@ -382,9 +382,9 @@ describe('a version you built yourself', () => {
   });
 });
 
-describe('getting a release in the first place', () => {
+describe('getting a version in the first place', () => {
   // The one question the panel has to answer before any of the rest matters.
-  it('offers a labelled way to install a new release, not a bare icon', () => {
+  it('offers a labelled way to install a new version, not a bare icon', () => {
     mount();
     const install = root.querySelector('[data-action="installNewVersion"]');
     expect(install).not.toBeNull();
@@ -392,7 +392,7 @@ describe('getting a release in the first place', () => {
   });
 
   // The walkthrough belongs with the Quick Start panel that is coming, not with
-  // the section for managing releases.
+  // the section for managing versions.
   it('does not carry the walkthrough button', () => {
     mount();
     expect(root.querySelector('[data-action="openWalkthrough"]')).toBeNull();
@@ -411,7 +411,7 @@ describe('getting a release in the first place', () => {
     // Scoped to Versions: Databases leads the panel now, so its own empty block
     // is the first `.empty` on screen.
     const empty = root.querySelector('details.section[data-section="versions"] .empty');
-    expect(empty?.textContent).toContain('No GemStone release on this machine yet');
+    expect(empty?.textContent).toContain('No GemStone version on this machine yet');
     expect(empty?.querySelector('[data-action="installNewVersion"]')).not.toBeNull();
     // ...and says where to put one you already have, since no button does that now.
     expect(empty?.textContent).toContain('/root');
@@ -427,7 +427,7 @@ describe('getting a release in the first place', () => {
 });
 
 describe('the New Database form', () => {
-  it('is not offered while there is no release to create from', () => {
+  it('is not offered while there is no version to create from', () => {
     mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
     expect(root.querySelector('[data-action="beginCreate"]')).toBeNull();
   });
@@ -1086,7 +1086,7 @@ describe('every way into the New Database form', () => {
 
   // With nothing installed there is no version to pick, so New Database… is
   // withheld and the empty text names the two ways out instead.
-  it('is not offered at all when no release is installed', () => {
+  it('is not offered at all when no version is installed', () => {
     mount(
       state({
         versions: [],
@@ -1096,7 +1096,7 @@ describe('every way into the New Database form', () => {
     );
     expect(root.querySelector('[data-action="beginCreate"]')).toBeNull();
     const databases = root.querySelector('details.section[data-section="databases"] .empty');
-    expect(databases?.textContent).toContain('install a GemStone release to make one');
+    expect(databases?.textContent).toContain('install a GemStone version to make one');
     // Registering needs nothing installed, so it is named here as the other way in.
     expect(databases?.textContent).toContain('Register Existing');
   });
@@ -1111,7 +1111,7 @@ describe('every way into the New Database form', () => {
 
 describe('a Windows machine with no WSL', () => {
   // There is no local server there, so nothing is ever extracted, downloaded or
-  // local — but a release can still have its Windows *client* installed. The
+  // local — but a version can still have its Windows *client* installed. The
   // table was permanently empty, and the client actions, which only exist on a
   // rendered row, were unreachable.
   const CLIENT_ONLY = {
@@ -1125,7 +1125,7 @@ describe('a Windows machine with no WSL', () => {
     clientExtracted: true,
   };
 
-  it('still lists a release whose Windows client is installed', () => {
+  it('still lists a version whose Windows client is installed', () => {
     mount(state({ windows: true, versions: [CLIENT_ONLY] }));
     const row = root.querySelector('.versions-table tbody tr');
     expect(row).not.toBeNull();
@@ -1150,8 +1150,8 @@ describe('the form the host opens the panel into', () => {
 
   // The host posts `beginCreate` ahead of the first state now, so the form is not
   // held behind a call to the download site. Arriving first, it has nothing to
-  // draw from — and a form built out of no state is a release dropdown with no
-  // releases in it, briefly, before the real one replaces it.
+  // draw from — and a form built out of no state is a version dropdown with no
+  // versions in it, briefly, before the real one replaces it.
   it('waits for a state rather than drawing itself out of nothing', () => {
     mountBare();
     window.dispatchEvent(new MessageEvent('message', { data: { command: 'beginCreate' } }));
@@ -1168,7 +1168,7 @@ describe('the form the host opens the panel into', () => {
   });
 });
 
-describe('asking for a database on a machine with no release', () => {
+describe('asking for a database on a machine with no version', () => {
   /** A fresh install: nothing downloaded, nothing unpacked, nothing to copy. */
   function nothingInstalled(): Record<string, unknown> {
     return state({
@@ -1184,7 +1184,7 @@ describe('asking for a database on a machine with no release', () => {
   }
 
   // The sidebar's + and its New Database… command do not know what is installed,
-  // so they can ask for a form that has nothing to offer: an empty release
+  // so they can ask for a form that has nothing to offer: an empty version
   // dropdown, an empty extent dropdown, a Create that can never be pressed, and
   // Cancel as the only way back to the panel that would have explained it.
   it('shows the lists and says why, instead of a form that cannot be filled in', () => {
@@ -1192,14 +1192,14 @@ describe('asking for a database on a machine with no release', () => {
     expect(root.querySelector('.create-form')).toBeNull();
     expect(root.querySelector('details.section[data-section="versions"]')).not.toBeNull();
     expect(root.querySelector('.gm-blocked')?.textContent).toContain(
-      'New Database needs a GemStone release to copy from',
+      'New Database needs a GemStone version to copy from',
     );
   });
 
   // The message is the sentence only. The Versions section is on screen below and
   // leads with the install button, so a copy in the message made two Install
   // Version… — three, with the one the section header also carried.
-  it('offers the way of getting a release exactly once', () => {
+  it('offers the way of getting a version exactly once', () => {
     openFormOnEmptyMachine();
     expect(root.querySelectorAll('[data-action="installNewVersion"]')).toHaveLength(1);
   });
@@ -1216,7 +1216,7 @@ describe('asking for a database on a machine with no release', () => {
     );
   });
 
-  it('takes the message away once a release is installed', () => {
+  it('takes the message away once a version is installed', () => {
     openFormOnEmptyMachine();
     api().render(state());
     expect(root.querySelector('.gm-blocked')).toBeNull();

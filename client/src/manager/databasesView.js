@@ -37,7 +37,7 @@
   // host opens it straight into the form, cleared once the user has seen the
   // lists behind it.
   let openedForCreate = false;
-  // The form was asked for on a machine with no release installed, so the lists
+  // The form was asked for on a machine with no version installed, so the lists
   // are showing instead and owe the reader an explanation. Cleared by installing
   // one.
   let needsVersionFirst = false;
@@ -321,7 +321,7 @@
   }
 
   // Two action cells, the same in every row: quiet icons, then the one primary
-  // action. Getting a release and removing one are mutually exclusive, so they
+  // action. Getting a version and removing one are mutually exclusive, so they
   // share the primary cell.
   //
   // Removing says "Remove" whichever kind of row it is — an archive, an
@@ -374,7 +374,7 @@
         cell(
           btn('extractVersion', 'Install', 'install', 'btn-primary', {
             version: v.version,
-            title: 'Finish installing this release from the archive already downloaded',
+            title: 'Finish installing this version from the archive already downloaded',
           }),
         )
       );
@@ -420,7 +420,7 @@
       (v) => v.extracted || v.downloaded || v.local || v.clientExtracted,
     );
     const installed = versionsInstalledCount(versions);
-    // The way to get a release carries its words. It was icon-only, which read as
+    // The way to get a version carries its words. It was icon-only, which read as
     // decoration: an unlabelled glyph in a header is not an answer to "how do I
     // get a new version?". The walkthrough stays a glyph — it is a pointer to
     // reading, not a thing you do to this machine — and it is the only home that
@@ -432,7 +432,7 @@
     // Register Existing Database — which records where it really lives instead
     // of needing a link in Jasper's root at all.
     const getActions = btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', {
-      title: 'Choose a release from the download site, then download and unpack it',
+      title: 'Choose a version from the download site, then download and unpack it',
     });
     const actions = getActions;
 
@@ -445,14 +445,14 @@
       return section(
         { key: 'versions', title: 'Versions', count: `${installed} installed`, actions: '', open },
         `<div class="empty">
-          <div>No GemStone release on this machine yet. Install one from the download site,
+          <div>No GemStone version on this machine yet. Install one from the download site,
           or put a build you already have in ${esc((lastState && lastState.rootPath) || 'the versions folder')}.</div>
           <div class="empty-acts">${getActions}</div>
         </div>`,
       );
     }
 
-    // A release is a record with the same fields every time — version, state,
+    // A version row is a record with the same fields every time — version, state,
     // size, date — so it reads as a table rather than a stack of cards.
     const rows = onDisk
       .map((v) => {
@@ -950,7 +950,7 @@
     </details>`;
   }
 
-  // `canCreate` is false when no release is installed: a form whose only choice is
+  // `canCreate` is false when no version is installed: a form whose only choice is
   // empty cannot be completed, so New Database… is withheld. Making one is not the
   // only way to get a database, though — Register Existing… in the panel header
   // adopts an installation from anywhere and needs nothing installed here — so the
@@ -970,7 +970,7 @@
     const rows = logins
       .map((l) => {
         // The label names the user, stone and host, the way every login row does.
-        // The NetLDI and release follow it dimmed: with no database row above to
+        // The NetLDI and version follow it dimmed: with no database row above to
         // supply them, they are all that separates two logins to the same stone.
         const extra = [l.netldi ? `via ${l.netldi}` : '', l.version]
           .filter((part) => part)
@@ -1032,7 +1032,7 @@
           : '')
       : canCreate
         ? `<div class="empty">No databases yet.<div>${btn('beginCreate', 'New Database…', 'plus', 'btn-primary')}</div></div>`
-        : `<div class="empty">No databases yet — install a GemStone release to make one, or
+        : `<div class="empty">No databases yet — install a GemStone version to make one, or
             use Register Existing… above to adopt one this machine already runs.</div>`;
     return section(
       {
@@ -1060,13 +1060,13 @@
     const lead = dbs
       ? installed
         ? `${dbs} database${dbs === 1 ? '' : 's'} · ${installed} version${installed === 1 ? '' : 's'} installed`
-        : `${dbs} database${dbs === 1 ? '' : 's'} · no release installed here`
+        : `${dbs} database${dbs === 1 ? '' : 's'} · no version installed here`
       : installed
-        ? 'No databases yet — make one from a release you have installed.'
-        : 'No GemStone release on this machine yet — install one to make a database, or register a database that already exists.';
-    // Creating needs something to create from, so the button waits for a release.
+        ? 'No databases yet — make one from a version you have installed.'
+        : 'No GemStone version on this machine yet — install one to make a database, or register a database that already exists.';
+    // Creating needs something to create from, so the button waits for a version.
     const create = installed ? btn('beginCreate', 'New Database\u2026', 'plus', 'btn-primary') : '';
-    // Registering does not: the installation it adopts brings its own release,
+    // Registering does not: the installation it adopts brings its own version,
     // which is the case a machine with nothing installed is most likely in.
     const register = btn('beginRegister', 'Register Existing\u2026', 'link', 'btn-secondary');
     return `<div class="gm-head">
@@ -1074,7 +1074,7 @@
       <div class="gm-head-acts">
         ${create}
         ${register}
-        ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new releases' })}
+        ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new versions' })}
       </div>
     </div>`;
   }
@@ -1084,10 +1084,10 @@
     const currentDir = (state.logins || []).find((l) => l.current)?.dirName;
 
     // Databases lead, always: they are what this panel is about, and versions sit
-    // below, where you go back for a new release. Versions used to lead a machine
+    // below, where you go back for a new version. Versions used to lead a machine
     // with nothing installed, on the reasoning that there was no database to make
     // yet — but Register Existing… adopts an installation from anywhere, so such a
-    // machine can hold databases and no installed release at once, and burying
+    // machine can hold databases and no installed version at once, and burying
     // them under Versions read as the registration never having landed.
     // A login with no local database to sit under gets its own section rather
     // than being dropped: it is on this machine's list, so it belongs on screen.
@@ -1120,7 +1120,7 @@
   function createProblems(c) {
     const v = createVersion(c);
     return {
-      extent: v && (v.extents || []).length ? '' : 'This release has no base extent to copy.',
+      extent: v && (v.extents || []).length ? '' : 'This version has no base extent to copy.',
       stoneName: nameProblem(createForm.stoneName, c.stoneNames, 'stone'),
       ldiName: nameProblem(createForm.ldiName, c.ldiNames, 'NetLDI'),
     };
@@ -1142,9 +1142,9 @@
 
   /**
    * Whether the New Database form has anything to work with. Its first question
-   * is which installed release to copy; with none installed, every answer under
+   * is which installed version to copy; with none installed, every answer under
    * it is empty, Create can never be pressed, and Cancel is the only way out —
-   * which is where the sidebar's + landed on a machine with no release yet.
+   * which is where the sidebar's + landed on a machine with no version yet.
    */
   function canCreateFrom(state) {
     return (((state || {}).create || {}).versions || []).length > 0;
@@ -1167,7 +1167,7 @@
 
   function renderVersionFirst() {
     return `<div class="gm-blocked">
-      <span class="note">${ICONS.warn}<span>New Database needs a GemStone release to copy from — install one below first.</span></span>
+      <span class="note">${ICONS.warn}<span>New Database needs a GemStone version to copy from — install one below first.</span></span>
     </div>`;
   }
 
@@ -1212,7 +1212,7 @@
       : '';
 
     const body = `<div class="create-form">
-      ${field('version', 'GemStone release', 'Which release this database runs. Only releases installed on this machine can be used.', `<select id="cf-version" class="cf-input" data-create-field="version">${versionOpts}</select>`, '')}
+      ${field('version', 'GemStone version', 'Which version this database runs. Only versions installed on this machine can be used.', `<select id="cf-version" class="cf-input" data-create-field="version">${versionOpts}</select>`, '')}
       ${field('extent', 'Base extent', 'The starting database file that gets copied. Take the plain one unless you know you want another.', `<select id="cf-extent" class="cf-input" data-create-field="extent">${extentOpts}</select>`, problems.extent)}
       ${field('stoneName', 'Stone name', takenStones, `<input id="cf-stoneName" class="cf-input" type="text" data-create-field="stoneName" value="${esc(createForm.stoneName)}" spellcheck="false" autocomplete="off">`, problems.stoneName)}
       ${field('ldiName', 'NetLDI name', `${takenLdis} The NetLDI is the small service a login talks to on its way to the stone.`, `<input id="cf-ldiName" class="cf-input" type="text" data-create-field="ldiName" value="${esc(createForm.ldiName)}" spellcheck="false" autocomplete="off">`, problems.ldiName)}
@@ -1314,7 +1314,7 @@
 
     const body = `<div class="create-form">
       ${field('productPath', 'Product directory', 'The GemStone installation whose binaries run this database. Jasper reads it and writes nothing inside it.', `${chosen}<div class="cf-actions">${btn('pickProduct', 'Choose Folder\u2026', 'folderOpen', 'btn-secondary')}</div>`, problems.productPath)}
-      ${field('version', 'GemStone release', 'Read from the installation\u2019s own version.txt, so it always matches the tree that runs it.', versionLine, '')}
+      ${field('version', 'GemStone version', 'Read from the installation\u2019s own version.txt, so it always matches the tree that runs it.', versionLine, '')}
       ${field('stoneName', 'Stone name', stoneHint, `<input id="cf-stoneName" class="cf-input" type="text" data-register-field="stoneName" value="${esc(registerForm.stoneName)}" spellcheck="false" autocomplete="off">`, problems.stoneName)}
       ${field('ldiName', 'NetLDI name', ldiHint, `<input id="cf-ldiName" class="cf-input" type="text" data-register-field="ldiName" value="${esc(registerForm.ldiName)}" spellcheck="false" autocomplete="off">`, problems.ldiName)}
       ${field('netldiPort', 'NetLDI port (optional)', 'Given, logins address the NetLDI by port. Worth filling in: a NetLDI name only resolves through /etc/services, and an installation Jasper did not set up often uses a name that was never added there.', `<input id="cf-netldiPort" class="cf-input" type="text" inputmode="numeric" data-register-field="netldiPort" value="${esc(String(registerForm.netldiPort || ''))}" spellcheck="false" autocomplete="off">`, problems.netldiPort)}
@@ -1463,8 +1463,8 @@
     const key = el.getAttribute && el.getAttribute('data-create-field');
     if (!key) return false;
     createForm[key] = el.type === 'checkbox' ? el.checked : el.value;
-    // Changing the release changes which base extents exist, so the extent falls
-    // back to that release's first rather than keeping a name it no longer has.
+    // Changing the version changes which base extents exist, so the extent falls
+    // back to that version's first rather than keeping a name it no longer has.
     if (key === 'version') {
       const v = createVersion((lastState && lastState.create) || {});
       createForm.extent = v && (v.extents || [])[0] ? v.extents[0] : '';
@@ -1793,7 +1793,7 @@
     }
   }
 
-  // A form select changes what the rest of the form offers (the release decides
+  // A form select changes what the rest of the form offers (the version decides
   // the extents), so it redraws. A caret cannot be lost in a select, so the
   // in-place trick that typing needs is unnecessary here.
   function onChange(e) {
