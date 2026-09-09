@@ -298,6 +298,24 @@ export class ClassCategoryItem extends vscode.TreeItem {
   }
 }
 
+// A class row's version tag and its explanation, in one place because two panes
+// render the same thing: the Classes pane (ClassItem) and the Class Hierarchy pane
+// (HierarchyItem).
+//
+// The `v` is what makes the numbers mean something. A bare `[3/3]` reads as a count
+// of anything the row might have — methods, subclasses, variables — and the tag is
+// the only place the class history surfaces in the pane, so there is nothing else on
+// screen to infer it from. The tooltip then says it in words for anyone still unsure.
+function versionTagOf(version: queries.ClassVersionInfo | undefined): string | undefined {
+  return version ? `v${version.current}/${version.total}` : undefined;
+}
+function versionTooltipOf(
+  className: string,
+  version: queries.ClassVersionInfo | undefined,
+): string {
+  return version ? `${className} — version ${version.current} of ${version.total}` : className;
+}
+
 // Exported for the unit tests that pin the class row's expansion chevron, and for the
 // Classes pane's drag controller, which carries only real class rows.
 export class ClassItem extends vscode.TreeItem {
@@ -311,13 +329,19 @@ export class ClassItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     hasVars = false,
-    versionTag?: string,
+    version?: queries.ClassVersionInfo,
     hasComment = false,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasVars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
+    // Without this the hover just repeats the label, so `Foo[v3/3]` explained
+    // `Foo[v3/3]`. Says the tag in words, and stays the plain name when untagged.
+    // decorateTestRow appends its result note to a tooltip already here rather than
+    // replacing it, so a test class keeps both lines.
+    this.tooltip = versionTooltipOf(className, version);
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
@@ -578,14 +602,17 @@ export class HierarchyItem extends vscode.TreeItem {
     // Position in the ancestor→self chain; -1 for subclasses.
     public readonly chainIndex: number,
     hasChildren: boolean,
-    // A `[current/total]` class-history version tag, when the class has more than
-    // one version (same rule as the Classes pane). Affects only the label, never the id.
-    versionTag?: string,
+    // The class's position in its class history, when it has more than one version
+    // (same rule as the Classes pane). Rendered as a `[vcurrent/total]` tag on the
+    // label and spelled out in the tooltip; never affects the id.
+    version?: queries.ClassVersionInfo,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
+    this.tooltip = versionTooltipOf(className, version);
     this.id = `h:${role}:${chainIndex}:${className}`;
     this.contextValue = 'explorerHierClass';
     // The current class is shown by keeping it *selected* in this pane (synced
@@ -2260,12 +2287,13 @@ export class ExplorerController {
     return this.commentedClasses.has(className);
   }
 
-  // The class's `current/total` version tag when it has more than one version in
-  // the current dictionary (so the row renders `Foo[2/3]`), or undefined for a
-  // single-version class (rendered as a plain `Foo`).
-  classVersion(className: string): string | undefined {
-    const v = this.classVersions.get(className);
-    return v ? `${v.current}/${v.total}` : undefined;
+  // The class's position in its class history when it has more than one version in
+  // the current dictionary (so the row renders `Foo[v2/3]` and says "version 2 of 3"
+  // on hover), or undefined for a single-version class (a plain `Foo`). The two item
+  // classes do the formatting — see versionTagOf / versionTooltipOf — so the tag and
+  // its explanation cannot drift apart between the Classes and Hierarchy panes.
+  classVersion(className: string): queries.ClassVersionInfo | undefined {
+    return this.classVersions.get(className);
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.

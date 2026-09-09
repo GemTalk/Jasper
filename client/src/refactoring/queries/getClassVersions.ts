@@ -2,7 +2,8 @@ import { QueryExecutor } from '../../queries/types';
 import { splitLines, dictLookupExpr } from '../../queries/util';
 
 /** A class's position in its class history: the 1-based index of the currently
- *  bound version and the total number of versions. Rendered as `[current/total]`. */
+ *  bound version and the total number of versions. Rendered as a `[vcurrent/total]`
+ *  tag on the row, with the numbers spelled out in its tooltip. */
 export interface ClassVersionInfo {
   current: number;
   total: number;
@@ -11,7 +12,7 @@ export interface ClassVersionInfo {
 // className → {current,total}, for every class in a dictionary whose class has
 // MORE THAN ONE version in its class history, in a single round trip. Classes
 // with a single version are omitted, so the Explorer renders them with no version
-// tag; a returned entry means "show `Foo[current/total]`", where current is the
+// tag; a returned entry means "show `Foo[vcurrent/total]`", where current is the
 // 1-based position of the dictionary's class within its class history (base = 1)
 // and total is the history size. The GemStone Explorer uses this to make
 // recompiled/reshaped class versions visible at a glance. Accepts a dictionary by
