@@ -330,6 +330,7 @@ export class ClassItem extends vscode.TreeItem {
     public readonly className: string,
     hasVars = false,
     version?: queries.ClassVersionInfo,
+    hasComment = false,
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -344,16 +345,20 @@ export class ClassItem extends vscode.TreeItem {
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    // One optional suffix, gating one button onto the rows that need it and matched
-    // as an optional group by every other class action's `when` — see the
-    // `explorerClass(\.novars)?` clauses in package.json — so the suffix only ever
-    // adds a button, never removes one. Anchored there rather than a bare
+    // Two optional suffixes, each gating one button onto the rows that need it and
+    // matched as optional groups by every other class action's `when` — see the
+    // `explorerClass(\.novars)?(\.commented)?` clauses in package.json — so a suffix
+    // only ever adds a button, never removes one. Anchored there rather than a bare
     // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
     //
     // `.novars` gates the class row's "+": that button exists for the class that has
     // no variable-side rows to host one, so on a class that already has them it would
     // be a third "+" on screen doing what those rows' own two already do.
-    this.contextValue = `explorerClass${hasVars ? '' : '.novars'}`;
+    // `.commented` gates the comment button to classes that actually have a comment
+    // (#387). Its clause must match `.novars` too — it was an exact `==` test, so
+    // adding a second suffix silently took the button off a commented class with no
+    // variables.
+    this.contextValue = `explorerClass${hasVars ? '' : '.novars'}${hasComment ? '.commented' : ''}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -879,12 +884,24 @@ function testResultTooltip(result: ExplorerTestResult): string {
 
 export class ExplorerController {
   readonly state: ExplorerState = {};
-  // className → category for the current dictionary; fetched once per dict. Was an
-  // accessor pair over a backing field, whose whole purpose was to rebuild a derived
-  // set of commented classes on every reassignment; with the comment button no longer
-  // gated on comment state there is nothing to derive, so the pair became a
-  // pass-through and is now a plain field again.
-  private classCategoryEntries: queries.ClassCategoryEntry[] = [];
+  // className → category for the current dictionary; fetched once per dict.
+  // Assign through the accessor pair, never to the backing field: the setter derives
+  // `commentedClasses` from the entries, so every reassignment (dict switch, refresh,
+  // class create/rename, comment edit) keeps that set in step with no site to forget.
+  private classCategoryEntriesStore: queries.ClassCategoryEntry[] = [];
+  // The commented subset of the above, as a set. `classHasComment` is asked once per
+  // class ROW, so scanning the entries there made the Classes pane quadratic in class
+  // count (~300k comparisons for the 769 classes in Globals, on every render). A set
+  // lookup puts it back alongside the O(1) map reads its two row siblings do
+  // (`classHasDefinedVars`, `classVersion`).
+  private commentedClasses = new Set<string>();
+  private get classCategoryEntries(): queries.ClassCategoryEntry[] {
+    return this.classCategoryEntriesStore;
+  }
+  private set classCategoryEntries(entries: queries.ClassCategoryEntry[]) {
+    this.classCategoryEntriesStore = entries;
+    this.commentedClasses = new Set(entries.filter((e) => e.hasComment).map((e) => e.className));
+  }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
   // expansion chevron. Names are fetched lazily on expand and memoized here.
@@ -2271,6 +2288,18 @@ export class ExplorerController {
     return (
       this.classHasDefinedIvars(className) || (this.definedClassVarCounts.get(className) ?? 0) > 0
     );
+  }
+
+  // Whether a class carries a real comment — drives whether the row offers the
+  // comment button at all (#387), so the button never promises a document
+  // that turns out to be GemStone's synthesised "No class-specific documentation
+  // for …" placeholder. Answered from the set derived from the class list already
+  // fetched for this dictionary, so asking costs no extra query and no scan. A class
+  // we have no entry for (a stale row, or one from another dictionary) is treated as
+  // uncommented: the Classes-pane toolbar button still reaches it, so nothing becomes
+  // unreachable.
+  classHasComment(className: string): boolean {
+    return this.commentedClasses.has(className);
   }
 
   // The class's position in its class history when it has more than one version in
@@ -6776,7 +6805,12 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
       const rows = this.ctl.classNames().map((n) => {
-        const item = new ClassItem(n, this.ctl.classHasDefinedVars(n), this.ctl.classVersion(n));
+        const item = new ClassItem(
+          n,
+          this.ctl.classHasDefinedVars(n),
+          this.ctl.classVersion(n),
+          this.ctl.classHasComment(n),
+        );
         this.ctl.decorateTestRow(item, this.ctl.state.dictName, n);
         return item;
       });

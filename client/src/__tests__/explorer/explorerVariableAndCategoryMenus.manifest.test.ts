@@ -59,22 +59,24 @@ const OPEN_COMMENT = 'gemstone.explorer.openComment';
 
 // Every shape a class row's contextValue can take. Built as a cross-product rather
 // than listed by hand: the suffixes are independent, and it was picking two
-// representative rows that let `.novars` silently take a button off a
-// variable-less class — the combination neither this file nor
-// explorerFilterUx387.manifest.test.ts happened to name. There is one suffix left
-// now that comment state gates nothing, but the cross-product stays: it is what
-// catches the next suffix added beside it.
+// representative rows that let `.novars` silently take the comment button off a
+// commented variable-less class — the one combination neither this file nor
+// explorerFilterUx387.manifest.test.ts happened to name.
 const TEST_SUFFIXES = ['', '.test', '.test.running', '.test.debugging'];
 const CLASS_ROWS: {
   viewItem: string;
   variableLess: boolean;
+  commented: boolean;
   testPart: string;
 }[] = TEST_SUFFIXES.flatMap((testPart) =>
-  [false, true].map((variableLess) => ({
-    viewItem: `explorerClass${variableLess ? '.novars' : ''}${testPart}`,
-    variableLess,
-    testPart,
-  })),
+  [false, true].flatMap((variableLess) =>
+    [false, true].map((commented) => ({
+      viewItem: `explorerClass${variableLess ? '.novars' : ''}${commented ? '.commented' : ''}${testPart}`,
+      variableLess,
+      commented,
+      testPart,
+    })),
+  ),
 );
 
 describe('the class row "+" lands only on a class with no variables', () => {
@@ -102,16 +104,14 @@ describe('the class row "+" lands only on a class with no variables', () => {
 
   it.each(CLASS_ROWS)('$viewItem keeps every action its suffixes should not touch', (row) => {
     // Each suffix may only ever ADD its own button. `.novars` adding the "+" must not
-    // cost the row anything else — and once it did: a comment gate matched
+    // cost the row anything else — and it did: `openComment` matched
     // `viewItem == explorerClass.commented` exactly, so a commented class with no
     // variables became `explorerClass.novars.commented` and lost its comment button.
     // Comparing two hand-picked rows missed that; comparing every row to the plain
-    // one, with only the suffixes' own buttons allowed to differ, does not. The
-    // comment button is no longer in this set because it is on every class row, so
-    // it is part of the baseline rather than something a suffix adds.
-    const OWNED_BY_SUFFIX = new Set([ADD_VARIABLE]);
-    // Baseline is the same row with `.novars` stripped but its `.test` part kept,
-    // since `.test` legitimately adds the test-run buttons.
+    // one, with only the suffixes' own buttons allowed to differ, does not.
+    const OWNED_BY_SUFFIX = new Set([ADD_VARIABLE, OPEN_COMMENT]);
+    // Baseline is the same row with `.novars` and `.commented` stripped but its
+    // `.test` part kept, since `.test` legitimately adds the test-run buttons.
     const baseline = commandsOn(CLASSES, `explorerClass${row.testPart}`);
     const here = commandsOn(CLASSES, row.viewItem);
 
@@ -121,11 +121,10 @@ describe('the class row "+" lands only on a class with no variables', () => {
     );
   });
 
-  it.each(CLASS_ROWS)('$viewItem offers the comment button', ({ viewItem }) => {
-    // Every class row, not just one that already has a comment: writing a first
-    // comment has to have a way in from the row, which is what the Hierarchy pane
-    // always offered and this pane did not.
-    expect(commandsOn(CLASSES, viewItem).includes(OPEN_COMMENT)).toBe(true);
+  it.each(CLASS_ROWS)('$viewItem → comment button: $commented', ({ viewItem, commented }) => {
+    // The pre-existing `.commented` invariant, re-checked against every row shape
+    // now that a second suffix can precede it.
+    expect(commandsOn(CLASSES, viewItem).includes(OPEN_COMMENT)).toBe(commented);
   });
 
   it('does not let the widened clauses swallow a class VARIABLE row', () => {
