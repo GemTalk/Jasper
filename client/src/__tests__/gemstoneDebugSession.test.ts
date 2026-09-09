@@ -28,7 +28,9 @@ vi.mock('../debugQueries', () => ({
   getFrameInfo: vi.fn((session: unknown, gsProcess: bigint, level: number) => ({
     methodOop: BigInt(1000 + level),
     ipOffset: 10 * level,
-    receiverOop: 500n,
+    selfOop: 500n,
+    selfIsUnavailable: false,
+    homeMethodOop: OOP_NIL,
     argAndTempNames: ['arg1', 'temp1'],
     argAndTempOops: [100n, 200n],
   })),
@@ -76,6 +78,7 @@ import { SessionManager } from '../sessionManager';
 import { BreakpointManager } from '../breakpointManager';
 import * as debugQueries from '../debugQueries';
 import * as browserQueries from '../browserQueries';
+import { OOP_NIL } from '../gciConstants';
 
 // Capture DAP messages sent by the debug session
 interface DapMessage {

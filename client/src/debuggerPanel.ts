@@ -162,13 +162,18 @@ interface VarRow {
 }
 
 /**
- * A named group of variable rows. Stage 2 splits the flat list into Receiver
- * (`self`), Instance variables, Arguments & Temps, and a collapsed
- * `(stack temps)` group for the synthetic eval-stack temporaries.
+ * A named group of variable rows: Receiver (`self`), Instance variables, the
+ * enclosing method's Arguments & Temps on a block frame, this frame's own
+ * Arguments & Temps, and a collapsed `(stack temps)` group for the synthetic
+ * eval-stack temporaries.
+ *
+ * That is also scope order, innermost last, and every consumer relies on it: a
+ * later row of the same name shadows an earlier one, so a block temp wins over
+ * an enclosing temp of the same spelling, which wins over an instVar.
  */
 interface VarGroup {
   title: string;
-  kind: 'receiver' | 'instvars' | 'argtemps' | 'stacktemps';
+  kind: 'receiver' | 'instvars' | 'homeargtemps' | 'argtemps' | 'stacktemps';
   vars: VarRow[];
   /** Rendered collapsed by default (used for the noisy `(stack temps)` group). */
   collapsed?: boolean;
@@ -1770,18 +1775,20 @@ export class DebuggerPanel {
     const selector = raw?.selector;
     if (!selector) return;
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
       this.postInit();
       return;
     }
-    // The receiver's class and every superclass up to Object — each a place the
-    // selector could be implemented, flagged with whether it already is.
-    const chain = debug.getReceiverClassChain(this.session, receiverOop, selector);
+    // The class of the frame's `self` — the HOME receiver in a block frame, so a
+    // block frame resolves the same chain its method frame would — and every
+    // superclass up to Object: each a place the selector could be implemented,
+    // flagged with whether it already is.
+    const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
       this.postInit();
@@ -1813,9 +1820,9 @@ export class DebuggerPanel {
       return;
     }
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
@@ -1823,7 +1830,7 @@ export class DebuggerPanel {
       return;
     }
 
-    const target = debug.getBrowseTarget(this.session, receiverOop, raw.selector);
+    const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
       this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
       this.postInit();
@@ -1869,20 +1876,16 @@ export class DebuggerPanel {
   private async implementSubclassResponsibility(): Promise<void> {
     const info = this.subclassRespInfo;
     if (!info) return;
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(
-        this.session,
-        this.gsProcess,
-        info.abstractServerLevel,
-      ).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of #${info.selector}.`;
       this.postInit();
       return;
     }
-    let chain = debug.getReceiverClassChain(this.session, receiverOop, info.selector);
+    let chain = debug.getReceiverClassChain(this.session, selfOop, info.selector);
     // Bound the chain at the abstract method's defining class (inclusive).
     const boundIdx = chain.findIndex((c) => c.className === info.definingClassName);
     if (boundIdx >= 0) chain = chain.slice(0, boundIdx + 1);
@@ -2264,6 +2267,13 @@ export class DebuggerPanel {
       .filter((r) => r.group === 'argtemps')
       .map((r) => toRow(r, { kind: 'temp', index: r.index }))
       .sort(byName);
+    // The enclosing method's names on a block frame — read-only here, because
+    // their write index belongs to the home frame, not this one. Edit them from
+    // the home activation's own row in the stack.
+    const homeArgTemps = rows
+      .filter((r) => r.group === 'homeargtemps')
+      .map((r) => toRow(r))
+      .sort(byName);
     // Stack temps keep natural order (sorting `.t1/.t10/.t2` would look wrong).
     const stackTemps = rows.filter((r) => r.group === 'stacktemps').map((r) => toRow(r));
 
@@ -2271,6 +2281,12 @@ export class DebuggerPanel {
     if (receiver.length > 0) groups.push({ title: 'Receiver', kind: 'receiver', vars: receiver });
     if (instVars.length > 0)
       groups.push({ title: 'Instance variables', kind: 'instvars', vars: instVars });
+    if (homeArgTemps.length > 0)
+      groups.push({
+        title: 'Enclosing method’s Arguments & Temps',
+        kind: 'homeargtemps',
+        vars: homeArgTemps,
+      });
     if (argTemps.length > 0)
       groups.push({ title: 'Arguments & Temps', kind: 'argtemps', vars: argTemps });
     if (stackTemps.length > 0) {
@@ -2511,7 +2527,7 @@ export class DebuggerPanel {
       // only), so revert can restore the exact original object.
       this.captureUndoOriginal(serverLevel, kind, index, info);
       if (kind === 'instvar') {
-        debug.setInstVar(this.session, info.receiverOop, index, valueOop);
+        debug.setInstVar(this.session, info.selfOop, index, valueOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, valueOop);
       }
@@ -2608,7 +2624,7 @@ export class DebuggerPanel {
     if (this.undoOriginals.has(key)) return; // keep the FIRST original
     const originalOop =
       kind === 'instvar'
-        ? debug.getInstVarOop(this.session, info.receiverOop, index)
+        ? debug.getInstVarOop(this.session, info.selfOop, index)
         : info.argAndTempOops[index - 1];
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
@@ -2641,12 +2657,8 @@ export class DebuggerPanel {
     }
     try {
       if (kind === 'instvar') {
-        const receiverOop = debug.getFrameInfo(
-          this.session,
-          this.gsProcess,
-          serverLevel,
-        ).receiverOop;
-        debug.setInstVar(this.session, receiverOop, index, originalOop);
+        const selfOop = debug.getFrameInfo(this.session, this.gsProcess, serverLevel).selfOop;
+        debug.setInstVar(this.session, selfOop, index, originalOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
@@ -3490,10 +3502,16 @@ export class DebuggerPanel {
 
   /**
    * The in-scope, named variables for `serverLevel` as inline-overlay rows, in
-   * receiver → instVars → args/temps order (so a shadowing temp overrides an
-   * instVar of the same name; `computeInlineValueLines` lets later entries win).
+   * receiver → instVars → enclosing temps → own args/temps order (so a shadowing
+   * temp overrides an instVar of the same name, and a block's own temp overrides
+   * an enclosing one; `computeInlineValueLines` lets later entries win). That is
+   * the order {@link VarGroup} is built in, so iterating the groups is enough.
    * The collapsed `(stack temps)` group is dropped — those `.tN` temporaries have
    * no source name to match.
+   *
+   * The enclosing method's names matter here in particular: a block frame's
+   * source pane shows the ENCLOSING method's source, so without them the overlay
+   * had nothing to say about names plainly visible on those lines.
    */
   private inlineVarsForFrame(serverLevel: number): InlineVar[] {
     const vars: InlineVar[] = [];
@@ -4017,7 +4035,7 @@ export class DebuggerPanel {
       // inherited methods (non-block frames only — see formatFrameLabel).
       if (!isBlock) {
         try {
-          receiverClass = debug.getObjectClassName(this.session, info.receiverOop);
+          receiverClass = debug.getObjectClassName(this.session, info.selfOop);
         } catch {
           /* best-effort; fall back to defining class only */
         }
