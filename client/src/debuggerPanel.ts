@@ -683,6 +683,10 @@ const EMPTY_GROUP_SWEEP_DEADLINE_MS = 2000;
  *  serializer that declines to restore one (see declineRestoredPanels). */
 const DEBUGGER_VIEW_TYPE = 'gemstoneEnhancedDebugger';
 
+/** Back-off for retiring a group whose last tab was just closed. The close is
+ *  asynchronous, so the group can still report the tab for a tick or two. */
+const RETIRE_GROUP_RETRY_DELAYS_MS = [0, 16, 64, 256];
+
 /**
  * A fully-resolved stack frame, before display filtering and renumbering.
  * Carries the classification bits the stack filter needs (which `FrameSummary`,
@@ -989,12 +993,54 @@ export class DebuggerPanel {
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
     if (orphans.length === 0) return;
     const wanted = new Set(orphans);
+    const closing: Thenable<unknown>[] = [];
+    // The columns these tabs are vacating. A reaped source tab leaves the companion
+    // source group empty, and that group is no more self-retiring than the panel's —
+    // both were emptied during a restore rather than by an ordinary close.
+    const vacated = new Set<vscode.ViewColumn>();
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (tab.input instanceof vscode.TabInputText && wanted.has(tab.input.uri.toString())) {
-          void vscode.window.tabGroups.close(tab);
+          vacated.add(group.viewColumn);
+          closing.push(vscode.window.tabGroups.close(tab));
         }
       }
+    }
+    void Promise.all(closing)
+      .catch(() => {})
+      .then(async () => {
+        for (const column of vacated) await DebuggerPanel.retireEmptyGroup(column);
+      });
+  }
+
+  /**
+   * Close the group in `column` once it is empty, and only while it is.
+   *
+   * VS Code retires a group of its own accord when the group's last editor closes —
+   * during ordinary use. A group emptied while the window is still coming up does not
+   * get that treatment, and neither does one that was never occupied (which is why
+   * closeEmptyGroups exists for the carve). Both are how a debugger's column outlived
+   * the debugger.
+   *
+   * Retried on a short back-off because the tab close it follows is asynchronous: the
+   * group can still report the tab for a tick or two after dispose() returns. Gives up
+   * quietly, and never closes a group that has an editor in it — if the user has put
+   * something there in the meantime, or VS Code has already retired it, there is
+   * nothing to do and nothing of theirs is at risk.
+   */
+  private static async retireEmptyGroup(column: vscode.ViewColumn | undefined): Promise<void> {
+    if (column === undefined) return;
+    for (const delayMs of RETIRE_GROUP_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+      if (!group) return; // already gone
+      if (group.tabs.length > 0) continue; // the close has not landed yet, or is not ours
+      try {
+        await vscode.window.tabGroups.close(group);
+      } catch {
+        /* raced with VS Code retiring it — nothing left to do */
+      }
+      return;
     }
   }
 
@@ -1033,8 +1079,14 @@ export class DebuggerPanel {
     DebuggerPanel.restoreDeclinerRegistered = true;
     vscode.window.registerWebviewPanelSerializer(DEBUGGER_VIEW_TYPE, {
       deserializeWebviewPanel(panel: vscode.WebviewPanel): Thenable<void> {
+        // Read the column BEFORE disposing: a disposed WebviewPanel throws rather than
+        // answering. Closing the tab is not enough on its own — VS Code retires a group
+        // when its last editor closes during ordinary use, but a group emptied while the
+        // window is still restoring keeps its place, which is the blank pane this is all
+        // about. So the group is retired here as well.
+        const column = panel.viewColumn;
         panel.dispose();
-        return Promise.resolve();
+        return DebuggerPanel.retireEmptyGroup(column);
       },
     });
   }

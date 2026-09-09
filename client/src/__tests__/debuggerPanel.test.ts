@@ -2010,16 +2010,63 @@ describe('DebuggerPanel', () => {
       const serializer = register.mock.calls[0][1] as {
         deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
       };
-      const restored = { dispose: vi.fn(), webview: { html: '' } };
+      const restored = { dispose: vi.fn(), webview: { html: '' }, viewColumn: 2 };
 
       await serializer.deserializeWebviewPanel(restored, undefined);
 
-      // Closing the tab is what makes VS Code retire the group; there is nothing to
-      // revive to, since the suspended process died with the session.
+      // There is nothing to revive to, since the suspended process died with the session.
       expect(restored.dispose).toHaveBeenCalledTimes(1);
       // And no debugger was built around it — the normal dispose path would try to
       // clear a stack on a session that was never opened.
       expect(restored.webview.html).toBe('');
+    });
+
+    // Closing the tab is not enough on its own. VS Code retires a group when its last
+    // editor closes during ordinary use, but a group emptied while the window is still
+    // restoring keeps its place — which is the blank pane the whole item is about, and
+    // the reason the flash of a restored debugger was followed by an empty box.
+    it('retires the group the restored panel leaves empty', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 7, tabs: [] }); // the group it came back into, now empty
+      const emptied = groups[groups.length - 1];
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 7 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    // The guarantee that makes the sweep safe: it only ever closes a group that is
+    // genuinely empty, so anything the user put there survives.
+    it('leaves the column alone when an editor is sitting in it', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 8, tabs: [{ input: {} }] }); // the user's own editor
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 8 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
     });
 
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
