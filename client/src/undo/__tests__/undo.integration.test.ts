@@ -5,7 +5,12 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
-import { applyClassSlotOps, captureClassSlots, newStashKey } from '../queries/classSlotQueries';
+import {
+  applyClassSlotOps,
+  captureClassSlots,
+  newStashKey,
+  releaseStashKeys,
+} from '../queries/classSlotQueries';
 import {
   captureDictionary,
   dictionaryEntryCount,
@@ -412,6 +417,17 @@ ws contents`;
       expect(
         exec(`(SessionTemps current at: #'${unused}' ifAbsent: [nil]) isNil printString`),
       ).toBe('true');
+    });
+
+    it('lets the stashed version go again, so the pin follows the stack rather than the session', () => {
+      defineClass(CLS);
+      const key = newStashKey(1);
+      const missing = newStashKey(1);
+      captureClassSlots(exec, [classSlot()], [key]);
+
+      releaseStashKeys(exec, [key, missing]);
+
+      expect(exec(`(SessionTemps current includesKey: #'${key}') printString`)).toBe('false');
     });
   });
 
