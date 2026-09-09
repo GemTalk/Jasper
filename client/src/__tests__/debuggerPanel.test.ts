@@ -26,7 +26,9 @@ vi.mock('../debugQueries', () => ({
   getFrameInfo: vi.fn((_s: unknown, _p: unknown, level: number) => ({
     methodOop: BigInt(level),
     ipOffset: 5,
-    receiverOop: BigInt(level * 100),
+    selfOop: BigInt(level * 100),
+    selfIsUnavailable: false,
+    homeMethodOop: OOP_NIL,
     argAndTempNames: [],
     argAndTempOops: [],
   })),
@@ -40,8 +42,8 @@ vi.mock('../debugQueries', () => ({
     if (oop === 2n) return { className: 'Object', selector: 'halt' };
     return { className: 'JasperDebugDemo', selector: 'accumulateFrom:to:' };
   }),
-  getObjectClassName: vi.fn((_s: unknown, receiverOop: bigint) =>
-    receiverOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
+  getObjectClassName: vi.fn((_s: unknown, selfOop: bigint) =>
+    selfOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
   ),
   getLineForIp: vi.fn(() => 12),
   getStepPoint: vi.fn(() => 2),
@@ -92,7 +94,7 @@ vi.mock('../debugQueries', () => ({
     environmentId: 0,
   })),
   // Whole-stack dump (#10/#11): one batched call. Default = a Receiver row per
-  // frame whose printString/oop mirror the per-frame receiverOop (level * 100).
+  // frame whose printString/oop mirror the per-frame selfOop (level * 100).
   fetchStackDump: vi.fn(() =>
     [1, 2, 3, 4, 5].map((l) => ({
       serverLevel: l,
@@ -179,6 +181,7 @@ import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
+import { OOP_NIL } from '../gciConstants';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -965,7 +968,7 @@ describe('DebuggerPanel', () => {
       // … then a detail block: separator, repeated heading, Receiver with self + oop.
       expect(text).toContain('---------------------------------');
       expect(text).toContain('Receiver:');
-      expect(text).toContain('    self = <print 100>   {100}'); // frame 1 receiverOop = 100
+      expect(text).toContain('    self = <print 100>   {100}'); // frame 1 selfOop = 100
     });
 
     it('writes a single frame (no leading number) to the clipboard on copyFrame', () => {
@@ -1521,7 +1524,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: BigInt(level * 100),
+            selfOop: BigInt(level * 100),
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -1552,7 +1557,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: 100n,
+            selfOop: 100n,
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -2489,7 +2496,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -2534,6 +2543,27 @@ describe('DebuggerPanel', () => {
         { name: 'amount', value: '<print 11>', oop: '11', edit: { kind: 'temp', index: 1 } },
         { name: 'total', value: '<print 22>', oop: '22', edit: { kind: 'temp', index: 2 } },
       ]);
+    });
+
+    it("groups the enclosing method's names read-only, ahead of the frame's own", () => {
+      vi.mocked(debug.fetchFrameVariables).mockImplementation(() => [
+        { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
+        { group: 'argtemps', name: 'each', value: '<print 11>', oop: '11', index: 1 },
+        { group: 'homeargtemps', name: 'coll', value: '<print 22>', oop: '22', index: 0 },
+      ]);
+      const panel = openPanel();
+
+      sendMessage(panel, { command: 'selectFrame', level: 2 });
+
+      const groups = lastPosted(panel, 'variables').groups;
+      const home = groups.find((g: { kind: string }) => g.kind === 'homeargtemps');
+      // No `edit`: the write index of an enclosing name addresses the enclosing
+      // frame, so applying it at this level would land on the wrong slot.
+      expect(home.vars).toEqual([{ name: 'coll', value: '<print 22>', oop: '22' }]);
+      // Scope order, innermost last — a same-named own temp has to shadow it
+      // wherever later entries win, the inline overlay above all.
+      const kinds = groups.map((g: { kind: string }) => g.kind);
+      expect(kinds.indexOf('homeargtemps')).toBeLessThan(kinds.indexOf('argtemps'));
     });
 
     it('alphabetizes instVars and named args/temps while preserving each slot write index', () => {
@@ -2783,7 +2813,7 @@ describe('DebuggerPanel', () => {
       // receiver (300) with one instVar `count` (#1). getInstVarOop returns the
       // instVar's *original* oop (700) when captured before the first edit.
       beforeEach(() => {
-        // The WRITE path still uses getFrameInfo (receiverOop) + getInstVarOop
+        // The WRITE path still uses getFrameInfo (selfOop) + getInstVarOop
         // (capture original); the PANE display now comes from fetchFrameVariables.
         vi.mocked(debug.getFrameInfo).mockImplementation(
           (_s: unknown, _p: unknown, level: number) =>
@@ -2791,14 +2821,18 @@ describe('DebuggerPanel', () => {
               ? {
                   methodOop: 2n,
                   ipOffset: 5,
-                  receiverOop: 300n,
+                  selfOop: 300n,
+                  selfIsUnavailable: false,
+                  homeMethodOop: OOP_NIL,
                   argAndTempNames: ['amount'],
                   argAndTempOops: [11n],
                 }
               : {
                   methodOop: BigInt(level),
                   ipOffset: 5,
-                  receiverOop: BigInt(level * 100),
+                  selfOop: BigInt(level * 100),
+                  selfIsUnavailable: false,
+                  homeMethodOop: OOP_NIL,
                   argAndTempNames: [],
                   argAndTempOops: [],
                 },
@@ -3277,7 +3311,9 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getFrameInfo).mockReturnValue({
           methodOop: 50n,
           ipOffset: 5,
-          receiverOop: 0n,
+          selfOop: 0n,
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         });
@@ -3358,7 +3394,9 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getFrameInfo).mockReturnValue({
           methodOop: 1n,
           ipOffset: 5,
-          receiverOop: 300n,
+          selfOop: 300n,
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         });
@@ -3442,7 +3480,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: 100n,
+            selfOop: 100n,
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -3790,7 +3830,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -3948,7 +3990,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -3976,7 +4020,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 ? 10n : BigInt(level), // the home method's own activation
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4074,7 +4120,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 7 ? HOME : BigInt(level), // the home method's own activation
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4166,7 +4214,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 4 ? 10n : BigInt(level), // home activation is server 4
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4221,7 +4271,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 || level === 6 ? HOME : BigInt(level), // two `foo` activations
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4877,8 +4929,8 @@ describe('DebuggerPanel', () => {
     // mockImplementations leak past clearAllMocks — restore the base 5-frame stack.
     afterEach(() => {
       vi.mocked(debug.getStackDepth).mockImplementation(() => 5);
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
       );
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'finish' };
@@ -4895,11 +4947,11 @@ describe('DebuggerPanel', () => {
       return panel;
     }
 
-    // Make the level-2 frame (receiverOop 200) a class-side method `buildIt`
+    // Make the level-2 frame (selfOop 200) a class-side method `buildIt`
     // inherited from JasperMakerBase, run with `receiverClassName` as the receiver.
     function classSideInheritedAtLevel2(receiverClassName: string) {
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 200n ? receiverClassName : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 200n ? receiverClassName : 'JasperDebugDemo',
       );
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'finish' };
@@ -5030,10 +5082,10 @@ describe('DebuggerPanel', () => {
     // --- editable Variables on a class-side frame (classInstVars) ---
 
     it('shows + edits a class-instance variable on a class-side frame (receiver is a class)', () => {
-      // Frame at level 3 (receiverOop 300) has a class receiver; its named
+      // Frame at level 3 (selfOop 300) has a class receiver; its named
       // instVars are the class-instance variables (e.g. `registry`).
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 300n ? 'JasperClassSideDemo class' : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 300n ? 'JasperClassSideDemo class' : 'JasperDebugDemo',
       );
       // The one-trip query returns the class-instance var as an instvars row.
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
