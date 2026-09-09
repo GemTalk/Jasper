@@ -162,13 +162,18 @@ interface VarRow {
 }
 
 /**
- * A named group of variable rows. Stage 2 splits the flat list into Receiver
- * (`self`), Instance variables, Arguments & Temps, and a collapsed
- * `(stack temps)` group for the synthetic eval-stack temporaries.
+ * A named group of variable rows: Receiver (`self`), Instance variables, the
+ * enclosing method's Arguments & Temps on a block frame, this frame's own
+ * Arguments & Temps, and a collapsed `(stack temps)` group for the synthetic
+ * eval-stack temporaries.
+ *
+ * That is also scope order, innermost last, and every consumer relies on it: a
+ * later row of the same name shadows an earlier one, so a block temp wins over
+ * an enclosing temp of the same spelling, which wins over an instVar.
  */
 interface VarGroup {
   title: string;
-  kind: 'receiver' | 'instvars' | 'argtemps' | 'stacktemps';
+  kind: 'receiver' | 'instvars' | 'homeargtemps' | 'argtemps' | 'stacktemps';
   vars: VarRow[];
   /** Rendered collapsed by default (used for the noisy `(stack temps)` group). */
   collapsed?: boolean;
@@ -2262,6 +2267,13 @@ export class DebuggerPanel {
       .filter((r) => r.group === 'argtemps')
       .map((r) => toRow(r, { kind: 'temp', index: r.index }))
       .sort(byName);
+    // The enclosing method's names on a block frame — read-only here, because
+    // their write index belongs to the home frame, not this one. Edit them from
+    // the home activation's own row in the stack.
+    const homeArgTemps = rows
+      .filter((r) => r.group === 'homeargtemps')
+      .map((r) => toRow(r))
+      .sort(byName);
     // Stack temps keep natural order (sorting `.t1/.t10/.t2` would look wrong).
     const stackTemps = rows.filter((r) => r.group === 'stacktemps').map((r) => toRow(r));
 
@@ -2269,6 +2281,12 @@ export class DebuggerPanel {
     if (receiver.length > 0) groups.push({ title: 'Receiver', kind: 'receiver', vars: receiver });
     if (instVars.length > 0)
       groups.push({ title: 'Instance variables', kind: 'instvars', vars: instVars });
+    if (homeArgTemps.length > 0)
+      groups.push({
+        title: 'Enclosing method’s Arguments & Temps',
+        kind: 'homeargtemps',
+        vars: homeArgTemps,
+      });
     if (argTemps.length > 0)
       groups.push({ title: 'Arguments & Temps', kind: 'argtemps', vars: argTemps });
     if (stackTemps.length > 0) {
@@ -3484,10 +3502,16 @@ export class DebuggerPanel {
 
   /**
    * The in-scope, named variables for `serverLevel` as inline-overlay rows, in
-   * receiver → instVars → args/temps order (so a shadowing temp overrides an
-   * instVar of the same name; `computeInlineValueLines` lets later entries win).
+   * receiver → instVars → enclosing temps → own args/temps order (so a shadowing
+   * temp overrides an instVar of the same name, and a block's own temp overrides
+   * an enclosing one; `computeInlineValueLines` lets later entries win). That is
+   * the order {@link VarGroup} is built in, so iterating the groups is enough.
    * The collapsed `(stack temps)` group is dropped — those `.tN` temporaries have
    * no source name to match.
+   *
+   * The enclosing method's names matter here in particular: a block frame's
+   * source pane shows the ENCLOSING method's source, so without them the overlay
+   * had nothing to say about names plainly visible on those lines.
    */
   private inlineVarsForFrame(serverLevel: number): InlineVar[] {
     const vars: InlineVar[] = [];

@@ -178,9 +178,35 @@ cls setup.
         expect(namedValues(rows, 'instvars')).toMatchObject({ limit: '99' });
         // …and the block's own argument and the temp it shares with its home.
         expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1', total: '1' });
-        // …and nothing belonging only to the home activation, which has its own
-        // row in the stack. The eval bar deliberately goes wider — see below.
-        expect(namedValues(rows, 'argtemps')).not.toHaveProperty('coll');
+      });
+    });
+
+    it("lists the enclosing method's arguments and temporaries on a block frame", () => {
+      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`, (gsProcess, s) => {
+        const rows = debug.fetchFrameVariables(
+          s,
+          gsProcess,
+          blockFrameLevel(s, gsProcess, 'scanNoSelf:'),
+        );
+
+        // Everything the eval bar resolves here is now visible here too.
+        expect(namedValues(rows, 'homeargtemps')).toEqual({
+          coll: 'anArray( 1, 2, 3)',
+          tag: '7',
+        });
+        // `total` is one slot the block shares with its home, so it appears once
+        // — under the block, whose row is the editable one.
+        expect(namedValues(rows, 'homeargtemps')).not.toHaveProperty('total');
+      });
+    });
+
+    it('offers no enclosing group on a frame that is not running a block', () => {
+      atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
+        const level = methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
+
+        expect(namedValues(debug.fetchFrameVariables(s, gsProcess, level), 'homeargtemps')).toEqual(
+          {},
+        );
       });
     });
 
@@ -296,6 +322,15 @@ cls setup.
         // answer ExecBlock1 and `self limit` a doesNotUnderstand — a plausible
         // looking wrong answer. nil is the honest one.
         expect(debug.evaluateInFrame(s, gsProcess, 'self class', level)).toBe('UndefinedObject');
+      });
+    });
+
+    it('offers no enclosing group either, the activation being gone', () => {
+      atHalt(HALT, (gsProcess, s) => {
+        const rows = debug.fetchFrameVariables(s, gsProcess, strandedLevel(s, gsProcess));
+
+        expect(namedValues(rows, 'homeargtemps')).toEqual({});
+        expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1' });
       });
     });
 

@@ -871,7 +871,11 @@ out contents`;
 
 /** One variable of a single frame (receiver / instVar / arg-temp / stack-temp). */
 export interface FrameVarRow {
-  group: 'receiver' | 'instvars' | 'argtemps' | 'stacktemps';
+  /**
+   * `homeargtemps` is the enclosing method's arguments and temporaries, present
+   * only on a block frame and only for names the block does not have of its own.
+   */
+  group: 'receiver' | 'instvars' | 'argtemps' | 'homeargtemps' | 'stacktemps';
   name: string;
   /** printString (escaped server-side then un-escaped here, capped). */
   value: string;
@@ -880,7 +884,9 @@ export interface FrameVarRow {
   /**
    * 1-based write index for an editable slot: instVar index (`instVarAt:put:`) or
    * arg/temp index into the frame's `argAndTempNames` (`_frameAt:tempAt:put:`).
-   * 0 for the receiver and stack temps (not editable).
+   * 0 for the receiver, the stack temps and the enclosing method's names (not
+   * editable) — see {@link fetchFrameVariables} for why a home name cannot carry
+   * a write index resolved at this level.
    */
   index: number;
 }
@@ -918,17 +924,18 @@ export function parseFrameVars(data: string): FrameVarRow[] {
  * the home object's instance variables) is what the pane is for. See
  * {@link FRAME_SELF_SMALLTALK}.
  *
- * The arg/temp rows, though, stay strictly this frame's own — deliberately NOT
- * matching {@link getFrameEvalContext}, which layers the home method's arguments
- * and temporaries in as well. So on a block frame the eval bar resolves a home
- * name the pane never lists. The two want different things: the eval bar has to
- * make an expression typed at this frame behave the way the same expression would
- * inside the block, home scope and all, while the pane is a picture of one
- * activation's own slots — and the home activation has its own row in the stack,
- * one click away, showing exactly those names. Mixing them in would also cross
- * the write path: `index` here is an offset into THIS frame's `argAndTempNames`,
- * and a home name carries the home frame's offset, which `_frameAt:tempAt:put:`
- * at this level would apply to the wrong slot.
+ * On a block frame the enclosing method's arguments and temporaries come back
+ * too, as a separate `homeargtemps` group, so the pane lists everything the eval
+ * bar can resolve there ({@link getFrameEvalContext} binds the same names) — a
+ * name you can type is a name you can see. Only names the block does not already
+ * have of its own are emitted: a temp the block shares with its home is one slot,
+ * and listing it twice would suggest two.
+ *
+ * Those rows are NOT editable, and carry index 0 for that reason. `index` is an
+ * offset into THIS frame's `argAndTempNames`, which is what
+ * `_frameAt:tempAt:put:` at this level applies it to; a home name's offset
+ * belongs to the home frame and would land on the wrong slot. Editing them is
+ * done from the home activation's own row in the stack.
  *
  * The name filters test with `beginsWith:`. GemStone has no `String>>startsWith:`
  * on 3.6.2 or 3.7.5 — sending it raises a MessageNotUnderstood on the FIRST name,
@@ -940,7 +947,7 @@ export function fetchFrameVariables(
   gsProcess: bigint,
   serverLevel: number,
 ): FrameVarRow[] {
-  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row arr slf names depth homeFrameOf frameSelfOf |
+  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row arr slf names depth hArr hNames homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
 ${dumpPayloadPrelude()}row := [:grp :nm :obj :idx |
@@ -957,6 +964,11 @@ ${FRAME_SELF_SMALLTALK}
     value: ${serverLevel}
     value: arr
     value: depth) ifNil: [arr at: 10].
+  hArr := homeFrameOf
+    value: [:j | [proc _frameContentsAt: j] on: Error do: [:e | nil]]
+    value: ${serverLevel}
+    value: arr
+    value: depth.
   names := arr at: 9.
   row value: 'receiver' value: 'self' value: slf value: 0.
   [ slf class allInstVarNames keysAndValuesDo: [:i :nm |
@@ -967,7 +979,16 @@ ${FRAME_SELF_SMALLTALK}
       nm := (names at: i) asString.
       (nm beginsWith: '__vsc') ifFalse: [
         row value: ((nm beginsWith: '.') ifTrue: ['stacktemps'] ifFalse: ['argtemps'])
-            value: nm value: (arr at: 10 + i) value: i ] ] ]
+            value: nm value: (arr at: 10 + i) value: i ] ] ].
+  hNames := hArr isNil ifTrue: [nil] ifFalse: [hArr at: 9].
+  hNames isNil ifFalse: [
+    1 to: hNames size do: [:i | | nm |
+      nm := (hNames at: i) asString.
+      ((nm beginsWith: '.')
+        or: [(nm beginsWith: '__vsc') or: [nm size = 4 and: [nm beginsWith: 'self']]]) ifFalse: [
+        (names notNil and: [(names detect: [:n | n asString = nm] ifNone: [nil]) notNil]) ifFalse: [
+          (10 + i) <= hArr size ifTrue: [
+            row value: 'homeargtemps' value: nm value: (hArr at: 10 + i) value: 0 ] ] ] ] ]
 ] on: Error do: [:e | ].
 out contents`;
 

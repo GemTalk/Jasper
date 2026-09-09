@@ -2401,6 +2401,27 @@ describe('DebuggerPanel', () => {
       ]);
     });
 
+    it("groups the enclosing method's names read-only, ahead of the frame's own", () => {
+      vi.mocked(debug.fetchFrameVariables).mockImplementation(() => [
+        { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
+        { group: 'argtemps', name: 'each', value: '<print 11>', oop: '11', index: 1 },
+        { group: 'homeargtemps', name: 'coll', value: '<print 22>', oop: '22', index: 0 },
+      ]);
+      const panel = openPanel();
+
+      sendMessage(panel, { command: 'selectFrame', level: 2 });
+
+      const groups = lastPosted(panel, 'variables').groups;
+      const home = groups.find((g: { kind: string }) => g.kind === 'homeargtemps');
+      // No `edit`: the write index of an enclosing name addresses the enclosing
+      // frame, so applying it at this level would land on the wrong slot.
+      expect(home.vars).toEqual([{ name: 'coll', value: '<print 22>', oop: '22' }]);
+      // Scope order, innermost last — a same-named own temp has to shadow it
+      // wherever later entries win, the inline overlay above all.
+      const kinds = groups.map((g: { kind: string }) => g.kind);
+      expect(kinds.indexOf('homeargtemps')).toBeLessThan(kinds.indexOf('argtemps'));
+    });
+
     it('alphabetizes instVars and named args/temps while preserving each slot write index', () => {
       // Rows arrive in deliberately NON-alphabetical order to prove the client
       // sorts them for display while each keeps its server-assigned write index.
