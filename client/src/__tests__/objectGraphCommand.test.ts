@@ -103,7 +103,6 @@ describe('Show Reference Graph, from a selection to an open graph', () => {
       getSession: vi.fn(() => session),
     } as unknown as SessionManager);
     deps = {
-      inspectorProvider: {} as ObjectGraphDeps['inspectorProvider'],
       commit: vi.fn(async () => undefined),
       abort: vi.fn(async () => undefined),
       revealClass: vi.fn(async () => undefined),

@@ -4584,7 +4584,14 @@ export class ExplorerController {
   // Browser "Find Class…"), then cascade the new panes to the chosen class:
   // select its dictionary and class-category, reveal the class row, and open its
   // definition. An explicit `name` arg (programmatic callers) skips the picker.
-  async findClass(name?: string, sessionId?: number): Promise<void> {
+  //
+  // `dictName` narrows a named lookup to one dictionary, for a caller that has
+  // already resolved which dictionary owns the class it means — the Inspector's
+  // Browse Class does. Without it a class name shadowed across dictionaries
+  // resolves to whichever entry comes first, which can be the wrong class of the
+  // same name. Ignored when no entry matches it, so a stale hint still lands on
+  // the class rather than on nothing.
+  async findClass(name?: string, sessionId?: number, dictName?: string): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
     // An explicit sessionId (GemStone Search) pins the reveal to the result's own session.
@@ -4611,9 +4618,11 @@ export class ExplorerController {
     if (name && name.trim()) {
       const trimmed = name.trim();
       const lower = trimmed.toLowerCase();
+      const inDict = dictName ? entries.filter((e) => e.dictName === dictName) : [];
+      const pool = inDict.length > 0 ? inDict : entries;
       chosen =
-        entries.find((e) => e.className === trimmed) ??
-        entries.find((e) => e.className.toLowerCase() === lower);
+        pool.find((e) => e.className === trimmed) ??
+        pool.find((e) => e.className.toLowerCase() === lower);
       if (!chosen) {
         void vscode.window.showWarningMessage(`No class matching "${trimmed}".`);
         return;
@@ -7344,10 +7353,11 @@ export function registerGemStoneExplorer(
     // the session its result came from rather than whatever session is selected now.
     vscode.commands.registerCommand(
       'gemstone.explorer.findClass',
-      (name?: string, sessionId?: number) =>
+      (name?: string, sessionId?: number, dictName?: string) =>
         ctl.findClass(
           typeof name === 'string' ? name : undefined,
           typeof sessionId === 'number' ? sessionId : undefined,
+          typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
         ),
     ),
     // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId

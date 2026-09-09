@@ -8,7 +8,6 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
-import { InspectorTreeProvider } from './inspectorTreeProvider';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
 import {
@@ -108,7 +107,6 @@ type Clean<T> = Exclude<T, { kind: 'needsCommit' }>;
  *  the export mirror and rebuild GemStone Search's corpora. A second commit path here
  *  would silently skip all of that. */
 export interface ObjectGraphDeps {
-  inspectorProvider: InspectorTreeProvider;
   commit: (session: ActiveSession) => Promise<void>;
   abort: (session: ActiveSession) => Promise<void>;
   revealClass: (className: string, sessionId?: number) => Promise<void>;
@@ -789,7 +787,7 @@ export class CodeExecutor {
 
   // ── Inspect ──────────────────────────────────────────
 
-  async inspectIt(inspectorProvider: InspectorTreeProvider): Promise<void> {
+  async inspectIt(): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
@@ -819,14 +817,10 @@ export class CodeExecutor {
     }
 
     const label = code.trim().split('\n')[0].slice(0, 40);
-    await this.executeAndInspect(session, code, label, inspectorProvider);
+    await this.executeAndInspect(session, code, label);
   }
 
-  async inspectExpression(
-    inspectorProvider: InspectorTreeProvider,
-    code: string,
-    label: string,
-  ): Promise<void> {
+  async inspectExpression(code: string, label: string): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
@@ -837,17 +831,16 @@ export class CodeExecutor {
       return;
     }
 
-    await this.executeAndInspect(session, code, label, inspectorProvider);
+    await this.executeAndInspect(session, code, label);
   }
 
   private async executeAndInspect(
     session: ActiveSession,
     code: string,
     label: string,
-    inspectorProvider: InspectorTreeProvider,
   ): Promise<void> {
     await this.executeForResultOop(session, code, (oop) => {
-      routeInspect(session, oop, label, inspectorProvider);
+      routeInspect(session, oop, label);
     });
   }
 
@@ -979,7 +972,7 @@ export class CodeExecutor {
         className: getObjectClassName(session, target),
         printString: getObjectPrintString(session, target, OBJECT_GRAPH_PRINT_LIMIT),
       }),
-      inspect: (target, label) => routeInspect(session, target, label, deps.inspectorProvider),
+      inspect: (target, label) => void routeInspect(session, target, label),
       // The graph's OWN session, which need not be the one the Explorer is showing.
       revealClass: (className) => deps.revealClass(className, session.id),
       withCleanSession: (run) => this.withCleanSession(session, deps, run),

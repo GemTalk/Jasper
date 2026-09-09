@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mockKoffiModule } from '../../__mocks__/koffi';
+import { fakeNativeSocketLibrary } from '../../__tests__/support/fakeNativeSocketLibrary';
 import { GciOptionalFunctionName } from '../optionalFunctions';
 
 /**
@@ -45,7 +46,7 @@ function optionalFuncOf(gci: GciLibrary) {
 const NB_LOGIN_FINISHED = `int GciTsNbLoginFinished(GciSessionPtr, _Out_ int *, _Out_ GciErrSType *)`;
 
 describe('optionalFunc rejects a signature that declares a different symbol', () => {
-  const gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll');
+  const gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll', fakeNativeSocketLibrary());
 
   it('constructs, so every real entry declares the symbol it is keyed by', () => {
     expect(gci).toBeDefined();

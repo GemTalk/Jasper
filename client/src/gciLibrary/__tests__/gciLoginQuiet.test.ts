@@ -22,6 +22,7 @@ vi.mock('koffi', () =>
 );
 
 import { GciLibrary } from '../../gciLibrary';
+import { fakeNativeSocketLibrary } from '../../__tests__/support/fakeNativeSocketLibrary';
 
 // Fixed inputs shared by every wrapper below. Their actual values don't
 // matter — only whether `loginFlags` gets the quiet bit ORed in — so a
@@ -138,7 +139,7 @@ describe('login wrappers force GCI_LOGIN_QUIET', () => {
 
   beforeEach(() => {
     nativeStubs.clear();
-    gci = new GciLibrary('/fake/libgcits.dylib');
+    gci = new GciLibrary('/fake/libgcits.dylib', fakeNativeSocketLibrary());
   });
 
   describe.each(WRAPPERS)('$name', ({ name, netldiArg, outParams, invoke }) => {
