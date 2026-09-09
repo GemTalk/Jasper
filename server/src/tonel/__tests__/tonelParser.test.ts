@@ -187,6 +187,73 @@ describe('parseTonelDocument', () => {
       expect(methods[0].text).toContain('bracket');
     });
 
+    it('does not treat a quote character literal as a string delimiter', () => {
+      const text = [
+        "Extension { #name : 'Foo' }",
+        '',
+        "{ #category : 'printing' }",
+        'Foo >> quoteForFork: aString [',
+        '\t| s |',
+        '\ts := WriteStream on: String new.',
+        "\ts nextPut: $'.",
+        "\taString do: [:c | c = $' ifTrue: [s nextPut: $']. s nextPut: c].",
+        "\ts nextPut: $'.",
+        '\t^s contents',
+        ']',
+        '',
+        "{ #category : 'printing' }",
+        'Foo >> after [',
+        '\t^ 42',
+        ']',
+      ].join('\n');
+      const regions = parseTonelDocument(text);
+      const methods = regions.filter((r) => r.kind === 'smalltalk-method');
+      expect(methods).toHaveLength(2);
+      expect(methods[0].text).toContain('quoteForFork:');
+      expect(methods[1].text).toContain('after');
+    });
+
+    it('does not treat a bracket character literal as a block delimiter', () => {
+      const text = [
+        "Extension { #name : 'Foo' }",
+        '',
+        "{ #category : 'testing' }",
+        'Foo >> openBracket [',
+        '\t^ $[',
+        ']',
+        '',
+        "{ #category : 'testing' }",
+        'Foo >> after [',
+        '\t^ 42',
+        ']',
+      ].join('\n');
+      const regions = parseTonelDocument(text);
+      const methods = regions.filter((r) => r.kind === 'smalltalk-method');
+      expect(methods).toHaveLength(2);
+      expect(methods[0].text).toContain('openBracket');
+      expect(methods[1].text).toContain('after');
+    });
+
+    it('does not treat a double-quote character literal as a comment delimiter', () => {
+      const text = [
+        "Extension { #name : 'Foo' }",
+        '',
+        "{ #category : 'testing' }",
+        'Foo >> quote [',
+        '\t^ $"',
+        ']',
+        '',
+        "{ #category : 'testing' }",
+        'Foo >> after [',
+        '\t^ 42',
+        ']',
+      ].join('\n');
+      const regions = parseTonelDocument(text);
+      const methods = regions.filter((r) => r.kind === 'smalltalk-method');
+      expect(methods).toHaveLength(2);
+      expect(methods[1].text).toContain('after');
+    });
+
     it('handles brackets inside comments', () => {
       const text = [
         "Extension { #name : 'Foo' }",

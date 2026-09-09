@@ -205,7 +205,9 @@ function parseMethodSignature(line: string): {
 
 /**
  * Find the line of the closing ] that ends a method body.
- * Uses bracket counting, respecting strings ('...') and comments ("...").
+ * Uses bracket counting, respecting strings ('...'), comments ("...") and
+ * character literals ($x) — the character after a $ is data, never a
+ * delimiter, so $' does not open a string and $[ does not open a block.
  */
 function findMethodEnd(lines: string[], openLine: number): number {
   let depth = 0;
@@ -233,6 +235,11 @@ function findMethodEnd(lines: string[], openLine: number): number {
         if (ch === '"') {
           inComment = false;
         }
+        continue;
+      }
+
+      if (ch === '$') {
+        j++; // the character literal's value, whatever it is
         continue;
       }
 
