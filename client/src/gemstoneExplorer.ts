@@ -5681,6 +5681,15 @@ export class ExplorerController {
     if (!name) return;
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
+    // With grouping off the pane renders selectors only, so there is no category
+    // row for the reveal below to land on: it rejected, the rejection was
+    // swallowed, and creating a category looked like it had done nothing at all.
+    // (It had not — the name went into the fresh overlay and turning grouping back
+    // on showed it.) Switching the pane to grouped is what makes the thing just
+    // created visible and ready to file a method into, which is the point of
+    // creating it. Note this writes the user's global preference, deliberately:
+    // they asked for a category, and a category only exists in a grouped pane.
+    if (!this.groupMethodsByCategory()) await this.setGroupMethodsByCategory(true);
     this.methodProvider.refresh();
     this.syncTitles();
     // Select the new category (expanding the side node — the class side starts
