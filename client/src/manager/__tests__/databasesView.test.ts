@@ -480,21 +480,24 @@ describe('the New Database form', () => {
     );
   });
 
-  // The form is taller than the panel on a normal window, so Create Database used
-  // to render below the fold with nothing on screen saying how to commit the form.
-  // It is now in a pinned row (.cf-submit, sized by CSS), and the note explaining
-  // what a create produces travels with it rather than staying in the flow below —
-  // it answers "what do I get", which is wanted before pressing, not after
-  // scrolling past it. CSS position cannot be observed in jsdom, so what is pinned
-  // here is the structural contract the stylesheet hangs off.
-  it('keeps Create Database and its explanatory note in the pinned submit row', () => {
+  // The form is taller than the panel on a normal window, so a submit row at the
+  // bottom put Create Database below the visible area: the one thing the form was
+  // asking for was the one thing off screen. The action now leads the form, which is
+  // visible regardless of panel height or scroll position, and the lead line says what
+  // to do with the fields underneath. Position is not observable in jsdom, so what is
+  // pinned here is document order — the action before the first field.
+  it('puts Create Database ahead of the fields, with a line saying what to do', () => {
     mount();
     click('beginCreate');
-    const submit = root.querySelector('.cf-submit');
-    expect(submit).not.toBeNull();
-    expect(submit?.querySelector('[data-action="submitCreate"]')).not.toBeNull();
-    expect(submit?.querySelector('[data-action="cancelCreate"]')).not.toBeNull();
-    expect(submit?.querySelector('.cf-note')?.textContent).toContain('DataCurator login');
+    const lead = root.querySelector('.cf-lead');
+    expect(lead).not.toBeNull();
+    expect(lead?.querySelector('[data-action="submitCreate"]')).not.toBeNull();
+    expect(lead?.querySelector('[data-action="cancelCreate"]')).not.toBeNull();
+    expect(lead?.querySelector('.cf-note')?.textContent).toContain('Fill in the fields below');
+    // And it really is before them, not merely in its own box: of the lead row and the
+    // fields, taken in document order, the lead row comes first.
+    const inOrder = Array.from(root.querySelectorAll('.cf-lead, [data-cf-field]'));
+    expect(inOrder[0]?.className).toContain('cf-lead');
   });
 
   it('refuses a name with characters a stone name cannot carry', () => {
@@ -1432,24 +1435,20 @@ describe('the Register Existing form', () => {
     expect(root.textContent).toContain('Choose the GemStone product directory');
   });
 
-  // Same pinned submit row as the New Database form, and the same reason. The
-  // mid-form "Choose Folder…" row is deliberately NOT pinned: it is a control that
-  // belongs beside the field it fills in, which is why the pinned row has a class
-  // of its own rather than the styling hanging off every .cf-actions.
-  it('pins its submit row without pinning the mid-form Choose Folder row', () => {
+  // Same shape as the New Database form, and for the same reason. The mid-form
+  // "Choose Folder…" row must NOT be swept into it: it is a control that belongs beside
+  // the field it fills in, which is why the lead row has a class of its own rather than
+  // the styling hanging off every .cf-actions.
+  it('leads with Register Database, leaving Choose Folder beside its field', () => {
     mount();
     click('beginRegister');
-    const submit = root.querySelector('.cf-submit');
-    expect(submit).not.toBeNull();
-    expect(submit?.querySelector('[data-action="submitRegister"]')).not.toBeNull();
-    expect(submit?.querySelector('[data-action="cancelRegister"]')).not.toBeNull();
-    expect(submit?.querySelector('.cf-note')?.textContent).toContain(
-      'records where this installation lives',
-    );
-    // The folder picker is in a plain .cf-actions row, outside the pinned one.
+    const lead = root.querySelector('.cf-lead');
+    expect(lead).not.toBeNull();
+    expect(lead?.querySelector('[data-action="submitRegister"]')).not.toBeNull();
+    expect(lead?.querySelector('.cf-note')?.textContent).toContain('Fill in the fields below');
     const picker = root.querySelector('[data-action="pickProduct"]');
     expect(picker).not.toBeNull();
-    expect(picker?.closest('.cf-submit')).toBeNull();
+    expect(picker?.closest('.cf-lead')).toBeNull();
     expect(picker?.closest('.cf-actions')).not.toBeNull();
   });
 
