@@ -4581,7 +4581,22 @@ export class ExplorerController {
   // Browser "Find Class…"), then cascade the new panes to the chosen class:
   // select its dictionary and class-category, reveal the class row, and open its
   // definition. An explicit `name` arg (programmatic callers) skips the picker.
-  async findClass(name?: string, sessionId?: number): Promise<void> {
+  // `dictName` narrows a named lookup to one dictionary, for a caller that has
+  // already resolved which dictionary owns the class it means — the debugger's
+  // Browse does. Without it a class name shadowed across dictionaries resolves to
+  // whichever entry comes first, which can be the wrong class of the same name.
+  // Ignored when no entry matches it, so a stale hint still lands on the class
+  // rather than on nothing.
+  //
+  // `method` lands on one of the class's methods rather than on the class: its
+  // row is selected and its source opened. That's what Browse from a debugger
+  // frame wants — the method that is actually running.
+  async findClass(
+    name?: string,
+    sessionId?: number,
+    dictName?: string,
+    method?: { selector: string; isMeta: boolean },
+  ): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
     // An explicit sessionId (GemStone Search) pins the reveal to the result's own session.
@@ -4608,9 +4623,11 @@ export class ExplorerController {
     if (name && name.trim()) {
       const trimmed = name.trim();
       const lower = trimmed.toLowerCase();
+      const inDict = dictName ? entries.filter((e) => e.dictName === dictName) : [];
+      const pool = inDict.length > 0 ? inDict : entries;
       chosen =
-        entries.find((e) => e.className === trimmed) ??
-        entries.find((e) => e.className.toLowerCase() === lower);
+        pool.find((e) => e.className === trimmed) ??
+        pool.find((e) => e.className.toLowerCase() === lower);
       if (!chosen) {
         void vscode.window.showWarningMessage(`No class matching "${trimmed}".`);
         return;
@@ -4624,7 +4641,18 @@ export class ExplorerController {
       if (!picked) return;
       chosen = picked.entry;
     }
-    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
+    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
+      revealMethod: method,
+    });
+    if (!method) return;
+    // revealClass leaves state untouched when its queries fail (it warns itself);
+    // reading the method list then would read the PREVIOUS class's selectors.
+    if (this.state.className !== chosen.className) return;
+    if (!(await this.openRevealedMethodSource(method.isMeta, method.selector))) {
+      void vscode.window.showWarningMessage(
+        `${chosen.className} does not implement ${method.isMeta ? 'class method ' : ''}#${method.selector}.`,
+      );
+    }
   }
 
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
@@ -4926,10 +4954,9 @@ export class ExplorerController {
     if (this.state.className !== landing.className) return false;
     if (!revealMethod) return true;
 
-    const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
-      (i) => i.selector === revealMethod.selector,
-    );
-    if (!info) {
+    // revealClass has already selected the row; reopen the source too, since a
+    // method landing is a method the user was reading.
+    if (!(await this.openRevealedMethodSource(revealMethod.isMeta, revealMethod.selector))) {
       void vscode.window.showWarningMessage(
         `${landing.className} no longer implements ${revealMethod.isMeta ? 'class method ' : ''}${revealMethod.selector}.`,
       );
@@ -4939,14 +4966,23 @@ export class ExplorerController {
       const { selector: _selector, isMeta: _isMeta, ...reached } = landing;
       return reached;
     }
-    // revealClass has already selected the row; reopen the source too, since a
-    // method landing is a method the user was reading.
+    return true;
+  }
+
+  // Open the source of the method row `revealClass` has just selected. Answers
+  // false when the loaded class doesn't implement that selector on that side, so
+  // each caller can word its own "no longer there" message.
+  private async openRevealedMethodSource(isMeta: boolean, selector: string): Promise<boolean> {
+    const info = this.selectorsFor(isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => i.selector === selector,
+    );
+    if (!info) return false;
     await this.openMethod(
       new MethodItem(
-        revealMethod.isMeta,
+        isMeta,
         info,
         this.groupMethodsByCategory() ? info.category : undefined,
-        this.methodSourceUri(revealMethod.isMeta, info),
+        this.methodSourceUri(isMeta, info),
       ),
     );
     return true;
@@ -7310,12 +7346,16 @@ export function registerGemStoneExplorer(
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
     // the session its result came from rather than whatever session is selected now.
+    // `dictName` pins a shadowed class name to one dictionary, and `method`
+    // lands on one of its methods (both used by the debugger's Browse).
     vscode.commands.registerCommand(
       'gemstone.explorer.findClass',
-      (name?: string, sessionId?: number) =>
+      (name?: string, sessionId?: number, dictName?: string, method?: MethodCommandArg) =>
         ctl.findClass(
           typeof name === 'string' ? name : undefined,
           typeof sessionId === 'number' ? sessionId : undefined,
+          typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
+          methodArg(method),
         ),
     ),
     // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId

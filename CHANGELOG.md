@@ -4,6 +4,15 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **The error notifier offers one debugger, and it is the GemStone Debugger.** A debuggable error put up a modal with **Enhanced Debug** and **Debug** side by side — two buttons for "debug this" at the moment your code just broke, where the interesting one was always the panel with the frame list, the variable panes, inline values and step points. The notifier now offers a single **Debug**, which opens that panel; dismissing it still releases the suspended process. Nothing is removed: the `gemstone` debug type is still registered, so the VS Code (DAP) debugger stays reachable from the Run and Debug view and from a launch configuration. ([#586](https://github.com/GemTalk/Jasper/issues/586))
+- **Browse from a debugger frame lands in the GemStone Explorer.** The frame context menu's **Browse** opened a System Browser, which is not where class browsing lives any more. It now cascades the Explorer's panes to the class the running method is *defined* in — following method lookup, so an inherited method opens on the class whose source is really executing — and opens that method itself, rather than leaving you on the class to find it. The class's home dictionary goes along with its name, so a class name shadowed across two dictionaries resolves to the one this frame is running, not to whichever entry comes first. The cases that could never be browsed still say so instead of navigating somewhere misleading: a doit frame, an unresolvable receiver, a selector not found in the chain, and a class in no symbol-list dictionary. ([#586](https://github.com/GemTalk/Jasper/issues/586))
+
+### Fixed
+
+- **The debugger's source pane opens with the debugger, below the panel.** Opening the debugger was meant to give you the panel and its companion source pane together, the top frame's source already showing. Instead the pane arrived with the first frame click, and arrived *beside* the debugger in a column of its own. The cause was the carve that splits the debugger's column in two: it read the editor grid immediately after creating the webview panel, before VS Code had registered the group that panel opened into, so the plan could not find the column it was asked to split and declined — silently, inside a best-effort `try`, leaving no trace anywhere. With no source group carved, the source editor named the column after the panel's and VS Code created that group on demand, which is the column that appeared. The carve now re-reads the grid until the panel's own group is in it, and a decline that happens anyway is logged and keeps the source inside the debugger's column instead of growing the editor grid. ([#586](https://github.com/GemTalk/Jasper/issues/586))
+
 ## [1.9.0] - 2026-09-04
 
 ### Added

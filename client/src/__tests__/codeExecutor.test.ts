@@ -600,7 +600,7 @@ describe('CodeExecutor', () => {
       expect(DebuggerPanel.create).toHaveBeenCalledWith(session, 0x123n, 'Debug It');
     });
 
-    it('does NOT show the debugger chooser prompt or start the DAP debugger', async () => {
+    it('does NOT show the error notifier or start the DAP debugger', async () => {
       setup();
 
       await executor.debugIt();
@@ -1386,7 +1386,7 @@ describe('CodeExecutor', () => {
 
       const calls = vi.mocked(vscode.window.showErrorMessage).mock.calls;
       const lastCall = calls[calls.length - 1];
-      expect(lastCall.slice(2)).toEqual(['Enhanced Debug', 'Debug']);
+      expect(lastCall.slice(2)).toEqual(['Debug']);
     });
 
     it('shows a modal dialog when Inspect It raises a DebuggableError', async () => {
@@ -1429,19 +1429,18 @@ describe('CodeExecutor', () => {
 
       const calls = vi.mocked(vscode.window.showErrorMessage).mock.calls;
       const lastCall = calls[calls.length - 1];
-      expect(lastCall.slice(2)).toEqual(['Enhanced Debug', 'Debug']);
+      expect(lastCall.slice(2)).toEqual(['Debug']);
     });
   });
 
-  // ── Reveal the Run and Debug view when debugging starts ────
+  // ── What "Debug" opens ────
   //
-  // After the user clicks "Debug", the debug session attaches but VSCode does
-  // not switch to the Run and Debug view on its own, so the call stack lands
-  // in a hidden view and the session looks like it did nothing. We explicitly
-  // reveal the view via the workbench.view.debug command. Dismissing the
-  // dialog must NOT reveal the view and must clear the stalled GsProcess.
+  // The notifier offers one debugger: the Enhanced Debugger panel, which then
+  // owns the suspended GsProcess. The DAP debugger stays registered and
+  // reachable from Run and Debug, but the notifier never starts it. Dismissing
+  // the dialog must open nothing and must clear the stalled GsProcess.
 
-  describe('reveals the Run and Debug view on Debug', () => {
+  describe('opens the Enhanced Debugger on Debug', () => {
     function debuggableGci() {
       return makeGci({
         GciTsNbResult: vi.fn(() => ({
@@ -1469,39 +1468,21 @@ describe('CodeExecutor', () => {
         .mock.calls.some(([cmd]) => cmd === 'workbench.view.debug');
     }
 
-    it('starts debugging and focuses the Run and Debug view when the user clicks Debug', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
-      vi.mocked(vscode.debug.startDebugging).mockResolvedValue(true);
-      setup();
-
-      await executor.executeIt();
-
-      expect(vscode.debug.startDebugging).toHaveBeenCalled();
-      const config = vi.mocked(vscode.debug.startDebugging).mock.calls[0][1] as unknown as {
-        type: string;
-        gsProcess: string;
-        sessionId: number;
-      };
-      expect(config.type).toBe('gemstone');
-      expect(config.sessionId).toBe(session.id);
-      expect(config.gsProcess).toBe(0x123n.toString());
-      expect(revealedView()).toBe(true);
-    });
-
-    it('does not reveal the view or start debugging, and clears the stack, when the dialog is dismissed', async () => {
+    it('does not start debugging, and clears the stack, when the dialog is dismissed', async () => {
       vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
       setup();
 
       await executor.executeIt();
 
+      expect(DebuggerPanel.create).not.toHaveBeenCalled();
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
       expect(gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, 0x123n);
     });
 
-    it('opens the Enhanced Debugger panel (and not the DAP debugger) when the user clicks Enhanced Debug', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+    it('opens the Enhanced Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 
       await executor.executeIt();
@@ -1522,7 +1503,7 @@ describe('CodeExecutor', () => {
     });
 
     it('passes a completion callback to the Enhanced Debugger for a halted Display It', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 
       await executor.displayIt();
@@ -1538,7 +1519,7 @@ describe('CodeExecutor', () => {
     });
 
     it('the Display It completion callback renders the result back in the workspace, refocusing the editor', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
       await executor.displayIt();
 
@@ -1664,7 +1645,6 @@ describe('CodeExecutor', () => {
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining('doesNotUnderstand: #foo'),
         { modal: true },
-        'Enhanced Debug',
         'Debug',
       );
     });

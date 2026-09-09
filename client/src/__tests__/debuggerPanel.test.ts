@@ -124,6 +124,13 @@ vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
 }));
 
+// A declined layout carve is reported to the GCI log rather than swallowed, so
+// spy on logWarning; everything else in the module stays real.
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig<typeof import('../gciLog')>()),
+  logWarning: vi.fn(),
+}));
+
 // "Browse" a frame opens a System Browser — stub the static entry point so the
 // test doesn't pull in the whole browser module (and its many dependencies).
 vi.mock('../systemBrowser', () => ({ SystemBrowser: { openAndNavigate: vi.fn() } }));
@@ -143,6 +150,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
+import { logWarning } from '../gciLog';
 import { EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
@@ -334,6 +342,22 @@ function lastPosted(panel: ReturnType<typeof lastPanel>, command: string) {
  * is enough.
  */
 const tick = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+// A grid the carve can work with: `leaves` plain columns, so `planDebuggerGrid`
+// can find the panel's own group and split it into the panel/source pair. Tests
+// that assert where the companion source lands need one — with no readable grid
+// the carve declines (by design) and the source opens as a tab in the panel's own
+// column instead. Each read answers a fresh object, since the fit pass rewrites
+// the layout it is handed.
+function mockEditorGrid(leaves: number): void {
+  vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+    Promise.resolve(
+      cmd === 'vscode.getEditorLayout'
+        ? { orientation: 0, groups: Array.from({ length: leaves }, () => ({ size: 600 })) }
+        : undefined,
+    ),
+  );
+}
 /** Drain a few macrotasks — enough for a chain of awaits to settle. */
 const flushMicrotasks = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await tick();
@@ -608,7 +632,9 @@ describe('DebuggerPanel', () => {
     vi.clearAllMocks();
     // clearAllMocks() clears call history but NOT mockImplementation overrides;
     // re-apply the captured factory defaults so a sticky override from one test
-    // doesn't leak into the next under sequence.shuffle.
+    // doesn't leak into the next under sequence.shuffle. Same for the shared
+    // executeCommand mock, which mockEditorGrid and the layout tests override.
+    vi.mocked(vscode.commands.executeCommand).mockReset();
     restoreDebugDefaults();
     // The read-only content provider is registered once per module lifetime
     // (guarded by the static providerRegistered flag); reset it (and the backing
@@ -764,6 +790,7 @@ describe('DebuggerPanel', () => {
       { viewColumn: 1, tabs: [] },
       { viewColumn: 2, tabs: [] },
     );
+    mockEditorGrid(3); // the panel opens into column 3 and carves its pair there
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     await tick();
     const panel = lastPanel();
@@ -967,38 +994,46 @@ describe('DebuggerPanel', () => {
       expect(stack.every((f) => f.browsable === true)).toBe(true);
     });
 
-    it('opens a browser on the running method’s defining class beside the debugger', () => {
+    // Browse lands in the GemStone Explorer (where class browsing lives), not in
+    // a System Browser: findClass cascades its panes and opens the method.
+    const findClassCalls = (): unknown[][] =>
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.filter((c) => c[0] === 'gemstone.explorer.findClass');
+
+    it('cascades the Explorer to the running method’s defining class and opens the method', () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).toHaveBeenCalledWith(
-        session,
-        {
-          dictName: 'UserGlobals',
-          className: 'JasperDebugDemo',
-          isMeta: false,
-          selector: 'halt',
-          category: 'running',
-          environmentId: 0,
-        },
-        vscode.ViewColumn.Beside,
-      );
+      // The dictionary rides along so a class name shadowed across dictionaries
+      // resolves to THIS class; the session id pins the reveal to this stone.
+      expect(findClassCalls()).toEqual([
+        [
+          'gemstone.explorer.findClass',
+          'JasperDebugDemo',
+          session.id,
+          'UserGlobals',
+          { selector: 'halt', isMeta: false },
+        ],
+      ]);
+      // The frozen System Browser is not involved any more.
+      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
     });
 
-    it('does not open a browser for an unknown frame level', () => {
+    it('does not browse an unknown frame level', () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);
 
       sendMessage(panel, { command: 'browseFrame', level: 999 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
     });
 
-    it('shows a message instead of opening a browser when the selector cannot be located', () => {
+    it('shows a message instead of browsing when the selector cannot be located', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce(undefined);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
@@ -1006,11 +1041,11 @@ describe('DebuggerPanel', () => {
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('Could not locate #halt');
     });
 
-    it('shows a message instead of opening a browser when the class is outside the symbol list', () => {
+    it('shows a message instead of browsing when the class is outside the symbol list', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce({
         className: 'Loner',
         isMeta: false,
@@ -1023,7 +1058,7 @@ describe('DebuggerPanel', () => {
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain("isn't in your symbol list");
     });
 
@@ -1259,6 +1294,8 @@ describe('DebuggerPanel', () => {
   describe('source pane', () => {
     // Let revealFrameSource's awaited openTextDocument/showTextDocument settle.
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    // Long enough for the carve's whole re-read back-off (CARVE_RETRY_DELAYS_MS).
+    const settleRetries = () => new Promise((resolve) => setTimeout(resolve, 300));
 
     const URI_INFO = {
       dictName: 'UserGlobals',
@@ -1299,6 +1336,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens the method source (gemstone://) in a group BELOW the panel, keeping focus', async () => {
+      mockEditorGrid(1);
       const panel = openPanelWithStack();
       vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // for the reveal of frame 3
       sendMessage(panel, { command: 'selectFrame', level: 3 });
@@ -1891,6 +1929,94 @@ describe('DebuggerPanel', () => {
         expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
           expect.anything(),
           expect.objectContaining({ viewColumn: 3 }),
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('shows the top frame’s source as the debugger opens, before any frame is clicked', async () => {
+      // The webview default-selects the top frame the moment the stack renders
+      // (see debuggerView's own test), and that select is what opens the source.
+      // So the panel and its companion pane come up together: no click involved,
+      // and the pane is the one the carve made below the panel.
+      mockEditorGrid(1);
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      const panel = openPanelWithStack();
+      sendMessage(panel, { command: 'selectFrame', level: 1 }); // the default select
+      await flush();
+
+      expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preserveFocus: true }),
+      );
+    });
+
+    it('waits for the panel’s own group to reach the grid before planning the carve', async () => {
+      // createWebviewPanel returns before VS Code has registered the group it
+      // opened into, so the grid read straight afterwards can still be the one
+      // from before the panel existed. planDebuggerGrid locates the panel by
+      // counting leaves, so against that grid it finds nothing and declines —
+      // and the pair is never carved. Re-reading is what makes the carve hold.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const stale = { orientation: 0, groups: [{ size: 1200 }] }; // panel's group not in it yet
+      const settled = { orientation: 0, groups: [{ size: 800 }, { size: 400 }] };
+      let reads = 0;
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) => {
+        if (cmd !== 'vscode.getEditorLayout') return Promise.resolve(undefined);
+        reads += 1;
+        return Promise.resolve(reads === 1 ? stale : settled);
+      });
+      try {
+        const panel = openPanelWithStack();
+        await settleRetries();
+
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.find((c) => c[0] === 'vscode.setEditorLayout')?.[1] as EditorGroupLayout;
+        expect(applied).toBeDefined();
+        expect(applied.groups[1].groups).toEqual([{}, {}]); // the pair, in the panel's column
+        expect(reads).toBeGreaterThan(1); // it re-read rather than declining
+
+        // …and the source opens into the group the carve created, not beside it.
+        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        await flush();
+        expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ viewColumn: 3 }),
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('logs a declined carve and keeps the source in the debugger’s own column', async () => {
+      // The panel's group never turns up in the grid. Naming the column after it
+      // anyway is what grew the grid by a column: showTextDocument would have VS
+      // Code create that group, putting the source BESIDE the debugger. Undivided,
+      // the source belongs in the debugger's own column — and the decline is
+      // logged, since its only other symptom is a pane in the wrong place.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const stale = { orientation: 0, groups: [{ size: 1200 }] };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? stale : undefined),
+      );
+      try {
+        const panel = openPanelWithStack();
+        await settleRetries();
+        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        await flush();
+
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+          'vscode.setEditorLayout',
+          expect.anything(),
+        );
+        expect(logWarning).toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+        expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ viewColumn: 2 }), // the panel's column, not a new one
         );
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
@@ -4171,6 +4297,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens a pre-filled new-method template BELOW the panel and hints to fill+save', async () => {
+      mockEditorGrid(1);
       const panel = openWithDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
       sendMessage(panel, { command: 'createDnuMethod' });
@@ -4349,6 +4476,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens a new-method template for the receiver class + frame selector, with banner help (no init)', async () => {
+      mockEditorGrid(1);
       const panel = openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
       sendMessage(panel, { command: 'implementInReceiver', level: 2 });
@@ -5166,6 +5294,7 @@ describe('DebuggerPanel', () => {
 
     it('retires its own groups once they are empty, so the grid does not accumulate', async () => {
       (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      mockEditorGrid(2); // the panel opens into column 2 and carves 3 below it
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);
