@@ -25,12 +25,17 @@ vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn() },
 }));
 
+vi.mock('../basicInspector/basicInspector', () => ({
+  BasicInspector: { create: vi.fn() },
+}));
+
 import { CodeExecutor } from '../codeExecutor';
 import { DebuggerPanel } from '../debuggerPanel';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
+import { BasicInspector } from '../basicInspector/basicInspector';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as vscode from 'vscode';
-import { __resetConfig } from '../__mocks__/vscode';
+import { __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from '../transcriptChannel';
 import { pollReadable } from '../socketPoll';
 import {
@@ -1156,14 +1161,7 @@ describe('CodeExecutor', () => {
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
 
-      const inspectorProvider = {
-        addRoot: vi.fn(),
-        findRootByLabel: vi.fn(),
-      };
-
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       const calls = vi
         .mocked(vscode.commands.executeCommand)
@@ -1172,31 +1170,28 @@ describe('CodeExecutor', () => {
       expect(calls[calls.length - 1]).toEqual(['setContext', 'gemstone.executing', false]);
     });
 
-    it('opens the result in an enhanced inspector when the session has one', async () => {
+    // `auto`, because the tabbed Inspector is the default even where the
+    // Enhanced one is installed — reaching it is a deliberate preference.
+    it('opens the result in an enhanced inspector on auto when the session has one', async () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       session.enhancedInspectorAvailable = true;
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
 
-      const inspectorProvider = { addRoot: vi.fn(), findRootByLabel: vi.fn() };
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       expect(EnhancedInspector.create).toHaveBeenCalledWith(session, 200n, '3 + 4');
-      expect(inspectorProvider.addRoot).not.toHaveBeenCalled();
+      expect(BasicInspector.create).not.toHaveBeenCalled();
     });
 
-    it('opens the result in the sidebar Inspector when the session has no enhanced inspector', async () => {
+    it('opens the result in the basic tabbed Inspector when the session has no enhanced inspector', async () => {
       session.enhancedInspectorAvailable = false;
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
 
-      const inspectorProvider = { addRoot: vi.fn(), findRootByLabel: vi.fn() };
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
-      expect(inspectorProvider.addRoot).toHaveBeenCalledWith(1, 200n, '3 + 4');
+      expect(BasicInspector.create).toHaveBeenCalledWith(session, 200n, '3 + 4');
       expect(EnhancedInspector.create).not.toHaveBeenCalled();
     });
 
@@ -1245,10 +1240,7 @@ describe('CodeExecutor', () => {
       );
       setActiveEditor(editor);
 
-      const inspectorProvider = { addRoot: vi.fn(), findRootByLabel: vi.fn() };
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       expect(callOrder.indexOf('decoration:apply')).toBeLessThan(
         callOrder.indexOf('executing:true'),
@@ -1279,12 +1271,7 @@ describe('CodeExecutor', () => {
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
 
-      const inspectorProvider = { addRoot: vi.fn(), findRootByLabel: vi.fn() };
-      await expect(
-        executor.inspectIt(
-          inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-        ),
-      ).rejects.toThrow('cannot resolve Utf8');
+      await expect(executor.inspectIt()).rejects.toThrow('cannot resolve Utf8');
 
       const setCalls = vi
         .mocked(vscode.commands.executeCommand)
@@ -1319,10 +1306,7 @@ describe('CodeExecutor', () => {
       const editor = makeEditor('bad syntax');
       setActiveEditor(editor);
 
-      const inspectorProvider = { addRoot: vi.fn(), findRootByLabel: vi.fn() };
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       const setCalls = vi
         .mocked(vscode.commands.executeCommand)
@@ -1397,14 +1381,7 @@ describe('CodeExecutor', () => {
       const editor = makeEditor('nil foo');
       setActiveEditor(editor);
 
-      const inspectorProvider = {
-        addRoot: vi.fn(),
-        findRootByLabel: vi.fn(),
-      };
-
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalled();
       expect(lastErrorMessageOptions()).toEqual({ modal: true });
@@ -1418,14 +1395,7 @@ describe('CodeExecutor', () => {
       const editor = makeEditor('nil foo');
       setActiveEditor(editor);
 
-      const inspectorProvider = {
-        addRoot: vi.fn(),
-        findRootByLabel: vi.fn(),
-      };
-
-      await executor.inspectIt(
-        inspectorProvider as unknown as import('../inspectorTreeProvider').InspectorTreeProvider,
-      );
+      await executor.inspectIt();
 
       const calls = vi.mocked(vscode.window.showErrorMessage).mock.calls;
       const lastCall = calls[calls.length - 1];
