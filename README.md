@@ -385,10 +385,15 @@ the thing it was set in goes away:
 #### Breakpoint manager
 
 The **Breakpoints** view in the GemStone sidebar lists what the current session's
-gem actually holds, grouped by class and method with the step point each
-breakpoint resolved to. It shows breakpoints Jasper never set, which are
+gem actually holds, under a heading naming that session — a breakpoint is per-gem
+state, so without it a row is a breakpoint in an unnamed stone, and switching the
+selected session switches the whole list. Beneath the heading they are grouped by
+class and method, with the step point each breakpoint resolved to and, for a
+conditional one, its condition. It shows breakpoints Jasper never set, which are
 otherwise invisible until execution stops on one. Rows carry an enable checkbox;
-clicking one opens the method with the caret on the step point.
+clicking one opens the method with the caret on the step point. The view reads
+only the selected session's gem — it does not go asking every session you are
+logged in to.
 
 ### SUnit Test Runner
 

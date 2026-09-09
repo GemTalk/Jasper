@@ -4,9 +4,14 @@ import { buildMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { BreakpointManager } from './breakpointManager';
+import { loginLabel } from './loginTypes';
 
-/** A class (or metaclass) heading, or one breakpoint under it. */
+/**
+ * The session heading, a class (or metaclass) heading under it, or one
+ * breakpoint under that.
+ */
 export type BreakpointNode =
+  | { kind: 'session'; label: string; groups: BreakpointNode[] }
   | { kind: 'class'; className: string; isMeta: boolean; breakpoints: GemStoneBreakpoint[] }
   | { kind: 'breakpoint'; bp: GemStoneBreakpoint }
   | { kind: 'notice'; text: string; icon?: string };
@@ -175,6 +180,23 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
       return item;
     }
 
+    if (element.kind === 'session') {
+      const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Expanded);
+      const total = element.groups.reduce(
+        (n, g) => n + (g.kind === 'class' ? g.breakpoints.length : 0),
+        0,
+      );
+      item.description = `${total}`;
+      item.iconPath = new vscode.ThemeIcon('plug');
+      item.contextValue = 'gemstoneBreakpointSession';
+      item.tooltip = new vscode.MarkdownString(
+        `Breakpoints in the gem of the **selected** session.\n\n` +
+          `Breakpoints are per-gem state: another session's are not shown here, ` +
+          `and switching the selected session switches this list.`,
+      );
+      return item;
+    }
+
     if (element.kind === 'class') {
       const item = new vscode.TreeItem(
         classLabel(element.className, element.isMeta),
@@ -219,6 +241,7 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
   }
 
   getChildren(element?: BreakpointNode): BreakpointNode[] {
+    if (element?.kind === 'session') return element.groups;
     if (element?.kind === 'class') {
       return element.breakpoints.map((bp) => ({ kind: 'breakpoint' as const, bp }));
     }
@@ -251,7 +274,18 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
         },
       ];
     }
-    return groupBreakpoints(this.lastFetch);
+    // Under a heading naming the session they were read from. This view shows
+    // ONE gem — the selected session's — and a breakpoint is per-gem state, so
+    // without the heading a row is a breakpoint in an unnamed stone. It does not
+    // fetch from every logged-in session: that would be a different view, and a
+    // slower one.
+    return [
+      {
+        kind: 'session',
+        label: loginLabel(session.login),
+        groups: groupBreakpoints(this.lastFetch),
+      },
+    ];
   }
 
   /** Every breakpoint the last fetch saw — for commands that act on all of them. */

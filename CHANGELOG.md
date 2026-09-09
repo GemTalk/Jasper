@@ -22,6 +22,8 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
+- **The Breakpoints view says which session its breakpoints are in.** A GemStone breakpoint is per-gem state, and that view reads one gem — the selected session's — so a row was a breakpoint in a stone the view never named, and switching the selected session silently swapped the whole list for another one. The rows now sit under a heading naming the session the way **Logins & Sessions** does, with the count beside it. It still reads only the selected session: showing every logged-in gem at once would be a different view, and a slower one.
+
 - **The breakpoint warning no longer claims conditions are ignored.** It named conditions, hit counts and log messages together; conditions are now honoured, so it names only the two that are not.
 
 ### Fixed

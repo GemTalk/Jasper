@@ -109,7 +109,16 @@ describe('BreakpointTreeProvider', () => {
   function makeSessionManager(hasSession = true) {
     return {
       getSelectedSession: vi.fn(() =>
-        hasSession ? { id: 1, gci: {}, handle: 'h', login: {}, stoneVersion: '3.7.5' } : undefined,
+        hasSession
+          ? {
+              id: 1,
+              gci: {},
+              handle: 'h',
+              // The heading names the session the way Logins & Sessions does.
+              login: { gs_user: 'DataCurator', stone: 'gs64stone_375', gem_host: 'localhost' },
+              stoneVersion: '3.7.5',
+            }
+          : undefined,
       ),
       onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
     } as unknown as SessionManager;
@@ -157,12 +166,41 @@ describe('BreakpointTreeProvider', () => {
     });
   });
 
-  it('groups the gem breakpoints into class nodes', () => {
+  it('puts the gem breakpoints under a heading naming the session', () => {
+    // Breakpoints are per-gem state and this view reads ONE gem — the selected
+    // session's. Without the heading a row is a breakpoint in an unnamed stone.
     mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
     const roots = provider.getChildren();
     expect(roots).toHaveLength(1);
-    expect(roots[0].kind).toBe('class');
+    expect(roots[0].kind).toBe('session');
+  });
+
+  it('groups the session’s breakpoints into class nodes beneath it', () => {
+    mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
+    const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
+    const [sessionNode] = provider.getChildren();
+    const groups = provider.getChildren(sessionNode);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].kind).toBe('class');
+  });
+
+  it('names the session the way Logins & Sessions does, and counts its breakpoints', () => {
+    mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
+    const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
+    const item = provider.getTreeItem(provider.getChildren()[0]);
+    expect(item.label).toBe('DataCurator on gs64stone_375 (localhost)');
+    expect(item.description).toBe('2');
+  });
+
+  it('reads only the selected session — it does not go asking the others', () => {
+    // A view over every logged-in gem would be a different view, and a slower
+    // one: this is one fetch, from the session whose name is on the heading.
+    mockGetAll.mockReturnValue([bp()]);
+    const sessionManager = makeSessionManager();
+    const provider = new BreakpointTreeProvider(sessionManager, manager);
+    provider.getChildren();
+    expect(mockGetAll).toHaveBeenCalledTimes(1);
   });
 
   it('coalesces a burst of refreshes into one redraw', () => {
@@ -197,7 +235,8 @@ describe('BreakpointTreeProvider', () => {
   it('lists a class node’s breakpoints as its children', () => {
     mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
-    const [classNode] = provider.getChildren();
+    const [sessionNode] = provider.getChildren();
+    const [classNode] = provider.getChildren(sessionNode);
     const children = provider.getChildren(classNode);
     expect(children).toHaveLength(2);
     expect(children.every((c) => c.kind === 'breakpoint')).toBe(true);
