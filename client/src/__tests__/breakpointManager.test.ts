@@ -41,6 +41,8 @@ import {
   FunctionBreakpoint,
 } from '../__mocks__/vscode';
 import type * as vscodeApi from 'vscode';
+import * as vscode from 'vscode';
+import { __resetConfig } from '../__mocks__/vscode';
 import { BreakpointManager } from '../breakpointManager';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../languageIds';
 import { SessionManager } from '../sessionManager';
@@ -998,6 +1000,85 @@ describe('BreakpointManager', () => {
         fireChanged([bp]);
 
         expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('the condition drawn beside the code', () => {
+      /**
+       * An editor over the fixture source that records what was decorated.
+       * `refreshDecorations` is the only thing that draws the label, and where
+       * it lands is the whole question: a step point sits on a token in the
+       * middle of a statement, so anchoring there splits the code.
+       */
+      function editorOver(source: string) {
+        const starts = buildLineStarts(source);
+        const positionAt = (o: number) => {
+          let line = 1;
+          for (let l = 1; l < starts.length; l++) {
+            if (starts[l] <= o) line = l;
+            else break;
+          }
+          return new Position(line - 1, o - starts[line]);
+        };
+        const lines = source.split('\n');
+        const drawn: { type: unknown; value: unknown[] }[] = [];
+        return {
+          drawn,
+          editor: {
+            document: {
+              uri: Uri.parse(METHOD_URI),
+              isDirty: false,
+              getText: () => source,
+              positionAt,
+              lineAt: (line: number) => ({
+                range: {
+                  start: new Position(line, 0),
+                  end: new Position(line, lines[line].length),
+                },
+              }),
+            },
+            setDecorations: (type: unknown, value: unknown[]) => drawn.push({ type, value }),
+          } as unknown as import('vscode').TextEditor,
+        };
+      }
+
+      // `x := x + i` — the step point is the `:=`, mid statement.
+      const SOURCE = 'm\nx := x + i';
+
+      function drawFor(condition: string | undefined) {
+        mockGetMethodSource.mockReturnValue(SOURCE);
+        mockGetSourceOffsets.mockReturnValue([3]);
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, condition },
+        ]);
+        const { editor, drawn } = editorOver(SOURCE);
+        manager.refreshDecorations(editor);
+        // The label decoration is the last of the three passes.
+        return drawn[drawn.length - 1].value as { range: { start: Position } }[];
+      }
+
+      beforeEach(() => {
+        __resetConfig();
+      });
+
+      it('puts the label at the END of the line, not on the step point token', () => {
+        const labels = drawFor('i > 3');
+        expect(labels).toHaveLength(1);
+        // Line 1 (0-based), at its end — `x := x + i` is 10 characters.
+        expect(labels[0].range.start.line).toBe(1);
+        expect(labels[0].range.start.character).toBe(10);
+      });
+
+      it('draws nothing for a breakpoint with no condition', () => {
+        expect(drawFor(undefined)).toHaveLength(0);
+      });
+
+      it('draws nothing when the setting is off', () => {
+        vscode.workspace
+          .getConfiguration('gemstone')
+          .update('breakpoints.showConditionInEditor', false);
+        expect(drawFor('i > 3')).toHaveLength(0);
       });
     });
 

@@ -282,7 +282,12 @@
       {
         "title": "GemStone",
         "properties": {
-          "gemstone.stepPoints.display": {
+          "gemstone.breakpoints.showConditionInEditor": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Write a conditional breakpoint's condition at the end of its line in GemStone method source, as a dimmed annotation (never as text in the method). Turn it off if a permanently visible label is distracting: the gutter still shows VS Code's conditional-breakpoint icon, hovering the step point still reports the condition in full, and the **GemStone Breakpoints** view still shows it on the row."
+        },
+        "gemstone.stepPoints.display": {
             "type": "string",
             "enum": [
               "off",

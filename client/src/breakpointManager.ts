@@ -79,7 +79,7 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
 });
 
 /**
- * Writes a conditional breakpoint's condition after the token it sits on.
+ * Writes a conditional breakpoint's condition at the end of its line.
  *
  * The gutter already tells the two apart — VS Code draws its own conditional
  * icon for a breakpoint carrying a condition — but the icon says only *that*
@@ -89,16 +89,32 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
  * be written down. Drawn as an annotation rather than as text in the document:
  * the method's source is the stone's, and nothing here may modify it.
  *
- * Applied alongside the enabled/disabled border rather than instead of it, so a
- * conditional breakpoint still reads as armed or inert at a glance.
+ * At the **end of the line**, not after the step point's own token. A step point
+ * sits on a token in the middle of a statement — step point 5 of `running :=
+ * running + each` is the `:=` — so anchoring there splits the code it annotates
+ * and is genuinely hard to read. Applied alongside the enabled/disabled border
+ * rather than instead of it, so a conditional breakpoint still reads as armed or
+ * inert at a glance, and switched off entirely by
+ * `gemstone.breakpoints.showConditionInEditor` for anyone who finds a
+ * permanently-visible label distracting — the hover and the GemStone Breakpoints
+ * view still carry the condition either way.
  */
 const conditionDecoration = vscode.window.createTextEditorDecorationType({
   after: {
-    margin: '0 0 0 1ch',
+    // Set well clear of the code: at the end of a short line the label would
+    // otherwise read as part of the statement it follows.
+    margin: '0 0 0 3ch',
     fontStyle: 'italic',
     color: new vscode.ThemeColor('editorCodeLens.foreground'),
   },
 });
+
+/** Whether to draw a conditional breakpoint's condition beside its line. */
+function showConditionInEditor(): boolean {
+  return vscode.workspace
+    .getConfiguration('gemstone')
+    .get<boolean>('breakpoints.showConditionInEditor', true);
+}
 
 /** How much of a condition is drawn beside the token before it is elided. */
 const MAX_CONDITION_LABEL = 48;
@@ -189,6 +205,10 @@ export class BreakpointManager {
       }),
       vscode.window.onDidChangeVisibleTextEditors((editors) => {
         for (const editor of editors) this.refreshDecorations(editor);
+      }),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!e.affectsConfiguration('gemstone.breakpoints.showConditionInEditor')) return;
+        for (const editor of vscode.window.visibleTextEditors) this.refreshDecorations(editor);
       }),
     );
   }
@@ -1130,6 +1150,7 @@ export class BreakpointManager {
     const on: vscode.Range[] = [];
     const off: vscode.Range[] = [];
     const conditions: vscode.DecorationOptions[] = [];
+    const withCondition = showConditionInEditor();
     for (const bp of applied) {
       const spans = rangesForStepPoint(info, bp.stepPoint);
       for (const r of spans) {
@@ -1139,16 +1160,15 @@ export class BreakpointManager {
         );
         (bp.enabled ? on : off).push(range);
       }
-      // One label per breakpoint, on its last span: a step point can span
-      // several ranges (a keyword message's parts), and a label after each would
-      // repeat the same condition across one send.
-      const last = spans[spans.length - 1];
-      if (bp.condition !== undefined && last !== undefined) {
+      // One label per breakpoint, at the end of the line its step point starts
+      // on — never after the step point's own token, which is routinely mid
+      // statement.
+      const first = spans[0];
+      if (bp.condition !== undefined && first !== undefined && withCondition) {
+        const endOfLine = editor.document.lineAt(positionOf(editor.document, first.start).line)
+          .range.end;
         conditions.push({
-          range: new vscode.Range(
-            positionOf(editor.document, last.end),
-            positionOf(editor.document, last.end),
-          ),
+          range: new vscode.Range(endOfLine, endOfLine),
           hoverMessage: new vscode.MarkdownString(
             `Breakpoint condition:\n\n\`\`\`smalltalk\n${bp.condition}\n\`\`\``,
           ),
