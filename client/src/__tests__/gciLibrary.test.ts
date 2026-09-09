@@ -1188,3 +1188,58 @@ describe('GciLibrary', () => {
     });
   });
 });
+
+describe('GciTsContinueWithAsync without a koffi async binding', () => {
+  /**
+   * `.async` is not guaranteed: an optional-symbol stub carries none by design,
+   * and a binding can arrive without one for other reasons. Throwing there took
+   * out every caller of the async resume — the transcript forwarder loop and
+   * conditional breakpoints both — and a conditional breakpoint whose resume
+   * fails just stops every time, saying nothing.
+   */
+  function libraryWith(continueWith: unknown): {
+    lib: { GciTsContinueWithAsync: GciLibrary['GciTsContinueWithAsync'] };
+  } {
+    const lib = Object.create(GciLibrary.prototype) as GciLibrary;
+    (lib as unknown as Record<string, unknown>)._GciTsContinueWith = continueWith;
+    return { lib };
+  }
+
+  it('falls back to the blocking call and answers the same thing', async () => {
+    const calls: unknown[][] = [];
+    const sync = (...args: unknown[]) => {
+      calls.push(args);
+      // The out-param the real binding fills in.
+      Object.assign(args[5] as Record<string, unknown>, { number: 0, message: '' });
+      return 4242n;
+    };
+    const { lib } = libraryWith(sync);
+
+    await expect(lib.GciTsContinueWithAsync({}, 7n, 1n, null, 33)).resolves.toMatchObject({
+      result: 4242n,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toBe(7n);
+    expect(calls[0][4]).toBe(33);
+  });
+
+  it('uses the async binding when there is one', async () => {
+    const sync = Object.assign(
+      () => {
+        throw new Error('the blocking call must not be used when .async exists');
+      },
+      {
+        async: (...args: unknown[]) => {
+          const done = args[6] as (e: unknown, raw: bigint) => void;
+          Object.assign(args[5] as Record<string, unknown>, { number: 0, message: '' });
+          done(null, 99n);
+        },
+      },
+    );
+    const { lib } = libraryWith(sync);
+
+    await expect(lib.GciTsContinueWithAsync({}, 7n, 1n, null, 0)).resolves.toMatchObject({
+      result: 99n,
+    });
+  });
+});
