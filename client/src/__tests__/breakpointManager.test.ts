@@ -1144,6 +1144,64 @@ describe('BreakpointManager', () => {
       });
     });
 
+    describe('the same method reached by two URIs', () => {
+      /**
+       * One compiled method can be addressed by more than one `gemstone://` URI
+       * — the Explorer scopes its URIs to a dictionary index, the debugger
+       * builds one from what the gem reports, and the two differ in the query
+       * or the category while naming the same method. `applyToUri` CLEARS the
+       * whole method before arming, so applying either one makes the other's
+       * record a description of breakpoints that no longer exist. Left in place
+       * it is emitted as a spec of its own, and the gem is handed a stale
+       * condition alongside the live one — which is what a developer sees as an
+       * edited condition having no effect.
+       */
+      const OTHER_URI = `${METHOD_URI}?dict=4`;
+
+      it('keeps one record, not one per URI', () => {
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, condition: 'index = 900' },
+        ]);
+        manager.applyToUri(session(), Uri.parse(OTHER_URI), [
+          { line: 2, enabled: true, condition: 'index > 1001' },
+        ]);
+
+        expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(0);
+        expect(manager.appliedFor(Uri.parse(OTHER_URI))[0].condition).toBe('index > 1001');
+      });
+
+      it('sends the gem one condition — the live one', () => {
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, condition: 'index = 900' },
+        ]);
+        manager.applyToUri(session(), Uri.parse(OTHER_URI), [
+          { line: 2, enabled: true, condition: 'index > 1001' },
+        ]);
+
+        const specs = manager.conditionSpecsFor(session());
+        expect(specs).toHaveLength(1);
+        expect(specs[0].condition).toBe('index > 1001');
+      });
+
+      it('leaves a different method alone', () => {
+        const other = 'gemstone://1/Globals/Array/instance/accessing/size';
+        mockGetMethodSource.mockReturnValue('foo\n^1');
+        mockGetSourceOffsets.mockReturnValue([1, 5]);
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, condition: 'index = 900' },
+        ]);
+        manager.applyToUri(session(), Uri.parse(other), [
+          { line: 2, enabled: true, condition: 'n > 1' },
+        ]);
+
+        expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(1);
+        expect(manager.conditionSpecsFor(session())).toHaveLength(2);
+      });
+    });
+
     describe('conditionForStoneBreakpoint', () => {
       const stoneBp = (over: Record<string, unknown> = {}) => ({
         breakNumber: 1,

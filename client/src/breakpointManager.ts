@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { parseMethodUri } from './gemstoneFileSystemProvider';
+import { parseMethodUri, type MethodUriRef } from './gemstoneFileSystemProvider';
 import { BREAKPOINT_GUTTER_LANGUAGES, isMethodSourceUri, methodSourceRef } from './languageIds';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
@@ -291,6 +291,11 @@ export class BreakpointManager {
       /* the method may no longer exist — nothing to clear */
     }
 
+    // The gem's method is now empty, so any OTHER URI's record for it describes
+    // breakpoints that no longer exist. Drop them here, at the moment they stop
+    // being true, rather than leaving them to be believed.
+    this.dropAliasRecords(uri, method);
+
     if (wanted.length === 0) {
       this.applied.delete(uri.toString());
       this.refreshEditorsFor(uri);
@@ -458,6 +463,40 @@ export class BreakpointManager {
     this.refreshEditorsFor(uri);
     this._onDidApply.fire();
     return results;
+  }
+
+  /**
+   * Forget every record for this method held under a *different* URI.
+   *
+   * One compiled method can be addressed by more than one `gemstone://` URI: the
+   * Explorer scopes its URIs to a dictionary index, the debugger builds one from
+   * what the gem reports, and the two differ in the query or the category while
+   * naming the same method. Since `applyToUri` clears the whole method before
+   * arming anything, applying either one makes the other's record a description
+   * of breakpoints that are already gone.
+   *
+   * Left in place, that record goes on drawing token markers and a condition
+   * label for breakpoints that do not exist, and — worse — is handed to the gem
+   * as a condition spec of its own, so an edited condition appears to have no
+   * effect while the *previous* one is quietly still deciding.
+   */
+  private dropAliasRecords(uri: vscode.Uri, method: MethodUriRef): void {
+    const keep = uri.toString();
+    for (const key of [...this.applied.keys()]) {
+      if (key === keep) continue;
+      const other = methodSourceRef(vscode.Uri.parse(key));
+      if (!other) continue;
+      if (
+        other.sessionId === method.sessionId &&
+        other.className === method.className &&
+        other.isMeta === method.isMeta &&
+        other.selector === method.selector &&
+        other.environmentId === method.environmentId
+      ) {
+        this.applied.delete(key);
+        this.refreshEditorsFor(vscode.Uri.parse(key));
+      }
+    }
   }
 
   /**
