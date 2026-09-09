@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { GciLibrary } from '../gciLibrary';
 import { GciTestContext, useIntegrationTest } from './useIntegrationTest';
 import { GciLibraryError } from '../gciLibraryError';
+import { GCI_ERR_BAD_SESSION_ID } from '../gciConstants';
 import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
@@ -403,13 +404,36 @@ describe('GciLibrary', () => {
       expect(gciLibrary.socketFor(session)).toBeGreaterThanOrEqual(0);
     });
 
-    it('throws when the session socket cannot be identified', () => {
-      testContext.logout();
+    /**
+     * Mocks GciTsSocket rather than provoking the error for real: GciTsLogout
+     * frees the session, so calling GciTsSocket on a logged-out session is a
+     * use-after-free that can segfault the worker rather than return an error.
+     */
+    function simulateGciTsSocketError() {
+      const errorMessage = 'simulated GciTsSocket error';
 
-      expectToThrowGciLibraryError(
-        () => gciLibrary.socketFor(session),
-        'argument is not a valid GciSession pointer',
-      );
+      vi.spyOn(gciLibrary, 'GciTsSocket').mockReturnValueOnce({
+        fd: -1,
+        err: {
+          number: GCI_ERR_BAD_SESSION_ID,
+          message: errorMessage,
+          category: 0n,
+          context: 0n,
+          exceptionObj: 0n,
+          args: [],
+          argCount: 0,
+          fatal: 0,
+          reason: '',
+        },
+      });
+
+      return errorMessage;
+    }
+
+    it('throws when the session socket cannot be identified', () => {
+      const expectedErrorMessage = simulateGciTsSocketError();
+
+      expectToThrowGciLibraryError(() => gciLibrary.socketFor(session), expectedErrorMessage);
     });
   });
 
