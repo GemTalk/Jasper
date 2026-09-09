@@ -6,6 +6,8 @@ import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { FunctionBreakpointResolver } from './functionBreakpoints';
 import { messageOf } from './serverPlugin/installHelpers';
+import { compiledMethodExpr } from './queries/util';
+import { ConditionSpec } from './conditionalBreakpoints';
 import { describeMethodResult } from './methodResultsPicker';
 import {
   StepPointModel,
@@ -31,6 +33,17 @@ export interface AppliedBreakpoint {
   /** 1-based line in the stone's source. */
   line: number;
   enabled: boolean;
+  /**
+   * The Smalltalk expression that has to answer true for this breakpoint to
+   * stop, or undefined when it stops every time.
+   *
+   * Carried on the applied record rather than looked up from VS Code's list on
+   * demand because everything downstream needs it at once — the token marker,
+   * the hover, the breakpoint manager view and the in-gem skip loop — and this
+   * is the one place that already knows which VS Code breakpoint landed on which
+   * step point. See `conditionalBreakpoints.ts` for how it is honoured.
+   */
+  condition?: string;
 }
 
 /**
@@ -64,6 +77,44 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
   // the marker exists to answer.
   opacity: '0.75',
 });
+
+/**
+ * Writes a conditional breakpoint's condition after the token it sits on.
+ *
+ * The gutter already tells the two apart — VS Code draws its own conditional
+ * icon for a breakpoint carrying a condition — but the icon says only *that*
+ * there is one. The question a developer actually has, looking at a method they
+ * set a breakpoint in ten minutes ago, is **what** the condition says, and a
+ * condition that has to be hunted for in the Breakpoints panel may as well not
+ * be written down. Drawn as an annotation rather than as text in the document:
+ * the method's source is the stone's, and nothing here may modify it.
+ *
+ * Applied alongside the enabled/disabled border rather than instead of it, so a
+ * conditional breakpoint still reads as armed or inert at a glance.
+ */
+const conditionDecoration = vscode.window.createTextEditorDecorationType({
+  after: {
+    margin: '0 0 0 1ch',
+    fontStyle: 'italic',
+    color: new vscode.ThemeColor('editorCodeLens.foreground'),
+  },
+});
+
+/** How much of a condition is drawn beside the token before it is elided. */
+const MAX_CONDITION_LABEL = 48;
+
+/**
+ * The condition as it is drawn next to the token: one line, and short enough not
+ * to push the code it annotates off the screen.
+ */
+export function conditionLabel(condition: string): string {
+  const oneLine = condition.replace(/\s+/g, ' ').trim();
+  const shown =
+    oneLine.length > MAX_CONDITION_LABEL
+      ? `${oneLine.slice(0, MAX_CONDITION_LABEL - 1)}…`
+      : oneLine;
+  return `if ${shown}`;
+}
 
 /**
  * Applies Jasper's breakpoints to a GemStone session and keeps the two in step.
@@ -181,7 +232,7 @@ export class BreakpointManager {
   applyToUri(
     session: ActiveSession,
     uri: vscode.Uri,
-    requests?: { line: number; character?: number; enabled: boolean }[],
+    requests?: { line: number; character?: number; enabled: boolean; condition?: string }[],
   ): VerifiedBreakpoint[] {
     // The one statement of "a breakpoint can be armed here" (see
     // client/src/languageIds.ts), shared with the rule that decides which
@@ -249,7 +300,15 @@ export class BreakpointManager {
     // inline breakpoint on the same line, say. The gem has one breakpoint per
     // step point, so they collapse, and the step point stays armed if *any* of
     // them is enabled.
+    //
+    // A condition collapses the other way round: the step point is conditional
+    // only while *every* request on it carries a condition, because the gem has
+    // one breakpoint there and an unconditional request means "stop every time".
+    // Honouring one request's condition would silently break the other one's
+    // breakpoint, so the unconditional reading wins. Two differing conditions on
+    // one step point keep the first — there is nowhere to put a second.
     const byStepPoint = new Map<number, AppliedBreakpoint>();
+    const seenStepPoint = new Set<number>();
 
     for (const req of wanted) {
       const resolved = resolveStepPoint(info, req.line, req.character);
@@ -263,11 +322,18 @@ export class BreakpointManager {
         verified: true,
       });
       const existing = byStepPoint.get(resolved.stepPoint);
+      const first = !seenStepPoint.has(resolved.stepPoint);
+      seenStepPoint.add(resolved.stepPoint);
       byStepPoint.set(resolved.stepPoint, {
         stepPoint: resolved.stepPoint,
         offset: resolved.offset,
         line: resolved.line,
         enabled: (existing?.enabled ?? false) || req.enabled,
+        condition: first
+          ? req.condition
+          : req.condition === undefined
+            ? undefined
+            : existing?.condition,
       });
     }
 
@@ -623,6 +689,139 @@ export class BreakpointManager {
     if (existing) vscode.debug.removeBreakpoints([existing]);
   }
 
+  // ── Conditions ───────────────────────────────────────────
+
+  /**
+   * Ask for the condition on the breakpoint at the caret's step point, and set
+   * it.
+   *
+   * VS Code's own *Add Conditional Breakpoint* (right-click in the gutter) and
+   * *Edit Breakpoint* do the same job and Jasper honours what they produce; this
+   * exists so the condition is reachable from where the developer already is —
+   * the caret, the step point hover, and the breakpoint manager row — without
+   * having to find the right gutter pixel first. The box opens with the current
+   * condition in it, so seeing one and changing one are the same gesture.
+   */
+  async editConditionAtCursor(editor: vscode.TextEditor): Promise<void> {
+    const found = this.stepPointAtCursor(editor);
+    if (!found) return;
+    await this.promptForCondition(editor.document.uri, found.info, found.resolved.stepPoint);
+  }
+
+  /** Ask for the condition on the breakpoint at a step point named outright. */
+  async editConditionAtStepPoint(uri: vscode.Uri, stepPoint: number): Promise<void> {
+    const ctx = this.contextFor(uri);
+    if (!ctx) return;
+    await this.promptForCondition(uri, ctx.info, stepPoint);
+  }
+
+  /**
+   * Put a condition on the breakpoint at `stepPoint`, creating the breakpoint if
+   * there isn't one — asking for a condition where no breakpoint exists means
+   * "break here, but only when…", and refusing it would just make the developer
+   * set the breakpoint and ask again.
+   *
+   * An emptied box removes the condition rather than setting a blank one; a
+   * cancelled box changes nothing.
+   */
+  private async promptForCondition(
+    uri: vscode.Uri,
+    info: StepPointInfo,
+    stepPoint: number,
+  ): Promise<void> {
+    const existing = this.vsCodeBreakpointFor(uri, info, stepPoint);
+    const typed = await vscode.window.showInputBox({
+      title: `Breakpoint condition — step point ${stepPoint}`,
+      prompt:
+        'A Smalltalk expression answering true or false, evaluated in the ' +
+        'suspended frame. Leave empty to stop every time.',
+      placeHolder: 'e.g. amount > 100',
+      value: existing?.condition ?? '',
+      ignoreFocusOut: true,
+    });
+    if (typed === undefined) return; // cancelled
+
+    const condition = typed.trim() === '' ? undefined : typed.trim();
+    if (existing) {
+      if (existing.condition === condition) return;
+      replaceCondition(existing, condition);
+      return;
+    }
+
+    const at = info.offsets[stepPoint - 1];
+    if (at === undefined) return;
+    const ctx = this.contextFor(uri);
+    if (!ctx) return;
+    vscode.debug.addBreakpoints([
+      new vscode.SourceBreakpoint(
+        new vscode.Location(uri, ctx.document.positionAt(at)),
+        true,
+        condition,
+      ),
+    ]);
+  }
+
+  /**
+   * Every armed conditional breakpoint in `session`'s gem, as the in-gem skip
+   * loop needs to see them.
+   *
+   * Only *enabled* ones: a disabled breakpoint is not armed, so it cannot be the
+   * reason execution stopped and a spec for it would only be dead weight in the
+   * doit. Empty when nothing is conditional, which is what lets the whole
+   * mechanism cost nothing at all in the ordinary case.
+   */
+  conditionSpecsFor(session: ActiveSession): ConditionSpec[] {
+    const prefix = `gemstone://${session.id}/`;
+    const specs: ConditionSpec[] = [];
+    for (const [uriStr, applied] of this.applied) {
+      if (!uriStr.startsWith(prefix)) continue;
+      const method = methodSourceRef(vscode.Uri.parse(uriStr));
+      if (!method) continue;
+      for (const bp of applied) {
+        if (!bp.enabled || bp.condition === undefined) continue;
+        specs.push({
+          methodExpr: compiledMethodExpr(
+            method.className,
+            method.isMeta,
+            method.selector,
+            method.environmentId,
+          ),
+          stepPoint: bp.stepPoint,
+          condition: bp.condition,
+        });
+      }
+    }
+    return specs;
+  }
+
+  /**
+   * The condition on a breakpoint the gem reported, when Jasper set it and it
+   * has one. Lets the breakpoint manager view show a condition it has no other
+   * way of knowing about — the gem does not record one.
+   */
+  conditionForStoneBreakpoint(bp: GemStoneBreakpoint): string | undefined {
+    const session = this.sessionManager.getSelectedSession();
+    if (!session) return undefined;
+    const prefix = `gemstone://${session.id}/`;
+
+    for (const [uriStr, applied] of this.applied) {
+      if (!uriStr.startsWith(prefix)) continue;
+      const method = methodSourceRef(vscode.Uri.parse(uriStr));
+      if (!method) continue;
+      if (
+        method.className !== bp.className ||
+        method.isMeta !== bp.isMeta ||
+        method.selector !== bp.selector ||
+        method.environmentId !== bp.environmentId
+      ) {
+        continue;
+      }
+      const match = applied.find((a) => a.stepPoint === bp.stepPoint);
+      if (match?.condition !== undefined) return match.condition;
+    }
+    return undefined;
+  }
+
   /**
    * The open document for `uri` and its step points. Only an *open* document
    * will do — these entry points are all driven by a click in one, and the
@@ -882,6 +1081,7 @@ export class BreakpointManager {
       if (editor.document.uri.toString().startsWith(prefix)) {
         editor.setDecorations(enabledDecoration, []);
         editor.setDecorations(disabledDecoration, []);
+        editor.setDecorations(conditionDecoration, []);
       }
     }
     this._onDidApply.fire();
@@ -901,6 +1101,7 @@ export class BreakpointManager {
     if (!applied || applied.length === 0) {
       editor.setDecorations(enabledDecoration, []);
       editor.setDecorations(disabledDecoration, []);
+      editor.setDecorations(conditionDecoration, []);
       return;
     }
 
@@ -909,17 +1110,36 @@ export class BreakpointManager {
 
     const on: vscode.Range[] = [];
     const off: vscode.Range[] = [];
+    const conditions: vscode.DecorationOptions[] = [];
     for (const bp of applied) {
-      for (const r of rangesForStepPoint(info, bp.stepPoint)) {
+      const spans = rangesForStepPoint(info, bp.stepPoint);
+      for (const r of spans) {
         const range = new vscode.Range(
           positionOf(editor.document, r.start),
           positionOf(editor.document, r.end),
         );
         (bp.enabled ? on : off).push(range);
       }
+      // One label per breakpoint, on its last span: a step point can span
+      // several ranges (a keyword message's parts), and a label after each would
+      // repeat the same condition across one send.
+      const last = spans[spans.length - 1];
+      if (bp.condition !== undefined && last !== undefined) {
+        conditions.push({
+          range: new vscode.Range(
+            positionOf(editor.document, last.end),
+            positionOf(editor.document, last.end),
+          ),
+          hoverMessage: new vscode.MarkdownString(
+            `Breakpoint condition:\n\n\`\`\`smalltalk\n${bp.condition}\n\`\`\``,
+          ),
+          renderOptions: { after: { contentText: conditionLabel(bp.condition) } },
+        });
+      }
     }
     editor.setDecorations(enabledDecoration, on);
     editor.setDecorations(disabledDecoration, off);
+    editor.setDecorations(conditionDecoration, conditions);
   }
 
   /** What we last applied to `uri`, for the breakpoint manager view. */
@@ -1001,30 +1221,31 @@ export class BreakpointManager {
   }
 
   /**
-   * Say so when a breakpoint carries a condition, hit count or log message.
+   * Say so when a breakpoint carries a hit count or a log message.
    *
-   * VS Code offers all three through *Edit Breakpoint*, and they are honoured
-   * entirely by the debugger — Jasper does not implement them, so the breakpoint
-   * stops every time it is reached. Left unsaid, that is the worst kind of
+   * VS Code offers both through *Edit Breakpoint* and they are honoured entirely
+   * by the debugger — Jasper does not implement either, so the breakpoint stops
+   * every time it is reached regardless. Left unsaid, that is the worst kind of
    * failure this feature has: the developer has written down a precise intent,
    * the UI accepts it, and execution quietly ignores it. The fields are still
    * carried across enable/disable and name-conversion, so nothing is lost if
    * they are honoured later.
+   *
+   * Conditions are **not** on this list any more — see
+   * `conditionalBreakpoints.ts`, which evaluates them in the suspended frame.
    */
   private warnAboutUnsupportedFields(breakpoints: readonly vscode.Breakpoint[]): void {
     const ignored = breakpoints.filter(
       (bp) =>
         bp instanceof vscode.SourceBreakpoint &&
         bp.location.uri.scheme === 'gemstone' &&
-        (bp.condition !== undefined ||
-          bp.hitCondition !== undefined ||
-          bp.logMessage !== undefined),
+        (bp.hitCondition !== undefined || bp.logMessage !== undefined),
     );
     if (ignored.length === 0) return;
     vscode.window.showWarningMessage(
-      'GemStone breakpoints ignore conditions, hit counts and log messages — ' +
+      'GemStone breakpoints ignore hit counts and log messages — ' +
         `${ignored.length === 1 ? 'this breakpoint' : 'these breakpoints'} will stop every time ` +
-        'the step point is reached.',
+        'the step point is reached. Conditions are honoured.',
     );
   }
 
@@ -1052,7 +1273,7 @@ export function gemstoneBreakpoints(): vscode.SourceBreakpoint[] {
  */
 function readVsCodeBreakpoints(
   uri: vscode.Uri,
-): { line: number; character?: number; enabled: boolean }[] {
+): { line: number; character?: number; enabled: boolean; condition?: string }[] {
   const uriStr = uri.toString();
   return gemstoneBreakpoints()
     .filter((bp) => bp.location.uri.toString() === uriStr)
@@ -1062,6 +1283,10 @@ function readVsCodeBreakpoints(
         line: start.line + 1,
         character: start.character === 0 ? undefined : start.character,
         enabled: bp.enabled,
+        // A condition of whitespace is no condition: VS Code hands back what was
+        // typed, and an accidentally blank one must not turn into a breakpoint
+        // that can never stop.
+        condition: bp.condition?.trim() ? bp.condition.trim() : undefined,
       };
     });
 }
@@ -1084,6 +1309,27 @@ function replaceEnabled(breakpoints: vscode.SourceBreakpoint[], enabled: boolean
   );
   vscode.debug.removeBreakpoints(breakpoints);
   vscode.debug.addBreakpoints(replacements);
+}
+
+/**
+ * Re-add `breakpoint` with a new condition. `Breakpoint.condition` is read-only
+ * in the VS Code API, exactly as `enabled` is, so this is the only way to change
+ * one; everything else about the breakpoint rides along untouched.
+ */
+function replaceCondition(
+  breakpoint: vscode.SourceBreakpoint,
+  condition: string | undefined,
+): void {
+  vscode.debug.removeBreakpoints([breakpoint]);
+  vscode.debug.addBreakpoints([
+    new vscode.SourceBreakpoint(
+      breakpoint.location,
+      breakpoint.enabled,
+      condition,
+      breakpoint.hitCondition,
+      breakpoint.logMessage,
+    ),
+  ]);
 }
 
 function positionOf(document: vscode.TextDocument, offset: number): vscode.Position {

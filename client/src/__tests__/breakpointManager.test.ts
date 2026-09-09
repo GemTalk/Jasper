@@ -800,6 +800,7 @@ describe('BreakpointManager', () => {
         removed: event.removed ?? [],
         changed: event.changed ?? [],
       });
+      return manager;
     }
 
     const withFields = (fields: {
@@ -822,11 +823,10 @@ describe('BreakpointManager', () => {
       mockGetSourceOffsets.mockReturnValue([1, 5]);
     });
 
-    it('warns that a condition is ignored, rather than silently not honouring it', () => {
-      fire({ added: [withFields({ condition: 'x > 3' })] });
-      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
-        expect.stringContaining('ignore conditions'),
-      );
+    it('says nothing about a condition — conditions are honoured', () => {
+      debug.breakpoints = [withFields({ condition: 'x > 3' })];
+      fire({ added: debug.breakpoints });
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
     it('warns for a hit count', () => {
@@ -839,10 +839,16 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
     });
 
-    it('warns when a condition is added to an existing breakpoint', () => {
-      // Edit Breakpoint on an existing one arrives as a change, not an addition.
-      fire({ changed: [withFields({ condition: 'x > 3' })] });
-      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
+    it('names only what is really ignored', () => {
+      fire({ added: [withFields({ hitCondition: '5' })] });
+      const said = vi.mocked(window.showWarningMessage).mock.calls[0][0] as string;
+      expect(said).toContain('hit counts and log messages');
+      expect(said).not.toContain('ignore conditions');
+    });
+
+    it('warns once for several unsupported breakpoints, not once each', () => {
+      fire({ added: [withFields({ hitCondition: '1' }), withFields({ logMessage: 'b' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledTimes(1);
     });
 
     it('says nothing for a plain breakpoint', () => {
@@ -852,23 +858,18 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
-    it('warns once for several conditional breakpoints, not once each', () => {
-      fire({ added: [withFields({ condition: 'a' }), withFields({ condition: 'b' })] });
-      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledTimes(1);
-    });
-
-    it('ignores a conditional breakpoint on a non-gemstone file', () => {
+    it('ignores an unsupported field on a non-gemstone file', () => {
       const fileBp = new SourceBreakpoint(
         new Location(Uri.parse('file:///a.ts'), new Position(0, 0)),
         true,
-        'x > 3',
+        undefined,
+        '3',
       );
       fire({ added: [fileBp] });
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
     it('still carries the fields across an enable/disable round trip', () => {
-      // Nothing is lost if conditions are honoured later.
       const bp = withFields({ condition: 'x > 3', hitCondition: '2', logMessage: 'hi' });
       debug.breakpoints = [bp];
 
@@ -880,6 +881,220 @@ describe('BreakpointManager', () => {
       expect(replacement?.hitCondition).toBe('2');
       expect(replacement?.logMessage).toBe('hi');
       expect(replacement?.enabled).toBe(false);
+    });
+  });
+
+  describe('conditions', () => {
+    beforeEach(() => {
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+      vi.mocked(window.showWarningMessage).mockClear();
+    });
+
+    const conditional = (condition?: string, enabled = true) =>
+      new SourceBreakpoint(
+        new Location(Uri.parse(METHOD_URI), new Position(1, 0)),
+        enabled,
+        condition,
+      );
+
+    it('records the condition on the applied breakpoint', () => {
+      debug.breakpoints = [conditional('index > 3')];
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI));
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBe('index > 3');
+    });
+
+    it('arms a conditional breakpoint in the gem like any other', () => {
+      // The gem has no idea a breakpoint is conditional: it stops every time and
+      // the condition is applied afterwards. Nothing about arming changes.
+      debug.breakpoints = [conditional('index > 3')];
+      makeManager().applyToUri(session(), Uri.parse(METHOD_URI));
+      expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a blank condition as no condition', () => {
+      // VS Code hands back whatever was typed; a breakpoint that can never stop
+      // is not what an accidentally emptied box meant.
+      debug.breakpoints = [conditional('   ')];
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI));
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBeUndefined();
+    });
+
+    it('an unconditional request wins over a conditional one on the same step point', () => {
+      // One step point, one gem breakpoint. Honouring the condition would
+      // silently break the plain breakpoint sitting on the same token.
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 2, enabled: true, condition: 'index > 3' },
+        { line: 2, enabled: true },
+      ]);
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBeUndefined();
+    });
+
+    it('keeps the first of two conditions on one step point', () => {
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 2, enabled: true, condition: 'a' },
+        { line: 2, enabled: true, condition: 'b' },
+      ]);
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].condition).toBe('a');
+    });
+
+    describe('conditionSpecsFor', () => {
+      it('answers nothing when no breakpoint is conditional', () => {
+        debug.breakpoints = [conditional(undefined)];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.conditionSpecsFor(session())).toEqual([]);
+      });
+
+      it('names the method, step point and condition', () => {
+        debug.breakpoints = [conditional('index > 3')];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.conditionSpecsFor(session())).toEqual([
+          {
+            methodExpr: "(Array compiledMethodAt: #'at:' environmentId: 0)",
+            stepPoint: 2,
+            condition: 'index > 3',
+          },
+        ]);
+      });
+
+      it('leaves out a disabled conditional breakpoint', () => {
+        // A disabled breakpoint is not armed, so it cannot be why execution
+        // stopped — a spec for it would be dead weight in the doit.
+        debug.breakpoints = [conditional('index > 3', false)];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.conditionSpecsFor(session())).toEqual([]);
+      });
+
+      it('leaves out another session\u2019s methods', () => {
+        debug.breakpoints = [conditional('index > 3')];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        const other = { ...TEST_SESSION, id: 2 } as unknown as Parameters<
+          typeof manager.conditionSpecsFor
+        >[0];
+        expect(manager.conditionSpecsFor(other)).toEqual([]);
+      });
+    });
+
+    describe('conditionForStoneBreakpoint', () => {
+      const stoneBp = (over: Record<string, unknown> = {}) => ({
+        breakNumber: 1,
+        className: 'Array',
+        isMeta: false,
+        selector: 'at:',
+        stepPoint: 2,
+        disabled: false,
+        environmentId: 0,
+        methodOop: '1',
+        dictName: 'Globals',
+        category: 'accessing',
+        ...over,
+      });
+
+      it('finds the condition Jasper set', () => {
+        // The gem records no condition, so the view has no other way to know.
+        debug.breakpoints = [conditional('index > 3')];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.conditionForStoneBreakpoint(stoneBp())).toBe('index > 3');
+      });
+
+      it('answers nothing for a breakpoint at another step point', () => {
+        debug.breakpoints = [conditional('index > 3')];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+        expect(manager.conditionForStoneBreakpoint(stoneBp({ stepPoint: 1 }))).toBeUndefined();
+      });
+
+      it('answers nothing for a breakpoint Jasper did not set', () => {
+        expect(makeManager().conditionForStoneBreakpoint(stoneBp())).toBeUndefined();
+      });
+    });
+
+    describe('editing a condition', () => {
+      /** The method's editor, open and saved — what `contextFor` needs. */
+      const openDocument = (source: string) => {
+        const starts = buildLineStarts(source);
+        return {
+          uri: Uri.parse(METHOD_URI),
+          isDirty: false,
+          getText: () => source,
+          positionAt: (o: number) => {
+            let line = 1;
+            for (let l = 1; l < starts.length; l++) {
+              if (starts[l] <= o) line = l;
+              else break;
+            }
+            return new Position(line - 1, o - starts[line]);
+          },
+        };
+      };
+
+      beforeEach(() => {
+        workspace.textDocuments = [openDocument('foo\n^1')];
+        vi.mocked(window.showInputBox).mockReset();
+      });
+
+      it('opens the box with the condition already in it', async () => {
+        // Seeing a condition and changing one are the same gesture.
+        debug.breakpoints = [conditional('index > 3')];
+        vi.mocked(window.showInputBox).mockResolvedValue(undefined);
+        await makeManager().editConditionAtStepPoint(Uri.parse(METHOD_URI), 2);
+        expect(vi.mocked(window.showInputBox).mock.calls[0][0]).toMatchObject({
+          value: 'index > 3',
+        });
+      });
+
+      it('replaces the breakpoint with one carrying the new condition', async () => {
+        const bp = conditional('index > 3');
+        debug.breakpoints = [bp];
+        vi.mocked(window.showInputBox).mockResolvedValue('index > 9');
+
+        await makeManager().editConditionAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+        expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([bp]);
+        const added = vi.mocked(debug.addBreakpoints).mock.calls.at(-1)?.[0][0] as SourceBreakpoint;
+        expect(added.condition).toBe('index > 9');
+      });
+
+      it('an emptied box removes the condition', async () => {
+        debug.breakpoints = [conditional('index > 3')];
+        vi.mocked(window.showInputBox).mockResolvedValue('   ');
+
+        await makeManager().editConditionAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+        const added = vi.mocked(debug.addBreakpoints).mock.calls.at(-1)?.[0][0] as SourceBreakpoint;
+        expect(added.condition).toBeUndefined();
+      });
+
+      it('a cancelled box changes nothing', async () => {
+        debug.breakpoints = [conditional('index > 3')];
+        vi.mocked(window.showInputBox).mockResolvedValue(undefined);
+
+        await makeManager().editConditionAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+        expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+        expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
+      });
+
+      it('sets a new conditional breakpoint where there was none', async () => {
+        // "Break here, but only when…" is a reasonable thing to ask at a step
+        // point with no breakpoint yet.
+        debug.breakpoints = [];
+        vi.mocked(window.showInputBox).mockResolvedValue('index > 9');
+
+        await makeManager().editConditionAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+        const added = vi.mocked(debug.addBreakpoints).mock.calls.at(-1)?.[0][0] as SourceBreakpoint;
+        expect(added.condition).toBe('index > 9');
+      });
     });
   });
 

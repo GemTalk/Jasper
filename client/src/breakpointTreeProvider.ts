@@ -11,6 +11,20 @@ export type BreakpointNode =
   | { kind: 'breakpoint'; bp: GemStoneBreakpoint }
   | { kind: 'notice'; text: string; icon?: string };
 
+/**
+ * How much of a condition a row shows before eliding it. A row is one line and
+ * has a selector and a step point to fit as well; the tooltip has the rest.
+ */
+const MAX_ROW_CONDITION = 40;
+
+/** A condition as a row's trailing description, beside its step point. */
+export function conditionDescription(condition: string): string {
+  const oneLine = condition.replace(/\s+/g, ' ').trim();
+  return oneLine.length > MAX_ROW_CONDITION
+    ? `if ${oneLine.slice(0, MAX_ROW_CONDITION - 1)}\u2026`
+    : `if ${oneLine}`;
+}
+
 /** Label for a class heading — `Foo class` for the metaclass, as Smalltalk writes it. */
 export function classLabel(className: string, isMeta: boolean): string {
   if (className === '') return '(executed code)';
@@ -175,12 +189,23 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
     }
 
     const bp = element.bp;
+    const condition = this.breakpoints.conditionForStoneBreakpoint(bp);
     const item = new vscode.TreeItem(bp.selector === '' ? '(executed code)' : bp.selector);
-    item.description = `@ ${bp.stepPoint}`;
+    item.description =
+      condition === undefined
+        ? `@ ${bp.stepPoint}`
+        : `@ ${bp.stepPoint} \u00b7 ${conditionDescription(condition)}`;
     item.checkboxState = bp.disabled
       ? vscode.TreeItemCheckboxState.Unchecked
       : vscode.TreeItemCheckboxState.Checked;
-    item.tooltip = breakpointTooltip(bp);
+    item.tooltip = breakpointTooltip(bp, condition);
+    // A conditional breakpoint gets the icon VS Code's own Breakpoints view
+    // gives one, so the two views agree on sight. The plain rows keep no icon at
+    // all: their checkbox already carries enabled-vs-disabled, and an icon on
+    // every row would make the conditional ones harder to pick out, not easier.
+    if (condition !== undefined) {
+      item.iconPath = new vscode.ThemeIcon('debug-breakpoint-conditional');
+    }
     // Only a real method can be opened; a doit's source is long gone.
     item.contextValue = bp.selector === '' ? 'gemstoneBreakpointDoit' : 'gemstoneBreakpoint';
     if (bp.selector !== '') {
@@ -235,7 +260,7 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
   }
 }
 
-function breakpointTooltip(bp: GemStoneBreakpoint): vscode.MarkdownString {
+function breakpointTooltip(bp: GemStoneBreakpoint, condition?: string): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   const where =
     bp.className === ''
@@ -243,6 +268,10 @@ function breakpointTooltip(bp: GemStoneBreakpoint): vscode.MarkdownString {
       : `${classLabel(bp.className, bp.isMeta)} >> ${bp.selector}`;
   md.appendMarkdown(`**${where}**\n\nStep point ${bp.stepPoint}`);
   if (bp.disabled) md.appendMarkdown(' — disabled');
+  // In full, and unelided — the row above had to cut it short.
+  if (condition !== undefined) {
+    md.appendMarkdown(`\n\nStops only when:\n\n\`\`\`smalltalk\n${condition}\n\`\`\``);
+  }
   if (bp.dictName) md.appendMarkdown(`\n\nDictionary: ${bp.dictName}`);
   if (bp.environmentId > 0) md.appendMarkdown(`\n\nEnvironment: ${bp.environmentId}`);
   return md;
@@ -255,6 +284,24 @@ function breakpointTooltip(bp: GemStoneBreakpoint): vscode.MarkdownString {
  * opened, rather than trusting the line the gem reported, so the selection lands
  * on the token that will actually break.
  */
+export async function editBreakpointCondition(
+  sessionManager: SessionManager,
+  breakpoints: BreakpointManager,
+  node?: BreakpointNode,
+): Promise<void> {
+  if (node?.kind !== 'breakpoint') return;
+  const bp = node.bp;
+  if (bp.selector === '' || bp.className === '') return;
+
+  // Reveal first: the condition is edited against the method's open editor, and
+  // seeing the code the condition is about is most of the point of editing it
+  // from a row rather than from the gutter.
+  await revealBreakpoint(sessionManager, node);
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  await breakpoints.editConditionAtStepPoint(editor.document.uri, bp.stepPoint);
+}
+
 export async function revealBreakpoint(
   sessionManager: SessionManager,
   node?: BreakpointNode,

@@ -50,11 +50,19 @@ export class StepPointHoverProvider implements vscode.HoverProvider {
     md.appendMarkdown(`**Step point ${resolved.stepPoint}** of ${info.offsets.length}`);
 
     if (applied) {
+      const conditional = applied.condition !== undefined;
       md.appendMarkdown(
         applied.enabled
-          ? `\n\n$(debug-breakpoint) Breakpoint set`
-          : `\n\n$(debug-breakpoint-disabled) Breakpoint set but disabled`,
+          ? `\n\n$(${conditional ? 'debug-breakpoint-conditional' : 'debug-breakpoint'}) ` +
+              `${conditional ? 'Conditional breakpoint' : 'Breakpoint'} set`
+          : `\n\n$(debug-breakpoint-disabled) ` +
+              `${conditional ? 'Conditional breakpoint' : 'Breakpoint'} set but disabled`,
       );
+      // The condition in full, unelided — the token marker beside the code
+      // shortens a long one, and this is where the rest of it lives.
+      if (applied.condition !== undefined) {
+        md.appendMarkdown(`\n\nStops only when:\n\n\`\`\`smalltalk\n${applied.condition}\n\`\`\``);
+      }
     }
 
     const arg = encodeURIComponent(
@@ -69,6 +77,11 @@ export class StepPointHoverProvider implements vscode.HoverProvider {
         applied.enabled
           ? `[$(debug-breakpoint-disabled) Disable](command:gemstone.breakpoints.disableAtStepPoint?${arg} "Disable the breakpoint at step point ${resolved.stepPoint}")`
           : `[$(debug-breakpoint) Enable](command:gemstone.breakpoints.enableAtStepPoint?${arg} "Enable the breakpoint at step point ${resolved.stepPoint}")`,
+      );
+      links.push(
+        applied.condition === undefined
+          ? `[$(debug-breakpoint-conditional) Add condition](command:gemstone.breakpoints.editConditionAtStepPoint?${arg} "Only stop here when an expression answers true")`
+          : `[$(debug-breakpoint-conditional) Edit condition](command:gemstone.breakpoints.editConditionAtStepPoint?${arg} "Change the condition on the breakpoint at step point ${resolved.stepPoint}")`,
       );
     } else {
       links.push(

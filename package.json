@@ -1284,6 +1284,18 @@
         "icon": "$(debug-breakpoint-unsupported)"
       },
       {
+        "command": "gemstone.breakpoints.editConditionAtCursor",
+        "title": "Edit Breakpoint Condition at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-conditional)"
+      },
+      {
+        "command": "gemstone.breakpoints.editCondition",
+        "title": "Edit Condition\u2026",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-conditional)"
+      },
+      {
         "command": "gemstone.breakpoints.enableAll",
         "title": "Enable All Breakpoints",
         "category": "GemStone",
@@ -1361,6 +1373,11 @@
       {
         "command": "gemstone.breakpoints.clearAtStepPoint",
         "title": "Clear Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.editConditionAtStepPoint",
+        "title": "Edit Breakpoint Condition at Step Point",
         "category": "GemStone"
       },
       {
@@ -2162,6 +2179,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.breakpoints.editConditionAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.editCondition",
+          "when": "false"
+        },
+        {
           "command": "gemstone.breakpoints.reveal",
           "when": "false"
         },
@@ -2658,9 +2683,14 @@
           "group": "inline@0"
         },
         {
+          "command": "gemstone.breakpoints.editCondition",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "group": "inline@1"
+        },
+        {
           "command": "gemstone.breakpoints.remove",
           "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
-          "group": "inline@1"
+          "group": "inline@2"
         },
         {
           "command": "gemstone.breakpoints.enable",
@@ -3332,9 +3362,14 @@
           "group": "3_gemstoneBreakpoints@2"
         },
         {
-          "command": "gemstone.breakpoints.clearMethod",
+          "command": "gemstone.breakpoints.editConditionAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.clearMethod",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
+          "group": "3_gemstoneBreakpoints@4"
         },
         {
           "command": "gemstone.breakpoints.toggleStepPoints",

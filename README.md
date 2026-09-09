@@ -319,11 +319,37 @@ the thing it was set in goes away:
   swept and the message names the one that failed
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
-- **Not honoured: conditions, hit counts and log messages.** VS Code's *Edit
-  Breakpoint* accepts all three; GemStone breakpoints stop every time the step
-  point is reached, so Jasper warns when you set one rather than quietly ignoring
-  it. Conditional breakpoints are tracked under
-  [#277](https://github.com/GemTalk/Jasper/issues/277)
+- **Conditional breakpoints** — a breakpoint can carry a Smalltalk expression and
+  stop only when it answers `true`. Set one VS Code's way (right-click the gutter
+  → *Add Conditional Breakpoint*, or *Edit Breakpoint* on an existing one), or
+  Jasper's: **Edit Breakpoint Condition at Cursor** from the editor's right-click
+  menu, the *Add/Edit condition* link on the step-point hover, or the ✎ on a row
+  in the **GemStone Breakpoints** view. The condition is written beside the token
+  it guards, so you can read it without going looking for it, and the gutter
+  shows VS Code's own conditional-breakpoint icon.
+
+  The expression is evaluated **in the suspended frame**, so it can name the
+  method's arguments and temporaries, the block's own variables, `self`, instance
+  and class variables, and anything in your symbol list — `amount > 100`,
+  `each isNil`, `self isReady not`. It must answer `true` or `false`: a condition
+  that answers anything else, or that cannot be evaluated at all, stops at the
+  breakpoint and says why, rather than silently never stopping.
+
+  GemStone has no conditional breakpoints of its own — a method breakpoint always
+  stops the process and tells the client — so Jasper evaluates the condition
+  afterwards and resumes the process when it does not hold. A skipped hit costs
+  two round trips to the stone (one to judge the condition in the suspended
+  frame, one to resume), which measured **0.5–0.8 ms per skipped hit** against a
+  local stone on 3.6.2 and 3.7.5 alike; over a slower link it grows with the
+  latency, so a condition that skips tens of thousands of hits will be felt. Past
+  a second and a half a cancellable progress notification appears, and cancelling
+  stops at whatever hit it has reached. Your code is never rewritten or
+  recompiled to make any of this work, and nothing is left behind in the stone. A
+  breakpoint reached while skipping still stops if *it* has no condition, and an
+  error raised by your code while skipping opens the debugger on the error
+- **Not honoured: hit counts and log messages.** VS Code's *Edit Breakpoint*
+  accepts both; GemStone breakpoints stop every time the step point is reached
+  regardless, so Jasper warns when you set one rather than quietly ignoring it
 - **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
   the Breakpoints panel header). It greys the breakpoints out in the panel, but
   the VS Code API exposes no way for an extension to observe that state — so

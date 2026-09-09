@@ -129,7 +129,12 @@ import { BreakpointManager } from './breakpointManager';
 import { StepPointModel } from './stepPointModel';
 import { StepPointHintsProvider } from './stepPointHints';
 import { StepPointHoverProvider } from './stepPointHover';
-import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
+import {
+  BreakpointTreeProvider,
+  BreakpointNode,
+  editBreakpointCondition,
+  revealBreakpoint,
+} from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
 import { GrailNotebookController } from './grailNotebookController';
 import { SmalltalkNotebookController } from './smalltalkNotebookController';
@@ -998,7 +1003,7 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Code Execution ─────────────────────────────────────
   // Constructed before the SUnit controller, which borrows its debug-enabled
   // execution path to run a single test under the debugger.
-  const codeExecutor = new CodeExecutor(sessionManager);
+  const codeExecutor = new CodeExecutor(sessionManager, breakpointManager);
   context.subscriptions.push(codeExecutor);
 
   // ── SUnit Test Controller ────────────────────────────────
@@ -2786,6 +2791,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (editor) breakpointManager.clearMethodBreakpoints(editor);
     }),
 
+    vscode.commands.registerCommand('gemstone.breakpoints.editConditionAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) void breakpointManager.editConditionAtCursor(editor);
+    }),
+
     // The step-point commands take their target from the click that fired them —
     // an inlay hint number or a hover link — rather than from the caret, so they
     // act on the step point the developer actually pointed at.
@@ -2813,6 +2823,12 @@ export function activate(context: vscode.ExtensionContext) {
         breakpointManager.clearAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
     ),
 
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.editConditionAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.editConditionAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
     vscode.commands.registerCommand('gemstone.breakpoints.enableAll', () =>
       breakpointManager.setAllEnabled(true),
     ),
@@ -2833,6 +2849,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.breakpoints.reveal', (node?: BreakpointNode) =>
       revealBreakpoint(sessionManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editCondition', (node?: BreakpointNode) =>
+      editBreakpointCondition(sessionManager, breakpointManager, node),
     ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {

@@ -149,6 +149,40 @@ describe('StepPointHoverProvider', () => {
     expect(text).toContain('gemstone.breakpoints.enableAtStepPoint');
   });
 
+  it('offers to add a condition to a breakpoint that has none', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Add condition');
+    expect(text).toContain('gemstone.breakpoints.editConditionAtStepPoint');
+  });
+
+  it('shows a condition in full, and offers to edit it', () => {
+    // The marker beside the token elides a long condition; the hover is where
+    // the whole of it can be read, and where it can be changed.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true, condition: 'total > 100' }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Conditional breakpoint set');
+    expect(text).toContain('total > 100');
+    expect(text).toContain('Edit condition');
+  });
+
+  it('says a disabled conditional breakpoint is both', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([
+        { stepPoint: 2, offset: 14, line: 2, enabled: false, condition: 'total > 100' },
+      ]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Conditional breakpoint set but disabled');
+  });
+
   it('says nothing when the pointer is not on a step point token', () => {
     // Character 0 of line 1 is '^', which carries no selector range here — and
     // the caret rule would otherwise fall forward and misreport a step point.

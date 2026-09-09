@@ -15,6 +15,7 @@ import { clearStack, getObjectPrintString } from './debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import { setTranscriptLive, drainTranscript, settleNbResult } from './transcriptSink';
 import { pollNbToCompletion, NbCancelledError } from './nbRunner';
+import { ConditionOutcome, ConditionSpec, skipUntilConditionMet } from './conditionalBreakpoints';
 
 const MAX_RESULT_SIZE = 64 * 1024;
 
@@ -66,6 +67,27 @@ const MAX_OVERLAY_PREVIEW = 100;
 // rather than opening a debugger on it.
 const SOFT_BREAK_ERROR_NUMBER = 6003;
 
+// GemStone's "method breakpoint encountered". The one error number a breakpoint
+// condition can apply to: every other way execution stops (an error, a halt, a
+// soft break) is not a breakpoint and has no condition to consult.
+const BREAKPOINT_ERROR_NUMBER = 6005;
+
+// What an error raised by the developer's code *while breakpoints were being
+// skipped* is reported as. Deliberately not 6005: it is not a breakpoint, and
+// `executeWithDebugger` decides what to do with a stop by its error number — a
+// raise dressed up as a breakpoint would be reported as one.
+const RAISED_WHILE_SKIPPING = 0;
+
+/**
+ * Where the conditions on the currently armed breakpoints come from.
+ *
+ * Narrowed to the one question the executor asks so it does not depend on the
+ * whole breakpoint manager — and so a test can answer it with a literal.
+ */
+export interface ConditionalBreakpointSource {
+  conditionSpecsFor(session: ActiveSession): ConditionSpec[];
+}
+
 class DebuggableError extends Error {
   constructor(
     message: string,
@@ -97,7 +119,10 @@ export class CodeExecutor {
   // full result if the user chooses to materialize it in place.
   private overlaySelection: vscode.Selection | undefined;
 
-  constructor(private sessionManager: SessionManager) {
+  constructor(
+    private sessionManager: SessionManager,
+    private conditions: ConditionalBreakpointSource,
+  ) {
     this.diagnostics = vscode.languages.createDiagnosticCollection('gemstone-execute');
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   }
@@ -735,11 +760,92 @@ export class CodeExecutor {
       const context = toBigInt(resultErr.context);
       if (context !== OOP_NIL && context !== 0n) {
         this.validateContextOop(session, context);
+        if (resultErr.number === BREAKPOINT_ERROR_NUMBER) {
+          const resolved = await this.honourBreakpointConditions(session, context, msg);
+          if (resolved.kind === 'completed') return resolved.resultOop;
+          // Skipping can move the process on to another stop, and an error
+          // raised on the way is reported on the process it was raised in — so
+          // the debugger must open on THAT one, not on the breakpoint we left.
+          throw new DebuggableError(resolved.message, resolved.context, resolved.errorNumber);
+        }
         throw new DebuggableError(msg, context, resultErr.number);
       }
       throw new Error(msg);
     }
     return resultOop;
+  }
+
+  /**
+   * Decide whether this breakpoint is one the developer asked to stop at.
+   *
+   * A method breakpoint has already unwound to us by the time this runs — that
+   * is the whole shape of the problem, see `conditionalBreakpoints.ts` — so the
+   * work is to resume the suspended process past every stop whose condition is
+   * false and report where it ended up.
+   *
+   * Costs nothing when no breakpoint is conditional, which is the ordinary case:
+   * the specs are read from what is already applied, and an empty list short
+   * circuits before any GCI call.
+   */
+  private async honourBreakpointConditions(
+    session: ActiveSession,
+    context: bigint,
+    message: string,
+  ): Promise<
+    | { kind: 'break'; message: string; context: bigint; errorNumber: number }
+    | { kind: 'completed'; resultOop: bigint }
+  > {
+    const stopHere = {
+      kind: 'break' as const,
+      message,
+      context,
+      errorNumber: BREAKPOINT_ERROR_NUMBER,
+    };
+    const specs = this.conditions.conditionSpecsFor(session);
+    if (specs.length === 0) return stopHere;
+
+    let outcome: ConditionOutcome;
+    try {
+      outcome = await skipUntilConditionMet(session, context, specs);
+    } catch (e: unknown) {
+      // A cancel is the developer's answer, not a failure: let it unwind the
+      // execution the same way cancelling any other run does.
+      if (e instanceof NbCancelledError) throw e;
+      // Anything else, and the breakpoint still happened. Falling back to
+      // stopping is the safe end of the trade: a breakpoint that stops when it
+      // should not have is a nuisance, one that silently does not is a bug hunt.
+      const detail = e instanceof Error ? e.message : String(e);
+      logError(session.id, `breakpoint conditions could not be evaluated: ${detail}`);
+      vscode.window.showWarningMessage(
+        `Could not evaluate the breakpoint conditions (${detail}) — stopping at the breakpoint.`,
+      );
+      return stopHere;
+    }
+
+    switch (outcome.kind) {
+      case 'completed':
+        return { kind: 'completed', resultOop: outcome.resultOop };
+      case 'raised':
+        // The developer's own code raised while we were skipping. That is the
+        // thing worth showing, so the debugger opens on it rather than on the
+        // breakpoint we were stepping past.
+        return {
+          kind: 'break',
+          message: outcome.description,
+          context: outcome.context,
+          errorNumber: RAISED_WHILE_SKIPPING,
+        };
+      case 'conditionFailed':
+        // Said out loud, because the alternative is a breakpoint that stops for
+        // no visible reason and a condition that was never really applied.
+        vscode.window.showWarningMessage(
+          `Breakpoint condition could not be evaluated: ${outcome.message} — ` +
+            'stopping at the breakpoint.',
+        );
+        return { ...stopHere, message: `${message} (condition: ${outcome.message})` };
+      default:
+        return stopHere;
+    }
   }
 
   private async fetchResultString(session: ActiveSession): Promise<string> {
