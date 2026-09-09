@@ -216,43 +216,18 @@ jobs:
       SKIP_REPORT_BARE_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare.json
       SKIP_REPORT_PLUGIN_NAME: skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin
       SKIP_REPORT_PLUGIN_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
+      # TEMPORARY (npapagna/wip/koffi-windows-repro): pin the vitest file/test
+      # shuffle to the seed printed by the failing run (34290126072) to try to
+      # reproduce the koffi flake under the same ordering. Not for merging.
+      VITEST_SEED: '1788910129215'
     strategy:
       matrix:
-        # macOS is deliberately absent from this axis — it gets a single
-        # leg via the `include` below instead of the full version sweep.
-        platform: [ubuntu-latest, windows-latest]
-        gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
-        node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
-        # node-version's declared axis value is only '' (which falls back to
-        # the .nvmrc Node version); '22.15.1' isn't one of the declared
-        # values, so GitHub can't merge this into an existing combination —
-        # it adds an additional job pinned to the oldest GemStone version
-        # and the Node floor, as a smoke test to verify tests run on the
-        # Node floor too. This is to support older VS Code versions.
-        include:
-          # Temporary: macOS ran the full version sweep like the other two
-          # platforms, but its runners show far more duration variance than
-          # ubuntu or windows, so those legs were the ones most likely to
-          # trip the timeout on a bad-runner day — noise that says nothing
-          # about the code under test. Cut to one leg while that variance is
-          # investigated; restore the platform to the axis above once it is
-          # understood. The macOS-specific mechanics are version-independent
-          # (the DMG mount and shared-memory setup are the same on every
-          # release), so one leg still covers those. What it gives up: the
-          # dropped legs were the only place a newer release's darwin GCI
-          # client got exercised.
-          #
-          # It runs the *oldest* supported version, not the newest: the newest
-          # is already exercised on ubuntu and windows, whereas the oldest is
-          # where GCI API gaps surface, and pairing that with the platform
-          # whose setup differs most is the combination least covered
-          # elsewhere.
-          - platform: macos-latest
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '' # resolve Node from .nvmrc, like the dev legs above
-          - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
-            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '22.15.1'   # pin the floor for the smoke-test
+        # TEMPORARY (npapagna/wip/koffi-windows-repro): pinned to the single
+        # failing leg from run 34290126072 to repro the koffi flake. Not for
+        # merging.
+        platform: [windows-latest]
+        gemstone-version: ['3.7.2']
+        node-version: ['']
 
     steps:
       - name: Checkout code
