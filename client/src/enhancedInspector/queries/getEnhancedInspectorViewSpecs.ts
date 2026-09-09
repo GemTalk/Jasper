@@ -1,12 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
-
-const VALID_SELECTOR =
-  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
-
-export function isValidSelector(selector: string): boolean {
-  return VALID_SELECTOR.test(selector);
-}
+import { escapeString, homeDictionaryNameExpr, isValidSelector } from '../../queries/util';
 
 export interface EnhancedInspectorViewSpec {
   viewName: string;
@@ -213,6 +206,14 @@ STONJSON toString: (ds retrieveChildrenForNodeAtPath: ${stPath})`;
   return enhancedInspectorExecute(execute, code);
 }
 
+/**
+ * Where the System Browser should navigate to reach one method on the inspected
+ * object's class. The dictionary comes from the shared
+ * {@link homeDictionaryNameExpr} — the same rule the debugger's Browse and the
+ * basic Inspector's Browse Class use, so a class that is bound in more than one
+ * dictionary browses to the same place from all three. An '' dictName means no
+ * dictionary in the user's symbol list holds the class.
+ */
 export function fetchMethodBrowseLocation(
   execute: QueryExecutor,
   oop: bigint,
@@ -224,7 +225,7 @@ export function fetchMethodBrowseLocation(
   const code = `| obj baseCls dictName category |
 obj := Object _objectForOop: ${oop}.
 baseCls := obj class theNonMetaClass.
-dictName := (System myUserProfile dictionariesAndSymbolsOf: baseCls) first first name.
+dictName := ${homeDictionaryNameExpr('baseCls')}.
 category := (${methodCls} categoryOfSelector: #'${escapeString(methodSelector)}' environmentId: 0) ifNil: [''].
 STONJSON toString: (Dictionary new
   at: 'dictName' put: dictName;

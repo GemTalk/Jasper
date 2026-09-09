@@ -2,6 +2,20 @@ export function escapeString(s: string): string {
   return s.replace(/'/g, "''");
 }
 
+// A selector that is safe to interpolate into a doit as `#'...'`: a unary or
+// keyword selector, or one or two binary characters. `escapeString` doubles the
+// quotes in a literal but cannot make an arbitrary string a selector, so every
+// caller that builds a `#'...'` from a name it did not itself choose tests it
+// here first and refuses rather than compiling it. Shared by both inspectors'
+// queries: it is one guard against selector injection, so it gets one
+// definition — patched in two places is patched in neither.
+const VALID_SELECTOR =
+  /^[a-zA-Z_][a-zA-Z0-9_]*:?$|^([a-zA-Z_][a-zA-Z0-9_]*:)+$|^[+\-*/<>=~&|@%?,]{1,2}$/;
+
+export function isValidSelector(selector: string): boolean {
+  return VALID_SELECTOR.test(selector);
+}
+
 // Unicode7 gotcha for generated Smalltalk (GemStone 3.6.x). Every string literal inside a
 // GCI-executed doit compiles to Unicode7, and comparing an image-derived value against one
 // misbehaves: `Symbol = 'lit'` silently answers false, and `String = 'lit'` raises ArgumentError
@@ -133,4 +147,29 @@ export function symbolListIndexOfClassExpr(classVar: string): string {
       (idx = 0 and: [((sl at: i) at: ${classVar} name asSymbol ifAbsent: [nil]) == ${classVar}])
         ifTrue: [idx := i]].
     idx] value: System myUserProfile symbolList)`;
+}
+
+/** A Smalltalk EXPRESSION evaluating to the NAME of the dictionary that is the home of
+ *  the class object held in temp `classVar` — the SymbolList slot binding it under its
+ *  own name — or '' when no dictionary does (the class isn't in the user's symbol list)
+ *  or when that dictionary is unnamed. `classVar` must already be the non-meta class.
+ *
+ *  The single home for "which dictionary owns THIS class, by name": a class rename's
+ *  scope, the debugger's Browse, and both inspectors' Browse Class all ask it, and each
+ *  needs the same answer — a `gemstone://` URI or a browser navigation built on a
+ *  dictionary that merely references the class lands somewhere the user didn't ask for.
+ *  Resolves through {@link symbolListIndexOfClassExpr}, so the identity idiom itself
+ *  stays in one place too.
+ *
+ *  NOT `dictionariesAndSymbolsOf:`, which answers EVERY binding — alias entries
+ *  included (Python's `#object -> Object` sorts before Globals), so its first pair can
+ *  name a dictionary that only references the class — and whose `first first` raises
+ *  when nothing binds it at all. */
+export function homeDictionaryNameExpr(classVar: string): string {
+  // `slot`, not `idx`: the nested expression declares an `idx` block temp of its
+  // own, and GemStone refuses a name redefined in an enclosing scope.
+  return `([:symList | | slot |
+    slot := ${symbolListIndexOfClassExpr(classVar)}.
+    slot = 0 ifTrue: [''] ifFalse: [((symList at: slot) name ifNil: ['']) asString]]
+      value: System myUserProfile symbolList)`;
 }

@@ -1,23 +1,77 @@
+import * as vscode from 'vscode';
 import { ActiveSession } from './sessionManager';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { InspectorTreeProvider } from './inspectorTreeProvider';
+import { BasicInspector } from './basicInspector/basicInspector';
 
 /**
- * Open `oop` in the right inspector for this session: the Enhanced Inspector
- * (a webview) when the image has its support installed — returning the handle
- * so an owner (e.g. the debugger) can track it — else the classic Inspector
- * tree view in the primary sidebar (returns undefined). This is the single
- * routing point behind every "Inspect" surface: editor, global, and debugger.
+ * An open inspector panel, from the point of view of whatever opened it. The
+ * debugger holds these so it can close the inspectors it spawned when it goes
+ * away; nothing else about either panel is any of its business.
  */
-export function routeInspect(
-  session: ActiveSession,
-  oop: bigint,
-  label: string,
-  inspectorProvider: InspectorTreeProvider,
-): EnhancedInspector | undefined {
-  if (session.enhancedInspectorAvailable) {
-    return EnhancedInspector.create(session, oop, label);
-  }
-  inspectorProvider.addRoot(session.id, oop, label);
-  return undefined;
+export interface InspectorHandle {
+  close(): void;
+}
+
+/**
+ * What the user wants Inspect to open. `basic` is the default and always opens
+ * the tabbed Inspector, whatever the session has installed. `auto` takes
+ * whichever the session can have, which is the Enhanced Inspector wherever its
+ * server support is present. `enhanced` is the same as `auto` in effect — no
+ * setting can conjure server support that isn't in the image — and exists so
+ * the choice reads as a choice rather than as "auto, or off".
+ */
+export type InspectorPreference = 'auto' | 'enhanced' | 'basic';
+
+/**
+ * Which inspector this session's Inspect will open.
+ *
+ * The tabbed Inspector is the default everywhere, including on a session that
+ * has the Enhanced Inspector's server support: one inspector on every session
+ * and every supported stone means what you learn on one session is true on the
+ * next, and it is the only one that cannot be unavailable. Reaching the
+ * Enhanced Inspector is a deliberate `auto`.
+ *
+ * Anything unrecognised lands on `basic` for the same reason — a preference
+ * nobody can read must not route to the inspector that might not be there.
+ */
+export function inspectorFor(session: ActiveSession): 'enhanced' | 'basic' {
+  const preferred = vscode.workspace
+    .getConfiguration('gemstone')
+    .get<InspectorPreference>('inspector.preferred', 'basic');
+  if (preferred === 'auto' || preferred === 'enhanced')
+    return session.enhancedInspectorAvailable ? 'enhanced' : 'basic';
+  return 'basic';
+}
+
+/**
+ * Open `oop` in the right inspector for this session and return the handle, so
+ * an owner (e.g. the debugger) can track it: the basic tabbed Inspector, which
+ * needs no server support at all, unless the user has asked for `auto` and this
+ * session's image has the Enhanced Inspector's support installed on a stone new
+ * enough for it.
+ *
+ * This is the single routing point behind every "Inspect" surface — editor,
+ * global, and debugger. Both are editor-tab webviews presenting the object as
+ * tabs over a miller-column strip, so which one a session gets is a difference
+ * in how much the *stone* can tell us, not a different kind of tool.
+ */
+export function routeInspect(session: ActiveSession, oop: bigint, label: string): InspectorHandle {
+  return inspectorFor(session) === 'enhanced'
+    ? EnhancedInspector.create(session, oop, label)
+    : BasicInspector.create(session, oop, label);
+}
+
+/**
+ * Focus an inspector this session already has open on `label` — the name an
+ * "Inspect" was asked for, not the object — and answer whether it took focus,
+ * so a caller can skip opening a second one.
+ *
+ * Only the Explorer's Globals view asks, and only the basic Inspector answers —
+ * which is the same question as "where would a new Inspect go", so it follows
+ * the preference too. The Enhanced Inspector has always opened a fresh panel per
+ * Inspect, including from that view (the classic tree's reveal-existing rule was
+ * explicitly skipped for it), and this keeps it that way.
+ */
+export function revealInspect(session: ActiveSession, label: string): boolean {
+  return inspectorFor(session) === 'basic' ? BasicInspector.revealExisting(session, label) : false;
 }

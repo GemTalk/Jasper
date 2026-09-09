@@ -311,6 +311,28 @@
             "minimum": 0,
             "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
+          "gemstone.inspector.preferred": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "enhanced",
+              "basic"
+            ],
+            "enumDescriptions": [
+              "Whichever the session can have: the Enhanced Inspector where its server support is installed, the tabbed Inspector everywhere else",
+              "The Enhanced Inspector where it is available (the same as auto — a setting cannot install server support)",
+              "The tabbed Inspector always, even on a session that has the Enhanced Inspector"
+            ],
+            "default": "basic",
+            "markdownDescription": "Which Inspector **Inspect It** opens.\n\nBoth present an object as tabs over a miller-column strip. The tabbed Inspector is the default on every session: it is built on GCI primitives and kernel sends, so it works on every supported stone back to 3.6.2 and cannot be unavailable. The Enhanced Inspector adds per-class object views, but needs its server-side payload installed and a stone at 3.7.5 or later — set this to `auto` to get it wherever the session has it.\n\n**GemStone: Switch Inspector** flips between `basic` and `auto` without opening settings. Inspectors already open are unaffected; the choice applies to the next **Inspect It**."
+          },
+          "gemstone.inspector.loadAllPageLimit": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 1000,
+            "markdownDescription": "How many pages one **Load all** click reads in the Inspector before it stops and leaves the rest.\n\nA page is 100 rows (400 bytes on the **Bytes** tab), so the default reads 5,000 rows a click. Each page is a synchronous round trip, so a collection of a million elements would otherwise hold the session — and the editor — for as long as the reads took. When a click stops here the toolbar says so (`Load all stopped at 5,000 — click again for the next 5,000`) and another click carries on from where it left off; nothing is out of reach, it just takes more clicks.\n\nRaise it to read more per click on a large collection, at the cost of a longer freeze while it reads."
+          },
           "gemstone.explorer.navigationSelectorsOnly": {
             "type": "boolean",
             "default": false,
@@ -670,13 +692,6 @@
           "contextualTitle": "GemStone Breakpoints",
           "icon": "$(debug-breakpoint)",
           "type": "tree"
-        },
-        {
-          "id": "gemstoneInspector",
-          "name": "Inspector",
-          "contextualTitle": "GemStone Inspector",
-          "type": "tree",
-          "icon": "$(eye)"
         }
       ],
       "explorer": [
@@ -709,16 +724,6 @@
         "view": "gemstoneRowan",
         "contents": "Open a folder to work with Rowan.\n[New Rowan Project…](command:gemstone.rowanNewProject)",
         "when": "workspaceFolderCount == 0"
-      },
-      {
-        "view": "gemstoneInspector",
-        "contents": "No objects inspected yet.\nSelect code and press Cmd+K I to inspect.",
-        "when": "isMac"
-      },
-      {
-        "view": "gemstoneInspector",
-        "contents": "No objects inspected yet.\nSelect code and press Ctrl+K I to inspect.",
-        "when": "!isMac"
       },
       {
         "view": "gemstoneDatabases",
@@ -1060,22 +1065,15 @@
         "icon": "$(eye)"
       },
       {
+        "command": "gemstone.switchInspector",
+        "title": "Switch Inspector (Enhanced / Basic)",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.showTranscript",
         "title": "Show Transcript",
         "category": "GemStone",
         "icon": "$(output)"
-      },
-      {
-        "command": "gemstone.removeInspectorItem",
-        "title": "Remove",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
-        "command": "gemstone.clearInspector",
-        "title": "Clear All",
-        "category": "GemStone",
-        "icon": "$(clear-all)"
       },
       {
         "command": "gemstone.openBrowser",
@@ -2631,11 +2629,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "gemstone.clearInspector",
-          "when": "view == gemstoneInspector",
-          "group": "navigation"
-        },
-        {
           "command": "gemstone.newDatabase",
           "when": "view == gemstoneDatabases",
           "group": "navigation@1"
@@ -3175,11 +3168,6 @@
           "when": "view == gemstoneLogins && viewItem == gemstoneSession"
         },
         {
-          "command": "gemstone.removeInspectorItem",
-          "when": "view == gemstoneInspector && viewItem == gemstoneInspectorRoot",
-          "group": "inline@1"
-        },
-        {
           "command": "gemstone.replaceExtent",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneStopped",
           "group": "inline@1"
@@ -3551,17 +3539,17 @@
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.2",
     "eslint": "^10.9.1",
-    "eslint-config-flat-gitignore": "^2.3.0",
+    "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.11.0",
-    "lefthook": "^2.1.10",
+    "globals": "^17.12.0",
+    "lefthook": "^2.1.12",
     "lockfile-lint": "^5.0.1",
     "ovsx": "^1.1.1",
     "playwright-bdd": "^9.2.0",
     "prettier": "^3.9.6",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.68.0",
+    "typescript-eslint": "^8.69.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
@@ -3572,14 +3560,14 @@
   },
   "overrides": {
     "fast-uri": "^3.1.7",
-    "js-yaml": "^4.3.1"
+    "js-yaml": "^4.3.2"
   },
   "allowScripts": {
     "@vscode/vsce-sign@2.0.9": true,
-    "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
     "fsevents": false,
     "esbuild@0.28.2": true,
-    "koffi@2.16.3": true
+    "koffi@2.16.3": true,
+    "lefthook@2.1.12": true
   }
 }

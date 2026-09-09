@@ -8,6 +8,13 @@ import {
 } from './gciConstants';
 import { logInfo, logError } from './gciLog';
 import { runNbCall, NbRunOptions } from './nbRunner';
+import {
+  DUMP_PAYLOAD_TEMPS,
+  dumpPayloadPrelude,
+  splitDumpRows,
+  unescapeDumpField,
+} from './queries/dumpPayload';
+import { homeDictionaryNameExpr } from './queries/util';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -412,12 +419,13 @@ export interface ClassHomeInfo {
  * — as candidate places to implement (override) `selector`. Ordered
  * most-specific first (the receiver's class), so callers can pre-select it. A
  * class receiver walks its class-side chain (isMeta true throughout). For each
- * class: its home dictionary (found by NAME key in the user's symbol list — see
- * the symbol-list home-dict gotcha; '' when not in the symbol list, so not an
- * editable target) and whether it ALREADY implements `selector` (so the caller
- * can open the existing source instead of clobbering it with a stub, and warn
- * about a subclass implementation shadowing a superclass override). Returns []
- * on any failure so callers degrade gracefully.
+ * class: its home dictionary (the symbol-list dictionary that binds the class
+ * object under its own name, through the shared `homeDictionaryNameExpr`; ''
+ * when nothing in the symbol list binds it, so not an editable target) and
+ * whether it ALREADY implements `selector` (so the caller can open the existing
+ * source instead of clobbering it with a stub, and warn about a subclass
+ * implementation shadowing a superclass override). Returns [] on any failure so
+ * callers degrade gracefully.
  */
 export function getReceiverClassChain(
   session: ActiveSession,
@@ -427,7 +435,7 @@ export function getReceiverClassChain(
   try {
     // selector is a method selector (no quotes), but guard the quote anyway.
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel rows nm dn impl |
+    const code = `| rcvr meta cls sel rows base nm dn impl |
 rcvr := Object _objectForOop: ${receiverOop}.
 (rcvr isKindOf: Class)
   ifTrue: [ cls := rcvr. meta := true ]
@@ -435,10 +443,9 @@ rcvr := Object _objectForOop: ${receiverOop}.
 sel := '${sel}' asSymbol.
 rows := OrderedCollection new.
 [ cls notNil ] whileTrue: [
-  nm := cls theNonMetaClass name asString.
-  dn := ''.
-  System myUserProfile symbolList do: [:d |
-    (d includesKey: nm asSymbol) ifTrue: [ dn := d name ]].
+  base := cls theNonMetaClass.
+  nm := base name asString.
+  dn := ${homeDictionaryNameExpr('base')}.
   impl := cls includesSelector: sel.
   rows add: nm, (String with: Character tab),
     (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
@@ -472,7 +479,8 @@ export interface BrowseTarget {
   className: string;
   /** True when the method is class-side (the receiver is a class). */
   isMeta: boolean;
-  /** The defining class's home dictionary, '' when not in the user's symbol list. */
+  /** The defining class's home dictionary, '' when nothing in the user's symbol
+   *  list binds the class under its own name. */
   dictName: string;
   /** The method's category in the defining class ('' when uncategorized). */
   category: string;
@@ -484,11 +492,12 @@ export interface BrowseTarget {
  * for an inherited method), so "Browse" lands on the source that is really
  * executing. Walks the receiver's class chain for the first class that
  * `includesSelector:` (the lookup result), then reports that class's home
- * dictionary (by NAME key in the user's symbol list — see the symbol-list
- * home-dict gotcha) and the selector's method category. A class receiver walks
- * its class-side chain (isMeta true). Returns undefined when the selector can't
- * be found anywhere in the chain or on any failure, so the caller degrades to a
- * clear message rather than opening a misleading browser.
+ * dictionary (the shared `homeDictionaryNameExpr`: the symbol-list dictionary
+ * that binds the class object under its own name) and the selector's method
+ * category. A class receiver walks its class-side chain (isMeta true). Returns
+ * undefined when the selector can't be found anywhere in the chain or on any
+ * failure, so the caller degrades to a clear message rather than opening a
+ * misleading browser.
  */
 export function getBrowseTarget(
   session: ActiveSession,
@@ -497,7 +506,7 @@ export function getBrowseTarget(
 ): BrowseTarget | undefined {
   try {
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel def dn |
+    const code = `| rcvr meta cls sel def base dn |
 rcvr := Object _objectForOop: ${receiverOop}.
 (rcvr isKindOf: Class)
   ifTrue: [ cls := rcvr. meta := true ]
@@ -508,10 +517,9 @@ def := nil.
   (cls includesSelector: sel) ifTrue: [ def := cls ].
   cls := cls superclass ].
 def isNil ifTrue: [ '' ] ifFalse: [
-  dn := ''.
-  System myUserProfile symbolList do: [:d |
-    (d includesKey: def theNonMetaClass name asSymbol) ifTrue: [ dn := d name ]].
-  def theNonMetaClass name asString, (String with: Character tab),
+  base := def theNonMetaClass.
+  dn := ${homeDictionaryNameExpr('base')}.
+  base name asString, (String with: Character tab),
     (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
     dn, (String with: Character tab),
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
@@ -771,21 +779,6 @@ export interface StackDumpRow {
   oop: string;
 }
 
-// Reverse the server-side escaping (see fetchStackDump's doit): \\ \t \n \r.
-// Single pass so an introduced backslash can't be re-interpreted.
-function unescapeDumpField(s: string): string {
-  let out = '';
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && i + 1 < s.length) {
-      const n = s[++i];
-      out += n === 't' ? '\t' : n === 'n' ? '\n' : n === 'r' ? '\r' : n;
-    } else {
-      out += s[i];
-    }
-  }
-  return out;
-}
-
 /**
  * Parse the tab/newline payload produced by fetchStackDump's doit into rows.
  * One record per line; fields are `level <tab> group <tab> name <tab> value <tab>
@@ -794,11 +787,7 @@ function unescapeDumpField(s: string): string {
  */
 export function parseStackDump(data: string): StackDumpRow[] {
   const rows: StackDumpRow[] = [];
-  if (!data) return rows;
-  for (const line of data.split('\n')) {
-    if (line.length === 0) continue;
-    const f = line.split('\t');
-    if (f.length < 5) continue;
+  for (const f of splitDumpRows(data, 5)) {
     const serverLevel = parseInt(f[0], 10);
     if (Number.isNaN(serverLevel)) continue;
     rows.push({
@@ -838,20 +827,10 @@ export function fetchStackDump(session: ActiveSession, gsProcess: bigint): Stack
   // Every frame's contents are read ONCE into `frames` up front: resolving a
   // block frame's `self` walks out to its home activation, and re-sending
   // `_frameContentsAt:` inside that walk would make the whole dump quadratic.
-  const code = `| proc out tab esc psOf row depth frames homeFrameOf frameSelfOf |
+  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row depth frames homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
-tab := String with: Character tab.
-esc := [:str | | s |
-  s := str.
-  s size > 2000 ifTrue: [s := (s copyFrom: 1 to: 2000), '...'].
-  s := s copyReplaceAll: (String with: $\\) with: '\\\\'.
-  s := s copyReplaceAll: tab with: '\\t'.
-  s := s copyReplaceAll: (String with: Character lf) with: '\\n'.
-  s := s copyReplaceAll: (String with: Character cr) with: '\\r'.
-  s].
-psOf := [:obj | esc value: ([obj printString] on: Error do: [:e | '<unprintable>'])].
-row := [:lvl :grp :nm :obj |
+${dumpPayloadPrelude()}row := [:lvl :grp :nm :obj |
   out nextPutAll: lvl printString; nextPutAll: tab;
       nextPutAll: grp; nextPutAll: tab;
       nextPutAll: (esc value: nm); nextPutAll: tab;
@@ -913,11 +892,7 @@ export interface FrameVarRow {
  */
 export function parseFrameVars(data: string): FrameVarRow[] {
   const rows: FrameVarRow[] = [];
-  if (!data) return rows;
-  for (const line of data.split('\n')) {
-    if (line.length === 0) continue;
-    const f = line.split('\t');
-    if (f.length < 5) continue;
+  for (const f of splitDumpRows(data, 5)) {
     rows.push({
       group: f[0] as FrameVarRow['group'],
       name: unescapeDumpField(f[1]),
@@ -953,20 +928,10 @@ export function fetchFrameVariables(
   gsProcess: bigint,
   serverLevel: number,
 ): FrameVarRow[] {
-  const code = `| proc out tab esc psOf row arr slf names depth homeFrameOf frameSelfOf |
+  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row arr slf names depth homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
-tab := String with: Character tab.
-esc := [:str | | s |
-  s := str.
-  s size > 2000 ifTrue: [s := (s copyFrom: 1 to: 2000), '...'].
-  s := s copyReplaceAll: (String with: $\\) with: '\\\\'.
-  s := s copyReplaceAll: tab with: '\\t'.
-  s := s copyReplaceAll: (String with: Character lf) with: '\\n'.
-  s := s copyReplaceAll: (String with: Character cr) with: '\\r'.
-  s].
-psOf := [:obj | esc value: ([obj printString] on: Error do: [:e | '<unprintable>'])].
-row := [:grp :nm :obj :idx |
+${dumpPayloadPrelude()}row := [:grp :nm :obj :idx |
   out nextPutAll: grp; nextPutAll: tab;
       nextPutAll: (esc value: nm); nextPutAll: tab;
       nextPutAll: (psOf value: obj); nextPutAll: tab;
@@ -1088,39 +1053,6 @@ export function getIndexedOops(
   );
   if (err.number !== 0) return [];
   return oops;
-}
-
-/**
- * Returns sorted key-value entries for a SymbolDictionary.
- */
-export function getDictionaryEntries(
-  session: ActiveSession,
-  oop: bigint,
-): { key: string; valueOop: bigint }[] {
-  const keysOop = gciPerform(session, oop, 'keys');
-  const sortedOop = gciPerform(session, keysOop, 'asSortedCollection');
-  const keyArrayOop = gciPerform(session, sortedOop, 'asArray');
-
-  const { result: sizeRaw, err: sizeErr } = session.gci.GciTsFetchSize(session.handle, keyArrayOop);
-  if (sizeErr.number !== 0) return [];
-  const count = Number(sizeRaw);
-  if (count === 0) return [];
-
-  const { oops: keyOops, err: fetchErr } = session.gci.GciTsFetchOops(
-    session.handle,
-    keyArrayOop,
-    1n,
-    count,
-  );
-  if (fetchErr.number !== 0) return [];
-
-  const entries: { key: string; valueOop: bigint }[] = [];
-  for (const keyOop of keyOops) {
-    const key = gciPerformFetchString(session, keyOop, 'asString');
-    const valueOop = gciPerform(session, oop, 'at:', [keyOop]);
-    entries.push({ key, valueOop });
-  }
-  return entries;
 }
 
 // ── Stepping ────────────────────────────────────────────
@@ -1471,9 +1403,9 @@ export function evaluateInFrameNb(
     return Promise.reject(new Error(strErr.message || 'Cannot create expression string'));
   }
 
-  const symbolListOop = buildFrameSymbolList(session, names, oops);
-  const selector = symbolListOop === null ? 'evaluateInContext:' : 'evaluateInContext:symbolList:';
-  const args = symbolListOop === null ? [selfOop] : [selfOop, symbolListOop];
+  const symbolListOop = buildFrameSymbolList(session, names, oops) ?? sessionSymbolListOop(session);
+  const selector = 'evaluateInContext:symbolList:';
+  const args = [selfOop, symbolListOop];
 
   return runNbCall(
     session,
@@ -1531,14 +1463,12 @@ export function evaluateInFrameToOop(
     throw new Error(strErr.message || 'Cannot create expression string');
   }
 
-  // Bind the frame's named args/temps on top of the user's symbol list. The
-  // single-argument `evaluateInContext:` is only reached when a global we need
-  // won't resolve — it does not exist before 3.7 (see buildFrameSymbolList).
-  const symbolListOop = buildFrameSymbolList(session, names, oops);
+  // Bind the frame's named args/temps on top of the session's own symbol list;
+  // with nothing to bind, that list alone. See {@link sessionSymbolListOop} for
+  // why the one-argument `evaluateInContext:` is never sent.
+  const symbolListOop = buildFrameSymbolList(session, names, oops) ?? sessionSymbolListOop(session);
   try {
-    return symbolListOop === null
-      ? gciPerform(session, exprOop, 'evaluateInContext:', [selfOop])
-      : gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [selfOop, symbolListOop]);
+    return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [selfOop, symbolListOop]);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     throw new Error(withSelfUnavailableNote(message, selfIsUnavailable));
@@ -1694,11 +1624,86 @@ export function getInstVarOop(session: ActiveSession, receiverOop: bigint, index
 }
 
 /**
+ * Evaluates `expression` with `receiverOop` bound as `self`, and answers the
+ * result's OOP. The inspector's evaluation pane and its slot editor both run
+ * through here.
+ *
+ * The receiver arrives as an *argument*, not through `GciTsExecute`'s
+ * `contextObject`: the expression String is the receiver of an
+ * `evaluateInContext:` send, which is a kernel method and so needs no
+ * server-side support installed. `evaluateInFrameToOop` above uses the same
+ * mechanism for a debugger frame; the only difference is where `self` comes
+ * from.
+ */
+export function evaluateWithReceiverToOop(
+  session: ActiveSession,
+  receiverOop: bigint,
+  expression: string,
+): bigint {
+  const { result: exprOop, err } = session.gci.GciTsNewString(session.handle, expression);
+  if (err.number !== 0) {
+    throw new Error(err.message || 'Cannot create expression string');
+  }
+  return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [
+    receiverOop,
+    sessionSymbolListOop(session),
+  ]);
+}
+
+/**
+ * Writes `valueOop` into the `index`-th (1-based) indexed element of
+ * `receiverOop`, via `at:put:`. The indexed-slot counterpart of
+ * {@link setInstVar}.
+ */
+export function setIndexedVar(
+  session: ActiveSession,
+  receiverOop: bigint,
+  index: number,
+  valueOop: bigint,
+): void {
+  gciPerform(session, receiverOop, 'at:put:', [intToOop(session, index), valueOop]);
+}
+
+/** Reads the OOP of the `index`-th (1-based) indexed element, via `at:`. */
+export function getIndexedVarOop(
+  session: ActiveSession,
+  receiverOop: bigint,
+  index: number,
+): bigint {
+  return gciPerform(session, receiverOop, 'at:', [intToOop(session, index)]);
+}
+
+/** Writes `valueOop` at `keyOop` in a dictionary, via `at:put:`. */
+export function setDictionaryValue(
+  session: ActiveSession,
+  dictionaryOop: bigint,
+  keyOop: bigint,
+  valueOop: bigint,
+): void {
+  gciPerform(session, dictionaryOop, 'at:put:', [keyOop, valueOop]);
+}
+
+/** Reads the OOP stored at `keyOop` in a dictionary, via `at:`. */
+export function getDictionaryValueOop(
+  session: ActiveSession,
+  dictionaryOop: bigint,
+  keyOop: bigint,
+): bigint {
+  return gciPerform(session, dictionaryOop, 'at:', [keyOop]);
+}
+
+/**
  * Pins objects against garbage collection by adding them to the session's export
  * set (`GciTsSaveObjs`). Variable-revert uses this to keep a slot's original
  * value alive after the slot is overwritten — otherwise it could be scavenged
  * and its OOP number reused for a different object, so revert would restore the
  * wrong object. No-op for an empty list; immediates need not be saved.
+ *
+ * The raw GCI call, which knows nothing about who else on this session wants
+ * the object kept: the export set is not ref-counted, so a second save adds
+ * nothing and the first release undoes both. Holders that can coexist on one
+ * session — the debugger's and the basic Inspector's revert bookkeeping — pin
+ * through `exportSetPins.ts` instead, which counts claims and calls this once.
  */
 export function saveObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
@@ -1710,7 +1715,9 @@ export function saveObjs(session: ActiveSession, oops: bigint[]): void {
 
 /** Releases objects previously pinned with {@link saveObjs} (`GciTsReleaseObjs`).
  *  Targeted release only — never ReleaseAllObjs, since a session may host more
- *  than one debugger panel. No-op for an empty list. */
+ *  than one debugger panel. No-op for an empty list. Call it through
+ *  `exportSetPins.ts` rather than directly, so an object another holder on the
+ *  same session still needs isn't unpinned out from under it. */
 export function releaseObjs(session: ActiveSession, oops: bigint[]): void {
   if (oops.length === 0) return;
   const { success, err } = session.gci.GciTsReleaseObjs(session.handle, oops);
@@ -1729,21 +1736,45 @@ function resolveGlobalOop(session: ActiveSession, name: string): bigint | null {
 }
 
 /**
- * Builds the SymbolList to evaluate an expression against: a transient
- * SymbolDictionary mapping each *named* (non-synthetic) arg/temp to its current
- * value, prepended to the user's own symbol list — so bare identifiers like
- * `amount` resolve to the frame's temps while globals still resolve through the
- * appended user list.
+ * The session's own symbol list — `System myUserProfile symbolList` — so an
+ * evaluation sees the globals the user would see in a workspace.
  *
- * With no bindable names it answers the user's symbol list on its own rather
- * than null, so the caller can still use `evaluateInContext:symbolList:`. The
- * one-argument `evaluateInContext:` looks like the leaner choice for that case
- * but **does not exist before 3.7** — on 3.6.2 only the two-argument form is
- * implemented, and performing the missing selector fails with NameError 2404,
- * "There is no Symbol with the specified value", which reads as a problem with
- * the user's expression rather than with us. Null is returned only when a global
- * we need won't resolve, and the caller's one-argument fallback is then a last
- * resort, not a fast path.
+ * Every `evaluateInContext:` send passes one. The single-argument
+ * `String>>evaluateInContext:` looks like the leaner choice for an evaluation
+ * that needs no extra bindings, but it does not exist before GemStone 3.7: on a
+ * 3.6.x stone that perform fails with NameError 2404, "There is no Symbol with
+ * the specified value". The two-argument form is present on every supported
+ * release, so it is the only one used.
+ *
+ * Memoized on the session, because it is three synchronous round trips
+ * (`System`, `myUserProfile`, `symbolList`) on the interactive path of every
+ * Display It, Execute It and inspector slot edit, and it answers the same
+ * persistent object each time: the profile's SymbolList is reached from the
+ * profile, and adding or removing a dictionary mutates that object rather than
+ * replacing it. Only `UserProfile>>symbolList:`, installing a whole new list,
+ * would leave the memo stale — and it dies with the session anyway.
+ */
+function sessionSymbolListOop(session: ActiveSession): bigint {
+  if (session.symbolListOop !== undefined) return session.symbolListOop;
+  const systemClass = resolveGlobalOop(session, 'System');
+  if (systemClass === null) throw new Error('Cannot resolve System to build a symbol list');
+  const listOop = gciPerform(
+    session,
+    gciPerform(session, systemClass, 'myUserProfile'),
+    'symbolList',
+  );
+  session.symbolListOop = listOop;
+  return listOop;
+}
+
+/**
+ * Builds a SymbolList whose first entry is a transient SymbolDictionary mapping
+ * each *named* (non-synthetic) arg/temp to its current value, prepended to the
+ * user's own symbol list — so bare identifiers like `amount` resolve to the
+ * frame's temps while globals still resolve through the appended user list.
+ * Returns null when the frame has no bindable named temps, or if any of the
+ * required globals can't be resolved — the caller then evaluates against
+ * {@link sessionSymbolListOop} on its own rather than failing.
  *
  * The synthetic `.tN` eval-stack temporaries have no source name (and `.t1`
  * isn't a legal identifier), so they are skipped — {@link getFrameEvalContext}
@@ -1765,15 +1796,12 @@ function buildFrameSymbolList(
     if (!name || name.startsWith('.') || oop === undefined) continue;
     bindings.push({ name, oop });
   }
+  if (bindings.length === 0) return null;
 
   const symDictClass = resolveGlobalOop(session, 'SymbolDictionary');
   const symListClass = resolveGlobalOop(session, 'SymbolList');
   const systemClass = resolveGlobalOop(session, 'System');
   if (symDictClass === null || symListClass === null || systemClass === null) return null;
-
-  const profileOop = gciPerform(session, systemClass, 'myUserProfile');
-  const userListOop = gciPerform(session, profileOop, 'symbolList');
-  if (bindings.length === 0) return userListOop;
 
   const dictOop = gciPerform(session, symDictClass, 'new');
   for (const { name, oop } of bindings) {
@@ -1783,6 +1811,8 @@ function buildFrameSymbolList(
   }
 
   // (SymbolList with: dict) , (System myUserProfile symbolList)
+  const profileOop = gciPerform(session, systemClass, 'myUserProfile');
+  const userListOop = gciPerform(session, profileOop, 'symbolList');
   const frontOop = gciPerform(session, symListClass, 'with:', [dictOop]);
   return gciPerform(session, frontOop, ',', [userListOop]);
 }

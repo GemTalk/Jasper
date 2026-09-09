@@ -23,9 +23,7 @@ import { OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
  *    on every frame, of every halt, on every release;
  *  - the eval bar and the Variables pane read the frame's *receiver* (slot 10 of
  *    `_frameContentsAt:`) as `self`. In a block frame that is the ExecBlock, so
- *    `self`, instance variables and class variables all failed there;
- *  - the eval bar's no-named-temps path performed `evaluateInContext:`, which
- *    does not exist before 3.7.
+ *    `self`, instance variables and class variables all failed there.
  *
  * The fixture class is created inside the harness transaction and never
  * committed. Each halt's suspended process is released with `GciTsClearStack`.
@@ -260,8 +258,9 @@ cls setup.
 
   it('evaluates in a plain method frame with no named temps at all', () => {
     // `AbstractException >> signal` takes no arguments and declares no temps, so
-    // this is the frame shape that used to reach the 3.7-only one-argument
-    // `evaluateInContext:` and fail with NameError 2404 on 3.6.2.
+    // the frame contributes no names and the evaluation runs against the session's
+    // symbol list alone — the shape that fails on 3.6.2 if the one-argument
+    // `evaluateInContext:` is ever sent again.
     atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
       const level = methodFrameLevel(s, gsProcess, 'AbstractException', 'signal');
       expect(debug.evaluateInFrame(s, gsProcess, '3 + 4', level)).toBe('7');
