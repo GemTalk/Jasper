@@ -104,7 +104,11 @@ export async function reverseClassEdit(
         ? `Revert of ${entry.label} failed: ${first.error}`
         : `Revert of ${entry.label} was partial — ${first.op.slot.className}: ${first.error}`,
     );
-    return true;
+    // Spent only when something landed. A partial revert leaves the recorded state describing
+    // nothing the stone holds, so re-offering it would revert from a state it does not know;
+    // a total failure wrote nothing at all, and an entry that still describes the stone must
+    // stay on offer rather than have the button move on to the change before it.
+    return succeeded.length > 0;
   }
 
   void vscode.window.showInformationMessage(

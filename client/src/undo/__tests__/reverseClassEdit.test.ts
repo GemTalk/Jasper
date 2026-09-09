@@ -215,7 +215,9 @@ describe('reverseClassEdit', () => {
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalled();
   });
 
-  it('reports a version the session no longer holds', async () => {
+  it('reports a version the session no longer holds, and keeps the entry on offer', async () => {
+    // Nothing was bound, so the stone still holds what the entry describes — spending it there
+    // moved the button on to the previous change the moment the failure was reported.
     vi.mocked(captureClassSlots).mockReturnValue([unbound]);
     vi.mocked(applyClassSlotOps).mockImplementation((_e, ops) =>
       ops.map((op) => ({ op, error: 'this session no longer holds the earlier version' })),
@@ -223,7 +225,7 @@ describe('reverseClassEdit', () => {
 
     const spent = await reverseClassEdit(session, entry([bound('1')], [unbound]));
 
-    expect(spent).toBe(true);
+    expect(spent).toBe(false);
     expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('no longer holds');
   });
 

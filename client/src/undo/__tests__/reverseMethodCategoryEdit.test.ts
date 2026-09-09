@@ -16,7 +16,7 @@ vi.mock('../afterUndo', () => ({
 
 import * as vscode from 'vscode';
 import { getMethodCategories, removeMethodCategory, renameCategory } from '../../browserQueries';
-import { removeOverlayCategory, renameOverlayCategory } from '../afterUndo';
+import { refreshExplorer, removeOverlayCategory, renameOverlayCategory } from '../afterUndo';
 import { reverseMethodCategoryEdit } from '../reverseMethodCategoryEdit';
 import { MethodCategoryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -175,7 +175,14 @@ describe('reverseMethodCategoryEdit', () => {
       expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
 
       expect(renameCategory).toHaveBeenCalled();
-      expect(renameOverlayCategory).not.toHaveBeenCalled();
+      // And the overlay is corrected too: the name is in BOTH places once a "+" category has
+      // been filled, and renaming only the real one leaves the overlay row on show under the
+      // name the undo just took away.
+      expect(renameOverlayCategory).toHaveBeenCalledWith(
+        { dict: 7, className: 'Account', isMeta: false },
+        'reading',
+        'accessing',
+      );
     });
   });
 
@@ -196,6 +203,13 @@ describe('reverseMethodCategoryEdit', () => {
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
         expect.stringContaining('no method moved'),
       );
+      // A "+" category that has since been filled is real on the stone AND still in the
+      // overlay. Removing only the real one left the row listed under a category the stone no
+      // longer has, until the browsed class changed (review of #507).
+      expect(removeOverlayCategory).toHaveBeenCalledWith(
+        { dict: 7, className: 'Account', isMeta: false },
+        'reading',
+      );
     });
 
     it('REFUSES when the category has been filled since, and names the count', async () => {
@@ -210,6 +224,9 @@ describe('reverseMethodCategoryEdit', () => {
         expect.stringContaining('now holds 3 methods'),
       );
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+      // The count comes from the stone, and the pane can be showing fewer — so it is put back
+      // in step before the refusal names a method the user cannot see (review of #507).
+      expect(refreshExplorer).toHaveBeenCalled();
     });
 
     it('reads one held method as singular', async () => {

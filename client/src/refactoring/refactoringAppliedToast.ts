@@ -29,7 +29,7 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
-import { checkRefactoringUndoAvailable } from './refactoringUndoAvailability';
+import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactoringUndoAvailability';
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
@@ -56,6 +56,10 @@ export function notifyRefactoringApplied(
       logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);
       else void vscode.window.setStatusBarMessage(message, 4000);
+      // "Nothing was recorded for this one" and "this engine cannot record anything" produce
+      // the same silent plain notice, and only the second is something the user can fix. Said
+      // once per session, here, because this is the one place every refactoring passes through.
+      if (session && !status.supported) warnUndoUnsupported(session);
       return;
     }
     logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);

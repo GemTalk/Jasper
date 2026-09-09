@@ -46,6 +46,7 @@ describe('undo status', () => {
     );
     expect(s).toEqual({
       available: true,
+      supported: true,
       label: 'Rename #total to #sum',
       engine: 'GsRenameMethodRefactoring',
       mechanism: 'changeSet',
@@ -57,6 +58,20 @@ describe('undo status', () => {
 
   it('reads an explicit "nothing recorded" as unavailable', () => {
     expect(parseUndoStatus('{"available":false}').available).toBe(false);
+  });
+
+  it('reads a stone whose engine has no undo as unavailable AND unsupported', () => {
+    // The two answer the same `available:false`, and only one of them is something the user
+    // can fix by re-installing the engine — so they have to be told apart here.
+    const s = parseUndoStatus('{"available":false,"supported":false}');
+
+    expect(s.available).toBe(false);
+    expect(s.supported).toBe(false);
+  });
+
+  it('treats an engine that says nothing about support as supporting undo', () => {
+    expect(parseUndoStatus('{"available":false}').supported).toBe(true);
+    expect(parseUndoStatus('not json').supported).toBe(true);
   });
 
   it('reads a non-JSON payload as unavailable rather than throwing', () => {

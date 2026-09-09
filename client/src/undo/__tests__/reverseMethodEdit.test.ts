@@ -187,9 +187,10 @@ describe('reverseMethodEdit', () => {
     expect(refreshSearch).toHaveBeenCalledWith(session.id);
   });
 
-  it('reports a failed reversal, and still uses the entry up', async () => {
-    // The recorded "before" no longer describes anything the stone holds, so offering the
-    // entry again would reverse from a state it does not know.
+  it('reports a reversal that wrote nothing, and keeps the entry on offer', async () => {
+    // Nothing landed, so the stone holds exactly what the entry describes. Using the entry up
+    // there showed as the button moving on to the previous change the moment the failure was
+    // reported, which reads as the undo having been silently spent.
     vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
     vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
       ops.map((op) => ({ op, error: 'not writable' })),
@@ -197,8 +198,29 @@ describe('reverseMethodEdit', () => {
 
     const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
 
-    expect(spent).toBe(true);
+    expect(spent).toBe(false);
     expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('not writable');
+  });
+
+  it('uses the entry up when part of the reversal landed', async () => {
+    // The recorded "before" no longer describes anything the stone holds, so offering the
+    // entry again would reverse from a state it does not know.
+    const twoSlots: MethodEditUndoEntry = {
+      ...entry([has('balance ^1'), has('rate ^1')], [gone, has('rate ^2')]),
+      slots: [
+        { className: 'Account', isMeta: false, selector: 'balance', environmentId: 0 },
+        { className: 'Account', isMeta: false, selector: 'rate', environmentId: 0 },
+      ],
+    };
+    vi.mocked(captureMethodSlots).mockReturnValue([gone, has('rate ^2')]);
+    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+      ops.map((op, i) => ({ op, error: i === 0 ? null : 'not writable' })),
+    );
+
+    const spent = await reverseMethodEdit(session, twoSlots);
+
+    expect(spent).toBe(true);
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('was partial');
   });
 
   it('keeps the entry when the current state could not even be read', async () => {

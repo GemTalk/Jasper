@@ -12,20 +12,31 @@ import type { AsyncQueryExecutor } from './previewRenameMethod';
  *
  * Every one of them reaches `GsRefactoringUndo` through `objectNamed:` rather than
  * naming it directly, so they still COMPILE against a stone whose refactoring engine
- * predates undo; there they answer the same "nothing to undo" envelope the engine
- * itself answers, instead of failing with a compile error.
+ * predates undo; there they answer a "nothing to undo" shape instead of failing with a
+ * compile error. The two that the user can be told about — the status probe and the
+ * recording of a reversal — make that branch DISTINGUISHABLE (`"supported":false`,
+ * `'no-undo-support'`) rather than indistinguishable from an idle session: an engine
+ * installed before this work applies every refactoring and records none, which looked
+ * exactly like undo being broken.
  */
 
 const UNDO_CLASS = `(System myUserProfile symbolList objectNamed: #GsRefactoringUndo)`;
 
 /** Is there a refactoring to undo, and what is it called?
  *  `{"available":true,"label":..,"engine":..,"sequence":N,"total":N}` or
- *  `{"available":false}`. */
+ *  `{"available":false}` — with `"supported":false` added when the stone has no
+ *  `GsRefactoringUndo` at all.
+ *
+ *  That extra field is the difference between "you have not applied a refactoring yet" and
+ *  "this engine predates undo, so nothing you apply here will ever be undoable". Both used to
+ *  answer the identical envelope, which made an engine installed before the undo work look
+ *  exactly like an idle session: refactorings applied, no Undo was ever offered, and nothing
+ *  said why. */
 export function refactoringUndoStatus(execute: QueryExecutor): string {
   return execute(
     `| c |
 c := ${UNDO_CLASS}.
-c isNil ifTrue: ['{"available":false}'] ifFalse: [c statusJson]`,
+c isNil ifTrue: ['{"available":false,"supported":false}'] ifFalse: [c statusJson]`,
   );
 }
 
@@ -100,9 +111,13 @@ export type ReverseRenameKind =
  * (for a class rename that is the NEW name, since the class is bound under it now), `from`
  * is the name in force now and `to` the name to go back to.
  *
- * Answers `'ok'`, `'unsupported'` for a kind the engine cannot reverse, or `'ok'` as a
- * no-op on a stone whose engine predates undo — recording is never allowed to fail a
- * rename that has already happened.
+ * Answers `'ok'`, `'unsupported'` for a kind the engine cannot reverse, or
+ * `'no-undo-support'` on a stone whose engine predates undo. That last one is a no-op, not a
+ * failure — recording is never allowed to fail a rename that has already happened — but it
+ * has its own answer rather than a cheerful `'ok'`, because the breadcrumb this leaves in the
+ * GCI log is the first place "the rename is undoable" can be told apart from "nothing here
+ * can record an undo", and one reading as the other is what made a stale engine look like a
+ * broken undo (review of #507).
  */
 export function recordReverseRename(
   execute: QueryExecutor,
@@ -119,7 +134,7 @@ export function recordReverseRename(
   return execute(
     `| c |
 c := ${UNDO_CLASS}.
-c isNil ifTrue: ['ok'] ifFalse: [
+c isNil ifTrue: ['no-undo-support'] ifFalse: [
   c
     recordReverseRename: #${kind}
     className: '${escapeString(className)}'

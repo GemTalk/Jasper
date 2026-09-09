@@ -102,10 +102,13 @@ export async function reverseMethodEdit(
         ? `Undo of ${entry.label} failed: ${first.error}`
         : `Undo of ${entry.label} was partial — ${slotLabel(first.op.slot)}: ${first.error}`,
     );
-    // Partial or total, the recorded "before" is no longer a description of anything the
-    // stone holds, so the entry is spent either way; offering it again would reverse
-    // from a state it no longer knows.
-    return true;
+    // A PARTIAL reversal spends the entry: some of it landed, so the recorded "before" no
+    // longer describes anything the stone holds, and offering it again would reverse from a
+    // state it does not know. A TOTAL failure does not — nothing was written, the stone holds
+    // exactly what it held, and the entry still describes it. Spending it there was visible as
+    // the button moving on to the previous change immediately after a failure was reported,
+    // which reads as the undo having been silently used up (review of #507).
+    return succeeded.length > 0;
   }
 
   void vscode.window.showInformationMessage(

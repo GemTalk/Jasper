@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
+  warnUndoUnsupported: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
-import { checkRefactoringUndoAvailable } from '../refactoringUndoAvailability';
+import { checkRefactoringUndoAvailable, warnUndoUnsupported } from '../refactoringUndoAvailability';
 import { notifyRefactoringApplied } from '../refactoringAppliedToast';
 import { UNDO_COMMAND } from '../../undo/undoUi';
 import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
@@ -20,8 +21,9 @@ import type { ActiveSession } from '../../sessionManager';
  */
 
 const session = { id: 7 } as ActiveSession;
-const status = (available: boolean) => ({
+const status = (available: boolean, supported = true) => ({
   available,
+  supported,
   label: 'Rename #total to #sum',
   engine: 'GsRenameMethodRefactoring',
   mechanism: 'changeSet' as const,
@@ -113,6 +115,27 @@ describe('notifyRefactoringApplied', () => {
     await settle();
 
     expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it("says so when the stone's engine cannot record an undo at all", async () => {
+    // An engine installed before the undo work applies every refactoring and records none, so
+    // the quiet notice is identical to the one a recorded-nothing refactoring gets — and the
+    // user is left with a feature that silently never works (review of #507).
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false, false));
+
+    notifyRefactoringApplied(session, 'Renamed it.', 'toast');
+    await settle();
+
+    expect(warnUndoUnsupported).toHaveBeenCalledWith(session);
+  });
+
+  it('stays quiet when the engine has undo and this refactoring recorded none', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+
+    notifyRefactoringApplied(session, 'Extracted #answer.');
+    await settle();
+
+    expect(warnUndoUnsupported).not.toHaveBeenCalled();
   });
 
   it('returns while the toast is still unanswered', async () => {

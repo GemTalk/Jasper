@@ -9,6 +9,7 @@ vi.mock('../../browserQueries', () => ({
 vi.mock('../undoRefactoringPanel', () => ({ showUndoRefactoringPanel: vi.fn() }));
 vi.mock('../refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
+  warnUndoUnsupported: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
@@ -36,8 +37,9 @@ const START = JSON.stringify({
   page: { changes: [], nextOffset: 0, done: true },
 });
 
-const status = (available: boolean) => ({
+const status = (available: boolean, supported = true) => ({
   available,
+  supported,
   label: 'Rename #total to #sum',
   engine: 'GsRenameMethodRefactoring',
   mechanism: 'changeSet' as const,

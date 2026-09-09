@@ -21,6 +21,13 @@
  * Which of the two runs is decided from the LIVE state, never from a flag recorded at the
  * time, because a category can cross between them: filing a method into a fresh one — by
  * compiling, or by dropping a method on it — is all it takes to make it real.
+ *
+ * Crossing over does NOT take the name out of the overlay, though, so the two places are not
+ * alternatives: a category that started at "+" is in both at once. The pane hides an overlay
+ * name that a real category already has, which is why that costs nothing until a reversal
+ * empties or renames the real one — and then the overlay row is left on show over a category
+ * the stone no longer has. So the STONE-side reversals correct the overlay too, best-effort;
+ * a name that was never in it answers 'not-listed' and nothing happens.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -96,6 +103,14 @@ export async function reverseMethodCategoryEdit(
   }
   logInfo(`[undo] #${entry.id} renamed '${entry.after}' back to '${entry.before}' on ${where}`);
 
+  // A category can be real on the stone AND still be in the Explorer's overlay: the "+"
+  // button puts the name there, filing a method into it makes it real, and the forward
+  // rename carries the overlay name across. The pane hides an overlay name that a real
+  // category already has, so the duplicate is invisible until the rename back empties the
+  // real one — and then the stale overlay row is what the user sees. Renamed here rather
+  // than after the refresh, while the pane's own category list still describes the stone as
+  // it was, so the name being restored cannot read as a collision with itself.
+  await renameOverlayCategory(entry.slot, entry.after, entry.before);
   await refreshExplorer();
   await refreshSearch(session.id);
   await reloadGemstoneEditors();
@@ -138,9 +153,16 @@ async function removeReal(
   const held = /^holds:(\d+)$/.exec(answer.trim());
   if (held) {
     const n = Number(held[1]);
+    // Refresh BEFORE saying so. The refusal counts what the stone holds, and the pane can be
+    // showing fewer — an editor compiled into the category, a drop, a method filed in from
+    // elsewhere. "It holds a method" over a pane listing none reads as Jasper being wrong
+    // about its own refusal (review of #507), so the pane is put back in step with the stone
+    // first and the message points at it.
+    await refreshExplorer();
     void vscode.window.showErrorMessage(
       `Cannot undo ${entry.label}: '${entry.after}' now holds ${n} method${n === 1 ? '' : 's'}, ` +
-        'and removing a category in GemStone removes the methods in it. Move them elsewhere first.',
+        'and removing a category in GemStone removes the methods in it. The Methods pane has ' +
+        'been refreshed to show them; move them elsewhere first.',
     );
     return false;
   }
@@ -150,6 +172,12 @@ async function removeReal(
   }
   logInfo(`[undo] #${entry.id} removed the empty category '${entry.after}' from ${where}`);
 
+  // The name can be in the Explorer's overlay as well as on the stone — the "+" button put it
+  // there and filing a method into it made it real, which is exactly the path that leads here.
+  // The pane hides an overlay name a real category already has, so removing only the real one
+  // leaves the overlay row on show over nothing: the reported symptom was a successful undo
+  // whose category stayed listed until the browsed class changed (review of #507).
+  await removeOverlayCategory(entry.slot, entry.after);
   await refreshExplorer();
   await refreshSearch(session.id);
   await reloadGemstoneEditors();

@@ -91,9 +91,11 @@ export async function reverseClassCategoryEdit(
         ? `Undo of ${entry.label} failed: ${failures[0]}`
         : `Undo of ${entry.label} was partial — ${failures[0]}`,
     );
-    // Partial or total, what was recorded no longer describes the dictionary, so the entry is
-    // spent either way.
-    return true;
+    // Spent only when a class actually moved: a partial refile leaves the recorded state
+    // describing nothing the dictionary holds, while a refile where every class failed moved
+    // nothing at all — the entry still describes the dictionary, so it stays on offer rather
+    // than have the button move on to the change before it (review of #507).
+    return moved > 0;
   }
   logInfo(`[undo] #${entry.id} refiled ${moved} class(es)`);
 

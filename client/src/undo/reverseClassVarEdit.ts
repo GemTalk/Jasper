@@ -153,10 +153,12 @@ export async function reverseClassVarEdit(
         ? `Undo of ${entry.label} failed: ${failures[0]}`
         : `Undo of ${entry.label} was partial — ${failures[0]}`,
     );
-    // Partial or total, what was recorded no longer describes anything the stone holds, so
-    // the entry is spent either way; offering it again would reverse from a state it no
-    // longer knows.
-    return true;
+    // Spent only when something landed: a partial reversal leaves the recorded state
+    // describing nothing the stone holds, so offering it again would reverse from a state it
+    // no longer knows, while a total failure wrote nothing and the entry still describes the
+    // stone exactly. Spending it there showed as the button moving on to the previous change
+    // the moment a failure was reported (review of #507).
+    return done.length > 0;
   }
 
   const strandedNote =

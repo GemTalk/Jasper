@@ -114,10 +114,11 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('reports a refiling the stone answered with a status string rather than raising', async () => {
+    // No class moved, so the entry still describes the dictionary and stays on offer.
     vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New' }));
     vi.mocked(recategorizeClass).mockReturnValue('Class not found: A');
 
-    expect(await reverseClassCategoryEdit(session, entry())).toBe(true);
+    expect(await reverseClassCategoryEdit(session, entry())).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('Class not found: A'),
     );

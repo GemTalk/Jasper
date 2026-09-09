@@ -16,6 +16,7 @@ vi.mock('../undoUi', async (importOriginal) => ({
 }));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
+  warnUndoUnsupported: vi.fn(),
 }));
 vi.mock('../../refactoring/undoRefactoringCommand', () => ({
   undoLastRefactoringCommand: vi.fn(),
@@ -53,6 +54,7 @@ const sessions = { getSelectedSession: () => session } as unknown as SessionMana
 
 const status = (available: boolean, sequence = 1) => ({
   available,
+  supported: true,
   label: 'Rename #total to #sum',
   engine: 'GsRenameMethodRefactoring',
   mechanism: 'changeSet' as const,

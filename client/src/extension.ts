@@ -1577,9 +1577,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Undo the last thing done in this session -- a method edit or an applied refactoring
-    // (#434). Reached five ways: the purple status-bar button, the Undo button on the
-    // post-apply toast, the palette entry and the Actions & Navigation pane's button -- all
-    // of which land in the one dispatcher.
+    // (#434). Reached three ways: the Undo button on the post-apply toast, the Actions &
+    // Navigation pane's button and the palette entry (plus its Ctrl+K U chord) -- all of
+    // which land in the one dispatcher.
     vscode.commands.registerCommand('gemstone.undoLast', async () => {
       await undoLastCommand(sessionManager);
     }),

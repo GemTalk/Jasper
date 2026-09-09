@@ -32,7 +32,7 @@ import {
 } from './undoRefactoringPreview';
 import { showUndoRefactoringPanel } from './undoRefactoringPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
-import { checkRefactoringUndoAvailable } from './refactoringUndoAvailability';
+import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactoringUndoAvailability';
 import {
   refreshExplorer,
   refreshSearch,
@@ -103,10 +103,14 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   // item left stale by a reconnect corrects itself.
   const status = checkRefactoringUndoAvailable(session);
   if (!status.available) {
-    refuse(
-      'There is no refactoring to undo in this session. Undo covers the last refactoring ' +
-        'applied since you connected, and it is used up once you undo it.',
-    );
+    // Two different facts, and only one of them is the user's to fix: nothing has been
+    // recorded yet, or this engine cannot record anything at all.
+    if (!status.supported) warnUndoUnsupported(session);
+    else
+      refuse(
+        'There is no refactoring to undo in this session. Undo covers the last refactoring ' +
+          'applied since you connected, and it is used up once you undo it.',
+      );
     return;
   }
 

@@ -84,6 +84,11 @@ export interface UndoChange {
 /** Whether there is a refactoring to undo, and what it is called. */
 export interface UndoStatus {
   available: boolean;
+  /** Whether this stone's engine has undo AT ALL. False only when the engine is installed
+   *  but predates the undo work, which is a different fact from "nothing recorded yet" and
+   *  the one thing the user can act on — every refactoring on such a stone is silently
+   *  irreversible until the engine is re-installed. */
+  supported: boolean;
   label: string;
   engine: string;
   mechanism: UndoMechanism;
@@ -170,6 +175,7 @@ function str(v: unknown): string | null {
 export function parseUndoStatus(json: string): UndoStatus {
   const empty: UndoStatus = {
     available: false,
+    supported: true,
     label: '',
     engine: '',
     mechanism: 'changeSet',
@@ -185,9 +191,12 @@ export function parseUndoStatus(json: string): UndoStatus {
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return empty;
   const env = parsed as Record<string, unknown>;
-  if (env.available !== true) return empty;
+  // `supported:false` is only ever sent by the client-side wrapper when the stone has no
+  // GsRefactoringUndo at all; an engine that has it never says so, hence the !== false.
+  if (env.available !== true) return { ...empty, supported: env.supported !== false };
   return {
     available: true,
+    supported: true,
     label: str(env.label) ?? 'the last refactoring',
     engine: str(env.engine) ?? '',
     mechanism: mechanismOf(env.mechanism),

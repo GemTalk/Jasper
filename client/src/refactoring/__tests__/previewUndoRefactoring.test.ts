@@ -26,7 +26,9 @@ describe('undo refactoring queries', () => {
     const code = codeOf((e) => refactoringUndoStatus(e));
     expect(code).toContain('objectNamed: #GsRefactoringUndo');
     expect(code).toContain('c statusJson');
-    expect(code).toContain(`c isNil ifTrue: ['{"available":false}']`);
+    // The no-engine branch says WHICH kind of "nothing to undo" this is, so a stone whose
+    // engine predates undo can be told apart from a session that has applied nothing.
+    expect(code).toContain(`c isNil ifTrue: ['{"available":false,"supported":false}']`);
   });
 
   it('starts a paginated preview under a token and bounds the page', async () => {
