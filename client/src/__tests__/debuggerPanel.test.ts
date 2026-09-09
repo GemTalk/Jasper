@@ -617,11 +617,19 @@ function rearmRestoreDecliner(): void {
     false;
 }
 
+// The columns a window left behind are static — they have to outlive activate() to be
+// there when VS Code deserializes the panel — so within a test file they also outlive
+// the test that recorded them, and would add a group close to whatever ran next.
+function forgetOrphanColumns(): void {
+  (DebuggerPanel as unknown as { orphanColumns: number[] }).orphanColumns = [];
+}
+
 describe('DebuggerPanel', () => {
   let session: ActiveSession;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    forgetOrphanColumns();
     // Inspect opens the tabbed Inspector by default, whatever the session has
     // installed; the two tests here that want the Enhanced one ask for `auto`
     // themselves. Cleared per test because the mock's config store is
@@ -1943,6 +1951,12 @@ describe('DebuggerPanel', () => {
     // gemstone://). We persist the open source URIs to workspaceState and reap
     // the leftovers on the next activation.
     const ORPHAN_KEY = 'jasper.debugger.orphanSourceUris';
+    // What the window leaves for the next one: the source tabs to reap AND the editor
+    // columns to retire. The columns matter on their own — a debugger that never showed
+    // a source still carved a group, so that group has no tab to reap and would be
+    // unreachable without them.
+    const trackedUris = (m: { get(k: string): unknown }): string[] =>
+      (m.get(ORPHAN_KEY) as { uris?: string[] } | undefined)?.uris ?? [];
     function fakeMemento(initial: Record<string, unknown> = {}): vscode.Memento {
       const store = new Map<string, unknown>(Object.entries(initial));
       return {
@@ -1958,6 +1972,8 @@ describe('DebuggerPanel', () => {
 
     it('reaps a debugger source tab a prior session left open, then re-arms the set', () => {
       const orphan = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/finish';
+      // Seeded in the pre-columns shape on purpose: a window upgraded across that
+      // change still has a bare array on disk and its tabs must still be reaped.
       const memento = fakeMemento({ [ORPHAN_KEY]: [orphan] });
       const orphanTab = { input: new vscode.TabInputText(vscode.Uri.parse(orphan)) };
       // An unrelated tab the user opened independently (e.g. System Browser) — never ours.
@@ -2069,6 +2085,36 @@ describe('DebuggerPanel', () => {
       expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
     });
 
+    // The half the serializer alone could never reach: the companion source group is
+    // carved EMPTY, so a debugger closed with no source ever shown leaves a group with
+    // no tab to reap. Its column has to have been written down while the window was
+    // alive, because dispose cannot win the shutdown race.
+    it('retires a recorded column that came back with nothing in it', async () => {
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [5] } });
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 5, tabs: [] });
+      const emptied = groups[groups.length - 1];
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    it('records the columns a live debugger holds, not just its source tabs', async () => {
+      const memento = fakeMemento();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      openPanelWithStack();
+      await flush();
+
+      const stored: { columns?: number[] } | undefined = memento.get(ORPHAN_KEY);
+      expect(stored?.columns?.length).toBeGreaterThan(0);
+    });
+
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
@@ -2085,7 +2131,7 @@ describe('DebuggerPanel', () => {
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
       expect(uri).toContain('orphanProbeA'); // our just-opened source…
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // …is now tracked for reaping.
+      expect(trackedUris(memento)).toContain(uri); // …is now tracked for reaping.
     });
 
     it('drops the URI from the tracked set on a clean panel close (nothing to reap)', async () => {
@@ -2102,12 +2148,12 @@ describe('DebuggerPanel', () => {
       const uri = (
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // tracked while open…
+      expect(trackedUris(memento)).toContain(uri); // tracked while open…
 
       closePanel(panel);
 
       // …and dropped on a clean dispose, so the next launch has nothing to reap.
-      expect(memento.get(ORPHAN_KEY) ?? []).not.toContain(uri);
+      expect(trackedUris(memento)).not.toContain(uri);
     });
 
     // ── Double-click-to-edit inline values (#5 Phase 2) ───────────────────

@@ -685,7 +685,14 @@ const DEBUGGER_VIEW_TYPE = 'gemstoneEnhancedDebugger';
 
 /** Back-off for retiring a group whose last tab was just closed. The close is
  *  asynchronous, so the group can still report the tab for a tick or two. */
-const RETIRE_GROUP_RETRY_DELAYS_MS = [0, 16, 64, 256];
+const RETIRE_GROUP_RETRY_DELAYS_MS = [0, 32, 128, 512, 1000];
+
+/** What a window leaves behind for the next one when it closes with a debugger open:
+ *  the companion source tabs to reap, and the editor columns to retire. */
+interface PersistedOrphans {
+  uris: string[];
+  columns: number[];
+}
 
 /**
  * A fully-resolved stack frame, before display filtering and renumbering.
@@ -988,11 +995,25 @@ export class DebuggerPanel {
     DebuggerPanel.orphanState = state;
     DebuggerPanel.extensionPath = extensionPath;
     DebuggerPanel.declineRestoredPanels();
-    const orphans = state.get<string[]>(DebuggerPanel.ORPHAN_SOURCE_KEY, []);
+    const stored = state.get<PersistedOrphans | string[] | undefined>(
+      DebuggerPanel.ORPHAN_SOURCE_KEY,
+      undefined,
+    );
+    // A bare array is what an earlier version wrote (URIs only, before the columns were
+    // recorded), so a window upgraded across that change still gets its tabs reaped.
+    const orphans: PersistedOrphans = Array.isArray(stored)
+      ? { uris: stored, columns: [] }
+      : (stored ?? { uris: [], columns: [] });
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
-    if (orphans.length === 0) return;
-    const wanted = new Set(orphans);
+    DebuggerPanel.orphanColumns = orphans.columns;
+    // The columns are retired even with nothing to reap: a debugger that never showed a
+    // source still carved a group, and that group is exactly the one with no tab in it.
+    if (orphans.uris.length === 0) {
+      void DebuggerPanel.retireOrphanColumns();
+      return;
+    }
+    const wanted = new Set(orphans.uris);
     const closing: Thenable<unknown>[] = [];
     // The columns these tabs are vacating. A reaped source tab leaves the companion
     // source group empty, and that group is no more self-retiring than the panel's —
@@ -1010,7 +1031,24 @@ export class DebuggerPanel {
       .catch(() => {})
       .then(async () => {
         for (const column of vacated) await DebuggerPanel.retireEmptyGroup(column);
+        await DebuggerPanel.retireOrphanColumns();
       });
+  }
+
+  /**
+   * The columns a debugger held when the window last closed, read back at activation.
+   * Kept until they are retired rather than consumed on the spot, because the panel's
+   * own tab is closed by the serializer — which VS Code calls AFTER activate() — so a
+   * sweep that ran only at activation would find the panel's group still occupied.
+   */
+  private static orphanColumns: number[] = [];
+
+  /** Retire whichever of the last window's debugger columns came back empty. Safe to
+   *  call more than once: retireEmptyGroup only closes a group with nothing in it. */
+  private static async retireOrphanColumns(): Promise<void> {
+    for (const column of DebuggerPanel.orphanColumns) {
+      await DebuggerPanel.retireEmptyGroup(column);
+    }
   }
 
   /**
@@ -1086,7 +1124,13 @@ export class DebuggerPanel {
         // about. So the group is retired here as well.
         const column = panel.viewColumn;
         panel.dispose();
-        return DebuggerPanel.retireEmptyGroup(column);
+        // Its own column when VS Code reports one — during deserialization it may not
+        // yet — and then the columns recorded before the window closed, which is what
+        // covers the companion source group as well. This runs after activate(), so it
+        // is also the pass at which the panel's own group is finally empty.
+        return DebuggerPanel.retireEmptyGroup(column).then(() =>
+          DebuggerPanel.retireOrphanColumns(),
+        );
       },
     });
   }
@@ -1103,13 +1147,28 @@ export class DebuggerPanel {
     const state = DebuggerPanel.orphanState;
     if (!state) return;
     const uris = new Set<string>();
+    // The carved columns go with them. A window close cannot be raced — dispose loses
+    // it, which is why this set is rewritten continuously rather than at shutdown — so
+    // anything the next launch needs has to already be on disk when the window dies.
+    // The columns are that: the panel's group and the companion source group, which are
+    // what the next launch has to retire. Without them the source group is unreachable,
+    // because the carve creates it EMPTY: a debugger closed with no source ever shown
+    // leaves a group with no tab to reap and no record of where it was.
+    const columns = new Set<number>();
     for (const set of DebuggerPanel.panels.values()) {
       for (const dbg of set) {
         for (const u of dbg.shownSourceUris) uris.add(u);
         for (const u of dbg.dnuMethodUris) uris.add(u);
+        for (const c of [dbg.panelGroupColumn, dbg.sourceGroupColumn]) {
+          if (c !== undefined) columns.add(c);
+        }
       }
     }
-    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, uris.size ? Array.from(uris) : undefined);
+    const orphans: PersistedOrphans | undefined =
+      uris.size || columns.size
+        ? { uris: Array.from(uris), columns: Array.from(columns) }
+        : undefined;
+    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, orphans);
   }
 
   private static ensureReadOnlySourceProvider(): void {
@@ -1453,6 +1512,11 @@ export class DebuggerPanel {
       DebuggerPanel.panels.set(session.id, new Set());
     }
     DebuggerPanel.panels.get(session.id)!.add(debugger_);
+    // Record the columns now, not when a source tab first opens. A debugger closed with
+    // the window before it ever showed a source still carved a group, and that group —
+    // carved empty, so with no tab to reap — is only reachable next launch if its column
+    // was written down while this window was alive.
+    DebuggerPanel.persistLiveSourceUris();
     // Single-stepping needs no session-wide setup here: the debugged process
     // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
     // GemStone can't step native code, error 6014) and every step/continue
