@@ -22,7 +22,6 @@ import { executeFetchString } from '../browserQueries';
 import { logError } from '../gciLog';
 import { QueryExecutor } from '../queries/types';
 import { readWebviewScript } from '../webviewAssets';
-import { SystemBrowser } from '../systemBrowser';
 import {
   PAGE_SIZE,
   ObjectHeader,
@@ -696,6 +695,13 @@ export class BasicInspector {
 
   // ── Browse ───────────────────────────────────────────
 
+  /**
+   * Browse the class of the value a row points at — in the GemStone Explorer,
+   * which is where class browsing lives. `findClass` cascades its panes to the
+   * class and opens its definition; it is handed the dictionary this session
+   * resolved as the class's home, so a name shadowed across dictionaries lands
+   * on THIS class rather than on the first of its name.
+   */
   private browseClass(oop: bigint): void {
     const location = fetchBrowseLocation(this.makeExecutor(), oop);
     if (!location || !location.dictName) {
@@ -704,14 +710,12 @@ export class BasicInspector {
       );
       return;
     }
-    SystemBrowser.navigateBeside(this.session, {
-      dictName: location.dictName,
-      className: location.className,
-      isMeta: false,
-      selector: '',
-      category: '',
-      environmentId: 0,
-    });
+    void vscode.commands.executeCommand(
+      'gemstone.explorer.findClass',
+      location.className,
+      this.sessionId,
+      location.dictName,
+    );
   }
 
   // ── Webview ──────────────────────────────────────────

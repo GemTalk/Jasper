@@ -18,13 +18,13 @@ vi.mock('vscode', () => ({
           : fallback,
     }),
   },
+  commands: { executeCommand: vi.fn() },
   env: { clipboard: { writeText: vi.fn(() => Promise.resolve()) } },
   ViewColumn: { Beside: 2 },
 }));
 
 vi.mock('../../browserQueries', () => ({ executeFetchString: vi.fn(() => '') }));
 vi.mock('../../gciLog', () => ({ logError: vi.fn() }));
-vi.mock('../../systemBrowser', () => ({ SystemBrowser: { navigateBeside: vi.fn() } }));
 
 vi.mock('../queries/basicInspectorQueries', () => ({
   PAGE_SIZE: 100,
@@ -58,7 +58,6 @@ import { BasicInspector } from '../basicInspector';
 import * as queries from '../queries/basicInspectorQueries';
 import * as debug from '../../debugQueries';
 import { forgetSession as forgetSessionPins } from '../../exportSetPins';
-import { SystemBrowser } from '../../systemBrowser';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
@@ -640,7 +639,11 @@ describe('acting on a row', () => {
     send({ command: 'ready' });
   });
 
-  it('browses the class of the value the row points at', () => {
+  /**
+   * Class browsing lives in the GemStone Explorer, so a row's Browse Class
+   * cascades its panes rather than opening the System Browser.
+   */
+  it('browses the class of the value the row points at, in the Explorer', () => {
     vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
       dictName: 'UserGlobals',
       className: 'Account',
@@ -648,18 +651,32 @@ describe('acting on a row', () => {
 
     send({ command: 'browseClass', oop: '900' });
 
-    expect(SystemBrowser.navigateBeside).toHaveBeenCalledWith(
-      session,
-      expect.objectContaining({ dictName: 'UserGlobals', className: 'Account' }),
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Account',
+      session.id,
+      'UserGlobals',
     );
   });
 
-  it('says so rather than opening a browser on nothing', () => {
+  /** The dictionary goes with the name, so a shadowed class resolves to this one. */
+  it('names the dictionary it resolved, not just the class', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+      dictName: 'OtherDict',
+      className: 'Account',
+    });
+
+    send({ command: 'browseClass', oop: '900' });
+
+    expect(vi.mocked(vscode.commands.executeCommand).mock.calls[0][3]).toBe('OtherDict');
+  });
+
+  it('says so rather than navigating to nothing', () => {
     vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
 
     send({ command: 'browseClass', oop: '900' });
 
-    expect(SystemBrowser.navigateBeside).not.toHaveBeenCalled();
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
   });
 

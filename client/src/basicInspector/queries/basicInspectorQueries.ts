@@ -556,7 +556,7 @@ export function fetchMethodSource(
 
 // ── Browse ─────────────────────────────────────────────
 
-/** Where the System Browser should navigate to reach a value's class. */
+/** Where the GemStone Explorer should navigate to reach a value's class. */
 export interface BrowseLocation {
   dictName: string;
   className: string;
@@ -564,7 +564,8 @@ export interface BrowseLocation {
 
 /**
  * Resolve a value's class and the symbol dictionary holding it, for "Browse
- * Class" on a row. Like `fetchMethodBrowseLocation` in the Enhanced Inspector's
+ * Class" on a row — which navigates the Explorer, and is handed the dictionary
+ * so a class name shadowed across two of them resolves to this one. Like `fetchMethodBrowseLocation` in the Enhanced Inspector's
  * queries, minus STONJSON and minus the method category — this one browses to
  * the class, not to a selector. The dictionary itself comes from the shared
  * {@link homeDictionaryNameExpr}, which both of those and the debugger's Browse
