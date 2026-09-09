@@ -1033,6 +1033,16 @@ export class ExplorerController {
      *  commands here that rewrite something an editor can be sitting on without going
      *  through a save — refiling a class rewrites the category line in its definition. */
     private readonly notifyDocumentChanged?: (uri: vscode.Uri) => void,
+    /** Called when a class becomes the selected one, so a view that caches per-class data
+     *  (completion's selector / instance-variable lists) can warm it before it is asked
+     *  for. Selecting a class is the strongest signal its methods are about to be read. */
+    private readonly onClassSelected?: (sessionId: number, className: string) => void,
+    /** Called when the user asks the Explorer to re-read the image (the Refresh button),
+     *  so anything cached FROM the image is dropped rather than surviving the refresh.
+     *  The compile hooks catch the common case on their own; this is the escape hatch for
+     *  the one they cannot see — a class or method created by executing code in a
+     *  workspace, which the stone announces to nobody. */
+    private readonly onImageReread?: () => void,
   ) {}
 
   /**
@@ -1430,6 +1440,8 @@ export class ExplorerController {
   // selection highlighted across a data refresh on its own (stable row ids), so
   // skipping reveal loses nothing but the unwanted jump.
   async refreshRetainingSelection({ reveal = true }: { reveal?: boolean } = {}): Promise<void> {
+    // Before anything is re-read, not after: a refresh means what is held is suspect.
+    this.onImageReread?.();
     const session = this.session();
     const { dictName, dictIndex, className } = this.state;
     // Remember the method row currently selected so it can be re-revealed.
@@ -1820,6 +1832,9 @@ export class ExplorerController {
     if (revealHierarchy) void this.revealHierarchySelf();
     this.syncTitles();
     this.recordLanding();
+    // Warming this class's completions is best-effort and debounced on the other side,
+    // so a click-through does not fetch per row and selection stays immediate.
+    if (session) this.onClassSelected?.(session.id, item.className);
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
@@ -7055,6 +7070,11 @@ export function registerGemStoneExplorer(
   // Announces a stone-side change to a `gemstone://` document (the FS provider's
   // `notifyChanged`), so an open editor on it re-reads.
   notifyDocumentChanged?: (uri: vscode.Uri) => void,
+  // Called when a class becomes the selected one, so completion can warm that class's
+  // selector / instance-variable lists before the first request pays for them inline.
+  onClassSelected?: (sessionId: number, className: string) => void,
+  // Called when the Refresh button re-reads the image, so caches derived from it drop.
+  onImageReread?: () => void,
 ): ExplorerHandle {
   const ctl = new ExplorerController(
     sessionManager,
@@ -7063,6 +7083,8 @@ export function registerGemStoneExplorer(
     context.globalState,
     sunit,
     notifyDocumentChanged,
+    onClassSelected,
+    onImageReread,
   );
 
   // A run starting or finishing changes what these rows should say, so repaint the

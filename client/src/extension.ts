@@ -799,6 +799,16 @@ export function activate(context: vscode.ExtensionContext) {
     // would file the class back. The file system is built just below, so this forwards
     // rather than handing over an object that does not exist yet.
     (uri) => gemstoneFs.notifyChanged(uri),
+    // Selecting a class is the strongest signal its methods are about to be read, so
+    // warm that class's completions instead of making the first Ctrl+Space pay for
+    // them inline. Forwarded for the same reason as its neighbours above: the
+    // completion provider is built below this call.
+    (_sid, className) => completionProvider?.primeClass(className),
+    // Refresh GemStone Explorer used to leave completion serving whatever it fetched on
+    // the session's first request: invalidateCache had exactly one caller, the
+    // palette-only "Refresh Browser" command, named after a browser Jasper no longer
+    // uses and reachable from no Explorer surface at all.
+    () => completionProvider?.invalidateCache(),
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────
@@ -873,6 +883,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
+    completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
     // Hosts the RB family under the native "Refactor…" menu in a saved
@@ -996,6 +1007,20 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     sunitTestController,
     sunitTestController.onDidChangeResults(() => sunitResultsChanged.fire()),
+  );
+
+  // Completion caches a class's selectors and instance variables, and the image-wide
+  // class list, none of which the stone announces a change to. A compile is the
+  // commonest way they go stale — a new method is exactly a selector completion did
+  // not know about — so it is dropped here, per class rather than wholesale: throwing
+  // away the class list on every method save would refetch much the most expensive of
+  // the three. A class-definition compile can also introduce a name the list has
+  // never seen, so that drops the list too.
+  context.subscriptions.push(
+    gemstoneFs.onMethodCompiled((e) => completionProvider.invalidateForCompiledUri(e.uri)),
+    gemstoneFs.onClassDefinitionCompiled((e) =>
+      completionProvider.invalidateForCompiledUri(e.uri, true),
+    ),
   );
 
   // Keep the pass/fail indicators honest. A compiled method or class definition
@@ -2255,6 +2280,13 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
+    // Drops everything read from the stone and held client-side: the workspace symbol
+    // corpus, completion's three caches, and the export manager's session state. Was
+    // titled "Refresh Browser", after the System Browser, which is no longer how anyone
+    // reaches this — and while it was the ONLY caller of the completion provider's
+    // invalidateCache, that name was also the only name for the fix to stale
+    // completion. The Explorer's own Refresh and the compile hooks cover that now, so
+    // this is the blunt instrument rather than the only instrument.
     vscode.commands.registerCommand('gemstone.refreshBrowser', async () => {
       symbolProvider.invalidateCache();
       completionProvider.invalidateCache();

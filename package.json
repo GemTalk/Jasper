@@ -1164,7 +1164,7 @@
       },
       {
         "command": "gemstone.refreshBrowser",
-        "title": "Refresh Browser",
+        "title": "Refresh Cached Stone Data",
         "category": "GemStone",
         "icon": "$(refresh)"
       },

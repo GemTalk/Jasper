@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -18,15 +18,41 @@ const mockGetAllClassNames = vi.mocked(getAllClassNames);
 const mockGetInstVarNames = vi.mocked(getInstVarNames);
 const mockGetAllSelectors = vi.mocked(getAllSelectors);
 
-function makeSessionManager(hasSession: boolean) {
-  return {
+// The provider subscribes to both session-lifecycle events in its constructor, so the
+// listeners are captured here and can be fired by the tests that pin what they clear.
+interface FakeSessions {
+  manager: SessionManager;
+  fireSelectionChanged(): void;
+  fireSessionRemoved(): void;
+}
+function makeSessions(hasSession: boolean): FakeSessions {
+  const listeners: { selection: (() => void)[]; removed: (() => void)[] } = {
+    selection: [],
+    removed: [],
+  };
+  const manager = {
     getSelectedSession: vi.fn(() =>
       hasSession
         ? { id: 1, gci: {}, handle: 'h1', login: { label: 'Test' }, stoneVersion: '3.7.2' }
         : undefined,
     ),
-    onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+    onDidChangeSelection: vi.fn((l: () => void) => {
+      listeners.selection.push(l);
+      return { dispose: () => {} };
+    }),
+    onDidRemoveSession: vi.fn((l: () => void) => {
+      listeners.removed.push(l);
+      return { dispose: () => {} };
+    }),
   } as unknown as SessionManager;
+  return {
+    manager,
+    fireSelectionChanged: () => listeners.selection.forEach((l) => l()),
+    fireSessionRemoved: () => listeners.removed.forEach((l) => l()),
+  };
+}
+function makeSessionManager(hasSession: boolean): SessionManager {
+  return makeSessions(hasSession).manager;
 }
 
 function makeDocument(uri: string) {
@@ -277,5 +303,181 @@ describe('GemStoneCompletionProvider', () => {
       // Should still extract "Array" as class name
       expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'Array');
     });
+  });
+});
+
+// The three caches are only correct while the image they were read from is, and the
+// stone announces nothing. invalidateCache had exactly one caller in the whole client
+// — the palette-only "Refresh Browser" command, named after a browser Jasper no longer
+// uses — so nothing an Explorer surface could reach ever cleared them: compile a new
+// method, press Refresh GemStone Explorer, and completion kept serving whatever it
+// fetched on the session's first request.
+describe('when the cached answers stop being true', () => {
+  // These describes sit outside the file's main one, so its mock reset does not reach
+  // them: without this, query calls accumulate across tests and the counts below are
+  // whatever ran before them.
+  beforeEach(() => {
+    mockGetAllClassNames.mockReset().mockReturnValue([]);
+    mockGetInstVarNames.mockReset().mockReturnValue([]);
+    mockGetAllSelectors.mockReset().mockReturnValue([]);
+  });
+
+  const doc = () => makeDocument('gemstone://1/Globals/Array/instance/accessing/size');
+
+  function primed() {
+    const sessions = makeSessions(true);
+    const provider = new GemStoneCompletionProvider(sessions.manager);
+    mockGetAllSelectors.mockReturnValue(['size']);
+    mockGetInstVarNames.mockReturnValue(['contents']);
+    mockGetAllClassNames.mockReturnValue([
+      { className: 'Array', dictName: 'Globals', dictIndex: 1 },
+    ]);
+    provider.provideCompletionItems(doc());
+    // Everything is cached now, so a second request must not reach the stone at all.
+    mockGetAllSelectors.mockClear();
+    mockGetInstVarNames.mockClear();
+    mockGetAllClassNames.mockClear();
+    provider.provideCompletionItems(doc());
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+    expect(mockGetAllClassNames).not.toHaveBeenCalled();
+    return { provider, sessions };
+  }
+
+  it('caches, so the assertions below are about invalidation and not about misses', () => {
+    primed();
+  });
+
+  it('refetches one class after a compile, without dropping the class list', () => {
+    const { provider } = primed();
+
+    provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/instance/x/y'));
+    provider.provideCompletionItems(doc());
+
+    // The compiled class is re-read…
+    expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
+    expect(mockGetInstVarNames).toHaveBeenCalledTimes(1);
+    // …and the image-wide class list, much the most expensive of the three, is not.
+    expect(mockGetAllClassNames).not.toHaveBeenCalled();
+  });
+
+  it('also drops the class list when a class DEFINITION was compiled', () => {
+    const { provider } = primed();
+
+    provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/definition'), true);
+    provider.provideCompletionItems(doc());
+
+    // A definition compile can introduce a name the list has never seen.
+    expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves another class alone when one class is compiled', () => {
+    const { provider } = primed();
+
+    provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Other/instance/x/y'));
+    provider.provideCompletionItems(doc());
+
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+  });
+
+  it('clears everything when the selected session changes', () => {
+    const { provider, sessions } = primed();
+
+    sessions.fireSelectionChanged();
+    provider.provideCompletionItems(doc());
+
+    expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
+    expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
+  });
+
+  // Also the only bound on how much these maps hold: there is no LRU and no TTL, so a
+  // long session otherwise accumulated a selector array per class ever browsed.
+  it('clears everything when a session is removed', () => {
+    const { provider, sessions } = primed();
+
+    sessions.fireSessionRemoved();
+    provider.provideCompletionItems(doc());
+
+    expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
+    expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
+  });
+});
+
+// provideCompletionItems is synchronous, so the FIRST request for a class paid
+// getAllSelectors and getInstVarNames inline, on the keystroke. Selecting a class in
+// the Explorer is the strongest signal its methods are about to be read, so the fetch
+// moves there — off the gesture, and debounced so clicking through classes does not
+// fire one per row passed through.
+describe('warming a class ahead of the first request', () => {
+  // These describes sit outside the file's main one, so its mock reset does not reach
+  // them: without this, query calls accumulate across tests and the counts below are
+  // whatever ran before them.
+  beforeEach(() => {
+    mockGetAllClassNames.mockReset().mockReturnValue([]);
+    mockGetInstVarNames.mockReset().mockReturnValue([]);
+    mockGetAllSelectors.mockReset().mockReturnValue([]);
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  // In afterEach, not at the end of each test: a failing assertion would otherwise
+  // skip the restore and leave fake timers on for whatever ran next. clearAllTimers
+  // drops a prime still pending, so one test's debounce cannot fire inside another —
+  // which it did, and the order shuffling made it look intermittent.
+  afterEach(() => {
+    vi.clearAllTimers();
+  });
+
+  it('does not touch the stone on the selection itself', () => {
+    const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+    provider.primeClass('Array');
+
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+    expect(mockGetInstVarNames).not.toHaveBeenCalled();
+  });
+
+  it('fetches once the selection settles', () => {
+    const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+    provider.primeClass('Array');
+    vi.runAllTimers();
+
+    expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.anything(), 'Array');
+    expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'Array');
+  });
+
+  it('fetches only the class landed on when several are clicked through', () => {
+    const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+    provider.primeClass('First');
+    provider.primeClass('Second');
+    provider.primeClass('Third');
+    vi.runAllTimers();
+
+    expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
+    expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.anything(), 'Third');
+  });
+
+  it('makes the first real request free, which is the point', () => {
+    const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+    mockGetAllSelectors.mockReturnValue(['size']);
+
+    provider.primeClass('Array');
+    vi.runAllTimers();
+    mockGetAllSelectors.mockClear();
+    provider.provideCompletionItems(makeDocument('gemstone://1/Globals/Array/instance/a/size'));
+
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+  });
+
+  it('drops a prime that has not fired yet when disposed', () => {
+    const provider = new GemStoneCompletionProvider(makeSessionManager(true));
+
+    provider.primeClass('Array');
+    provider.dispose();
+    vi.runAllTimers();
+
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });
 });

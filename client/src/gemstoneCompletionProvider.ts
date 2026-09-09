@@ -2,17 +2,109 @@ import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 
+/** How long a class selection settles before its completions are fetched. Clicking
+ *  through classes is a navigation gesture, so a prime must not fire once per row
+ *  passed through on the way to the one wanted. */
+const PRIME_DEBOUNCE_MS = 250;
+
 export class GemStoneCompletionProvider implements vscode.CompletionItemProvider {
   private classNameCache = new Map<unknown, vscode.CompletionItem[]>();
   private selectorCache = new Map<string, vscode.CompletionItem[]>();
   private instVarCache = new Map<string, vscode.CompletionItem[]>();
+  private primeTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(private sessionManager: SessionManager) {}
+  /**
+   * The cache lifecycle lives here rather than at the call sites, because these
+   * three maps are only correct for as long as the image they were read from is.
+   *
+   * Session selection and removal clear EVERYTHING rather than the entries for one
+   * session. The two per-class maps are keyed by session id, but classNameCache is
+   * keyed by the session HANDLE — deliberately, so a reconnect that hands back a new
+   * handle cannot serve a class list from the old connection — and a handle cannot be
+   * mapped back to the id being removed. A full clear is also what the workspace
+   * symbol provider does on the same signal, and the cost is one refetch on the next
+   * request. It doubles as the only bound on how much these maps hold: there is no
+   * LRU or TTL, so without this a long session accumulated one selector array per
+   * class ever browsed.
+   */
+  constructor(private sessionManager: SessionManager) {
+    sessionManager.onDidChangeSelection(() => this.invalidateCache());
+    sessionManager.onDidRemoveSession(() => this.invalidateCache());
+  }
 
   invalidateCache(): void {
     this.classNameCache.clear();
     this.selectorCache.clear();
     this.instVarCache.clear();
+  }
+
+  /**
+   * Drop one class's selectors and instance variables, for a compile that changed
+   * exactly that class. Kept narrow on purpose: a compile is the commonest way these
+   * go stale, and dropping all three maps over it would throw away the image-wide
+   * class list — much the most expensive of the three to refetch — every time a
+   * method is saved.
+   */
+  invalidateClass(sessionId: number, className: string): void {
+    const key = `${sessionId}:${className}`;
+    this.selectorCache.delete(key);
+    this.instVarCache.delete(key);
+  }
+
+  /** Drop the image-wide class-name list, for a change that can add or remove a
+   *  class rather than alter one. */
+  invalidateClassNames(): void {
+    this.classNameCache.clear();
+  }
+
+  /**
+   * A method or class definition was just compiled at `uri`, so whatever that URI's
+   * class had cached is now a version behind. A class-definition compile can also
+   * introduce a name the class list has never seen, hence the second drop.
+   */
+  invalidateForCompiledUri(uri: vscode.Uri, definitionChanged = false): void {
+    const session = this.sessionManager.getSelectedSession();
+    const className = this.extractClassName(uri);
+    if (session && className) this.invalidateClass(session.id, className);
+    if (definitionChanged) this.invalidateClassNames();
+  }
+
+  /**
+   * Warm a class's completions ahead of the first request for them.
+   *
+   * Selecting a class in the Explorer is the strongest available signal that its
+   * methods are about to be read or edited, and provideCompletionItems is
+   * SYNCHRONOUS — the first request for a class pays getAllSelectors and
+   * getInstVarNames inline, on the keystroke. Priming here is about removing that
+   * stall, not merely moving it.
+   *
+   * Deliberately not seeded from the class's own selectors, which the Explorer
+   * already has in hand: completion asks for `allSelectors`, which includes the
+   * inherited chain and is a strictly larger set. A warm-but-partial list is worse
+   * than a cold correct one, because nothing would later notice it was short.
+   *
+   * Best-effort throughout. Debounced, so clicking through classes does not fire a
+   * fetch per row; off the gesture, so selection stays immediate; and failures are
+   * swallowed exactly as the fetches below already swallow them — a prime that does
+   * not happen costs a slow first completion, which is where this started.
+   */
+  primeClass(className: string): void {
+    if (this.primeTimer) clearTimeout(this.primeTimer);
+    this.primeTimer = setTimeout(() => {
+      this.primeTimer = undefined;
+      const session = this.sessionManager.getSelectedSession();
+      if (!session) return;
+      // Straight through the same getters the provider uses, so a primed entry is
+      // byte-for-byte what a request would have cached and can never disagree with it.
+      this.getInstVarItems(session, className);
+      this.getSelectorItems(session, className);
+    }, PRIME_DEBOUNCE_MS);
+  }
+
+  /** Cancels a prime still waiting out its debounce. */
+  dispose(): void {
+    if (this.primeTimer) clearTimeout(this.primeTimer);
+    this.primeTimer = undefined;
   }
 
   provideCompletionItems(document: vscode.TextDocument): vscode.CompletionItem[] {
