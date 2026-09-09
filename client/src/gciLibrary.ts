@@ -2383,9 +2383,7 @@ export class GciLibrary {
   public async executeAndFetchOop(session: unknown, code: string): Promise<bigint> {
     this.executeNb(session, code);
 
-    await this.waitForNbResult(session);
-
-    return this.fetchNbResult(session);
+    return this.awaitNbResult(session);
   }
 
   /**
@@ -2412,8 +2410,10 @@ export class GciLibrary {
 
   /**
    * Blocks (without blocking the event loop) until `session`'s in-flight
-   * non-blocking GCI call is ready to fetch, polling for readiness rather
-   * than waiting on GemStone directly.
+   * non-blocking GCI call finishes, then fetches and returns its result
+   * oop. This is the only sanctioned way to retrieve a non-blocking
+   * result: it always polls for readiness first, so a caller can never
+   * fetch before the call has actually finished.
    *
    * Does not bound how long it waits: a connection that dies without ever
    * producing an OS-visible disconnect signal leaves this polling
@@ -2422,11 +2422,20 @@ export class GciLibrary {
    * the right policy; today's only caller is tests.
    *
    * @param session - The GemStone session to operate in.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If the evaluated code signals an error, or
+   *   if the underlying GCI call fails.
    */
-  private async waitForNbResult(session: unknown) {
+  private async awaitNbResult(session: unknown) {
     while (!this.isNbResultReady(session)) {
       await this.waitBeforeNextNbResultCheck();
     }
+
+    const { result, err } = this.GciTsNbResult(session);
+
+    this.throwOnIllegalOop(result, err);
+
+    return result;
   }
 
   /**
@@ -2514,23 +2523,6 @@ export class GciLibrary {
   }
 
   /**
-   * Blocks until `session`'s in-flight non-blocking GCI call finishes,
-   * and returns its result oop.
-   *
-   * @param session - The GemStone session to operate in.
-   * @returns The OOP of the result object.
-   * @throws {GciLibraryError} If the evaluated code signals an error, or
-   *   if the underlying GCI call fails.
-   */
-  private fetchNbResult(session: unknown) {
-    const { result, err } = this.GciTsNbResult(session);
-
-    this.throwOnIllegalOop(result, err);
-
-    return result;
-  }
-
-  /**
    * Returns the file descriptor of `session`'s socket, so a caller can
    * poll it (e.g. via `poll`/`select`) for readiness instead of blocking
    * while waiting on a non-blocking GCI call. The fd is owned by the
@@ -2581,6 +2573,55 @@ export class GciLibrary {
     this.throwOnIllegalOop(result, err);
 
     return result;
+  }
+
+  /**
+   * Sends the unary message `selector` to `receiverOop` via the
+   * non-blocking GCI entry point and returns the OOP of the result.
+   *
+   * The result OOP is retained in the session's PureExportSet, so the
+   * caller is responsible for releasing it when no longer needed. Does not
+   * block the event loop while GemStone processes the send; see
+   * {@link awaitNbResult} for the readiness-polling behavior this shares.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param receiverOop - The oop of the message's receiver.
+   * @param selector - The unary selector to send.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If `selector` cannot be resolved, the sent
+   *   method signals an error, or the underlying GCI call fails.
+   */
+  public async performAsync(
+    session: unknown,
+    receiverOop: bigint,
+    selector: string,
+  ): Promise<bigint> {
+    this.performNb(session, receiverOop, selector);
+
+    return this.awaitNbResult(session);
+  }
+
+  /**
+   * Starts sending the unary message `selector` to `receiverOop` via the
+   * non-blocking GCI entry point, without waiting for it to finish.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param receiverOop - The oop of the message's receiver.
+   * @param selector - The unary selector to send.
+   * @throws {GciLibraryError} If the underlying GCI call fails to start.
+   */
+  private performNb(session: unknown, receiverOop: bigint, selector: string) {
+    const { success, err } = this.GciTsNbPerform(
+      session,
+      receiverOop,
+      OOP_ILLEGAL,
+      selector,
+      [],
+      0,
+      0,
+    );
+
+    this.throwUnless(success, err);
   }
 
   /**
