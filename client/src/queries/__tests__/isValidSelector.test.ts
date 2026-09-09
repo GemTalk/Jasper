@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { isValidSelector } from '../queries/getEnhancedInspectorViewSpecs';
+import { isValidSelector } from '../util';
 
+/**
+ * The guard both inspectors' queries put a selector through before
+ * interpolating it into a doit as `#'...'`. It lives in queries/util.ts because
+ * it is one rule against selector injection, and a rule patched in one of two
+ * copies is patched in neither.
+ */
 describe('isValidSelector', () => {
   describe('valid selectors', () => {
     it('accepts a unary selector', () => {

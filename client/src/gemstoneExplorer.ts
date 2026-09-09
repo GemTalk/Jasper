@@ -4581,12 +4581,13 @@ export class ExplorerController {
   // Browser "Find Class…"), then cascade the new panes to the chosen class:
   // select its dictionary and class-category, reveal the class row, and open its
   // definition. An explicit `name` arg (programmatic callers) skips the picker.
+  //
   // `dictName` narrows a named lookup to one dictionary, for a caller that has
-  // already resolved which dictionary owns the class it means — the debugger's
-  // Browse does. Without it a class name shadowed across dictionaries resolves to
-  // whichever entry comes first, which can be the wrong class of the same name.
-  // Ignored when no entry matches it, so a stale hint still lands on the class
-  // rather than on nothing.
+  // already resolved which dictionary owns the class it means — the Inspector's
+  // Browse Class and the debugger's Browse both do. Without it a class name
+  // shadowed across dictionaries resolves to whichever entry comes first, which
+  // can be the wrong class of the same name. Ignored when no entry matches it, so
+  // a stale hint still lands on the class rather than on nothing.
   //
   // `method` lands on one of the class's methods rather than on the class: its
   // row is selected and its source opened. That's what Browse from a debugger

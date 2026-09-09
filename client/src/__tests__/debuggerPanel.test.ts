@@ -131,8 +131,14 @@ vi.mock('../gciLog', async (orig) => ({
   logWarning: vi.fn(),
 }));
 
-// "Browse" a frame opens a System Browser — stub the static entry point so the
-// test doesn't pull in the whole browser module (and its many dependencies).
+vi.mock('../basicInspector/basicInspector', () => ({
+  BasicInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
+}));
+
+// The frozen System Browser is stubbed, not exercised: Browse from a frame goes
+// to the GemStone Explorer now, and a test below asserts this entry point is
+// never called. The stub also keeps the whole browser module (and its many
+// dependencies) out of the test.
 vi.mock('../systemBrowser', () => ({ SystemBrowser: { openAndNavigate: vi.fn() } }));
 
 // Source offsets for the step-point highlight. These are GemStone `_sourceOffsets`,
@@ -151,6 +157,7 @@ import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
 import { logWarning } from '../gciLog';
+import { forgetSession as forgetSessionPins } from '../exportSetPins';
 import { EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
@@ -176,6 +183,8 @@ import {
 } from '../debuggerPanel';
 import { InlineValuesCodeLensProvider } from '../inlineValuesCodeLens';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
+import { BasicInspector } from '../basicInspector/basicInspector';
+import { __setConfig } from '../__mocks__/vscode';
 import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
@@ -630,6 +639,16 @@ describe('DebuggerPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Inspect opens the tabbed Inspector by default, whatever the session has
+    // installed; the two tests here that want the Enhanced one ask for `auto`
+    // themselves. Cleared per test because the mock's config store is
+    // module-level, so a seeded value would otherwise leak into whichever test
+    // sequence.shuffle runs next.
+    __setConfig('gemstone', 'inspector.preferred', undefined);
+    // Export-set pins are ref-counted per session in module state, so a test
+    // that pins without releasing would otherwise leave a claim standing and
+    // stop the next test's pin from reaching the stone.
+    forgetSessionPins(1);
     // clearAllMocks() clears call history but NOT mockImplementation overrides;
     // re-apply the captured factory defaults so a sticky override from one test
     // doesn't leak into the next under sequence.shuffle. Same for the shared
@@ -642,10 +661,6 @@ describe('DebuggerPanel', () => {
     // whichever read-only-frame test happened to run first.
     (DebuggerPanel as unknown as { providerRegistered: boolean }).providerRegistered = false;
     (DebuggerPanel as unknown as { readOnlySources: Map<string, string> }).readOnlySources.clear();
-    // The injected inspector provider is a static (set once at activation); clear
-    // it so a test that assigns it (the fallback-inspect case) doesn't leak into
-    // the next under sequence.shuffle.
-    DebuggerPanel.inspectorProvider = undefined;
     // tabGroups.all is a plain array on the mock, not a vi.fn — reset it so a
     // test that populates it doesn't leak into the next.
     (vscode.window.tabGroups.all as unknown as unknown[]).length = 0;
@@ -1884,6 +1899,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('closes the source editor AND every enhanced inspector it opened, together, on close', async () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       const panel = openPanelWithStack();
       // A real gemstone:// method source, shown in source column 9.
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
@@ -2646,24 +2662,23 @@ describe('DebuggerPanel', () => {
       expect(vi.mocked(debug.fetchFrameVariables)).toHaveBeenCalled();
     });
 
-    it('opens an enhanced inspector for a clicked variable when the session has one', () => {
+    // `auto`, because the tabbed Inspector is the default even where the
+    // Enhanced one is installed — reaching it is a deliberate preference.
+    it('opens an enhanced inspector for a clicked variable on auto when the session has one', () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       const panel = openPanel();
       sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
       expect(EnhancedInspector.create).toHaveBeenCalledWith(session, 300n, 'self');
     });
 
-    it('falls back to the sidebar Inspector for a clicked variable when the session has no enhanced inspector', () => {
+    it('falls back to the basic tabbed Inspector for a clicked variable when the session has no enhanced inspector', () => {
       session.enhancedInspectorAvailable = false;
-      const addRoot = vi.fn();
-      DebuggerPanel.inspectorProvider = {
-        addRoot,
-      } as unknown as typeof DebuggerPanel.inspectorProvider;
       const panel = openPanel();
 
       sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
 
       expect(EnhancedInspector.create).not.toHaveBeenCalled();
-      expect(addRoot).toHaveBeenCalledWith(1, 300n, 'self');
+      expect(BasicInspector.create).toHaveBeenCalledWith(session, 300n, 'self');
     });
 
     it('setVariable (instvar) evaluates the expr, writes via instVarAt:put:, refreshes, and reports ok', () => {
