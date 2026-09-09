@@ -2232,12 +2232,20 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.commit",
+          "command": "gemstone.sessionCommit",
           "when": "gemstone.hasActiveSession"
         },
         {
-          "command": "gemstone.explorer.abort",
+          "command": "gemstone.sessionAbort",
           "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.commit",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "false"
         },
         {
           "command": "gemstone.explorer.removeDictionary",

@@ -1946,16 +1946,29 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.sessionCommit', (item: GemStoneSessionItem) =>
-      commitSession(item.activeSession),
+    // A session row names the session to act in; the Command Palette hands over
+    // nothing, so the active session answers for it. These are the palette's
+    // GemStone: Commit and GemStone: Abort.
+    vscode.commands.registerCommand(
+      'gemstone.sessionCommit',
+      async (item?: GemStoneSessionItem) => {
+        const session = item ? item.activeSession : await sessionManager.resolveSession();
+        if (!session) return;
+        return commitSession(session);
+      },
     ),
 
-    vscode.commands.registerCommand('gemstone.sessionAbort', (item: GemStoneSessionItem) =>
-      abortSession(item.activeSession),
-    ),
+    vscode.commands.registerCommand('gemstone.sessionAbort', async (item?: GemStoneSessionItem) => {
+      const session = item ? item.activeSession : await sessionManager.resolveSession();
+      if (!session) return;
+      return abortSession(session);
+    }),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
-    // Abort are reachable without switching to the Sessions view.
+    // Abort are reachable without switching to the Sessions view. They carry the
+    // same titles as the commands above, so package.json keeps them out of the
+    // Command Palette — two identical GemStone: Commit entries is a coin toss,
+    // not a choice.
     vscode.commands.registerCommand('gemstone.explorer.commit', () => {
       const session = sessionManager.getSelectedSession();
       if (!session) {

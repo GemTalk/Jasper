@@ -31,3 +31,27 @@ describe('extension command handlers guard against undefined node', () => {
     );
   });
 });
+
+// The same species of crash, one type further along: a handler that declares
+// its tree item as required (`item: GemStoneSessionItem`) reads `activeSession`
+// off `undefined` the moment the Command Palette runs it with no argument —
+// which is what GemStone: Commit and GemStone: Abort did
+// (https://github.com/GemTalk/Jasper/issues/455). Declaring the parameter
+// optional is what makes the compiler insist on a fallback for the palette
+// case, so pin that here.
+describe('tree-item command handlers accept being invoked without an item', () => {
+  const extensionPath = path.resolve(__dirname, '..', 'extension.ts');
+  const source = fs.readFileSync(extensionPath, 'utf-8');
+
+  it('never declares a required GemStoneSessionItem parameter', () => {
+    const required = source
+      .split('\n')
+      .map((text, i) => ({ line: i + 1, text: text.trim() }))
+      .filter(({ text }) => /\bitem:\s*GemStoneSessionItem\b/.test(text));
+
+    expect(
+      required,
+      `these must be \`item?: GemStoneSessionItem\`:\n${JSON.stringify(required, null, 2)}`,
+    ).toEqual([]);
+  });
+});
