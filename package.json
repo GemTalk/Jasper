@@ -333,6 +333,11 @@
             "maximum": 1000,
             "markdownDescription": "How many pages one **Load all** click reads in the Inspector before it stops and leaves the rest.\n\nA page is 100 rows (400 bytes on the **Bytes** tab), so the default reads 5,000 rows a click. Each page is a synchronous round trip, so a collection of a million elements would otherwise hold the session — and the editor — for as long as the reads took. When a click stops here the toolbar says so (`Load all stopped at 5,000 — click again for the next 5,000`) and another click carries on from where it left off; nothing is out of reach, it just takes more clicks.\n\nRaise it to read more per click on a large collection, at the cost of a longer freeze while it reads."
           },
+          "gemstone.explorer.navigationSelectorsOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "List the GemStone Explorer's navigation trail by selector alone, dropping the class from each method's label — the class moves to the dimmed column beside it. Useful while working inside one class, where the repeated class name crowds out the part that differs. Toggle quickly from the Actions & Navigation pane's button row."
+          },
           "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
             "default": true,
@@ -586,6 +591,15 @@
       ],
       "gemstoneExplorer": [
         {
+          "id": "gemstoneExplorerNavigation",
+          "name": "Actions & Navigation",
+          "contextualTitle": "GemStone Actions & Navigation",
+          "type": "webview",
+          "icon": "$(history)",
+          "when": "gemstone.explorerActive",
+          "size": 2
+        },
+        {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
           "contextualTitle": "GemStone Dictionaries",
@@ -601,7 +615,8 @@
           "type": "tree",
           "icon": "$(symbol-folder)",
           "when": "gemstone.explorerActive",
-          "size": 1
+          "size": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "gemstoneExplorerClasses",
@@ -1207,15 +1222,40 @@
       },
       {
         "command": "gemstone.navigateBack",
-        "title": "GemStone Go Back",
+        "title": "Go Back",
         "category": "GemStone",
         "icon": "$(arrow-left)"
       },
       {
         "command": "gemstone.navigateForward",
-        "title": "GemStone Go Forward",
+        "title": "Go Forward",
         "category": "GemStone",
         "icon": "$(arrow-right)"
+      },
+      {
+        "command": "gemstone.explorer.showHistory",
+        "title": "Recent Locations…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.explorer.clearHistory",
+        "title": "Clear Navigation History",
+        "category": "GemStone",
+        "icon": "$(clear-all)",
+        "enablement": "gemstone.hasNavigationHistory"
+      },
+      {
+        "command": "gemstone.explorer.showNavigationSelectorsOnly",
+        "title": "Show Only Selectors in the Navigation Trail",
+        "category": "GemStone",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "gemstone.explorer.showNavigationFullLocations",
+        "title": "Show Full Locations in the Navigation Trail",
+        "category": "GemStone",
+        "icon": "$(list-tree)"
       },
       {
         "command": "gemstone.breakpoints.toggleAtCursor",
@@ -1518,6 +1558,54 @@
         "title": "Remove Dictionary",
         "category": "GemStone",
         "icon": "$(trash)"
+      },
+      {
+        "command": "gemstone.fileIn",
+        "title": "File In...",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "gemstone.fileInFile",
+        "title": "File In to GemStone",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutDictionary",
+        "title": "File Out Dictionary...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClassCategory",
+        "title": "File Out Class Category...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClass",
+        "title": "File Out Class...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutProtocol",
+        "title": "File Out Method Category...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutMethods",
+        "title": "File Out Method(s)...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileIn",
+        "title": "File In...",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
       },
       {
         "command": "gemstone.explorer.renameDictionary",
@@ -1825,6 +1913,18 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.methodHistory",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.methodHistoryFromEditor",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -2035,6 +2135,13 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "command": "gemstone.fileInFile",
+          "when": "resourceExtname == .gs || resourceExtname == .tpz",
+          "group": "gemstone@0"
+        }
+      ],
       "commandPalette": [
         {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
@@ -2086,11 +2193,27 @@
         },
         {
           "command": "gemstone.navigateBack",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.navigateForward",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.showHistory",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.clearHistory",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.showNavigationSelectorsOnly",
+          "when": "gemstone.hasActiveSession && !config.gemstone.explorer.navigationSelectorsOnly"
+        },
+        {
+          "command": "gemstone.explorer.showNavigationFullLocations",
+          "when": "gemstone.hasActiveSession && config.gemstone.explorer.navigationSelectorsOnly"
         },
         {
           "command": "gemstone.renameTemporary",
@@ -2110,14 +2233,42 @@
         },
         {
           "command": "gemstone.explorer.commit",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.explorer.abort",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.explorer.removeDictionary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.fileInFile",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutDictionary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassCategory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutProtocol",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutMethods",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
           "when": "false"
         },
         {
@@ -2191,6 +2342,14 @@
         {
           "command": "gemstone.explorer.classHistory",
           "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
@@ -2340,21 +2499,6 @@
           "when": "view == gemstoneExplorerClassHierarchy"
         },
         {
-          "command": "gemstone.explorer.refresh",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@3"
-        },
-        {
-          "command": "gemstone.explorer.commit",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@4"
-        },
-        {
-          "command": "gemstone.explorer.abort",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@5"
-        },
-        {
           "command": "gemstoneExplorerDicts.filter",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@0"
@@ -2428,6 +2572,11 @@
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@6"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@7"
         },
         {
           "command": "gemstone.explorer.newClassCategory",
@@ -2545,6 +2694,41 @@
           "command": "gemstone.explorer.removeDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.fileOutDictionary",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "5_filein@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassCategory",
+          "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass/",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutProtocol",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutMethods",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "4_fileout@0"
         },
         {
           "command": "gemstone.explorer.openMethodToSide",
@@ -2782,6 +2966,11 @@
           "group": "3_refactor@3"
         },
         {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@4"
+        },
+        {
           "command": "gemstone.explorer.pushUpMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
@@ -2931,6 +3120,16 @@
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || viewItem == gemstoneLoginConnected)"
         },
         {
+          "command": "gemstone.fileIn",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.fileIn",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "group": "2_transfer@0"
+        },
+        {
           "command": "gemstone.sessionCommit",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@2"
@@ -3044,6 +3243,16 @@
       ],
       "editor/title": [
         {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.fileInFile",
+          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "group": "navigation@0"
+        },
+        {
           "command": "gemstone.navigateBack",
           "when": "resourceScheme == gemstone",
           "group": "navigation@1"
@@ -3091,6 +3300,11 @@
           "group": "2_navigation@1"
         },
         {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "2_navigation@2"
+        },
+        {
           "command": "gemstone.breakpoints.toggleAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@0"
@@ -3114,6 +3328,11 @@
           "command": "gemstone.breakpoints.toggleStepPoints",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@4"
+        },
+        {
+          "command": "gemstone.fileInFile",
+          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "group": "1_gemstone@6"
         }
       ]
     },
@@ -3236,6 +3455,18 @@
         "key": "ctrl+k m",
         "mac": "cmd+k m",
         "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.navigateBack",
+        "key": "ctrl+alt+-",
+        "mac": "ctrl+-",
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/ || (activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus))"
+      },
+      {
+        "command": "gemstone.navigateForward",
+        "key": "ctrl+shift+-",
+        "mac": "ctrl+shift+-",
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/ || (activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus))"
       }
     ]
   },
@@ -3253,11 +3484,15 @@
     "compile:mcp": "tsc -p mcp-server/tsconfig.json",
     "bundle": "node esbuild.mjs",
     "watch": "tsc -b -w client/tsconfig.json server/tsconfig.json",
+    "//generate:gci-optional-functions": "Regenerates client/src/gciLibrary/optionalFunctions.generated.ts from vendor/gci-headers/ and Prettier-formats it. Run after vendoring a header revision; CI's Lint & Format job reruns it and fails on any diff.",
+    "generate:gci-optional-functions": "tsx scripts/generate-gci-optional-functions.mjs && prettier --write client/src/gciLibrary/optionalFunctions.generated.ts",
     "//dev:fresh": "Launch a fresh, isolated dev editor window: isolates gemstone.rootPath to an empty dir so it opens in a clean brand-new-user state (no downloaded servers or stones). Leaves HOME untouched, so the jasper MCP integration keeps working.",
     "dev:fresh": "bash scripts/dev-fresh.sh",
     "//dev:fresh:keep-installs": "Like dev:fresh but reuses your real ~/Documents/GemStone so you can connect to servers/stones you've already downloaded.",
     "dev:fresh:keep-installs": "bash scripts/dev-fresh.sh --keep-installs",
     "serve:seaside": "bash scripts/serve-seaside.sh",
+    "//docs:fetch": "Optional, human-run: downloads GemTalk's official GemStone manuals (PDF) into a shared local cache and links it as gs-docs/. Nothing else invokes this, and no agent tooling downloads on its own; see .claude/skills/gemstone-docs/.",
+    "docs:fetch": "node scripts/fetch-gs-docs.mjs",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
     "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
     "//lint:gci-headers": "Asserts vendor/gci-headers/versions.md matches the committed header files (hashes, folder links, and no unreferenced folders). Run after adding a row.",

@@ -10,6 +10,12 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // the manifest and a user's settings.json spell them out.)
 import { METHOD_LANGUAGE as METHOD, SMALLTALK_LANGUAGE as SMALLTALK } from '../languageIds';
 
+// A Topaz `.gs` file is GemStone source too, but it is not part of the
+// method/Smalltalk split these tests hold: File In acts on a file, not on the
+// code in an editor, and a method editor has no `.gs` file to file in. Entries
+// gated on it are excluded below rather than counted as commands the split lost.
+const TOPAZ = 'gemstone-topaz';
+
 const root = path.resolve(__dirname, '..', '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
 
@@ -117,7 +123,9 @@ describe('a method editor is still GemStone Smalltalk in every other respect', (
     // only gemstone-smalltalk would silently drop these out of the context menu
     // in method editors — where they are used most.
     const items: { command: string; when: string }[] = pkg.contributes.menus['editor/context'];
-    const languageGated = items.filter((i) => i.when.includes('resourceLangId'));
+    const languageGated = items
+      .filter((i) => i.when.includes('resourceLangId'))
+      .filter((i) => !i.when.includes(`resourceLangId == ${TOPAZ}`));
 
     expect(languageGated.length).toBeGreaterThan(0);
     const missing = languageGated
@@ -131,6 +139,7 @@ describe('a method editor is still GemStone Smalltalk in every other respect', (
     const items: { command: string; when: string }[] = pkg.contributes.menus['editor/context'];
     const missing = items
       .filter((i) => i.when.includes('resourceLangId'))
+      .filter((i) => !i.when.includes(`resourceLangId == ${TOPAZ}`))
       .filter((i) => !i.command.startsWith('gemstone.breakpoints.'))
       .filter((i) => !i.when.includes(`resourceLangId == ${SMALLTALK}`))
       .map((i) => i.command);

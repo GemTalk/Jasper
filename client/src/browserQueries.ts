@@ -31,6 +31,12 @@ import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClass
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
+import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
+import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
+import { fileOutMethodCategory as sharedFileOutMethodCategory } from './queries/fileOutMethodCategory';
+import { fileOutDictionary as sharedFileOutDictionary } from './queries/fileOutDictionary';
+import { fileInChunk as sharedFileInChunk } from './queries/fileInChunk';
+import { removeAllMethods as sharedRemoveAllMethods } from './queries/removeAllMethods';
 import { describeClass as sharedDescribeClass } from './queries/describeClass';
 import { getInstVarNames as sharedGetInstVarNames } from './queries/getInstVarNames';
 import { getDefinedInstVarNames as sharedGetDefinedInstVarNames } from './queries/getDefinedInstVarNames';
@@ -188,6 +194,10 @@ import {
   revertClassToVersion as sharedRevertClassToVersion,
   removeClassVersion as sharedRemoveClassVersion,
 } from './refactoring/queries/classHistory';
+import {
+  getMethodHistory as sharedGetMethodHistory,
+  removeMethodHistory as sharedRemoveMethodHistory,
+} from './methodHistory/queries/methodHistory';
 import { globalNameInUse as sharedGlobalNameInUse } from './refactoring/queries/globalNameInUse';
 import { isKernelClass as sharedIsKernelClass } from './refactoring/queries/isKernelClass';
 import {
@@ -749,6 +759,52 @@ export function fileOutClass(
   dict?: number | string,
 ): string {
   return sharedFileOutClass(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function fileOutHeader(session: ActiveSession): string {
+  return sharedFileOutHeader(defaultQueryExecutorUsing(session));
+}
+
+export function fileOutMethod(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict);
+}
+
+export function fileOutMethodCategory(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  category: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutMethodCategory(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    category,
+    dict,
+  );
+}
+
+export function fileOutDictionary(session: ActiveSession, dict: number | string): string {
+  return sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
+}
+
+export function fileInChunk(session: ActiveSession, code: string): string {
+  return sharedFileInChunk(defaultQueryExecutorUsing(session), code);
+}
+
+export function removeAllMethods(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+): string {
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
 }
 
 export function describeClass(
@@ -1906,6 +1962,41 @@ export function revertClassToVersion(
   index: number,
 ): string {
   return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index);
+}
+
+// Per-method source history (in-stone, per-user, this-stone-only, read-only) and
+// forgetting a method's recorded history. Restoring a version is not a query here:
+// it is just a recompile through the ordinary compile path (which records it).
+export function getMethodHistory(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  dict?: number | string,
+): string {
+  return sharedGetMethodHistory(
+    defaultQueryExecutorUsing(session),
+    className,
+    selector,
+    isMeta,
+    dict,
+  );
+}
+
+export function removeMethodHistory(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  dict?: number | string,
+): string {
+  return sharedRemoveMethodHistory(
+    defaultQueryExecutorUsing(session),
+    className,
+    selector,
+    isMeta,
+    dict,
+  );
 }
 
 export function globalNameInUse(session: ActiveSession, name: string): boolean {

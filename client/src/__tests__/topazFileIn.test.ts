@@ -189,6 +189,26 @@ name
     );
   });
 
+  it("compiles into Bob''s methods, un-doubling the quote as topaz wrote it", () => {
+    const text = `category: 'Bob''s methods'
+method: MyClass
+name
+  ^ name
+%`;
+    const session = createMockSession();
+
+    fileInClass(session, text);
+
+    expect(queries.compileMethod).toHaveBeenCalledWith(
+      session,
+      'MyClass',
+      false,
+      "Bob's methods",
+      expect.stringContaining('name'),
+      0,
+    );
+  });
+
   it('compiles class methods with isMeta=true', () => {
     const text = `category: 'creation'
 classmethod: MyClass
@@ -407,6 +427,18 @@ printOn: aStream
     expect(parsed.methods[0].category).toBe('accessing');
     expect(parsed.methods[1].key.selector).toBe('printOn: aStream');
     expect(parsed.methods[1].category).toBe('printing');
+  });
+
+  it("reads Bob''s methods as one category, not as Bob", () => {
+    // Topaz doubles an embedded quote. This reader, fileInClass and
+    // parseTopazScript all go through parseCategoryDirective, so a category name
+    // cannot mean one thing to the class mirror and another to File In.
+    const text = `category: 'Bob''s methods'
+method: MyClass
+name
+  ^ name
+%`;
+    expect(parseFileStructure(text).methods[0].category).toBe("Bob's methods");
   });
 
   it('distinguishes instance and class methods', () => {

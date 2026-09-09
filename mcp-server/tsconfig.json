@@ -1,8 +1,16 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./out",
-    "noEmit": true
+    "noEmit": true,
+    // This project deliberately reaches up into client/src, so the inferred
+    // rootDir (mcp-server/) does not contain every source file. TS 6 enforces
+    // that even under `noEmit`, so widen it to the repo root.
+    "rootDir": "..",
+    // Unlike server/tsconfig.json, `types` is not load-bearing here: express's
+    // types reference node transitively, so this project survives TS 6 without
+    // it. Named anyway, so that the Node dependency is stated rather than
+    // inherited from whatever express happens to pull in next.
+    "types": ["node"]
   },
   "include": [
     "src/**/*.ts",

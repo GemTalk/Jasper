@@ -97,7 +97,6 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
-import { GemstoneNavigationHistory } from './gemstoneNavigationHistory';
 import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
@@ -105,6 +104,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
@@ -112,6 +112,7 @@ import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHe
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
+import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
@@ -186,6 +187,7 @@ import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost, sessionsOnDatabase } from './databaseForLogin';
 import { describeHolder, isExtentLocked, sessionHolders, ExtentHolder } from './extentHolders';
 import { runQuickSetup } from './quickSetup';
+import { fileInCommand, fileInUris } from './fileTransfer/fileIn';
 import {
   isWindows,
   getWslInfoAsync,
@@ -808,6 +810,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Method-history side-by-side diff provider ───────────
+  // Serves the read-only virtual documents behind "Diff ⇄ current" in the method
+  // history viewer.
+  registerMethodHistoryDiff(context);
+
   // ── Workspace Symbol Provider (Cmd+T class search) ──────
   const symbolProvider = new GemStoneWorkspaceSymbolProvider(sessionManager);
   context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(symbolProvider));
@@ -927,7 +934,10 @@ export function activate(context: vscode.ExtensionContext) {
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
               if (className !== 'new-class') {
-                explorer.onMethodCompiled(sessionId, className);
+                // parts[5] is the selector when the URI names a method; forwarding it
+                // lets the explorer refresh only that method's history panel instead
+                // of every panel open for the class.
+                explorer.onMethodCompiled(sessionId, className, parts[5]);
               }
             }
           }
@@ -1015,6 +1025,31 @@ export function activate(context: vscode.ExtensionContext) {
       void sunitTestController.ensureTestsForDocument(editor?.document.uri);
     }),
   );
+
+  // In-editor entry to Method History: a title-bar button + context-menu item on a
+  // gemstone method editor, so the history is reachable from the source being
+  // edited without hunting for the row in the Explorer. The context key gates the
+  // menus to method editors only (not class-definition/comment/workspace editors).
+  const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.methodEditorActive',
+      isMethodEditorUri(editor?.document.uri),
+    );
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),
+    vscode.commands.registerCommand('gemstone.methodHistoryFromEditor', () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) return;
+      void explorer.openMethodHistoryForUri(uri).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Method history failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+  );
+  updateMethodEditorContext(vscode.window.activeTextEditor);
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);
@@ -1385,27 +1420,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Back/Forward history for gemstone:// editors (drives the title-bar arrows).
-  // Reopens as a preview so it reuses the single method tab, matching the flow it
-  // retraces; returns false when the URI can't be shown so its entry is pruned.
-  const gsHistory = new GemstoneNavigationHistory(async (uri) => {
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: true });
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (vscode.window.activeTextEditor) {
-    gsHistory.record(vscode.window.activeTextEditor.document.uri);
-  }
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) gsHistory.record(editor.document.uri);
-    }),
-  );
-
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1438,15 +1452,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
       },
     ),
-
-    // Thin wrappers so editor-history Back/Forward can appear as title-bar icon
-    // buttons on gemstone:// editors (a menu entry needs an icon our own command
-    // supplies). They walk gsHistory — our own view history — rather than VS
-    // Code's built-in Go Back/Forward, because a method opened in the reusable
-    // preview tab isn't recorded by the built-in history (that only tracks
-    // pinned/distinct tabs), so a first-time user couldn't get back.
-    vscode.commands.registerCommand('gemstone.navigateBack', () => gsHistory.back()),
-    vscode.commands.registerCommand('gemstone.navigateForward', () => gsHistory.forward()),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
@@ -2262,6 +2267,47 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.refreshTests', () => {
       sunitTestController.refresh();
     }),
+
+    // Read a Topaz `.gs` file on this machine back into the session (issue #539).
+    // The palette entry picks the file; the resource entry (gemstone.fileInFile, below)
+    // takes the one(s) already selected in VS Code's Explorer, the one an open editor
+    // names from its title bar or context menu, or the one whose "File In to GemStone"
+    // lens was clicked (gemstoneCodeLensProvider).
+    // Also the ⤓ on a session row in Logins & Sessions, and the one on the GemStone
+    // Explorer's Dictionaries pane (gemstone.explorer.fileIn): both already name a
+    // session, so they file straight into it instead of asking. From the palette
+    // (no row) the usual "which session?" applies.
+    vscode.commands.registerCommand('gemstone.fileIn', async (item?: GemStoneSessionItem) => {
+      await fileInCommand(sessionManager, context.globalState, item?.activeSession);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.fileInFile',
+      async (uri?: vscode.Uri, selected?: vscode.Uri[]) => {
+        // VS Code hands an Explorer context command the clicked resource AND the whole
+        // selection; the editor title bar, the editor context menu and the code lens
+        // each pass a single resource. Every route this command is wired to therefore
+        // arrives with a URI — the manifest keeps it out of the Command Palette
+        // (`"when": "false"`), since there it would have no file to act on. The
+        // active-editor fallback and the warning below are defence for a call from
+        // somewhere else — a user keybinding, or another extension's
+        // `executeCommand` — not for a palette entry.
+        const active = vscode.window.activeTextEditor?.document.uri;
+        const uris =
+          selected && selected.length > 0
+            ? selected
+            : uri
+              ? [uri]
+              : active?.scheme === 'file'
+                ? [active]
+                : [];
+        if (uris.length === 0) {
+          void vscode.window.showWarningMessage('Open or select a .gs file to file in.');
+          return;
+        }
+        await fileInUris(sessionManager, uris, context.globalState);
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.displayIt', async () => {
       await codeExecutor.displayIt();

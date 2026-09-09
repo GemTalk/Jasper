@@ -13,6 +13,13 @@ TODO.md
 # be bundled into the .vsix (it is ~1GB and contains example private keys).
 client/tmp/**
 
+# Optional local download of GemTalk's copyrighted manuals (npm run docs:fetch),
+# a symlink to a ~22 MB cache outside the repo. Gitignored, but vsce does not
+# read .gitignore — without this line, packaging on a machine that ran the fetch
+# would follow the link and redistribute the PDFs inside the .vsix.
+gs-docs
+gs-docs/**
+
 # Contributor tooling and docs — not part of the shipped extension.
 .github/**
 acceptance/**
@@ -84,6 +91,7 @@ client/src/**
 !client/src/refactoring/renameMethodPanelView.js
 !client/src/refactoring/renameClassEditorView.js
 !client/src/refactoring/classHistoryPanelView.js
+!client/src/methodHistory/methodHistoryPanelView.js
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
 !client/src/omniSearch/omniSearchView.js
