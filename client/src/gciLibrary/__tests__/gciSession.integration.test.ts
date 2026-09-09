@@ -12,6 +12,10 @@ import { GciTestContext, useIntegrationTest } from '../../__tests__/useIntegrati
  * opens no nested transaction levels, so the `afterEach` floor check never
  * runs -- teardown just aborts the single transaction `beforeEach` opened.
  * Do not add a budget here.
+ *
+ * GciTsLogout frees the session, so calling GciTsSessionIsRemote -- or any
+ * GCI function -- on a session that has already been logged out is
+ * undefined behavior and is intentionally not exercised here.
  */
 describe('GCI session lifecycle (integration)', () => {
   // RT_ERR_NO_PROCESS_TO_CONTINUE in gcierr.ht -- same value in every vendored
@@ -21,15 +25,11 @@ describe('GCI session lifecycle (integration)', () => {
 
   let gci: GciLibrary;
   let session: unknown;
-  let login: GciTestContext['login'];
-  let logout: GciTestContext['logout'];
   let withTransientSession: GciTestContext['withTransientSession'];
 
   useIntegrationTest((testContext) => {
     gci = testContext.gciLibrary;
     session = testContext.session;
-    login = testContext.login;
-    logout = testContext.logout;
     withTransientSession = testContext.withTransientSession;
   });
 
@@ -38,14 +38,6 @@ describe('GCI session lifecycle (integration)', () => {
       // The harness always logs in through an RPC gem NRS, never a linked one,
       // so 1 (RPC) is the only value an active session here can answer.
       expect(gci.GciTsSessionIsRemote(session)).toBe(1);
-    });
-
-    it('reports a logged-out session as invalid', () => {
-      const loggedOutSession = logout();
-
-      expect(gci.GciTsSessionIsRemote(loggedOutSession)).toBe(-1);
-
-      login();
     });
   });
 
