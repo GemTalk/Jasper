@@ -43,7 +43,7 @@ import {
 import type * as vscodeApi from 'vscode';
 import * as vscode from 'vscode';
 import { __resetConfig } from '../__mocks__/vscode';
-import { BreakpointManager } from '../breakpointManager';
+import { BreakpointManager, conditionLabel } from '../breakpointManager';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../languageIds';
 import { SessionManager } from '../sessionManager';
 import { StepPointModel, buildLineStarts } from '../stepPointModel';
@@ -1000,6 +1000,27 @@ describe('BreakpointManager', () => {
         fireChanged([bp]);
 
         expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('conditionLabel', () => {
+      it('names the verb, so the label is a sentence and not a fragment', () => {
+        expect(conditionLabel('each > 900')).toBe('Break if each > 900');
+      });
+
+      it('flattens a multi-line condition onto one line', () => {
+        expect(conditionLabel('each > 900\n  and: [ each even ]')).toBe(
+          'Break if each > 900 and: [ each even ]',
+        );
+      });
+
+      it('elides a condition too long to sit beside the code', () => {
+        const long = `each > ${'9'.repeat(80)}`;
+        const label = conditionLabel(long);
+        expect(label.startsWith('Break if ')).toBe(true);
+        expect(label.endsWith('…')).toBe(true);
+        // The prefix does not eat into what the developer wrote.
+        expect(label.length).toBe('Break if '.length + 48);
       });
     });
 

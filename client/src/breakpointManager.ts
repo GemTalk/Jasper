@@ -116,12 +116,18 @@ function showConditionInEditor(): boolean {
     .get<boolean>('breakpoints.showConditionInEditor', true);
 }
 
-/** How much of a condition is drawn beside the token before it is elided. */
+/** How much of a condition is drawn beside the line before it is elided. */
 const MAX_CONDITION_LABEL = 48;
 
 /**
- * The condition as it is drawn next to the token: one line, and short enough not
- * to push the code it annotates off the screen.
+ * The condition as it is drawn at the end of its line: one line of text, and
+ * short enough not to push the code it annotates off the screen.
+ *
+ * Reads "Break if …" rather than a bare "if …", which is a fragment: the label
+ * is the one place a reader may not already know what they are looking at, and
+ * naming the verb makes it a sentence about what the breakpoint will do. The
+ * budget for the condition itself is unchanged — the prefix costs six
+ * characters, and a condition long enough to be elided was being elided before.
  */
 export function conditionLabel(condition: string): string {
   const oneLine = condition.replace(/\s+/g, ' ').trim();
@@ -129,7 +135,7 @@ export function conditionLabel(condition: string): string {
     oneLine.length > MAX_CONDITION_LABEL
       ? `${oneLine.slice(0, MAX_CONDITION_LABEL - 1)}…`
       : oneLine;
-  return `if ${shown}`;
+  return `Break if ${shown}`;
 }
 
 /**

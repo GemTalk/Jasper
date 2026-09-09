@@ -325,7 +325,8 @@ the thing it was set in goes away:
   Jasper's: **Edit Breakpoint Condition at Cursor** from the editor's right-click
   menu, the *Add/Edit condition* link on the step-point hover, or the ✎ on a row
   in the **GemStone Breakpoints** view. The condition is written at the end of the
-  line it guards, dimmed, so you can read it without going looking for it, and
+  line it guards, dimmed, as `Break if each > 900`, so you can read it without
+  going looking for it, and
   the gutter shows VS Code's own conditional-breakpoint icon. Set
   `gemstone.breakpoints.showConditionInEditor` to `false` if you would rather not
   have it there — the icon, the hover and the Breakpoints view still show it.
