@@ -319,12 +319,12 @@
               "basic"
             ],
             "enumDescriptions": [
-              "Whichever the session can have: the Enhanced Inspector where its server support is installed, the basic tabbed Inspector everywhere else",
+              "Whichever the session can have: the Enhanced Inspector where its server support is installed, the tabbed Inspector everywhere else",
               "The Enhanced Inspector where it is available (the same as auto — a setting cannot install server support)",
-              "The basic tabbed Inspector always, even on a session that has the Enhanced Inspector"
+              "The tabbed Inspector always, even on a session that has the Enhanced Inspector"
             ],
-            "default": "auto",
-            "markdownDescription": "Which Inspector **Inspect It** opens.\n\nBoth present an object as tabs over a miller-column strip; the Enhanced Inspector adds per-class object views but needs its server-side payload installed and a stone at 3.7.5 or later, while the basic one is built on GCI primitives and works on every supported stone. Leave this on `auto` unless you want the basic Inspector on a session that could have the Enhanced one — for comparing the two, or for a view the Enhanced Inspector doesn't offer.\n\n**GemStone: Switch Inspector** flips between `auto` and `basic` without opening settings. Inspectors already open are unaffected; the choice applies to the next **Inspect It**."
+            "default": "basic",
+            "markdownDescription": "Which Inspector **Inspect It** opens.\n\nBoth present an object as tabs over a miller-column strip. The tabbed Inspector is the default on every session: it is built on GCI primitives and kernel sends, so it works on every supported stone back to 3.6.2 and cannot be unavailable. The Enhanced Inspector adds per-class object views, but needs its server-side payload installed and a stone at 3.7.5 or later — set this to `auto` to get it wherever the session has it.\n\n**GemStone: Switch Inspector** flips between `basic` and `auto` without opening settings. Inspectors already open are unaffected; the choice applies to the next **Inspect It**."
           },
           "gemstone.inspector.loadAllPageLimit": {
             "type": "integer",

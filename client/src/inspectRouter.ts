@@ -13,33 +13,42 @@ export interface InspectorHandle {
 }
 
 /**
- * What the user wants Inspect to open. `auto` takes whichever the session can
- * have; `basic` asks for the tabbed Inspector even where the Enhanced one is
- * installed. `enhanced` is the same as `auto` in effect — no setting can
- * conjure server support that isn't in the image — and exists so the choice
- * reads as a choice rather than as "auto, or off".
+ * What the user wants Inspect to open. `basic` is the default and always opens
+ * the tabbed Inspector, whatever the session has installed. `auto` takes
+ * whichever the session can have, which is the Enhanced Inspector wherever its
+ * server support is present. `enhanced` is the same as `auto` in effect — no
+ * setting can conjure server support that isn't in the image — and exists so
+ * the choice reads as a choice rather than as "auto, or off".
  */
 export type InspectorPreference = 'auto' | 'enhanced' | 'basic';
 
 /**
- * Which inspector this session's Inspect will open. The stone decides what is
- * possible and the user decides among what's possible: only `basic` overrides,
- * because it is the one that always works.
+ * Which inspector this session's Inspect will open.
+ *
+ * The tabbed Inspector is the default everywhere, including on a session that
+ * has the Enhanced Inspector's server support: one inspector on every session
+ * and every supported stone means what you learn on one session is true on the
+ * next, and it is the only one that cannot be unavailable. Reaching the
+ * Enhanced Inspector is a deliberate `auto`.
+ *
+ * Anything unrecognised lands on `basic` for the same reason — a preference
+ * nobody can read must not route to the inspector that might not be there.
  */
 export function inspectorFor(session: ActiveSession): 'enhanced' | 'basic' {
   const preferred = vscode.workspace
     .getConfiguration('gemstone')
-    .get<InspectorPreference>('inspector.preferred', 'auto');
-  if (preferred === 'basic') return 'basic';
-  return session.enhancedInspectorAvailable ? 'enhanced' : 'basic';
+    .get<InspectorPreference>('inspector.preferred', 'basic');
+  if (preferred === 'auto' || preferred === 'enhanced')
+    return session.enhancedInspectorAvailable ? 'enhanced' : 'basic';
+  return 'basic';
 }
 
 /**
  * Open `oop` in the right inspector for this session and return the handle, so
- * an owner (e.g. the debugger) can track it: the Enhanced Inspector when the
- * image has its support installed and the stone is new enough — and the user
- * hasn't asked for the basic one — else the basic tabbed Inspector, which needs
- * no server support at all.
+ * an owner (e.g. the debugger) can track it: the basic tabbed Inspector, which
+ * needs no server support at all, unless the user has asked for `auto` and this
+ * session's image has the Enhanced Inspector's support installed on a stone new
+ * enough for it.
  *
  * This is the single routing point behind every "Inspect" surface — editor,
  * global, and debugger. Both are editor-tab webviews presenting the object as

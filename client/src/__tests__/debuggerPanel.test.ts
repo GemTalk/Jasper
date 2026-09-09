@@ -174,6 +174,7 @@ import {
 import { InlineValuesCodeLensProvider } from '../inlineValuesCodeLens';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { BasicInspector } from '../basicInspector/basicInspector';
+import { __setConfig } from '../__mocks__/vscode';
 import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
@@ -612,6 +613,12 @@ describe('DebuggerPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Inspect opens the tabbed Inspector by default, whatever the session has
+    // installed; the two tests here that want the Enhanced one ask for `auto`
+    // themselves. Cleared per test because the mock's config store is
+    // module-level, so a seeded value would otherwise leak into whichever test
+    // sequence.shuffle runs next.
+    __setConfig('gemstone', 'inspector.preferred', undefined);
     // Export-set pins are ref-counted per session in module state, so a test
     // that pins without releasing would otherwise leave a claim standing and
     // stop the next test's pin from reaching the stone.
@@ -1831,6 +1838,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('closes the source editor AND every enhanced inspector it opened, together, on close', async () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       const panel = openPanelWithStack();
       // A real gemstone:// method source, shown in source column 9.
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
@@ -2505,7 +2513,10 @@ describe('DebuggerPanel', () => {
       expect(vi.mocked(debug.fetchFrameVariables)).toHaveBeenCalled();
     });
 
-    it('opens an enhanced inspector for a clicked variable when the session has one', () => {
+    // `auto`, because the tabbed Inspector is the default even where the
+    // Enhanced one is installed — reaching it is a deliberate preference.
+    it('opens an enhanced inspector for a clicked variable on auto when the session has one', () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       const panel = openPanel();
       sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
       expect(EnhancedInspector.create).toHaveBeenCalledWith(session, 300n, 'self');

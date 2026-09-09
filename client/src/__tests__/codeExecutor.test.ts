@@ -35,7 +35,7 @@ import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { BasicInspector } from '../basicInspector/basicInspector';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as vscode from 'vscode';
-import { __resetConfig } from '../__mocks__/vscode';
+import { __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from '../transcriptChannel';
 import { pollReadable } from '../socketPoll';
 import {
@@ -1170,7 +1170,10 @@ describe('CodeExecutor', () => {
       expect(calls[calls.length - 1]).toEqual(['setContext', 'gemstone.executing', false]);
     });
 
-    it('opens the result in an enhanced inspector when the session has one', async () => {
+    // `auto`, because the tabbed Inspector is the default even where the
+    // Enhanced one is installed — reaching it is a deliberate preference.
+    it('opens the result in an enhanced inspector on auto when the session has one', async () => {
+      __setConfig('gemstone', 'inspector.preferred', 'auto');
       session.enhancedInspectorAvailable = true;
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);

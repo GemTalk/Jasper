@@ -236,9 +236,9 @@ Context menu operations include:
 
 #### Enhanced Inspector
 
-With the optional server-side support installed (GemStone 3.7.5+), **Inspect It** opens the **Enhanced Inspector** instead: the same tabbed, miller-column shell, but with rich per-class object views in the style of Glamorous Toolkit. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt. Everything described above works with no server support at all, on GemStone 3.6.2 and later.
+With the optional server-side support installed (GemStone 3.7.5+), a second inspector is available: the **Enhanced Inspector**, the same tabbed, miller-column shell but with rich per-class object views in the style of Glamorous Toolkit. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt. Everything described above works with no server support at all, on GemStone 3.6.2 and later.
 
-To use the basic Inspector on a session that has the Enhanced one — to compare them, or for a view the Enhanced Inspector doesn't offer — set `gemstone.inspector.preferred` to `basic`, or run **GemStone: Switch Inspector**, which flips that setting from the Command Palette. Inspectors already open are left alone; the choice applies to the next **Inspect It**.
+Installing the support does not by itself change what **Inspect It** opens. The Inspector described above is the default on every session, because it is the only one that works on every supported stone — so what you learn about it holds wherever you log in. To reach the Enhanced Inspector, set `gemstone.inspector.preferred` to `auto`, or run **GemStone: Switch Inspector**, which flips that setting from the Command Palette. Inspectors already open are left alone; the choice applies to the next **Inspect It**.
 
 ### Search and Navigation
 
@@ -451,7 +451,7 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 | `gemstone.classSync.readOnlyMirror` | true | Write exported `.gs` mirror files as read-only; turn off to speed up syncing on slow or network filesystems |
 | `gemstone.displayItMode` | `overlay` | How Display It shows its result: `overlay` (non-destructive annotation) or `insert` (into the document) |
 | `gemstone.maxEnvironment` | 0 | Method environments to display in browser |
-| `gemstone.inspector.preferred` | `auto` | Which Inspector **Inspect It** opens: `auto` (the Enhanced Inspector where the session has its server support), or `basic` to use the tabbed Inspector everywhere |
+| `gemstone.inspector.preferred` | `basic` | Which Inspector **Inspect It** opens: `basic` (the tabbed Inspector everywhere, whatever the session has installed), or `auto` for the Enhanced Inspector where the session has its server support |
 | `gemstone.inspector.loadAllPageLimit` | 50 | Pages one **Load all** click reads in the Inspector before stopping (a page is 100 rows, 400 bytes on the Bytes tab), so the default reads 5,000 rows a click |
 | `gemstone.serverSupport.autoInstall` | `ask` | What to do when a stone lacks the optional server-side support (Enhanced Inspector, refactoring engine): `ask`, `always`, or `never` |
 | `gemstone.sessionMode` | `single` | Concurrent sessions allowed: `single` (default) or `multiple` (beta — reveals the Sessions panel) |

@@ -36,7 +36,9 @@ beforeEach(() => {
 });
 
 describe('the inspector an Inspect raises', () => {
-  it('raises the Enhanced Inspector on a session that has its server support', () => {
+  it('raises the Enhanced Inspector on auto, on a session that has its server support', () => {
+    __setConfig('gemstone', 'inspector.preferred', 'auto');
+
     routeInspect(session(true), 100n, 'anAccount');
 
     expect(raisedViewTypes()).toEqual(['gemstoneEnhancedInspector']);
@@ -48,9 +50,7 @@ describe('the inspector an Inspect raises', () => {
     expect(raisedViewTypes()).toEqual(['gemstoneBasicInspector']);
   });
 
-  it('raises the basic Inspector where the user asked for it outright', () => {
-    __setConfig('gemstone', 'inspector.preferred', 'basic');
-
+  it('raises the basic Inspector by default, even on a session that has the Enhanced one', () => {
     routeInspect(session(true), 100n, 'anAccount');
 
     expect(raisedViewTypes()).toEqual(['gemstoneBasicInspector']);
