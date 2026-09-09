@@ -62,10 +62,8 @@ const FILE_OUT_COMMANDS = [
 const CLASS_ROWS = [
   'explorerClass',
   'explorerClass.novars',
-  'explorerClass.commented',
-  'explorerClass.novars.commented',
   'explorerClass.test',
-  'explorerClass.novars.commented.test',
+  'explorerClass.novars.test',
   'explorerClass.test.running',
 ];
 

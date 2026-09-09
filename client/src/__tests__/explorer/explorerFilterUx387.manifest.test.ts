@@ -95,23 +95,48 @@ const classRowCommands = (viewItem: string): string[] =>
     .filter((e) => /viewItem (==|=~)/.test(e.when ?? ''))
     .filter((e) => admits(e.when ?? '', viewItem))
     .map((e) => e.command);
+// Same question of the Class Hierarchy pane, so the two panes' answers can be
+// compared rather than asserted separately and allowed to drift.
+const hierRowCommands = (viewItem: string): string[] =>
+  itemContext
+    .filter((e) => (e.when ?? '').includes('gemstoneExplorerClassHierarchy'))
+    .filter((e) => /viewItem (==|=~)/.test(e.when ?? ''))
+    .filter((e) => admits(e.when ?? '', viewItem))
+    .map((e) => e.command);
 
-describe('#387 item 11 — the .commented contextValue only ever adds a button', () => {
-  it('offers the comment button on a class that has a comment', () => {
-    expect(classRowCommands('explorerClass.commented')).toContain('gemstone.explorer.openComment');
+// The Classes pane used to show the comment button only on a class that already had
+// one, so writing a first comment had no way in from the row — while the Hierarchy
+// pane offered it on every row. Removing that gate accepts GemStone's synthesised
+// "No class-specific documentation for …" placeholder as the document you type a
+// first comment into, which is where you would type one anyway.
+describe('the comment button is offered on every class row', () => {
+  it.each([
+    'explorerClass',
+    'explorerClass.novars',
+    'explorerClass.test',
+    'explorerClass.novars.test',
+    'explorerClass.test.running',
+    'explorerClass.test.debugging',
+  ])('%s offers it', (viewItem) => {
+    expect(classRowCommands(viewItem)).toContain('gemstone.explorer.openComment');
   });
 
-  it('withholds it on a class that has none', () => {
-    expect(classRowCommands('explorerClass')).not.toContain('gemstone.explorer.openComment');
+  it('matches the Hierarchy pane, which never gated it', () => {
+    expect(classRowCommands('explorerClass')).toContain('gemstone.explorer.openComment');
+    expect(hierRowCommands('explorerHierClass')).toContain(
+      'gemstone.explorer.openHierarchyComment',
+    );
   });
 
-  it('leaves every other class action reachable either way', () => {
+  it('leaves every class row carrying the same set of actions bar the "+"', () => {
+    // Comment state no longer distinguishes two rows at all, so the only thing that
+    // may differ between a class with variables and one without is the "+".
     const plain = classRowCommands('explorerClass');
-    const commented = classRowCommands('explorerClass.commented');
+    const novars = classRowCommands('explorerClass.novars');
     expect(plain.length).toBeGreaterThan(5); // the class row is not stripped bare
-    // The comment button is the ONLY difference between the two rows.
-    expect(commented.filter((c) => c !== 'gemstone.explorer.openComment').sort()).toEqual(
-      plain.sort(),
+    const ADD_VARIABLE = 'gemstone.explorer.addVariable';
+    expect(novars.filter((c) => c !== ADD_VARIABLE).sort()).toEqual(
+      plain.filter((c) => c !== ADD_VARIABLE).sort(),
     );
   });
 

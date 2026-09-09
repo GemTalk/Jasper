@@ -134,15 +134,14 @@ describe('variable-side rows under a class', () => {
     expect(new ClassItem('Foo', true).contextValue).toBe('explorerClass');
   });
 
-  it('composes .novars with .commented without either hiding the other', () => {
-    // Both suffixes only ever ADD a button, so every other class action's `when`
-    // matches them as optional groups — in this order.
-    expect(new ClassItem('Foo', false, undefined, true).contextValue).toBe(
-      'explorerClass.novars.commented',
+  // A class row's contextValue no longer varies with whether the class has a
+  // comment: the comment button is offered on every row, so there is nothing left
+  // for a `.commented` suffix to gate. `.novars` is the only suffix.
+  it('carries no suffix other than .novars, whatever else is true of the class', () => {
+    expect(new ClassItem('Foo', false, { current: 2, total: 3 }).contextValue).toBe(
+      'explorerClass.novars',
     );
-    expect(new ClassItem('Foo', true, undefined, true).contextValue).toBe(
-      'explorerClass.commented',
-    );
+    expect(new ClassItem('Foo', true, { current: 2, total: 3 }).contextValue).toBe('explorerClass');
   });
 
   // The two halves of the invariant are pinned separately above — ClassItem's
