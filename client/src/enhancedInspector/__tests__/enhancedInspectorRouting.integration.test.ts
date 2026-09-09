@@ -168,10 +168,14 @@ describe('inspect it routing (integration)', () => {
     // both counts for exactly this reason: with the Bytes total taken from the
     // character count, Load more and Load all vanished with half the object
     // still unread. A QuadByteString is the same case at four bytes a character.
-    const wideOop = gci.execute(
-      handle,
-      '| s | s := DoubleByteString new: 3. s at: 1 put: (Character value: 16r0410). s',
-    );
+    //
+    // `new:` alone is the whole fixture: the storage is two bytes per character
+    // whatever those characters are, so nothing has to be put into it. An
+    // earlier version stored a wide Character to make the point, which cost a
+    // `Character value:` that a bare image does not answer — the send exists on
+    // a stone carrying the server payloads and not on the plain ones this leg
+    // runs against.
+    const wideOop = gci.execute(handle, 'DoubleByteString new: 3');
     const header = bi.fetchObjectHeader(exec(), wideOop);
 
     expect(header!.className).toBe('DoubleByteString');
