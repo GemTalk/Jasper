@@ -65,6 +65,15 @@ emit_header() {
             echo "!           MIT - $c"
         fi
     done <<< "$(echo "$copyrights" | tr ';' '\n' | sed -E 's/^ +//; s/ +$//')"
+    # A row whose copyright field is blank (or trims to empty) would otherwise
+    # emit a header with no License line at all -- silently unattributed, on a
+    # file we ship in the VSIX. Refuse, as the missing-closing-rule case does.
+    if [ "$first" = 1 ]; then
+        echo "  ERROR: no copyright holder for $src in the attribution table;" >&2
+        echo "         the header would ship with no License line. Fix the" >&2
+        echo "         table at the bottom of this script and re-run." >&2
+        return 1
+    fi
     echo "!           Full MIT notice and permission text: THIRD-PARTY.md and"
     echo "!           NOTICE at the root of https://github.com/GemTalk/Jasper"
     echo "!"
@@ -93,7 +102,7 @@ apply_one() {
     #    the second dashed rule -- so corrections to the table below (a copyright
     #    holder, an upstream project) propagate on the next run instead of being
     #    skipped because a stale header happened to be present.
-    local tmp body
+    local tmp body header
     tmp="$(mktemp)"
     body="$(mktemp)"
     if head -1 "$path" | grep -qF "$SENTINEL"; then
@@ -117,8 +126,14 @@ apply_one() {
     else
         cat "$path" > "$body"
     fi
+    # Build the header before touching the file: a refusal (no copyright holder
+    # for this row) must leave the payload exactly as it was.
+    if ! header="$(emit_header "$origin" "$src" "$upstream" "$copyrights")"; then
+        rm -f "$tmp" "$body"
+        return 1
+    fi
     {
-        emit_header "$origin" "$src" "$upstream" "$copyrights"
+        printf '%s\n' "$header"
         cat "$body"
     } > "$tmp"
     mv "$tmp" "$path"
