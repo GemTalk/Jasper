@@ -99,7 +99,7 @@ export async function beginChangeSignature(
   });
   if (!edit) return false;
 
-  const partsErr = validateSignatureParts(edit.newParts, oldSelector);
+  const partsErr = validateSignatureParts(edit.newParts, oldSelector, edit.newArgNames.length);
   if (partsErr) {
     void vscode.window.showErrorMessage(`Change signature: ${partsErr}`);
     return false;

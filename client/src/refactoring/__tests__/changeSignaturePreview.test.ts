@@ -326,3 +326,46 @@ describe('signature validation', () => {
     expect(duplicateArgName(['', ''])).toBeUndefined();
   });
 });
+
+// ── The arity guard ─────────────────────────────────────────
+//
+// Shape alone does not make a legal method pattern: `fullAddress:` with no argument
+// passes every part-by-part check and still cannot be compiled. Nothing between the
+// editor and the engine counted keywords against arguments, so this is the backstop
+// whatever route the edit arrived by.
+
+describe('validateSignatureParts arity guard', () => {
+  it('rejects a one-keyword selector carrying no argument', () => {
+    expect(validateSignatureParts(['fullAddress:'], 'fullAddress', 0)).toMatch(
+      /takes 1 argument, but 0 were given/,
+    );
+  });
+
+  it('accepts a one-keyword selector carrying one argument', () => {
+    expect(validateSignatureParts(['fullAddress:'], 'fullAddress', 1)).toBeUndefined();
+  });
+
+  it('rejects a two-keyword selector carrying one argument', () => {
+    expect(validateSignatureParts(['at:', 'put:'], 'at:', 1)).toMatch(
+      /takes 2 arguments, but 1 was given/,
+    );
+  });
+
+  it('accepts a two-keyword selector carrying two arguments', () => {
+    expect(validateSignatureParts(['at:', 'put:'], 'at:', 2)).toBeUndefined();
+  });
+
+  it('expects no argument for a unary selector', () => {
+    expect(validateSignatureParts(['width'], 'height', 0)).toBeUndefined();
+    expect(validateSignatureParts(['width'], 'height', 1)).toMatch(/takes 0 arguments, but 1/);
+  });
+
+  it('expects exactly one argument for a binary selector', () => {
+    expect(validateSignatureParts(['<'], '>', 1)).toBeUndefined();
+    expect(validateSignatureParts(['<'], '>', 0)).toMatch(/takes 1 argument, but 0/);
+  });
+
+  it('skips the check when the caller does not supply an argument count', () => {
+    expect(validateSignatureParts(['fullAddress:'], 'fullAddress')).toBeUndefined();
+  });
+});

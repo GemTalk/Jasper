@@ -179,7 +179,10 @@ describe('change-signature editor', () => {
   });
 
   it('accepts a backslash binary selector', () => {
-    mount('size', []);
+    // Renamed from another BINARY selector, so the one argument it needs is already
+    // there. (Renaming a unary selector to a binary one is rejected on arity — the
+    // unary has no argument to bind, and the only way to add one makes it a keyword.)
+    mount('+', ['other']);
     const part = document.querySelector<HTMLInputElement>('input.part')!;
 
     part.value = '\\';
@@ -187,6 +190,17 @@ describe('change-signature editor', () => {
 
     expect(document.getElementById('error')?.textContent).toBe('');
     expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('rejects renaming a unary selector to a binary one, which has no argument', () => {
+    mount('size', []);
+    const part = document.querySelector<HTMLInputElement>('input.part')!;
+
+    part.value = '\\';
+    part.dispatchEvent(new Event('input'));
+
+    expect(document.getElementById('error')?.textContent).toMatch(/takes 1 argument, but 0/);
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('has an empty permutation for a unary selector', () => {
@@ -203,5 +217,136 @@ describe('change-signature editor', () => {
     (document.getElementById('cancel') as HTMLButtonElement).click();
 
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'cancel' });
+  });
+});
+
+// ── Typing a colon on a unary selector ──────────────────────
+//
+// A unary selector's sole row starts with no argument and no data-orig, so it used to
+// contribute a selector part and nothing else however you edited it: typing a colon
+// gave a one-keyword selector with zero arguments — not a legal method pattern — with
+// Preview… still enabled. These cover the transform that grows the row instead, its
+// reverse, and the guard that catches the malformed shape by any other route.
+
+describe('change-signature editor: colon on a unary selector', () => {
+  function typePart(index: number, value: string) {
+    const inputs = document.querySelectorAll<HTMLInputElement>('input.part');
+    inputs[index].value = value;
+    inputs[index].dispatchEvent(new Event('input'));
+  }
+
+  it('grows the row into a parameter when a colon is typed', () => {
+    const { handle } = mount('fullAddress', []);
+    expect(handle.permutation()).toEqual([]);
+
+    typePart(0, 'fullAddress:');
+
+    expect(handle.parts()).toEqual(['fullAddress:']);
+    // Reported as a NEW parameter (data-orig 0) with the template's name and default.
+    expect(handle.permutation()).toEqual([0]);
+    expect(handle.newArgNames()).toEqual(['aValue']);
+    expect(handle.defaults()).toEqual(['nil']);
+    expect(document.querySelector('span.arg.none')).toBeNull();
+    expect(document.getElementById('sel')?.textContent).toBe('fullAddress:');
+  });
+
+  it('leaves Preview enabled and posts a well-formed edit after the transform', () => {
+    const { vscode } = mount('fullAddress', []);
+    typePart(0, 'fullAddress:');
+    const argname = document.querySelector<HTMLInputElement>('input.argname')!;
+    argname.value = 'anAddress';
+    argname.dispatchEvent(new Event('input'));
+
+    const ok = document.getElementById('ok') as HTMLButtonElement;
+    expect(ok.disabled).toBe(false);
+    expect(document.getElementById('error')?.textContent).toBe('');
+    ok.click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'ok',
+        newParts: ['fullAddress:'],
+        permutation: [0],
+        newArgNames: ['anAddress'],
+        defaults: ['nil'],
+      }),
+    );
+  });
+
+  it('collapses the row again when the colon is deleted', () => {
+    const { handle } = mount('fullAddress', []);
+    typePart(0, 'fullAddress:');
+    typePart(0, 'fullAddress');
+
+    expect(handle.permutation()).toEqual([]);
+    expect(handle.newArgNames()).toEqual([]);
+    expect(document.querySelector('span.arg.none')).not.toBeNull();
+    expect(document.querySelector('input.argname')).toBeNull();
+  });
+
+  it('keeps the typed argument name and default across a collapse and re-expand', () => {
+    const { handle } = mount('fullAddress', []);
+    typePart(0, 'fullAddress:');
+    const argname = document.querySelector<HTMLInputElement>('input.argname')!;
+    argname.value = 'anAddress';
+    argname.dispatchEvent(new Event('input'));
+    const defval = document.querySelector<HTMLInputElement>('input.defval')!;
+    defval.value = "''";
+    defval.dispatchEvent(new Event('input'));
+
+    typePart(0, 'fullAddress');
+    typePart(0, 'fullAddress:');
+
+    expect(handle.newArgNames()).toEqual(['anAddress']);
+    expect(handle.defaults()).toEqual(["''"]);
+  });
+
+  it('does not double-bind the row controls when it expands', () => {
+    const { handle } = mount('fullAddress', []);
+    typePart(0, 'fullAddress:');
+
+    (document.querySelector('button.remove') as HTMLButtonElement).click();
+
+    expect(handle.parts()).toEqual([]);
+  });
+
+  it('does not grow a binary selector row', () => {
+    const { handle } = mount('+', ['other']);
+
+    typePart(0, '+:');
+
+    // `+:` is not an identifier-colon, so the row keeps the shape it was rendered
+    // with — the reused argument it already had.
+    expect(handle.newArgNames()).toEqual(['other']);
+    expect(document.querySelectorAll('input.argname')).toHaveLength(0);
+  });
+
+  it('does not un-make an added parameter when its colon is deleted', () => {
+    const { handle } = mount('fullAddress', []);
+    handle.addParam();
+
+    typePart(1, 'arg');
+
+    // The row stays a parameter (only rows the colon expanded collapse), so the
+    // mismatch surfaces as an error rather than a silently dropped argument.
+    expect(handle.newArgNames()).toEqual(['aValue']);
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('blocks a keyword selector whose keyword count does not match its arguments', () => {
+    mount('at:put:', ['k', 'v']);
+    (
+      document.querySelectorAll('li.kwrow')[1].querySelector('button.remove') as HTMLElement
+    ).click();
+    // Two keywords typed back on, but only one argument row left.
+    typePart(0, 'at:');
+    const list = document.querySelector('ul.rows')!;
+    const extra = list.firstElementChild!.cloneNode(true) as HTMLElement;
+    extra.removeAttribute('data-orig');
+    list.appendChild(extra);
+    typePart(0, 'at:');
+
+    expect(document.getElementById('error')?.textContent).toMatch(/takes 2 arguments, but 1/);
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
   });
 });
