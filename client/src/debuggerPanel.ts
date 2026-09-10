@@ -162,13 +162,18 @@ interface VarRow {
 }
 
 /**
- * A named group of variable rows. Stage 2 splits the flat list into Receiver
- * (`self`), Instance variables, Arguments & Temps, and a collapsed
- * `(stack temps)` group for the synthetic eval-stack temporaries.
+ * A named group of variable rows: Receiver (`self`), Instance variables, the
+ * enclosing method's Arguments & Temps on a block frame, this frame's own
+ * Arguments & Temps, and a collapsed `(stack temps)` group for the synthetic
+ * eval-stack temporaries.
+ *
+ * That is also scope order, innermost last, and every consumer relies on it: a
+ * later row of the same name shadows an earlier one, so a block temp wins over
+ * an enclosing temp of the same spelling, which wins over an instVar.
  */
 interface VarGroup {
   title: string;
-  kind: 'receiver' | 'instvars' | 'argtemps' | 'stacktemps';
+  kind: 'receiver' | 'instvars' | 'homeargtemps' | 'argtemps' | 'stacktemps';
   vars: VarRow[];
   /** Rendered collapsed by default (used for the noisy `(stack temps)` group). */
   collapsed?: boolean;
@@ -679,6 +684,21 @@ const READONLY_SOURCE_SCHEME = 'gemstone-debug';
  */
 const EMPTY_GROUP_SWEEP_DEADLINE_MS = 2000;
 
+/** The webview type of a debugger panel. Shared by the panel it opens and the
+ *  serializer that declines to restore one (see declineRestoredPanels). */
+const DEBUGGER_VIEW_TYPE = 'gemstoneEnhancedDebugger';
+
+/** Back-off for retiring a group whose last tab was just closed. The close is
+ *  asynchronous, so the group can still report the tab for a tick or two. */
+const RETIRE_GROUP_RETRY_DELAYS_MS = [0, 32, 128, 512, 1000];
+
+/** What a window leaves behind for the next one when it closes with a debugger open:
+ *  the companion source tabs to reap, and the editor columns to retire. */
+interface PersistedOrphans {
+  uris: string[];
+  columns: number[];
+}
+
 /**
  * A fully-resolved stack frame, before display filtering and renumbering.
  * Carries the classification bits the stack filter needs (which `FrameSummary`,
@@ -933,11 +953,14 @@ export class DebuggerPanel {
    *
    * The companion source editor is a real text-editor tab (a `gemstone://`
    * method or our `gemstone-debug:` doc), which VS Code persists and restores
-   * across a window close — unlike the webview panel, which is dropped (we
-   * register no serializer). So if the window is closed while a debugger is
+   * across a window close. So if the window is closed while a debugger is
    * open, `dispose()` → `closeSourceEditors()` can't win the shutdown race (the
    * async tab close isn't persisted), and the source tab comes back next launch
    * orphaned — and broken, since there's no live session to resolve `gemstone://`.
+   *
+   * The panel itself is handled separately, by a serializer that closes whatever
+   * VS Code restores (see declineRestoredPanels) — that is what retires the empty
+   * group the panel came back into. This reap is only about the source tabs.
    *
    * Fix: keep the set of currently-open debugger source URIs in `workspaceState`
    * (rewritten as the union of all live panels whenever it changes; emptied on
@@ -976,19 +999,200 @@ export class DebuggerPanel {
   static initSourceTabCleanup(state: vscode.Memento, extensionPath?: string): void {
     DebuggerPanel.orphanState = state;
     DebuggerPanel.extensionPath = extensionPath;
-    const orphans = state.get<string[]>(DebuggerPanel.ORPHAN_SOURCE_KEY, []);
+    DebuggerPanel.declineRestoredPanels();
+    const stored = state.get<PersistedOrphans | string[] | undefined>(
+      DebuggerPanel.ORPHAN_SOURCE_KEY,
+      undefined,
+    );
+    // A bare array is what an earlier version wrote (URIs only, before the columns were
+    // recorded), so a window upgraded across that change still gets its tabs reaped.
+    const orphans: PersistedOrphans = Array.isArray(stored)
+      ? { uris: stored, columns: [] }
+      : (stored ?? { uris: [], columns: [] });
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
-    if (orphans.length === 0) return;
-    const wanted = new Set(orphans);
+    DebuggerPanel.orphanColumns = orphans.columns;
+    // The layout these numbers were read against. Captured HERE, once, and carried
+    // down every path below rather than read again when each retire finally runs:
+    // the work below is fire-and-forget, so a slow tab close can land it long after
+    // this window's layout stopped being the one the numbers describe.
+    const generation = DebuggerPanel.columnLayoutGeneration;
+    // The columns are retired even with nothing to reap: a debugger that never showed a
+    // source still carved a group, and that group is exactly the one with no tab in it.
+    if (orphans.uris.length === 0) {
+      void DebuggerPanel.retireOrphanColumns(generation);
+      return;
+    }
+    const wanted = new Set(orphans.uris);
+    const closing: Thenable<unknown>[] = [];
+    // The columns these tabs are vacating. A reaped source tab leaves the companion
+    // source group empty, and that group is no more self-retiring than the panel's —
+    // both were emptied during a restore rather than by an ordinary close.
+    const vacated = new Set<vscode.ViewColumn>();
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (tab.input instanceof vscode.TabInputText && wanted.has(tab.input.uri.toString())) {
-          void vscode.window.tabGroups.close(tab);
+          vacated.add(group.viewColumn);
+          closing.push(vscode.window.tabGroups.close(tab));
         }
       }
     }
+    void Promise.all(closing)
+      .catch(() => {})
+      .then(async () => {
+        for (const column of vacated) {
+          await DebuggerPanel.retireEmptyGroup(column, generation);
+        }
+        await DebuggerPanel.retireOrphanColumns(generation);
+      });
   }
+
+  /**
+   * The columns a debugger held when the window last closed, read back at activation.
+   * Kept until they are retired rather than consumed on the spot, because the panel's
+   * own tab is closed by the serializer — which VS Code calls AFTER activate() — so a
+   * sweep that ran only at activation would find the panel's group still occupied.
+   */
+  private static orphanColumns: number[] = [];
+
+  /**
+   * Bumped each time a debugger carves a fresh column pair. Both empty-group sweeps
+   * capture it and abandon their remaining passes if it moves, because everything
+   * they hold is a column NUMBER and a carve invalidates those two ways over: VS Code
+   * renumbers columns positionally as groups open and close, so the number no longer
+   * denotes the group it was captured for — and the pair's companion source group is
+   * carved EMPTY, which is exactly the shape a sweep closes. Without the check, a
+   * retire left over from activation (it polls for up to ~1.7s) could take away the
+   * source pane of a debugger opened while it was still waiting.
+   */
+  private static columnLayoutGeneration = 0;
+
+  /**
+   * Retire whichever of the last window's debugger columns came back empty. Safe to
+   * call more than once: retireEmptyGroup only closes a group with nothing in it.
+   *
+   * `generation` is the layout the columns were read against, passed in rather than
+   * read here. Reading it here would re-authorize a call that has slipped: this runs
+   * from fire-and-forget chains, so it can start after a debugger has recarved the
+   * grid — and then every number it holds names a group it was not recorded for.
+   */
+  private static async retireOrphanColumns(generation: number): Promise<void> {
+    for (const column of DebuggerPanel.orphanColumns) {
+      await DebuggerPanel.retireEmptyGroup(column, generation);
+    }
+  }
+
+  /**
+   * Close the group in `column` once it is empty, and only while it is.
+   *
+   * VS Code retires a group of its own accord when the group's last editor closes —
+   * during ordinary use. A group emptied while the window is still coming up does not
+   * get that treatment, and neither does one that was never occupied (which is why
+   * closeEmptyGroups exists for the carve). Both are how a debugger's column outlived
+   * the debugger.
+   *
+   * Retried on a short back-off because the tab close it follows is asynchronous: the
+   * group can still report the tab for a tick or two after dispose() returns. Gives up
+   * quietly, and never closes a group that has an editor in it — if the user has put
+   * something there in the meantime, or VS Code has already retired it, there is
+   * nothing to do and nothing of theirs is at risk. It also abandons the rest of its
+   * back-off if a debugger carves a pair while it waits, since the column number it
+   * holds no longer means what it meant (see columnLayoutGeneration).
+   *
+   * Why this POLLS while closeEmptyGroups waits: the difference is what each one has
+   * to go on, not two guesses at the same duration. closeEmptyGroups runs on the
+   * dispose path, where WE issued the tab closes and hold the promise for them, so it
+   * awaits that promise and sweeps the moment it settles; its deadline is not a guess
+   * at when the closes land but a ceiling on how long one DIRTY tab's modal save
+   * prompt may hold up the rest of the teardown, after which it sweeps what is already
+   * empty and sweeps again when the prompt is finally answered. This one runs on the
+   * restore path, where the closes are VS Code's own — the serializer's dispose and
+   * whatever the window restore is still doing — and there is no promise to await, so
+   * a back-off is the only signal available. Collapsing them would mean either polling
+   * a close we could have awaited, or awaiting a promise that does not exist.
+   */
+  private static async retireEmptyGroup(
+    column: vscode.ViewColumn | undefined,
+    generation: number,
+  ): Promise<void> {
+    if (column === undefined) return;
+    for (const delayMs of RETIRE_GROUP_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // A debugger has carved a pair since `column` was read off the layout, so it no
+      // longer names the group it was recorded for — and one of the groups it now
+      // names is that debugger's empty source pane. Checked before the first look as
+      // well as between retries, because the caller's chain may itself have been
+      // waiting: give up rather than close somebody else's group.
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
+      const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+      if (!group) return; // already gone
+      if (group.tabs.length > 0) continue; // the close has not landed yet, or is not ours
+      try {
+        await vscode.window.tabGroups.close(group);
+      } catch {
+        /* raced with VS Code retiring it — nothing left to do */
+      }
+      return;
+    }
+  }
+
+  /**
+   * Close any debugger panel VS Code restores, so the column it occupied goes with
+   * it instead of coming back as a blank pane.
+   *
+   * A debugger carves its own column out of the editor grid (carveDebuggerColumn):
+   * the panel group on top, the companion source group below. Closing the panel
+   * normally retires both — dispose closes the source tabs and then sweeps its own
+   * groups once empty. Closing the WINDOW with a debugger open is the one path where
+   * none of that runs: dispose cannot win the shutdown race, which is why the
+   * source tab is reaped on the next launch instead (see ORPHAN_SOURCE_KEY).
+   *
+   * The group was the half that reap never covered. VS Code persists the editor
+   * LAYOUT regardless of what was in it, so the panel's group came back — empty,
+   * because a webview is dropped unless a serializer claims it. And VS Code only
+   * retires a group when its last *editor closes*; a group restored empty never had
+   * one close, so nothing took it away. It then survived every later F5, and shifted
+   * the ViewColumn numbers along for the next debugger that tried to carve a column.
+   *
+   * Registering a serializer that immediately disposes what it restores puts that
+   * case back on the ordinary path: the tab is restored, closed, and its group is
+   * retired by VS Code itself — one mechanism instead of a second cleanup that has
+   * to guess at column numbers after the fact.
+   *
+   * It declines rather than revives because there is nothing to revive TO. The panel
+   * showed a process suspended at a halt; that process died with the session when
+   * the window closed, so a restored panel could only be a picture of a stack that
+   * no longer exists, with every button on it broken. Note this disposes the raw
+   * WebviewPanel and never builds a DebuggerPanel around it — the normal dispose
+   * path would try to clear a stack on a session that was never opened.
+   */
+  private static declineRestoredPanels(): void {
+    if (DebuggerPanel.restoreDeclinerRegistered) return;
+    DebuggerPanel.restoreDeclinerRegistered = true;
+    vscode.window.registerWebviewPanelSerializer(DEBUGGER_VIEW_TYPE, {
+      deserializeWebviewPanel(panel: vscode.WebviewPanel): Thenable<void> {
+        // Read the column BEFORE disposing: a disposed WebviewPanel throws rather than
+        // answering. Closing the tab is not enough on its own — VS Code retires a group
+        // when its last editor closes during ordinary use, but a group emptied while the
+        // window is still restoring keeps its place, which is the blank pane this is all
+        // about. So the group is retired here as well.
+        const column = panel.viewColumn;
+        // The layout both retires below are entitled to act on — read before the
+        // dispose that starts them, and not again afterwards (see retireOrphanColumns).
+        const generation = DebuggerPanel.columnLayoutGeneration;
+        panel.dispose();
+        // Its own column when VS Code reports one — during deserialization it may not
+        // yet — and then the columns recorded before the window closed, which is what
+        // covers the companion source group as well. This runs after activate(), so it
+        // is also the pass at which the panel's own group is finally empty.
+        return DebuggerPanel.retireEmptyGroup(column, generation).then(() =>
+          DebuggerPanel.retireOrphanColumns(generation),
+        );
+      },
+    });
+  }
+  /** Guards against a second registration, which VS Code rejects for one view type. */
+  private static restoreDeclinerRegistered = false;
 
   /**
    * Rewrite the persisted orphan set as the union of every live panel's open
@@ -1000,13 +1204,28 @@ export class DebuggerPanel {
     const state = DebuggerPanel.orphanState;
     if (!state) return;
     const uris = new Set<string>();
+    // The carved columns go with them. A window close cannot be raced — dispose loses
+    // it, which is why this set is rewritten continuously rather than at shutdown — so
+    // anything the next launch needs has to already be on disk when the window dies.
+    // The columns are that: the panel's group and the companion source group, which are
+    // what the next launch has to retire. Without them the source group is unreachable,
+    // because the carve creates it EMPTY: a debugger closed with no source ever shown
+    // leaves a group with no tab to reap and no record of where it was.
+    const columns = new Set<number>();
     for (const set of DebuggerPanel.panels.values()) {
       for (const dbg of set) {
         for (const u of dbg.shownSourceUris) uris.add(u);
         for (const u of dbg.dnuMethodUris) uris.add(u);
+        for (const c of [dbg.panelGroupColumn, dbg.sourceGroupColumn]) {
+          if (c !== undefined) columns.add(c);
+        }
       }
     }
-    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, uris.size ? Array.from(uris) : undefined);
+    const orphans: PersistedOrphans | undefined =
+      uris.size || columns.size
+        ? { uris: Array.from(uris), columns: Array.from(columns) }
+        : undefined;
+    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, orphans);
   }
 
   private static ensureReadOnlySourceProvider(): void {
@@ -1326,9 +1545,12 @@ export class DebuggerPanel {
     // second halt joins the column the first one carved instead of growing the
     // grid by an error.
     const shared = DebuggerPanel.liveDebuggerColumns(session.id);
+    // A new pair renumbers the grid and adds an empty source group; a second halt
+    // joining the column the first carved does neither. See columnLayoutGeneration.
+    if (!shared) DebuggerPanel.columnLayoutGeneration++;
     const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
-      'gemstoneEnhancedDebugger',
+      DEBUGGER_VIEW_TYPE,
       'GemStone Debugger',
       { viewColumn: panelColumn, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
@@ -1350,6 +1572,11 @@ export class DebuggerPanel {
       DebuggerPanel.panels.set(session.id, new Set());
     }
     DebuggerPanel.panels.get(session.id)!.add(debugger_);
+    // Record the columns now, not when a source tab first opens. A debugger closed with
+    // the window before it ever showed a source still carved a group, and that group —
+    // carved empty, so with no tab to reap — is only reachable next launch if its column
+    // was written down while this window was alive.
+    DebuggerPanel.persistLiveSourceUris();
     // Single-stepping needs no session-wide setup here: the debugged process
     // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
     // GemStone can't step native code, error 6014) and every step/continue
@@ -1770,18 +1997,20 @@ export class DebuggerPanel {
     const selector = raw?.selector;
     if (!selector) return;
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
       this.postInit();
       return;
     }
-    // The receiver's class and every superclass up to Object — each a place the
-    // selector could be implemented, flagged with whether it already is.
-    const chain = debug.getReceiverClassChain(this.session, receiverOop, selector);
+    // The class of the frame's `self` — the HOME receiver in a block frame, so a
+    // block frame resolves the same chain its method frame would — and every
+    // superclass up to Object: each a place the selector could be implemented,
+    // flagged with whether it already is.
+    const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
       this.postInit();
@@ -1813,9 +2042,9 @@ export class DebuggerPanel {
       return;
     }
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
@@ -1823,7 +2052,7 @@ export class DebuggerPanel {
       return;
     }
 
-    const target = debug.getBrowseTarget(this.session, receiverOop, raw.selector);
+    const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
       this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
       this.postInit();
@@ -1869,20 +2098,16 @@ export class DebuggerPanel {
   private async implementSubclassResponsibility(): Promise<void> {
     const info = this.subclassRespInfo;
     if (!info) return;
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(
-        this.session,
-        this.gsProcess,
-        info.abstractServerLevel,
-      ).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of #${info.selector}.`;
       this.postInit();
       return;
     }
-    let chain = debug.getReceiverClassChain(this.session, receiverOop, info.selector);
+    let chain = debug.getReceiverClassChain(this.session, selfOop, info.selector);
     // Bound the chain at the abstract method's defining class (inclusive).
     const boundIdx = chain.findIndex((c) => c.className === info.definingClassName);
     if (boundIdx >= 0) chain = chain.slice(0, boundIdx + 1);
@@ -2264,6 +2489,13 @@ export class DebuggerPanel {
       .filter((r) => r.group === 'argtemps')
       .map((r) => toRow(r, { kind: 'temp', index: r.index }))
       .sort(byName);
+    // The enclosing method's names on a block frame — read-only here, because
+    // their write index belongs to the home frame, not this one. Edit them from
+    // the home activation's own row in the stack.
+    const homeArgTemps = rows
+      .filter((r) => r.group === 'homeargtemps')
+      .map((r) => toRow(r))
+      .sort(byName);
     // Stack temps keep natural order (sorting `.t1/.t10/.t2` would look wrong).
     const stackTemps = rows.filter((r) => r.group === 'stacktemps').map((r) => toRow(r));
 
@@ -2271,6 +2503,12 @@ export class DebuggerPanel {
     if (receiver.length > 0) groups.push({ title: 'Receiver', kind: 'receiver', vars: receiver });
     if (instVars.length > 0)
       groups.push({ title: 'Instance variables', kind: 'instvars', vars: instVars });
+    if (homeArgTemps.length > 0)
+      groups.push({
+        title: 'Enclosing method’s Arguments & Temps',
+        kind: 'homeargtemps',
+        vars: homeArgTemps,
+      });
     if (argTemps.length > 0)
       groups.push({ title: 'Arguments & Temps', kind: 'argtemps', vars: argTemps });
     if (stackTemps.length > 0) {
@@ -2402,7 +2640,7 @@ export class DebuggerPanel {
     // The eval runs non-blocking so a runaway expression doesn't freeze the panel
     // and CAN be cancelled. The in-panel overlay owns cancel (suppressNotification),
     // and onStart marks it cancellable + captures the handle the Cancel button hits.
-    let value = '';
+    let value: string;
     let isError = false;
     try {
       value = await debug.evaluateInFrameNb(this.session, this.gsProcess, expr, serverLevel, {
@@ -2511,7 +2749,7 @@ export class DebuggerPanel {
       // only), so revert can restore the exact original object.
       this.captureUndoOriginal(serverLevel, kind, index, info);
       if (kind === 'instvar') {
-        debug.setInstVar(this.session, info.receiverOop, index, valueOop);
+        debug.setInstVar(this.session, info.selfOop, index, valueOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, valueOop);
       }
@@ -2608,7 +2846,7 @@ export class DebuggerPanel {
     if (this.undoOriginals.has(key)) return; // keep the FIRST original
     const originalOop =
       kind === 'instvar'
-        ? debug.getInstVarOop(this.session, info.receiverOop, index)
+        ? debug.getInstVarOop(this.session, info.selfOop, index)
         : info.argAndTempOops[index - 1];
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
@@ -2641,12 +2879,8 @@ export class DebuggerPanel {
     }
     try {
       if (kind === 'instvar') {
-        const receiverOop = debug.getFrameInfo(
-          this.session,
-          this.gsProcess,
-          serverLevel,
-        ).receiverOop;
-        debug.setInstVar(this.session, receiverOop, index, originalOop);
+        const selfOop = debug.getFrameInfo(this.session, this.gsProcess, serverLevel).selfOop;
+        debug.setInstVar(this.session, selfOop, index, originalOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
@@ -3490,10 +3724,16 @@ export class DebuggerPanel {
 
   /**
    * The in-scope, named variables for `serverLevel` as inline-overlay rows, in
-   * receiver → instVars → args/temps order (so a shadowing temp overrides an
-   * instVar of the same name; `computeInlineValueLines` lets later entries win).
+   * receiver → instVars → enclosing temps → own args/temps order (so a shadowing
+   * temp overrides an instVar of the same name, and a block's own temp overrides
+   * an enclosing one; `computeInlineValueLines` lets later entries win). That is
+   * the order {@link VarGroup} is built in, so iterating the groups is enough.
    * The collapsed `(stack temps)` group is dropped — those `.tN` temporaries have
    * no source name to match.
+   *
+   * The enclosing method's names matter here in particular: a block frame's
+   * source pane shows the ENCLOSING method's source, so without them the overlay
+   * had nothing to say about names plainly visible on those lines.
    */
   private inlineVarsForFrame(serverLevel: number): InlineVar[] {
     const vars: InlineVar[] = [];
@@ -4017,7 +4257,7 @@ export class DebuggerPanel {
       // inherited methods (non-block frames only — see formatFrameLabel).
       if (!isBlock) {
         try {
-          receiverClass = debug.getObjectClassName(this.session, info.receiverOop);
+          receiverClass = debug.getObjectClassName(this.session, info.selfOop);
         } catch {
           /* best-effort; fall back to defining class only */
         }
@@ -4724,7 +4964,12 @@ export class DebuggerPanel {
   ): Promise<void> {
     const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
     if (wanted.length === 0) return;
+    // Captured before the wait below, which a modal save prompt can stretch out for
+    // as long as the user leaves the dialog standing — long enough for another
+    // debugger to open and renumber the columns these are. See columnLayoutGeneration.
+    const generation = DebuggerPanel.columnLayoutGeneration;
     const sweep = (): void => {
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
       for (const group of vscode.window.tabGroups.all) {
         if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
           void Promise.resolve(vscode.window.tabGroups.close(group)).catch(() => {});

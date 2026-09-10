@@ -10,6 +10,7 @@ vi.mock('../../browserQueries', () => ({
 }));
 
 import * as vscode from 'vscode';
+import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
 import * as queries from '../../browserQueries';
 import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import { ExplorerController, MethodCategoryItem, MethodItem } from '../../gemstoneExplorer';
@@ -66,6 +67,7 @@ const openTextDocument = vi.mocked(vscode.workspace.openTextDocument);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetConfig();
   vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
   vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
   vi.mocked(queries.removeCategory).mockReturnValue('ok');
@@ -95,6 +97,86 @@ describe('ExplorerController.newMethodCategory', () => {
 
     expect(ctl.methodCategories(true).some((c) => c.category === 'printing')).toBe(true);
     expect(ctl.methodCategories(false).some((c) => c.category === 'printing')).toBe(false);
+  });
+
+  // Creating a category also raises an "undoable" toast offering to put it back, which is a
+  // separate notice with its own reason to exist — so these two cases match on the grouping
+  // repair's own wording rather than counting every information message.
+  const groupingNotices = (
+    info: ReturnType<typeof vi.mocked<typeof vscode.window.showInformationMessage>>,
+  ): unknown[][] =>
+    info.mock.calls.filter((c) => String(c[0]).includes("Don't Group Methods by Category"));
+
+  // With grouping off the pane renders selectors only, so there are no category
+  // rows — the reveal had nothing to land on, rejected, and the rejection was
+  // swallowed. The name was never actually lost (turning grouping back on showed
+  // it), but on screen creating a category did nothing whatsoever.
+  it('turns grouping back on so the category it just made is visible', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const { ctl, methodView } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+
+    const setGrouping = vi.spyOn(ctl, 'setGroupMethodsByCategory');
+
+    await ctl.newMethodCategory(false);
+
+    expect(setGrouping).toHaveBeenCalledWith(true);
+    expect(ctl.groupMethodsByCategory()).toBe(true);
+    expect(methodView.reveal).toHaveBeenCalledTimes(1);
+    const revealed = methodView.reveal.mock.calls[0][0] as MethodCategoryItem;
+    expect(revealed.category).toBe('accessing');
+    // And the category itself is there, as it always was.
+    expect(ctl.methodCategories(false).some((c) => c.category === 'accessing')).toBe(true);
+  });
+
+  // The switch writes a GLOBAL preference, so a user who deliberately turned grouping
+  // off has it changed for every workspace from now on. Doing that in silence is
+  // indistinguishable from a bug — the pane just looks different and stays that way —
+  // so the repair names itself, and names the toggle that undoes it.
+  it('says so when it turns grouping back on', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(groupingNotices(info)).toHaveLength(1);
+    const said = String(groupingNotices(info)[0][0]);
+    expect(said).toContain('accessing');
+    expect(said).toContain("Don't Group Methods by Category");
+  });
+
+  it('says nothing about grouping when the pane was already grouped', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', true);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(groupingNotices(info)).toHaveLength(0);
+  });
+
+  // The switch is a repair for an unusable pane state, not a preference the command
+  // owns: with grouping already on there is nothing to fix, so it must not write the
+  // setting at all.
+  it('leaves the grouping preference alone when the pane is already grouped', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', true);
+    const { ctl } = makeController();
+    // Spied on the controller, not on getConfiguration().update: the vscode mock
+    // hands back a fresh config object (and a fresh update mock) per call, so an
+    // assertion on that mock would be watching a function the controller never
+    // touched and would pass whatever the code did.
+    const setGrouping = vi.spyOn(ctl, 'setGroupMethodsByCategory');
+    showInputBox.mockResolvedValue('accessing');
+
+    await ctl.newMethodCategory(false);
+
+    expect(setGrouping).not.toHaveBeenCalled();
+    expect(ctl.groupMethodsByCategory()).toBe(true);
   });
 
   it('does nothing when the name prompt is cancelled', async () => {
