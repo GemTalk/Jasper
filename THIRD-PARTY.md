@@ -95,8 +95,8 @@ SOFTWARE.
   prepended, and (2) class placement is rewritten from upstream's `Globals` to
   the dedicated `GsEnhancedInspector` dictionary, so the whole payload can be
   removed by dropping one dictionary. Otherwise verbatim.
-- **License:** MIT throughout — but across **six** upstream repos with **seven**
-  distinct copyright holders. See the table and the notices below.
+- **License:** MIT throughout — but **seven** copyright notices across **six**
+  upstream repos. See the table and the notices below.
 
 ### Per-file provenance
 

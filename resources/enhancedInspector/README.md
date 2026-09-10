@@ -37,8 +37,8 @@ disagree, trust the array.
 
 ## Attribution
 
-Every file here is third-party MIT-licensed source, from **six** upstream repos with **seven**
-distinct copyright holders — not all of them feenk's. Each file carries a generated attribution
+Every file here is third-party MIT-licensed source: **seven** copyright notices across **six**
+upstream repos — not all of them feenk's. Each file carries a generated attribution
 header naming its origin, its upstream project, and its copyright holder; the full MIT notice and
 permission text is in [`THIRD-PARTY.md`](../../THIRD-PARTY.md) and [`NOTICE`](../../NOTICE) at the
 repo root. Both ship in the VSIX alongside these payloads. The headers are written from the
