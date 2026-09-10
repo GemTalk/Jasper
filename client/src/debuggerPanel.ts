@@ -1048,6 +1048,18 @@ export class DebuggerPanel {
    */
   private static orphanColumns: number[] = [];
 
+  /**
+   * Bumped each time a debugger carves a fresh column pair. Both empty-group sweeps
+   * capture it and abandon their remaining passes if it moves, because everything
+   * they hold is a column NUMBER and a carve invalidates those two ways over: VS Code
+   * renumbers columns positionally as groups open and close, so the number no longer
+   * denotes the group it was captured for — and the pair's companion source group is
+   * carved EMPTY, which is exactly the shape a sweep closes. Without the check, a
+   * retire left over from activation (it polls for up to ~1.7s) could take away the
+   * source pane of a debugger opened while it was still waiting.
+   */
+  private static columnLayoutGeneration = 0;
+
   /** Retire whichever of the last window's debugger columns came back empty. Safe to
    *  call more than once: retireEmptyGroup only closes a group with nothing in it. */
   private static async retireOrphanColumns(): Promise<void> {
@@ -1069,7 +1081,9 @@ export class DebuggerPanel {
    * group can still report the tab for a tick or two after dispose() returns. Gives up
    * quietly, and never closes a group that has an editor in it — if the user has put
    * something there in the meantime, or VS Code has already retired it, there is
-   * nothing to do and nothing of theirs is at risk.
+   * nothing to do and nothing of theirs is at risk. It also abandons the rest of its
+   * back-off if a debugger carves a pair while it waits, since the column number it
+   * holds no longer means what it meant (see columnLayoutGeneration).
    *
    * Why this POLLS while closeEmptyGroups waits: the difference is what each one has
    * to go on, not two guesses at the same duration. closeEmptyGroups runs on the
@@ -1085,8 +1099,13 @@ export class DebuggerPanel {
    */
   private static async retireEmptyGroup(column: vscode.ViewColumn | undefined): Promise<void> {
     if (column === undefined) return;
+    const generation = DebuggerPanel.columnLayoutGeneration;
     for (const delayMs of RETIRE_GROUP_RETRY_DELAYS_MS) {
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // A debugger carved a pair while this was waiting, so `column` no longer names
+      // the group it was captured for — and one of the groups it now names is that
+      // debugger's empty source pane. Give up rather than close somebody else's group.
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
       const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
       if (!group) return; // already gone
       if (group.tabs.length > 0) continue; // the close has not landed yet, or is not ours
@@ -1505,6 +1524,9 @@ export class DebuggerPanel {
     // second halt joins the column the first one carved instead of growing the
     // grid by an error.
     const shared = DebuggerPanel.liveDebuggerColumns(session.id);
+    // A new pair renumbers the grid and adds an empty source group; a second halt
+    // joining the column the first carved does neither. See columnLayoutGeneration.
+    if (!shared) DebuggerPanel.columnLayoutGeneration++;
     const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
       DEBUGGER_VIEW_TYPE,
@@ -4921,7 +4943,12 @@ export class DebuggerPanel {
   ): Promise<void> {
     const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
     if (wanted.length === 0) return;
+    // Captured before the wait below, which a modal save prompt can stretch out for
+    // as long as the user leaves the dialog standing — long enough for another
+    // debugger to open and renumber the columns these are. See columnLayoutGeneration.
+    const generation = DebuggerPanel.columnLayoutGeneration;
     const sweep = (): void => {
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
       for (const group of vscode.window.tabGroups.all) {
         if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
           void Promise.resolve(vscode.window.tabGroups.close(group)).catch(() => {});

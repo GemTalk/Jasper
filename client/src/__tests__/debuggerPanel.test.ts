@@ -2092,6 +2092,36 @@ describe('DebuggerPanel', () => {
       expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
     });
 
+    // The activation retire polls for up to ~1.7s, because the closes it follows are
+    // VS Code's own and there is no promise to await. A halt inside that window carves
+    // a fresh pair, which renumbers the grid AND adds an empty source group — so a
+    // remembered number from the last window no longer names the group it was recorded
+    // for, and one of the groups it now names is a live debugger's source pane. The
+    // retire gives up instead of closing it.
+    it('abandons a pending retire once a debugger has carved a new column pair', async () => {
+      // Occupied at the first poll, so the retire goes round the back-off rather than
+      // finishing inside the call.
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push({ viewColumn: 4, tabs: [{ input: {} }] });
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [4] } });
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      // The halt lands while the retire is still waiting out its back-off, and the
+      // column it remembers has emptied in the meantime.
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      groups[0].tabs.length = 0;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
+    });
+
     // The half the serializer alone could never reach: the companion source group is
     // carved EMPTY, so a debugger closed with no source ever shown leaves a group with
     // no tab to reap. Its column has to have been written down while the window was
