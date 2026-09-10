@@ -77,7 +77,13 @@ Rules live in `.gitleaks.toml`. Two things there need to stay true:
 - **The allowlists are narrow, and matched on the secret text.** esbuild inlines every dependency into one `extension.js`, so our code and vendor code cannot be separated by path. The current entries cover two class identifiers from bundled ASN.1/PKCS libraries and PEM *delimiter* literals in PEM-handling code. A real key in the same file is still caught.
 - **`gemstone-password-literal` is a custom rule, and it is not redundant.** gitleaks' default ruleset does **not** flag the password form that Open VSX rejects, so scanning with the defaults alone would sail straight past the exact failure this job exists to prevent. It mirrors `client/src/__tests__/publishSecretScan.test.ts`, which stays: the unit test fails in seconds on every PR, while this covers the whole package.
 
+- **The delimiter allowlist is scoped to the `private-key` rule, and `gemstone-pem-key-material` is why.** RE2 has no lookahead, so "allow the header but not the contents" cannot be written as one negative regex: an allowlist permissive enough to pass the header also passes a key that follows it. A key split as `"-----BEGIN PRIVATE KEY-----\n" + "MIIEv..."` begins with exactly that prefix. The header and the material are therefore separate rules, and nothing allowlists the material one.
+
 A finding fails the run before anything is published, and the report is uploaded as an artifact. Fix it and re-dispatch; nothing has been spent.
+
+**What the scan cannot do.** gitleaks matches text, not program semantics, so string concatenation defeats every rule and every allowlist here — `"-----BEGIN PRIVATE" + " KEY-----"`, or `"sword" + "fish"`, never appear contiguously in the file. Base64 key material with no header is invisible too.
+
+That is the right trade, because of what the job is for: it predicts Open VSX's server-side verdict before an upload spends a version number, and Open VSX runs the same class of regex scanner. A secret that evades these rules evades theirs, so it does not cause the rejection this guards against. The scan is calibrated to an accidental commit — which is never obfuscated — not to a determined author, which no regex stops. Deliberate smuggling is answered by code review, the merge queue and the release-approval gate. Resist loosening these rules to chase concatenation patterns: each looser rule costs false positives, and a scan that cries wolf is one somebody eventually turns off.
 
 ### A success message is not a live release
 

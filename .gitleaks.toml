@@ -29,6 +29,7 @@ generic-api-key rule scores these on entropy as though the identifier were a
 key. Anchored to the exact names so an unrelated high-entropy assignment is
 still reported.
 """
+targetRules = ["generic-api-key"]
 regexTarget = "secret"
 regexes = [
     '''^(RecipientEncryptedKeys|PKCS8ShroudedKeyBag)(_\d+)?$''',
@@ -43,6 +44,7 @@ between them. The alternatives below require the delimiter to be followed
 immediately by a regex terminator or by the end of a JavaScript string —
 a real embedded key has base64 there instead, so it still trips the rule.
 """
+targetRules = ["private-key"]
 regexTarget = "secret"
 regexes = [
     '''^-----BEGIN [A-Z ]*PRIVATE KEY-----(/|\\n"\s*\+)''',
@@ -65,3 +67,44 @@ id = "gemstone-password-literal"
 description = "A `password`-suffixed key assigned a short quoted literal — the form Open VSX's hashicorp-tf-password rule rejects"
 regex = '''(?i)password\w*\s*[:=]\s*["'][A-Za-z0-9]{7,20}["']'''
 tags = ["password", "open-vsx"]
+
+# The delimiter allowlist above is scoped to `private-key`, and this rule is
+# why. RE2 has no lookahead, so "allow the header but not the contents" cannot
+# be expressed as a single negative regex: an allowlist permissive enough to
+# let the header through also lets through whatever follows it. A real key
+# split across string literals — "-----BEGIN PRIVATE KEY-----\n" + "MIIEv..."
+# — begins with exactly the prefix that allowlist matches, and was allowed by
+# an earlier version of this file.
+#
+# So the header and the key material are separated into two rules. This one
+# matches the material: a PEM header followed, within a few characters of
+# punctuation or escape, by a long unbroken base64 run. No allowlist targets
+# it, so nothing above can suppress it. The false positives cannot reach it —
+# PEM-handling code has identifiers and dots between the markers, never a
+# 40-character base64 run.
+[[rules]]
+id = "gemstone-pem-key-material"
+description = "A PEM private-key header followed by actual base64 key material"
+regex = '''-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[\s\S]{0,40}?[A-Za-z0-9+/]{40,}'''
+tags = ["private-key", "key-material"]
+
+# What this cannot do, stated plainly so the job is not mistaken for a
+# guarantee: gitleaks matches TEXT, not program semantics. Every rule and
+# every allowlist here is defeated by string concatenation —
+# "-----BEGIN PRIVATE" + " KEY-----", or "sword" + "fish" — because the
+# literal never appears contiguously in the file. Base64 key material with no
+# header attached is invisible too. Verified, not assumed.
+#
+# That is acceptable because of what this job is FOR. It exists to predict
+# Open VSX's server-side verdict before an upload burns a version number, and
+# Open VSX runs the same class of regex scanner: a secret that evades these
+# rules evades theirs too, so it does not cause the rejection this guards
+# against. The control is calibrated to the failure it is meant to catch —
+# an accidental commit, which is never obfuscated — not to a determined
+# author, which no regex can stop.
+#
+# Deliberate smuggling is a different threat with different defences: code
+# review, the merge queue, and the release-approval gate. Do not answer it by
+# loosening these rules to chase concatenation patterns. Each looser rule
+# costs false positives, and a scan that cries wolf is a scan someone
+# eventually disables — which is strictly worse than one with a known limit.
