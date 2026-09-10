@@ -419,8 +419,8 @@ export interface ClassHomeInfo {
 }
 
 /**
- * The receiver's full class chain — its class and every superclass up to Object
- * — as candidate places to implement (override) `selector`. Ordered
+ * The receiver's full class chain — its class and every superclass along the
+ * lookup chain — as candidate places to implement (override) `selector`. Ordered
  * most-specific first (the receiver's class), so callers can pre-select it. The
  * walk starts at `rcvr class`, so a class receiver gets its metaclass chain and
  * each row reports its own side (`cls isMeta`) — a class-side method lives on

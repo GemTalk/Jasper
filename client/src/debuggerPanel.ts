@@ -234,6 +234,48 @@ export function formatFrameLabel(p: FrameLabelParts): string {
   return `${prefix}${classPart}>>#${p.selector}`;
 }
 
+/** The dictionary that holds the GemStone kernel classes: a class bound there is
+ *  part of the base image rather than the user's own code. */
+const BASE_CLASS_DICT = 'Globals';
+
+/**
+ * One row of the "implement #<selector> in which class?" QuickPick — the label
+ * and its description.
+ *
+ * The label carries the SIDE (`Foo class`, the way `formatFrameLabel` writes a
+ * defining class). The chain crosses from a metaclass into `Class` and its
+ * instance-side superclasses, so a class receiver's chain holds BOTH
+ * `Object class` and `Object`; the picked row is what supplies `isMeta` for the
+ * `gemstone://` URI the method is written to. Bare class names would put two
+ * rows spelled `Object` in front of the user and then silently write to
+ * whichever one they didn't mean.
+ *
+ * A class whose home dictionary is `Globals` is a GemStone base class. Those
+ * rows are still offered — `Class`, `ClassDescription` and `Behavior` are real
+ * places to implement, and a genuine (if heavy) answer — but the row says what
+ * it is, because adding to or reimplementing a method there changes behaviour
+ * for every object in the stone, not just this receiver.
+ */
+export function implementTargetRow(
+  c: debug.ClassHomeInfo,
+  selector: string,
+): { label: string; description: string } {
+  const label = `${c.className}${c.isMeta ? ' class' : ''}`;
+  // No home dictionary → no editable gemstone:// URI; pickAndOpenImplementTemplate
+  // refuses such a pick, so the row says why rather than promising an editor.
+  if (!c.dictName) return { label, description: '(not in your symbol list)' };
+  const home =
+    c.dictName === BASE_CLASS_DICT
+      ? `in ${c.dictName} — a GemStone base class, take care`
+      : `in ${c.dictName}`;
+  return {
+    label,
+    description: c.implementsSelector
+      ? `already implements #${selector} — opens it to edit (${home})`
+      : `implement here (${home})`,
+  };
+}
+
 /**
  * Format a frame's position annotation as `@<stepPoint> line <line>` — e.g.
  * `@2 line 12`. Either part is omitted when unavailable; returns '' when both
@@ -1988,11 +2030,16 @@ export class DebuggerPanel {
    * "Implement <selector> in <ReceiverClass>" (T2/T3 override): the selected
    * frame is running a method the receiver INHERITED; open an editor to implement
    * that selector somewhere along the receiver's inheritance chain. The candidate
-   * classes (getReceiverClassChain — the receiver's class up through Object) and
-   * the selector/arg-count come from the frame. With more than one candidate, a
-   * QuickPick lets the user choose where in the hierarchy to implement (the
-   * receiver's class is pre-selected); each entry notes its home dictionary and
-   * whether it ALREADY implements the selector.
+   * classes (getReceiverClassChain — the receiver's class and every superclass
+   * along the lookup chain) and the selector/arg-count come from the frame. For a
+   * CLASS receiver that chain is the metaclass one, which runs up through
+   * `Object class` and then crosses into `Class`, `ClassDescription`, `Behavior`
+   * and `Object` — instance-side entries, and real (if heavy) places to
+   * implement, so they are offered rather than withheld. With more than one
+   * candidate, a QuickPick lets the user choose where in the hierarchy to
+   * implement (the receiver's class is pre-selected); each entry names its side,
+   * its home dictionary, whether that dictionary makes it a GemStone base class,
+   * and whether it ALREADY implements the selector (see implementTargetRow).
    *
    * For a class that does NOT yet implement it → a pre-filled stub (reuses the
    * create-method-from-DNU template machinery). For one that ALREADY does → its
@@ -2024,8 +2071,9 @@ export class DebuggerPanel {
     }
     // The class of the frame's `self` — the HOME receiver in a block frame, so a
     // block frame resolves the same chain its method frame would — and every
-    // superclass up to Object: each a place the selector could be implemented,
-    // flagged with whether it already is.
+    // superclass along the lookup chain (the metaclass chain for a class
+    // receiver, which crosses into instance-side `Class` and above): each a place
+    // the selector could be implemented, flagged with whether it already is.
     const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
@@ -2190,22 +2238,21 @@ export class DebuggerPanel {
     // chain to implement (receiver's class first; each marked override vs edit).
     logInfo(
       `[GemStone Debugger] implement #${selector}: chain = ` +
-        chain.map((c) => `${c.className}${c.implementsSelector ? '(impl)' : ''}`).join(' → '),
+        chain
+          .map(
+            (c) =>
+              `${implementTargetRow(c, selector).label}${c.implementsSelector ? '(impl)' : ''}`,
+          )
+          .join(' → '),
     );
     let targetIndex = 0;
     if (chain.length > 1) {
       const pick = await vscode.window.showQuickPick(
-        chain.map((c, i) => ({
-          label: c.className,
-          description: !c.dictName
-            ? '(not in your symbol list)'
-            : c.implementsSelector
-              ? `already implements #${selector} — opens it to edit (in ${c.dictName})`
-              : `implement here (in ${c.dictName})`,
-          index: i,
-        })),
+        chain.map((c, i) => ({ ...implementTargetRow(c, selector), index: i })),
         {
-          placeHolder: `Implement #${selector} in which class? (receiver is ${chain[0].className})`,
+          placeHolder:
+            `Implement #${selector} in which class? ` +
+            `(receiver is ${implementTargetRow(chain[0], selector).label})`,
           // The pick is triggered from the webview, which keeps/regains focus —
           // without this the QuickPick loses focus and auto-dismisses before the
           // user can see it (it just flashes). Keep it open until an explicit pick.

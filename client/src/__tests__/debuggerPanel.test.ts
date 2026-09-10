@@ -4991,6 +4991,10 @@ describe('DebuggerPanel', () => {
       ]);
       expect(items[0].description).toMatch(/implement here/i);
       expect(items[2].description).toMatch(/already implements/i);
+      // Interval's home is Globals — a base class, so its row says take care;
+      // the Kernel rows are ordinary targets and say nothing extra.
+      expect(items[0].description).toMatch(/GemStone base class, take care/i);
+      expect(items[1].description).not.toMatch(/base class/i);
       // A stub template for the chosen (non-implementing) superclass.
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       expect(uri.toString()).toContain('/Kernel/SequenceableCollection/instance/');
@@ -5013,6 +5017,71 @@ describe('DebuggerPanel', () => {
       expect(uri.toString()).not.toContain('new-method');
       const editor = await vi.mocked(vscode.window.showTextDocument).mock.results.at(-1)!.value;
       expect(editor.edit).not.toHaveBeenCalled(); // existing source left intact
+    });
+
+    // A CLASS receiver: the chain is the metaclass one up through `Object class`,
+    // then crosses into `Class` and its instance-side superclasses. `Object` is
+    // therefore in it twice, once per side.
+    const META_CHAIN = [
+      { className: 'Widget', isMeta: true, dictName: 'UserGlobals', implementsSelector: false },
+      { className: 'Object', isMeta: true, dictName: 'Globals', implementsSelector: false },
+      { className: 'Class', isMeta: false, dictName: 'Globals', implementsSelector: false },
+      { className: 'Behavior', isMeta: false, dictName: 'Globals', implementsSelector: false },
+      { className: 'Object', isMeta: false, dictName: 'Globals', implementsSelector: true },
+    ];
+
+    it('names the side of each class-side candidate, so the two Object rows differ', async () => {
+      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      // Pick `Object class` (index 1) — indistinguishable from `Object` (index 4)
+      // if the label dropped the side, and it is `isMeta` that picks the URI side.
+      vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
+        async (items: unknown) => (items as { index: number }[])[1] as never,
+      );
+      const panel = openPanel();
+      vi.mocked(vscode.workspace.openTextDocument).mockClear();
+      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await flush();
+
+      const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
+        label: string;
+        description: string;
+      }[];
+      expect(items.map((i) => i.label)).toEqual([
+        'Widget class',
+        'Object class',
+        'Class',
+        'Behavior',
+        'Object',
+      ]);
+      // Every row spelled differently — no two candidates the user must guess between.
+      expect(new Set(items.map((i) => i.label)).size).toBe(items.length);
+      // The class-side pick writes to the class side.
+      const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(uri.toString()).toContain('/Globals/Object/class/');
+    });
+
+    it('offers the base classes the metaclass chain crosses into, marked as base classes', async () => {
+      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
+        async (items: unknown) => (items as { index: number }[])[2] as never,
+      ); // Class — a genuine target, offered rather than withheld
+      const panel = openPanel();
+      vi.mocked(vscode.workspace.openTextDocument).mockClear();
+      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await flush();
+
+      const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
+        label: string;
+        description: string;
+      }[];
+      // Widget class is the user's own (UserGlobals); the rest live in Globals and
+      // say so, so "implement #foo in Behavior" is not offered as if it were routine.
+      expect(items[0].description).not.toMatch(/base class/i);
+      expect(items[1].description).toMatch(/GemStone base class, take care/i);
+      expect(items[3].description).toMatch(/GemStone base class, take care/i);
+      // Offered, not withheld: picking Class opens its template.
+      const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(uri.toString()).toContain('/Globals/Class/instance/');
     });
 
     it('warns that a subclass implementation shadows an override placed higher up', async () => {
