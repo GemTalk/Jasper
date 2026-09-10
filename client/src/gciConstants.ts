@@ -41,6 +41,11 @@ export const GCI_LOGIN_PW_ENCRYPTED = 0x1;
 // gating is needed.
 export const GCI_LOGIN_QUIET = 0x10;
 
+// GCI error codes (from gcierr.ht)
+// The session pointer passed to a GCI call doesn't identify a live session --
+// e.g. it was already logged out (and freed) or never valid to begin with.
+export const GCI_ERR_BAD_SESSION_ID = 4100;
+
 // Class OOPs (from gcioop.ht)
 export const OOP_CLASS_STRING = 74753n;
 export const OOP_CLASS_UTF8 = 154113n;

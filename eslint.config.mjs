@@ -64,6 +64,22 @@ const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
 
+// `rewriteRelativeImportExtensions` in tsconfig.base.json makes a `.ts`
+// specifier legal in every workspace, but it is wanted in only the few modules
+// that must also load under Node's type-stripping, which resolves nothing else.
+// Everywhere else it is the wrong idiom, so the flag is fenced off here rather
+// than left to convention. Per-file `files:` overrides mark the exceptions.
+//
+// Repeated in each block that configures this rule: flat config *replaces* a
+// rule's options rather than merging them, so a block setting
+// `@typescript-eslint/no-restricted-imports` for its own reason would otherwise
+// drop this ban for the files it matches.
+const TS_EXTENSION_IMPORT = {
+  regex: String.raw`^\.{1,2}/.*\.ts$`,
+  message:
+    'Import the module without the `.ts` extension. An explicit `.ts` specifier is for modules that must also load under Node type-stripping, and the exceptions are listed in eslint.config.mjs.',
+};
+
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
   // a hand-maintained duplicate list that drifts (e.g. missed `.vscode-test/`
@@ -122,6 +138,23 @@ export default tseslint.config(
     },
   },
   {
+    files: ['**/*.ts'],
+    rules: {
+      // The typescript-eslint drop-in rather than the core rule, to match the
+      // other configuration of it below.
+      '@typescript-eslint/no-restricted-imports': ['error', { patterns: [TS_EXTENSION_IMPORT] }],
+    },
+  },
+  {
+    // The one module that names a `.ts` specifier, because eslint.config.mjs
+    // reaches its generated half through Node's type-stripping. Its import
+    // comment carries the full reason. Turned off wholesale rather than
+    // re-stated minus that pattern: no other configuration of this rule applies
+    // to a non-test file, so there is nothing else here to lose.
+    files: ['client/src/gciLibrary/optionalFunctions.ts'],
+    rules: { '@typescript-eslint/no-restricted-imports': 'off' },
+  },
+  {
     rules: {
       // Real dead-code signal, so this stays an error. The `^_` patterns let
       // intentionally-unused params/locals/catch bindings (required by a
@@ -145,8 +178,17 @@ export default tseslint.config(
     // Shared with a Node bin script below — not a webview global consumer.
     ignores: ['client/src/gemStoneVersion.js'],
     // `acquireVsCodeApi` is the VS Code webview host bridge, injected into the
-    // webview global scope — not part of `globals.browser`.
-    languageOptions: { globals: { ...globals.browser, acquireVsCodeApi: 'readonly' } },
+    // webview global scope — not part of `globals.browser`. `MillerColumns` is
+    // the shared column-strip model (webview/millerColumns.js), injected as its
+    // own <script> tag ahead of the scripts that use it, so it is a global to
+    // them in exactly the same way.
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        acquireVsCodeApi: 'readonly',
+        MillerColumns: 'readonly',
+      },
+    },
   },
   {
     // Config/build scripts and CLI bin scripts, plus gemStoneVersion.js: a plain
@@ -208,7 +250,12 @@ export default tseslint.config(
       ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
       'vitest/valid-describe-callback': 'error',
-      'vitest/valid-expect': 'error',
+      // Default caps expect() at exactly 1 argument, which also blocks Chai's
+      // legitimate expect(actual, message) form (vitest's own type defs. keep
+      // it: `<T>(actual: T, message?: string) => Assertion<T>`). Raise the
+      // ceiling to 2 so a descriptive failure message stays available; a 0-
+      // or 3+-arg call is still a real mistake and still flagged.
+      'vitest/valid-expect': ['error', { maxArgs: 2 }],
       'vitest/valid-expect-in-promise': 'error',
       'vitest/valid-title': 'error',
     },
@@ -224,25 +271,28 @@ export default tseslint.config(
     // Confines every test to the harness's session (see the message constants
     // above for why).
     //
-    // Three exemptions, for two different reasons:
+    // Four exemptions, for two different reasons:
     //
     // `client/src/__tests__/gci/**` is being deleted, not fixed. Every file
     // there logs in for itself, so the rule would only collect disables that
     // leave with the files.
     //
-    // The other two are the unit tests *of* the login bindings, and they are
-    // exempt as whole files because naming those bindings is the whole point of
-    // each: `gciLoginQuiet` calls all four raw wrappers to assert the quiet bit
-    // reaches the native layer, and `gciOptionalFunctions` calls the ones an
-    // older library lacks to assert each throws. Both mock `koffi`, so a call
-    // reaches a `vi.fn()` and never a stone -- there is no session to arm, and
-    // so nothing for this rule to protect. Matched by basename rather than
-    // path, so moving either file keeps its exemption.
+    // The other three are the unit tests *of* the bindings themselves, and they
+    // are exempt as whole files because constructing a `GciLibrary` is the whole
+    // point of each: `gciLoginQuiet` calls all four raw wrappers to assert the
+    // quiet bit reaches the native layer, `missingGciFunctions` calls the ones
+    // an older library lacks to assert each throws, and `optionalFuncSignature`
+    // constructs one to prove `optionalFunc` rejects an entry whose signature
+    // declares a different symbol. All three mock `koffi`, so a call reaches a
+    // `vi.fn()` and never a stone -- there is no session to arm, and so nothing
+    // for this rule to protect. Matched by basename rather than path, so moving
+    // any of them keeps its exemption.
     files: ['**/*.test.ts', '**/*.spec.ts', '**/*.test.tsx'],
     ignores: [
       'client/src/__tests__/gci/**',
       '**/gciLoginQuiet.test.ts',
-      '**/gciOptionalFunctions.test.ts',
+      '**/missingGciFunctions.test.ts',
+      '**/optionalFuncSignature.test.ts',
     ],
     rules: {
       'no-restricted-syntax': [
@@ -336,6 +386,7 @@ export default tseslint.config(
         {
           patterns: [
             { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+            TS_EXTENSION_IMPORT,
           ],
         },
       ],

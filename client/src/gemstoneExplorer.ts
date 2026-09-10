@@ -26,10 +26,24 @@ import {
   MethodFilter,
 } from './explorerMethodFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
+import {
+  ExplorerLanding,
+  ExplorerNavigationHistory,
+  TrailLabelMode,
+  isMethodLanding,
+  landingContext,
+  landingKey,
+  landingLabel,
+  landingPath,
+} from './explorerNavigationHistory';
+import { NAVIGATION_VIEW_ID, NavigationViewProvider } from './explorerNavigationView';
 import { categoryChildNodes, categoryParentPath, categoryMatches } from './explorerCategories';
 import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
+import { composeFileOut, fileOutFileName, saveFileOut } from './fileTransfer/fileOut';
+import { fileInCommand } from './fileTransfer/fileIn';
+import { isClassNotFound } from './queries/fileOutClass';
 import {
   RenamePreview,
   RenameApplyResult,
@@ -105,6 +119,14 @@ import {
 } from './refactoring/classHistoryModel';
 import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
+import {
+  showMethodHistoryPanel,
+  refreshMethodHistoryPanel,
+} from './methodHistory/methodHistoryPanel';
+import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
+import { installMethodHistory } from './methodHistory/methodHistoryServer';
+import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -276,6 +298,24 @@ export class ClassCategoryItem extends vscode.TreeItem {
   }
 }
 
+// A class row's version tag and its explanation, in one place because two panes
+// render the same thing: the Classes pane (ClassItem) and the Class Hierarchy pane
+// (HierarchyItem).
+//
+// The `v` is what makes the numbers mean something. A bare `[3/3]` reads as a count
+// of anything the row might have — methods, subclasses, variables — and the tag is
+// the only place the class history surfaces in the pane, so there is nothing else on
+// screen to infer it from. The tooltip then says it in words for anyone still unsure.
+function versionTagOf(version: queries.ClassVersionInfo | undefined): string | undefined {
+  return version ? `v${version.current}/${version.total}` : undefined;
+}
+function versionTooltipOf(
+  className: string,
+  version: queries.ClassVersionInfo | undefined,
+): string {
+  return version ? `${className} — version ${version.current} of ${version.total}` : className;
+}
+
 // Exported for the unit tests that pin the class row's expansion chevron, and for the
 // Classes pane's drag controller, which carries only real class rows.
 export class ClassItem extends vscode.TreeItem {
@@ -289,13 +329,19 @@ export class ClassItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     hasVars = false,
-    versionTag?: string,
+    version?: queries.ClassVersionInfo,
     hasComment = false,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasVars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
+    // Without this the hover just repeats the label, so `Foo[v3/3]` explained
+    // `Foo[v3/3]`. Says the tag in words, and stays the plain name when untagged.
+    // decorateTestRow appends its result note to a tooltip already here rather than
+    // replacing it, so a test class keeps both lines.
+    this.tooltip = versionTooltipOf(className, version);
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
@@ -556,14 +602,17 @@ export class HierarchyItem extends vscode.TreeItem {
     // Position in the ancestor→self chain; -1 for subclasses.
     public readonly chainIndex: number,
     hasChildren: boolean,
-    // A `[current/total]` class-history version tag, when the class has more than
-    // one version (same rule as the Classes pane). Affects only the label, never the id.
-    versionTag?: string,
+    // The class's position in its class history, when it has more than one version
+    // (same rule as the Classes pane). Rendered as a `[vcurrent/total]` tag on the
+    // label and spelled out in the tooltip; never affects the id.
+    version?: queries.ClassVersionInfo,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
+    this.tooltip = versionTooltipOf(className, version);
     this.id = `h:${role}:${chainIndex}:${className}`;
     this.contextValue = 'explorerHierClass';
     // The current class is shown by keeping it *selected* in this pane (synced
@@ -657,6 +706,21 @@ async function confirmDroppedMethods(labels: string[]): Promise<boolean> {
     DELETE,
   );
   return choice === DELETE;
+}
+
+// One open method-history viewer, tracked so a compile elsewhere can refresh it and
+// so a repeat request reveals the existing tab instead of opening a duplicate.
+interface MethodHistoryPanelEntry {
+  sessionId: number;
+  className: string;
+  selector: string;
+  isMeta: boolean;
+  // The dictionary the panel was opened against. Part of the panel's identity: two
+  // classes with the same name in different SymbolDictionaries are different methods
+  // and get their own tab, rather than one revealing the other's history.
+  dict: number | string | undefined;
+  panel: vscode.WebviewPanel;
+  refresh: () => void;
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -940,6 +1004,23 @@ export class ExplorerController {
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
 
+  // Go Back / Go Forward over the places the panes have landed. Kept on the
+  // controller (not per view) because a landing spans every pane at once.
+  readonly history = new ExplorerNavigationHistory({
+    go: (landing) => this.goToLanding(landing),
+    onChange: () => this.syncNavigationState(),
+    // Our Back/Forward take over VS Code's keybindings wherever the Explorer or a
+    // gemstone:// editor has focus, so with no GemStone landing left that way the
+    // press has to reach VS Code's own history rather than doing nothing.
+    passThrough: (direction) =>
+      void vscode.commands.executeCommand(
+        direction === 'back' ? 'workbench.action.navigateBack' : 'workbench.action.navigateForward',
+      ),
+  });
+  // The Actions & Navigation pane — the always-visible button row over the trail. Set once
+  // at registration; absent in tests that don't build it.
+  private navigation?: NavigationViewProvider;
+
   readonly dictProvider = new DictProvider(this);
   readonly categoryProvider = new CategoryProvider(this);
   readonly classProvider = new ClassProvider(this);
@@ -958,7 +1039,8 @@ export class ExplorerController {
     /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
-    /** Extension global storage, used only to fire the one-time "how to keep methods open" hint. */
+    /** Extension global storage: the one-time "how to keep methods open" hint, and the
+     *  directory File Out and File In remember between them. */
     private readonly globalState?: vscode.Memento,
     /** Test affordances on class/method rows. Absent in tests that don't exercise them,
      *  and before the SUnit controller exists. */
@@ -968,6 +1050,16 @@ export class ExplorerController {
      *  commands here that rewrite something an editor can be sitting on without going
      *  through a save — refiling a class rewrites the category line in its definition. */
     private readonly notifyDocumentChanged?: (uri: vscode.Uri) => void,
+    /** Called when a class becomes the selected one, so a view that caches per-class data
+     *  (completion's selector / instance-variable lists) can warm it before it is asked
+     *  for. Selecting a class is the strongest signal its methods are about to be read. */
+    private readonly onClassSelected?: (sessionId: number, className: string) => void,
+    /** Called when the user asks the Explorer to re-read the image (the Refresh button),
+     *  so anything cached FROM the image is dropped rather than surviving the refresh.
+     *  The compile hooks catch the common case on their own; this is the escape hatch for
+     *  the one they cannot see — a class or method created by executing code in a
+     *  workspace, which the stone announces to nobody. */
+    private readonly onImageReread?: () => void,
   ) {}
 
   /**
@@ -1365,6 +1457,8 @@ export class ExplorerController {
   // selection highlighted across a data refresh on its own (stable row ids), so
   // skipping reveal loses nothing but the unwanted jump.
   async refreshRetainingSelection({ reveal = true }: { reveal?: boolean } = {}): Promise<void> {
+    // Before anything is re-read, not after: a refresh means what is held is suspect.
+    this.onImageReread?.();
     const session = this.session();
     const { dictName, dictIndex, className } = this.state;
     // Remember the method row currently selected so it can be re-revealed.
@@ -1514,6 +1608,7 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+    this.recordLanding();
   }
 
   selectClassCategory(item: ClassCategoryItem): void {
@@ -1538,6 +1633,7 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+    this.recordLanding();
   }
 
   // The class-category of a class as the classes pane currently knows it, or
@@ -1752,6 +1848,10 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     if (revealHierarchy) void this.revealHierarchySelf();
     this.syncTitles();
+    this.recordLanding();
+    // Warming this class's completions is best-effort and debounced on the other side,
+    // so a click-through does not fetch per row and selection stays immediate.
+    if (session) this.onClassSelected?.(session.id, item.className);
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
@@ -2202,12 +2302,13 @@ export class ExplorerController {
     return this.commentedClasses.has(className);
   }
 
-  // The class's `current/total` version tag when it has more than one version in
-  // the current dictionary (so the row renders `Foo[2/3]`), or undefined for a
-  // single-version class (rendered as a plain `Foo`).
-  classVersion(className: string): string | undefined {
-    const v = this.classVersions.get(className);
-    return v ? `${v.current}/${v.total}` : undefined;
+  // The class's position in its class history when it has more than one version in
+  // the current dictionary (so the row renders `Foo[v2/3]` and says "version 2 of 3"
+  // on hover), or undefined for a single-version class (a plain `Foo`). The two item
+  // classes do the formatting — see versionTagOf / versionTooltipOf — so the tag and
+  // its explanation cannot drift apart between the Classes and Hierarchy panes.
+  classVersion(className: string): queries.ClassVersionInfo | undefined {
+    return this.classVersions.get(className);
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.
@@ -3660,6 +3761,201 @@ export class ExplorerController {
     });
   }
 
+  // Show one method's recorded source history (context menu on a method row). The
+  // history is captured in-stone as methods are edited in Jasper (the
+  // JasperMethodHistory helper, installed at login; no server plugin required);
+  // this only reads and, on restore, recompiles a chosen version.
+  async methodHistory(node: MethodItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const className = this.state.className;
+    if (className === undefined) return;
+    await this.openMethodHistory(
+      session,
+      className,
+      node.info.selector,
+      node.isMeta,
+      this.state.dictIndex ?? this.state.dictName,
+    );
+  }
+
+  // Open (or reveal) the method-history viewer for one method. Shared by the
+  // Explorer method-row command and the in-editor entry point.
+  async openMethodHistory(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+    dict: number | string | undefined,
+  ): Promise<void> {
+    // One tab per method: if a viewer for this exact method is already open, reveal
+    // it instead of opening a duplicate.
+    const already = this.methodHistoryPanels.find(
+      (e) =>
+        e.sessionId === session.id &&
+        e.className === className &&
+        e.selector === selector &&
+        e.isMeta === isMeta &&
+        e.dict === dict,
+    );
+    if (already) {
+      already.panel.reveal();
+      return;
+    }
+
+    const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
+
+    // The method-history helper is installed at login (SessionTemps, no plugin), so
+    // the overwhelmingly common path already has it. Read first and only pay the
+    // ~14-method install compile if the read comes back with the helper-missing
+    // envelope (a login bootstrap that was skipped or failed) — installing ahead of
+    // every open cost a full GCI round trip just to hit the server's already-installed
+    // short-circuit.
+    const readHistory = (): MethodVersion[] =>
+      parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta, dict));
+
+    let versions: MethodVersion[];
+    try {
+      versions = readHistory();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!isHelperMissingError(msg)) {
+        void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+        return;
+      }
+      installMethodHistory(session);
+      try {
+        versions = readHistory();
+      } catch (e2: unknown) {
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        void vscode.window.showErrorMessage(`Method history failed: ${msg2}`);
+        return;
+      }
+    }
+    if (versions.length === 0) {
+      void vscode.window.showInformationMessage(
+        `No recorded history for ${label} yet. History is captured in this stone as you edit ` +
+          'methods in Jasper.',
+      );
+      return;
+    }
+
+    // The latest list drives index→source lookup for restore/diff; a restore
+    // appends a new version, so refresh this on every restore.
+    let current = versions;
+    const sourceOf = (index: number): { source: string; category: string } | undefined => {
+      const v = current.find((x) => x.index === index);
+      return v ? { source: v.source, category: v.category } : undefined;
+    };
+    const currentSource = (): string => current.find((v) => v.isCurrent)?.source ?? '';
+
+    const panel = showMethodHistoryPanel(label, versions, {
+      restore: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return { versions: current, error: `version [${index}] is no longer available` };
+        try {
+          // Recompiling routes through the ordinary compile path, which records
+          // this as a new (current) version — so the restore is itself undoable.
+          queries.compileMethod(
+            session,
+            className,
+            isMeta,
+            v.category,
+            v.source,
+            EXPLORER_METHOD_ENVIRONMENT,
+            dict,
+          );
+        } catch (e: unknown) {
+          return { versions: current, error: e instanceof Error ? e.message : String(e) };
+        }
+        current = parseMethodHistory(
+          queries.getMethodHistory(session, className, selector, isMeta, dict),
+        );
+        // The installed method changed — re-render the Methods pane so its
+        // session-method indicators reflect the recompiled source.
+        this.methodProvider.refresh();
+        return { versions: current };
+      },
+      diff: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return;
+        await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
+      },
+    });
+
+    // Keep the panel live: when this method is recompiled elsewhere (the editor is
+    // saved, the debugger commits an edit), re-fetch and re-render so the new
+    // current version appears — the webview preserves the diff being viewed. The
+    // entry is removed when the panel is closed.
+    const entry: MethodHistoryPanelEntry = {
+      sessionId: session.id,
+      className,
+      selector,
+      isMeta,
+      dict,
+      panel,
+      refresh: () => {
+        try {
+          current = parseMethodHistory(
+            queries.getMethodHistory(session, className, selector, isMeta, dict),
+          );
+          refreshMethodHistoryPanel(panel, current);
+        } catch {
+          /* a closed/again-busy session just leaves the panel as-is */
+        }
+      },
+    };
+    this.methodHistoryPanels.push(entry);
+    panel.onDidDispose(() => {
+      this.methodHistoryPanels = this.methodHistoryPanels.filter((e) => e !== entry);
+    });
+  }
+
+  // Open the method-history viewer for the method a gemstone:// editor URI names —
+  // the in-editor entry point (title-bar button / context menu / palette). Resolves
+  // the method's own session by id (falling back to the selected one). A non-method
+  // URI gets a gentle note rather than silently doing nothing.
+  async openMethodHistoryForUri(uri: vscode.Uri): Promise<void> {
+    const parsed = parseUri(uri);
+    if (parsed.kind !== 'method') {
+      void vscode.window.showInformationMessage(
+        'Method History is available while editing a method.',
+      );
+      return;
+    }
+    const session = this.sessionManager.getSession(parsed.sessionId) ?? this.session();
+    if (!session) return;
+    await this.openMethodHistory(
+      session,
+      parsed.className,
+      parsed.selector,
+      parsed.isMeta,
+      parsed.dictIndex ?? parsed.dictName,
+    );
+  }
+
+  // Open method-history panels, so a compile elsewhere can refresh the matching
+  // one(s). Keyed by method identity; entries are removed on panel close.
+  private methodHistoryPanels: MethodHistoryPanelEntry[] = [];
+
+  // Refresh any open method-history panel for a just-(re)compiled method. When the
+  // compile event carries a selector, only that method's panel is refreshed — each
+  // refresh is a blocking GCI round trip, so refreshing N panels for unrelated
+  // methods of the same class cost N of them to re-fetch identical data. Callers
+  // that genuinely have no selector still fall back to refreshing the class's
+  // panels, which is correct, just chattier.
+  private refreshOpenMethodHistoryPanels(
+    sessionId: number,
+    className: string,
+    selector?: string,
+  ): void {
+    for (const entry of this.methodHistoryPanels) {
+      if (entry.sessionId !== sessionId || entry.className !== className) continue;
+      if (selector !== undefined && entry.selector !== selector) continue;
+      entry.refresh();
+    }
+  }
+
   // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
@@ -3927,6 +4223,7 @@ export class ExplorerController {
     // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
     const takesFocus = opts.focusEditorAfter === true;
     const side = isMeta ? 'class' : 'instance';
+    this.recordLanding({ selector: info.selector, isMeta });
     try {
       await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
     } catch (e) {
@@ -4042,6 +4339,7 @@ export class ExplorerController {
     }
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
+    this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
     // Carry the 1-based dictionary index so the method's class is resolved in the
     // right dictionary (some dictionaries — e.g. Python — hold classes whose
     // lookup is ambiguous by bare name). Slash-bearing selectors are escaped.
@@ -4326,7 +4624,14 @@ export class ExplorerController {
   // Browser "Find Class…"), then cascade the new panes to the chosen class:
   // select its dictionary and class-category, reveal the class row, and open its
   // definition. An explicit `name` arg (programmatic callers) skips the picker.
-  async findClass(name?: string, sessionId?: number): Promise<void> {
+  //
+  // `dictName` narrows a named lookup to one dictionary, for a caller that has
+  // already resolved which dictionary owns the class it means — the Inspector's
+  // Browse Class does. Without it a class name shadowed across dictionaries
+  // resolves to whichever entry comes first, which can be the wrong class of the
+  // same name. Ignored when no entry matches it, so a stale hint still lands on
+  // the class rather than on nothing.
+  async findClass(name?: string, sessionId?: number, dictName?: string): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
     // An explicit sessionId (GemStone Search) pins the reveal to the result's own session.
@@ -4353,9 +4658,11 @@ export class ExplorerController {
     if (name && name.trim()) {
       const trimmed = name.trim();
       const lower = trimmed.toLowerCase();
+      const inDict = dictName ? entries.filter((e) => e.dictName === dictName) : [];
+      const pool = inDict.length > 0 ? inDict : entries;
       chosen =
-        entries.find((e) => e.className === trimmed) ??
-        entries.find((e) => e.className.toLowerCase() === lower);
+        pool.find((e) => e.className === trimmed) ??
+        pool.find((e) => e.className.toLowerCase() === lower);
       if (!chosen) {
         void vscode.window.showWarningMessage(`No class matching "${trimmed}".`);
         return;
@@ -4455,6 +4762,248 @@ export class ExplorerController {
     }
   }
 
+  // ── Go Back / Go Forward ────────────────────────────────────────────────────
+
+  // Repaint the Actions & Navigation pane and re-gate the Back/Forward buttons whenever the
+  // chain or the cursor moves. Also called once at registration to seed both.
+  syncNavigationState(): void {
+    const mode = this.trailLabelMode();
+    const here = this.history.current();
+    const hereKey = here && landingKey(here);
+    this.navigation?.setState({
+      back: this.history.canGoBack(),
+      forward: this.history.canGoForward(),
+      clear: !this.history.isEmpty(),
+      mode,
+      location: here && landingPath(here),
+      // The trail lists methods only. A dictionary, class category or class you
+      // clicked through is still in the chain — Recent Locations shows all of it —
+      // but it belongs in the pinned line above, not in a row of its own, or
+      // flipping between two dictionaries would fill the trail with them.
+      //
+      // A row's index is its position in the CHAIN, which is what a click on it
+      // names; the coarse landings the filter drops leave gaps in those indices.
+      trail: this.history
+        .entries()
+        .map((landing, index) => ({ landing, index }))
+        .filter(({ landing }) => isMethodLanding(landing))
+        .map(({ landing, index }) => ({
+          index,
+          label: landingLabel(landing, mode),
+          context: landingContext(landing, mode),
+          current: landingKey(landing) === hereKey,
+        })),
+    });
+    // Back and Forward are deliberately NOT gated by a context key. They are bound
+    // to VS Code's own Go Back / Go Forward keys wherever the Explorer or a
+    // gemstone:// editor has focus, and a disabled command swallows its keystroke
+    // instead of letting the default binding through — which would make those keys
+    // dead the moment the GemStone trail ran out. They stay enabled and hand the
+    // press on (see the history's passThrough). The pane's own arrows still dim at
+    // the ends of the chain, which is what says the GemStone trail stops here.
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.hasNavigationHistory',
+      !this.history.isEmpty(),
+    );
+  }
+
+  /**
+   * How the trail names its rows. Persisted as a setting rather than session
+   * state, so a preference about how a list reads survives a reload — and can be
+   * found in Settings, not only on the button.
+   */
+  trailLabelMode(): TrailLabelMode {
+    return vscode.workspace
+      .getConfiguration('gemstone')
+      .get<boolean>('explorer.navigationSelectorsOnly', false)
+      ? 'selectors'
+      : 'full';
+  }
+
+  /** Write the label-mode setting; the config listener redraws the pane. */
+  async setTrailLabelMode(mode: TrailLabelMode): Promise<void> {
+    await vscode.workspace
+      .getConfiguration('gemstone')
+      .update(
+        'explorer.navigationSelectorsOnly',
+        mode === 'selectors',
+        vscode.ConfigurationTarget.Global,
+      );
+  }
+
+  setNavigationView(view: NavigationViewProvider): void {
+    this.navigation = view;
+    this.syncNavigationState();
+  }
+
+  /**
+   * The WHOLE chain as a quick pick, newest first — every dictionary, class
+   * category, class and method the Explorer has landed on, not just the methods
+   * the pane's trail lists. This is the one place the coarser landings are
+   * reachable, so each row spells its coordinate out in full rather than leaning
+   * on a context column the way the narrow pane does.
+   */
+  async showHistory(): Promise<void> {
+    const visited = this.history.entries();
+    if (visited.length === 0) {
+      void vscode.window.showInformationMessage(
+        'No GemStone Explorer locations visited yet in this session.',
+      );
+      return;
+    }
+    const here = this.history.current();
+    const hereKey = here && landingKey(here);
+    // Oldest first in the chain, newest first in the picker. One row per place, so
+    // it can hold no repeats.
+    const items = visited
+      .map((landing, index) => ({
+        label: landingLabel(landing),
+        description:
+          landingKey(landing) === hereKey
+            ? `${landingPath(landing)} — current`
+            : landingPath(landing),
+        index,
+      }))
+      .reverse();
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Recent locations in the GemStone Explorer',
+    });
+    if (picked) await this.history.goToIndex(picked.index);
+  }
+
+  /**
+   * Forget the selected session's trail. Other sessions keep theirs — the chains
+   * are per session — and a logout clears its own without anyone pressing this.
+   */
+  clearHistory(): void {
+    if (this.history.isEmpty()) return;
+    this.history.clear();
+  }
+
+  /**
+   * Note where the panes have just landed, so Go Back can return here.
+   *
+   * The coordinate is read off `state`; the method half is passed in, because the
+   * reveal/open paths know the selector before `state` does (and `state` only ever
+   * holds the last method *opened*, not the row revealed). Repeats, and the coarser
+   * intermediate landings of a cascade, are dropped by the history itself.
+   *
+   * Landings reached because an EDITOR gained focus — VS Code's own Back/Forward,
+   * a click on a tab — are flagged, so the history can recognise the native
+   * history walking the chain we are on and move the cursor with it instead of
+   * appending a duplicate entry.
+   */
+  private recordLanding(method?: { selector: string; isMeta: boolean }): void {
+    const session = this.session();
+    const { dictName, dictIndex, classCategory, className } = this.state;
+    // dictIndex is not part of the coordinate — Back re-resolves it from the name —
+    // but until the panes have one there is no dictionary landed on to record.
+    if (!session || dictName === undefined || dictIndex === undefined) return;
+    this.history.record(
+      {
+        sessionId: session.id,
+        dictName,
+        classCategory,
+        className,
+        selector: method?.selector,
+        isMeta: method?.isMeta,
+      },
+      { fromEditor: this.syncingToEditor },
+    );
+  }
+
+  /**
+   * Put the panes back on a recorded landing, recomputing it against the live
+   * stone rather than trusting the coordinate: the dictionary is re-resolved by
+   * name (a commit elsewhere can shift every index) and the class and selector
+   * have to still be there.
+   *
+   * Answers false when the landing no longer resolves, which drops it from the
+   * chain so a second press tries the one before it. A landing whose class is
+   * still there but whose method is gone still moves the panes to that class —
+   * better than refusing to move at all — reports the method missing, and answers
+   * with that class as the coordinate it reached, so the chain records the place
+   * the panes are on rather than the method that has gone.
+   */
+  private async goToLanding(landing: ExplorerLanding): Promise<boolean | ExplorerLanding> {
+    const session = this.session();
+    if (!session || session.id !== landing.sessionId) {
+      // Deliberately does NOT reconnect or switch sessions behind the user's back.
+      void vscode.window.showInformationMessage(
+        `Skipping ${landingLabel(landing)} — it was visited in a GemStone session that is no longer selected.`,
+      );
+      return false;
+    }
+    let dictIndex: number;
+    try {
+      dictIndex = queries.getDictionaryNames(session).indexOf(landing.dictName) + 1;
+    } catch {
+      return false;
+    }
+    if (dictIndex <= 0) {
+      void vscode.window.showWarningMessage(
+        `Skipping ${landingLabel(landing)} — dictionary ${landing.dictName} is no longer in the symbol list.`,
+      );
+      return false;
+    }
+
+    if (landing.className === undefined) {
+      this.selectDict(new DictItem(landing.dictName, dictIndex));
+      try {
+        await this.views?.dict.reveal(new DictItem(landing.dictName, dictIndex), { select: true });
+      } catch {
+        /* highlight only — the panes are already correct from state */
+      }
+      if (landing.classCategory !== undefined) {
+        const path = landing.classCategory;
+        const segment = path.split('-').pop() ?? path;
+        const item = new ClassCategoryItem(segment, path, false);
+        this.selectClassCategory(item);
+        try {
+          await this.views?.category.reveal(item, { select: true, expand: true });
+        } catch {
+          /* highlight only */
+        }
+      }
+      return true;
+    }
+
+    const revealMethod =
+      landing.selector !== undefined
+        ? { selector: landing.selector, isMeta: landing.isMeta === true }
+        : undefined;
+    await this.revealClass(landing.dictName, dictIndex, landing.className, { revealMethod });
+    // revealClass leaves state untouched when its queries fail (it warns itself).
+    if (this.state.className !== landing.className) return false;
+    if (!revealMethod) return true;
+
+    const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => i.selector === revealMethod.selector,
+    );
+    if (!info) {
+      void vscode.window.showWarningMessage(
+        `${landing.className} no longer implements ${revealMethod.isMeta ? 'class method ' : ''}${revealMethod.selector}.`,
+      );
+      // The panes are on the class — revealClass got that far — so answer with the
+      // class landing rather than false, which would prune this entry and rewind
+      // the cursor off the very place we just moved to.
+      const { selector: _selector, isMeta: _isMeta, ...reached } = landing;
+      return reached;
+    }
+    // revealClass has already selected the row; reopen the source too, since a
+    // method landing is a method the user was reading.
+    await this.openMethod(
+      new MethodItem(
+        revealMethod.isMeta,
+        info,
+        this.groupMethodsByCategory() ? info.category : undefined,
+        this.methodSourceUri(revealMethod.isMeta, info),
+      ),
+    );
+    return true;
+  }
+
   // Set the cascade state to a specific class and reveal it across the panes.
   // Never opens the class-definition editor — that's an explicit action now (the
   // class-row button / menu). `opts.revealMethod` reveals+selects a method row.
@@ -4506,6 +5055,9 @@ export class ExplorerController {
     this.methodProvider.refresh();
     void this.revealHierarchySelf();
     this.syncTitles();
+    // Record the class landing now; when a method is being revealed too, its own
+    // record (in revealMethodRow) refines this entry rather than adding a second.
+    this.recordLanding();
 
     // reveal() rejects if the element isn't (yet) in the tree; the panes are
     // already correct from state, so treat reveal purely as a highlight nicety.
@@ -4549,10 +5101,26 @@ export class ExplorerController {
 
   // ── Editor → navigator sync ─────────────────────────────────────────────────
 
+  // Set for the duration of syncToEditor, so the landings its reveals record know
+  // they came from an editor rather than a click in the panes (see recordLanding).
+  private syncingToEditor = false;
+
   // When a gemstone:// method/definition editor gains focus, cascade the panels
   // to its location (without reopening the editor). Ignores non-gemstone tabs,
   // template (new-*) URIs, and editors from a different session.
+  //
+  // The body is a separate method purely so the flag above is raised and lowered
+  // in one place, whichever of the many early returns the sync takes.
   async syncToEditor(uri: vscode.Uri): Promise<void> {
+    this.syncingToEditor = true;
+    try {
+      await this.syncPanesToEditor(uri);
+    } finally {
+      this.syncingToEditor = false;
+    }
+  }
+
+  private async syncPanesToEditor(uri: vscode.Uri): Promise<void> {
     if (uri.scheme !== 'gemstone') return;
     // We opened this editor ourselves from a tree click — the tree selection is
     // already correct, so don't bounce it (e.g. onto the ALL METHODS node).
@@ -5128,6 +5696,28 @@ export class ExplorerController {
     if (!name) return;
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
+    // With grouping off the pane renders selectors only, so there is no category
+    // row for the reveal below to land on: it rejected, the rejection was
+    // swallowed, and creating a category looked like it had done nothing at all.
+    // (It had not — the name went into the fresh overlay and turning grouping back
+    // on showed it.) Switching the pane to grouped is what makes the thing just
+    // created visible and ready to file a method into, which is the point of
+    // creating it. Note this writes the user's global preference, deliberately:
+    // they asked for a category, and a category only exists in a grouped pane.
+    //
+    // And it says so. A user who deliberately turned grouping off is owed an
+    // account of why their pane now looks different and stays that way — a
+    // preference that changes itself with no signal is indistinguishable from a
+    // bug, and Global is the right target despite the blast radius (Workspace
+    // would silently shadow their own setting, and has nothing to write to when
+    // no folder is open, which is how Jasper is often used).
+    if (!this.groupMethodsByCategory()) {
+      await this.setGroupMethodsByCategory(true);
+      void vscode.window.showInformationMessage(
+        `Grouping methods by category was turned on so the new "${name}" category is visible. ` +
+          'Turn it back off with "Don\'t Group Methods by Category" in the Methods pane title bar.',
+      );
+    }
     this.methodProvider.refresh();
     this.syncTitles();
     // Select the new category (expanding the side node — the class side starts
@@ -5306,6 +5896,223 @@ export class ExplorerController {
       this.methodProvider.refresh();
       this.syncTitles();
     }
+  }
+
+  // ── File out ────────────────────────────────────────────────────────────────
+  //
+  // Every Explorer level the issue asks for writes a Topaz `.gs` file, the same
+  // artifact Jadeite's "File Out …" menu items produce, to a directory the user
+  // picks on their OWN machine (#539). The pieces are shared: one header per file
+  // (see fileTransfer/fileOut.ts), then one or more bodies from the file-out queries.
+  //
+  // Each command asks for the destination first and only then runs the queries, so
+  // cancelling the dialog costs no round trips — filing out a dictionary is a single
+  // large query, but a class category is one query per class.
+
+  /** The session these commands act in, or a warning when nothing is connected. */
+  private fileOutSession(): ActiveSession | undefined {
+    const session = this.session();
+    if (!session) void vscode.window.showWarningMessage('Connect to a GemStone session first.');
+    return session;
+  }
+
+  /** saveFileOut with this window's globalState attached, so every file-out shares
+   *  one remembered destination directory. */
+  private runFileOut(options: Omit<Parameters<typeof saveFileOut>[0], 'store'>): Promise<unknown> {
+    return saveFileOut({ ...options, store: this.globalState });
+  }
+
+  /** File out every class in a dictionary — definitions, comments and methods, in
+   *  superclass-first order (the organizer's own ordering), behind a preamble that
+   *  recreates the dictionary itself on a stone that lacks it. */
+  async fileOutDictionary(node: DictItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    await this.runFileOut({
+      title: `File Out ${node.dictName}`,
+      defaultFileName: fileOutFileName(node.dictName),
+      label: node.dictName,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          queries.fileOutDictionary(session, node.dictIndex),
+        ]),
+    });
+  }
+
+  /**
+   * File out the classes of one class category — and of its sub-categories, matching
+   * what the Classes pane shows for that row.
+   *
+   * Ordered superclass-first through the dictionary's file-out order, so a subclass
+   * never precedes a superclass that shares the category. A superclass in the same
+   * dictionary but a DIFFERENT category is not pulled in: the row names a category,
+   * and silently exporting classes the user did not select would be a surprise. Such
+   * a file needs its superclasses filed in first, exactly as a Jadeite package
+   * file-out does.
+   */
+  async fileOutClassCategory(node: ClassCategoryItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const dictIndex = this.state.dictIndex;
+    if (dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a dictionary first.');
+      return;
+    }
+    const inCategory = new Set(
+      this.classCategoryEntries
+        .filter((e) => categoryMatches(e.category, node.fullPath))
+        .map((e) => e.className),
+    );
+    if (inCategory.size === 0) {
+      void vscode.window.showWarningMessage(`"${node.fullPath}" has no classes to file out.`);
+      return;
+    }
+    await this.runFileOut({
+      title: `File Out ${node.fullPath}`,
+      defaultFileName: fileOutFileName(node.fullPath),
+      label: node.fullPath,
+      build: () => {
+        const ordered = queries
+          .getDictionaryClassFileOutOrder(session, dictIndex)
+          .filter((name) => inCategory.has(name));
+        // The order query answers nothing at all for a dictionary that no longer
+        // resolves — a `state.dictIndex` gone stale because the dictionary was removed
+        // in another session, or a tree not yet refreshed — and answers a short list
+        // when only some of the pane's classes are still there. Either way the filter
+        // above quietly drops what it can't order, so without this the user is told
+        // "Filed out Animals" over a file that is header-only or missing classes.
+        // Raise instead, naming them, exactly as classFileOutBody does for one class.
+        if (ordered.length !== inCategory.size) {
+          const missing = [...inCategory].filter((name) => !ordered.includes(name)).sort();
+          throw new Error(
+            `Could not file out ${missing.length === 1 ? 'class' : 'classes'} ` +
+              `${missing.join(', ')} — no longer in this dictionary. Refresh and try again.`,
+          );
+        }
+        return composeFileOut(
+          queries.fileOutHeader(session),
+          ordered.map((name) => this.classFileOutBody(session, name, dictIndex)),
+        );
+      },
+    });
+  }
+
+  /** File out one class — its definition, comment and every method. Reached from the
+   *  Classes pane and from the Class Hierarchy pane, which carries its own dictionary
+   *  (a superclass usually lives somewhere else). */
+  async fileOutClass(node: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    await this.runFileOut({
+      title: `File Out ${node.className}`,
+      defaultFileName: fileOutFileName(node.className),
+      label: node.className,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          this.classFileOutBody(session, node.className, dict),
+        ]),
+    });
+  }
+
+  /** One class's file-out body, turning `fileOutClass`'s not-found sentinel into a
+   *  raise — the caller is writing a file, and a `.gs` whose whole contents are
+   *  "Class not found: X" is worse than a reported failure. */
+  private classFileOutBody(
+    session: ActiveSession,
+    className: string,
+    dict?: number | string,
+  ): string {
+    const source = queries.fileOutClass(session, className, dict);
+    if (isClassNotFound(source)) throw new Error(source);
+    return source;
+  }
+
+  /** File out every method in one method category (protocol) of the selected class. */
+  async fileOutMethodCategory(node: MethodCategoryItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const { className, dictIndex } = this.state;
+    if (className === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    // The computed ALL METHODS / SESSION METHODS rows are not categories the image
+    // knows, so `fileOutCategory:` has nothing to look up. The menu keeps this
+    // command off those rows; the guard covers the palette route.
+    if (node.computed) {
+      void vscode.window.showWarningMessage('That row is not a method category.');
+      return;
+    }
+    const label = `${className} ${node.isMeta ? 'class' : 'instance'} ▸ ${node.category}`;
+    await this.runFileOut({
+      title: `File Out ${node.category}`,
+      defaultFileName: fileOutFileName(`${className}-${node.category}`),
+      label,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          queries.fileOutMethodCategory(session, className, node.isMeta, node.category, dictIndex),
+        ]),
+    });
+  }
+
+  /**
+   * File out the selected method rows — the Methods pane is multi-select, so this
+   * takes a list, and Jadeite's equivalent files out the whole selection into one
+   * file too.
+   *
+   * Methods only: no class definition goes into the file, so it reads back into a
+   * stone that already has the class. That is the point of a method-level file-out —
+   * shipping one fix without redefining the class (which would drop every method it
+   * has, see the class-redefinition behaviour).
+   */
+  async fileOutMethods(nodes: MethodItem[]): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    if (nodes.length === 0) return;
+    const { className, dictIndex } = this.state;
+    if (className === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const single = nodes.length === 1 ? nodes[0] : undefined;
+    const label = single
+      ? `${className}>>${single.info.selector}`
+      : `${nodes.length} methods of ${className}`;
+    await this.runFileOut({
+      title: single ? `File Out ${single.info.selector}` : `File Out ${nodes.length} Methods`,
+      defaultFileName: fileOutFileName(
+        single ? `${className}-${single.info.selector}` : `${className}-methods`,
+      ),
+      label,
+      build: () =>
+        composeFileOut(
+          queries.fileOutHeader(session),
+          nodes.map((n) =>
+            queries.fileOutMethod(session, className, n.isMeta, n.info.selector, dictIndex),
+          ),
+        ),
+    });
+  }
+
+  // ── File in ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Read a Topaz file back in — the return trip for the File Out entries above.
+   *
+   * Offered from the Dictionaries pane's toolbar and from a dictionary row, because
+   * that is where the user just filed out from; the alternative was hunting for the
+   * button on a session row in another view, or knowing the palette wording (#539).
+   *
+   * Session-scoped, not row-scoped, however it was reached: a file names its own
+   * dictionaries, so filing in from the Animals row does not put anything in Animals.
+   * Hence the row entry sitting in a group of its own below "File Out Dictionary…"
+   * rather than beside it. The Explorer is already showing exactly one session, so
+   * that is the one it files into and there is no "which session?" prompt — and with
+   * nothing connected the target is undefined, which asks, as any other write does.
+   */
+  async fileIn(): Promise<void> {
+    await fileInCommand(this.sessionManager, this.globalState, this.session());
   }
 
   // New Method, invoked from a category row → files into THAT category (including
@@ -5867,7 +6674,13 @@ export class ExplorerController {
   // compiled (Save). When it's the class we're showing, reload so the new method
   // / class appears in the panels without a manual refresh.
 
-  onExternalMethodCompiled(sessionId: number, className: string): void {
+  onExternalMethodCompiled(sessionId: number, className: string, selector?: string): void {
+    // Refresh any open method-history viewer for this method first — independent of
+    // what the explorer currently has selected (the panel outlives the selection).
+    // The compile event carries the selector when the URI had one, so only the panel
+    // for the method that actually changed re-fetches.
+    this.refreshOpenMethodHistoryPanels(sessionId, className, selector);
+
     const session = this.session();
     if (
       !session ||
@@ -6268,7 +7081,7 @@ export function commitFilterOnRowSelection(
 // (method / class Save) and session lifecycle events (abort) to the controller
 // for a live panel refresh.
 export interface ExplorerHandle {
-  onMethodCompiled(sessionId: number, className: string): void;
+  onMethodCompiled(sessionId: number, className: string, selector?: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
   /** Claim an about-to-happen open so it navigates the panes; see
@@ -6280,6 +7093,9 @@ export interface ExplorerHandle {
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
+  /** Open the method-history viewer for the method a gemstone:// editor URI names
+   *  — the in-editor entry point, so the user need not find the row in the tree. */
+  openMethodHistoryForUri(uri: vscode.Uri): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -6301,6 +7117,11 @@ export function registerGemStoneExplorer(
   // Announces a stone-side change to a `gemstone://` document (the FS provider's
   // `notifyChanged`), so an open editor on it re-reads.
   notifyDocumentChanged?: (uri: vscode.Uri) => void,
+  // Called when a class becomes the selected one, so completion can warm that class's
+  // selector / instance-variable lists before the first request pays for them inline.
+  onClassSelected?: (sessionId: number, className: string) => void,
+  // Called when the Refresh button re-reads the image, so caches derived from it drop.
+  onImageReread?: () => void,
 ): ExplorerHandle {
   const ctl = new ExplorerController(
     sessionManager,
@@ -6309,6 +7130,8 @@ export function registerGemStoneExplorer(
     context.globalState,
     sunit,
     notifyDocumentChanged,
+    onClassSelected,
+    onImageReread,
   );
 
   // A run starting or finishing changes what these rows should say, so repaint the
@@ -6345,6 +7168,8 @@ export function registerGemStoneExplorer(
   // Seed the instance/class side context key (defaults to instance).
   ctl.syncMethodSide();
 
+  const navigationView = new NavigationViewProvider((index) => void ctl.history.goToIndex(index));
+  ctl.setNavigationView(navigationView);
   const dictView = vscode.window.createTreeView('gemstoneExplorerDicts', {
     treeDataProvider: ctl.dictProvider,
   });
@@ -6380,6 +7205,8 @@ export function registerGemStoneExplorer(
     hierarchy: hierarchyView,
     method: methodView,
   });
+  // Seed the Back/Forward enablement keys.
+  ctl.syncNavigationState();
 
   // Clicking a row anywhere in the Explorer ends an open filter edit, keeping the filter (see
   // ExplorerController.commitFilterInput). Registered ahead of the per-pane handlers below,
@@ -6419,14 +7246,19 @@ export function registerGemStoneExplorer(
   });
 
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(NAVIGATION_VIEW_ID, navigationView),
     dictView,
     categoryView,
     classView,
     hierarchyView,
     methodView,
-    sessionManager.onDidChangeSelection(() => {
+    sessionManager.onDidChangeSelection((id) => {
       syncActiveContext();
       ctl.reset();
+      // One chain per session: switching sessions switches the trail with it,
+      // rather than leaving another stone's methods on show. Done after the reset,
+      // which is what clears the panes the old chain's landings referred to.
+      ctl.history.setActiveSession(id === null ? undefined : id);
     }),
     // The manual Refresh button reloads in place, keeping the user's selection
     // (a full reset only happens on a session switch, below).
@@ -6434,6 +7266,35 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
+    // Go Back / Go Forward over the Explorer's landings — the Actions & Navigation pane's
+    // arrows, the gemstone:// editor title bar's, the palette, and the keybinding
+    // all walk this one chain.
+    vscode.commands.registerCommand('gemstone.navigateBack', () => ctl.history.back()),
+    vscode.commands.registerCommand('gemstone.navigateForward', () => ctl.history.forward()),
+    vscode.commands.registerCommand('gemstone.explorer.showHistory', () => ctl.showHistory()),
+    vscode.commands.registerCommand('gemstone.explorer.clearHistory', () => ctl.clearHistory()),
+    // A session logging out takes its chain with it, rather than leaving Back
+    // pointed at a stone that is no longer connected. When the session that logged
+    // out was the one on show, the chain falls back to another logged-in session's
+    // (SessionManager selects that session too, when it is the only one left).
+    sessionManager.onDidRemoveSession((id) => ctl.history.dropSession(id)),
+    // Navigation-pane label toggle. Walking around one class makes every row read
+    // `TheClass>>…`, and in a sidebar-width pane the repeated class name crowds out
+    // the selector, which is the only part that differs. Both write the persistent
+    // setting; the config listener below redraws the pane.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showNavigationSelectorsOnly',
+      () => void ctl.setTrailLabelMode('selectors'),
+    ),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showNavigationFullLocations',
+      () => void ctl.setTrailLabelMode('full'),
+    ),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.explorer.navigationSelectorsOnly')) {
+        ctl.syncNavigationState();
+      }
+    }),
     // Per-pane filter buttons. Dictionaries, Class Categories and Classes open a live
     // filter input (prefix match, '*' wildcard) that filters the pane in place, from
     // wherever focus currently sits (e.g. the editor); Methods opens VS Code's own find
@@ -6532,10 +7393,11 @@ export function registerGemStoneExplorer(
     // the session its result came from rather than whatever session is selected now.
     vscode.commands.registerCommand(
       'gemstone.explorer.findClass',
-      (name?: string, sessionId?: number) =>
+      (name?: string, sessionId?: number, dictName?: string) =>
         ctl.findClass(
           typeof name === 'string' ? name : undefined,
           typeof sessionId === 'number' ? sessionId : undefined,
+          typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
         ),
     ),
     // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId
@@ -6887,6 +7749,14 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Show one method's recorded source history (context menu on a method row).
+    vscode.commands.registerCommand('gemstone.explorer.methodHistory', (node?: MethodItem) => {
+      if (!(node instanceof MethodItem)) return;
+      void ctl.methodHistory(node).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+      });
+    }),
     // Insert an empty superclass above a class (context menu on a class row or hierarchy node).
     vscode.commands.registerCommand(
       'gemstone.explorer.insertSuperclass',
@@ -6920,6 +7790,40 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // ── File out (Topaz .gs) ──────────────────────────────────────────────────
+    // One per Explorer level. Each takes the row it was invoked on; the method one
+    // also honours the Methods pane's multi-selection, so a right-click with several
+    // rows highlighted files out all of them into one file.
+    vscode.commands.registerCommand('gemstone.explorer.fileOutDictionary', (node?: unknown) => {
+      if (node instanceof DictItem) void ctl.fileOutDictionary(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutClassCategory', (node?: unknown) => {
+      if (node instanceof ClassCategoryItem) void ctl.fileOutClassCategory(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutClass', (node?: unknown) => {
+      if (node instanceof ClassItem || node instanceof HierarchyItem) void ctl.fileOutClass(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutProtocol', (node?: unknown) => {
+      if (node instanceof MethodCategoryItem) void ctl.fileOutMethodCategory(node);
+    }),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.fileOutMethods',
+      (node?: unknown, selection?: unknown[]) => {
+        // A multi-select tree view hands a context-menu command the clicked row AND
+        // the whole selection. The selection is what the user means when several rows
+        // are highlighted; the clicked row is the fallback for the palette-shaped call
+        // that passes only one argument.
+        const rows = (Array.isArray(selection) ? selection : [node]).filter(
+          (n): n is MethodItem => n instanceof MethodItem,
+        );
+        if (rows.length > 0) void ctl.fileOutMethods(rows);
+      },
+    ),
+    // The return trip, from the Dictionaries pane's toolbar or a dictionary row.
+    // Takes no row: a file-in lands where the file says, not on what was clicked.
+    vscode.commands.registerCommand('gemstone.explorer.fileIn', () => {
+      void ctl.fileIn();
+    }),
     vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
       if (node instanceof DictItem) void ctl.removeDictionary(node);
     }),
@@ -6992,12 +7896,14 @@ export function registerGemStoneExplorer(
   );
 
   return {
-    onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
+    onMethodCompiled: (sessionId, className, selector) =>
+      ctl.onExternalMethodCompiled(sessionId, className, selector),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
+    openMethodHistoryForUri: (uri) => ctl.openMethodHistoryForUri(uri),
   };
 }

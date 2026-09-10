@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type TestContext } from 'vitest';
 import { GciLibrary } from '../gciLibrary';
 import { GciTestContext, useIntegrationTest } from './useIntegrationTest';
 import { GciLibraryError } from '../gciLibraryError';
+import { GCI_ERR_BAD_SESSION_ID } from '../gciConstants';
 import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
 } from './support/utf8OopCache';
+import {
+  expectEventLoopToBeBlockedDuring,
+  expectEventLoopToRemainResponsiveDuring,
+} from './support/timers';
 
 describe('GciLibrary', () => {
   let gciLibrary: GciLibrary;
@@ -65,6 +70,38 @@ describe('GciLibrary', () => {
   /** Asserts that `callback` throws a {@link GciLibraryError} with `expectedMessage`. */
   function expectToThrowGciLibraryError(callback: () => unknown, expectedMessage: string) {
     expect(callback).toThrowInstanceOf(GciLibraryError, expectedMessage);
+  }
+
+  /**
+   * Asserts that `promise` rejects with a {@link GciLibraryError} with
+   * `expectedMessage`.
+   *
+   * @param promise - The promise expected to reject.
+   * @param expectedMessage - The expected error message.
+   */
+  async function expectToBeRejectedWithGciLibraryError(
+    promise: Promise<unknown>,
+    expectedMessage: string,
+  ) {
+    await expect(promise).rejects.toThrowInstanceOf(GciLibraryError, expectedMessage);
+  }
+
+  /**
+   * Asserts that `callback` rejects with a {@link GciLibraryError} when
+   * given a Smalltalk snippet that signals a user-defined error (`self
+   * error: 'oops'`).
+   *
+   * The callback receives the Smalltalk snippet as its argument so it can
+   * embed it in any expression under test (e.g. pass it to
+   * `executeAndFetchOop`).
+   */
+  async function expectToBeRejectedWithExpectedGciLibraryError(
+    callback: (signalExpectedErrorExpression: string) => Promise<unknown>,
+  ) {
+    await expectToBeRejectedWithGciLibraryError(
+      callback(`self error: 'oops'`),
+      'a UserDefinedError occurred (error 2318), reason:halt, oops',
+    );
   }
 
   /** Asserts that the session's PureExportSet stays unchanged across `callback`. */
@@ -144,6 +181,49 @@ describe('GciLibrary', () => {
   }
 
   /**
+   * Makes the next readiness check report a failure via whichever
+   * mechanism this GemStone version's library actually uses: a
+   * `GciTsNbPoll` error result if it's available, or a thrown raw-socket
+   * read otherwise. Only one of the two mocks below is ever exercised in a
+   * given run, per the connected version's own {@link isNbResultReady}
+   * branch -- covering both is what makes this version-agnostic.
+   */
+  function simulatePollFailure() {
+    vi.spyOn(gciLibrary, 'GciTsNbPoll').mockReturnValueOnce({
+      result: -1,
+      err: {
+        number: 0,
+        message: 'Simulated GciTsNbPoll failure',
+        category: 0n,
+        context: 0n,
+        exceptionObj: 0n,
+        args: [],
+        argCount: 0,
+        fatal: 0,
+        reason: '',
+      },
+    });
+    vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrowOnce('oops');
+  }
+
+  /** Forces the next `socketFor` call to throw, simulating a session whose socket cannot be identified. */
+  function simulateSessionSocketFailure() {
+    vi.spyOn(gciLibrary, 'socketFor').mockThrowOnce('oops');
+  }
+
+  /**
+   * Skips the current test unless the connected GemStone version exercises
+   * the raw-socket polling fallback, i.e. lacks `GciTsNbPoll`.
+   */
+  function skipUnlessRawSocketPolling(ctx: TestContext) {
+    if (gciLibrary.isPollingSupportedByGCI()) {
+      ctx.skip(
+        'Native socket error handling tests are skipped because the configured GemStone version supports GciTsNbPoll, which is not exercised by these tests.',
+      );
+    }
+  }
+
+  /**
    * Asserts that evaluating `codeToEvaluate` and fetching its result as a
    * string yields `expectedResult`.
    *
@@ -208,6 +288,159 @@ describe('GciLibrary', () => {
       expectToThrowExpectedGciLibraryError((signalExpectedErrorExpression) => {
         gciLibrary.execute(session, signalExpectedErrorExpression);
       });
+    });
+  });
+
+  describe('evaluating expressions asynchronously', () => {
+    it('returns the result of evaluating an expression', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('uses nil as the receiver for evaluated code', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `self`);
+
+      expectOopToBeNil(resultOop);
+    });
+
+    it('has UserGlobals, Globals, and Published on the symbol list', async () => {
+      // Assert those three standard dictionaries are all on the symbol list, rather
+      // than that they are the *only* ones: an optional payload (e.g. the refactoring
+      // engine's shared GsRefactoring dictionary) may add more without changing that
+      // the standard three resolve.
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `({UserGlobals. Globals. Published} asSet - System myUserProfile symbolList asSet) isEmpty`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('executes code in the default environment', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `
+                "Object class does not understand #'new' outside environment 0, so this
+                would fail if execute runs code in a non-default environment."
+                Object new.
+                true`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('throws when the expression signals an error', async () => {
+      await expectToBeRejectedWithExpectedGciLibraryError((signalExpectedErrorExpression) =>
+        gciLibrary.executeAndFetchOop(session, signalExpectedErrorExpression),
+      );
+    });
+
+    it('does not block the event loop while GemStone evaluates the code', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    it('does not allow to execute a new operation while another is in progress', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      try {
+        await expectToBeRejectedWithGciLibraryError(
+          gciLibrary.executeAndFetchOop(session, ``),
+          'session has a GciTsNb operation in progress',
+        );
+      } finally {
+        await firstOperation;
+      }
+    });
+
+    it('does not affect the result of an ongoing operation when trying to execute another one', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      await gciLibrary.executeAndFetchOop(session, `false`).catch(() => {});
+
+      expectOopToBeTrue(await firstOperation);
+    });
+
+    it('returns the result when polling for it fails', async () => {
+      simulatePollFailure();
+
+      const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(result);
+    });
+
+    it('returns the result synchronously when polling for it fails', async () => {
+      simulatePollFailure();
+
+      await expectEventLoopToBeBlockedDuring(100, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    describe('Native socket error handling', () => {
+      beforeEach(skipUnlessRawSocketPolling);
+
+      it('returns the result when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+        expectOopToBeTrue(result);
+      });
+
+      it('returns the result synchronously when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        await expectEventLoopToBeBlockedDuring(100, () =>
+          gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+        );
+      });
+    });
+  });
+
+  describe('identifying the socket for a session', () => {
+    it('returns the file descriptor of the session socket', () => {
+      expect(gciLibrary.socketFor(session)).toBeGreaterThanOrEqual(0);
+    });
+
+    /**
+     * Mocks GciTsSocket rather than provoking the error for real: GciTsLogout
+     * frees the session, so calling GciTsSocket on a logged-out session is a
+     * use-after-free that can segfault the worker rather than return an error.
+     */
+    function simulateGciTsSocketError() {
+      const errorMessage = 'simulated GciTsSocket error';
+
+      vi.spyOn(gciLibrary, 'GciTsSocket').mockReturnValueOnce({
+        fd: -1,
+        err: {
+          number: GCI_ERR_BAD_SESSION_ID,
+          message: errorMessage,
+          category: 0n,
+          context: 0n,
+          exceptionObj: 0n,
+          args: [],
+          argCount: 0,
+          fatal: 0,
+          reason: '',
+        },
+      });
+
+      return errorMessage;
+    }
+
+    it('throws when the session socket cannot be identified', () => {
+      const expectedErrorMessage = simulateGciTsSocketError();
+
+      expectToThrowGciLibraryError(() => gciLibrary.socketFor(session), expectedErrorMessage);
     });
   });
 
@@ -338,6 +571,142 @@ describe('GciLibrary', () => {
         () => gciLibrary.perform(session, gciLibrary.falseOop(), 'new'),
         "a MessageNotUnderstood occurred (error 2010), a Boolean does not understand  #'new'",
       );
+    });
+  });
+
+  describe('sending messages asynchronously', () => {
+    it('returns the result of sending a message', async () => {
+      const result = await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not');
+
+      expectOopToBeTrue(result);
+    });
+
+    it('throws when the receiver does not understand the selector', async () => {
+      // 'new' is used because it's a well-known selector that's always
+      // already a real Symbol. A made-up selector like 'foo' raises
+      // NameError instead, but only until something -- anything, even
+      // unrelated to this test -- compiles that exact text as a Symbol
+      // literal or send in this session; after that it raises
+      // MessageNotUnderstood instead, so a made-up selector's expected
+      // error flips depending on what else ran earlier in the file.
+      await expectToBeRejectedWithGciLibraryError(
+        gciLibrary.performAsync(session, gciLibrary.falseOop(), 'new'),
+        "a MessageNotUnderstood occurred (error 2010), a Boolean does not understand  #'new'",
+      );
+    });
+
+    it('throws when the sent method signals an error', async () => {
+      const receiverOop = gciLibrary.execute(
+        session,
+        `
+                | errorClass |
+                errorClass := Object subclass: #GciLibraryTestAsyncError instVarNames: {} inDictionary: UserGlobals.
+                errorClass compileMethod: 'signalError self error: ''oops'''.
+                errorClass new
+            `,
+      );
+
+      await expectToBeRejectedWithGciLibraryError(
+        gciLibrary.performAsync(session, receiverOop, 'signalError'),
+        'a UserDefinedError occurred (error 2318), reason:halt, oops',
+      );
+    });
+
+    /**
+     * Returns a fresh instance of a class that understands
+     * `waitThenAnswerTrueSelector`, a method that waits one second and then
+     * answers `true`, so tests can send it a unary message that takes real,
+     * observable time to complete.
+     */
+    function delayedReceiver(): { receiverOop: bigint; waitThenAnswerTrueSelector: string } {
+      const receiverOop = gciLibrary.execute(
+        session,
+        `
+                | delayingClass |
+                delayingClass := Object subclass: #GciLibraryTestAsyncDelay instVarNames: {} inDictionary: UserGlobals.
+                delayingClass compileMethod: 'waitThenAnswerTrue (Delay forSeconds: 1) wait. ^ true'.
+                delayingClass new
+            `,
+      );
+
+      return { receiverOop, waitThenAnswerTrueSelector: 'waitThenAnswerTrue' };
+    }
+
+    it('does not block the event loop while GemStone processes the send', async () => {
+      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
+
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
+      );
+    });
+
+    it('does not allow to send a new message while another is in progress', async () => {
+      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
+      const firstOperation = gciLibrary.performAsync(
+        session,
+        receiverOop,
+        waitThenAnswerTrueSelector,
+      );
+
+      try {
+        await expectToBeRejectedWithGciLibraryError(
+          gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not'),
+          'session has a GciTsNb operation in progress',
+        );
+      } finally {
+        await firstOperation;
+      }
+    });
+
+    it('does not affect the result of an ongoing send when trying to send another message', async () => {
+      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
+      const firstOperation = gciLibrary.performAsync(
+        session,
+        receiverOop,
+        waitThenAnswerTrueSelector,
+      );
+
+      await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not').catch(() => {});
+
+      expectOopToBeTrue(await firstOperation);
+    });
+
+    it('returns the result when polling for it fails', async () => {
+      simulatePollFailure();
+
+      const result = await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not');
+
+      expectOopToBeTrue(result);
+    });
+
+    it('returns the result synchronously when polling for it fails', async () => {
+      simulatePollFailure();
+      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
+
+      await expectEventLoopToBeBlockedDuring(100, () =>
+        gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
+      );
+    });
+
+    describe('Native socket error handling', () => {
+      beforeEach(skipUnlessRawSocketPolling);
+
+      it('returns the result when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        const result = await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not');
+
+        expectOopToBeTrue(result);
+      });
+
+      it('returns the result synchronously when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+        const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
+
+        await expectEventLoopToBeBlockedDuring(100, () =>
+          gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
+        );
+      });
     });
   });
 

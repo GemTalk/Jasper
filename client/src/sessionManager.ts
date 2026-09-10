@@ -5,6 +5,7 @@ import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes'
 import { logInfo } from './gciLog';
 import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
+import { installMethodHistory } from './methodHistory/methodHistoryServer';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough
 // that connect latency is imperceptible, large enough not to busy-spin while the
@@ -23,6 +24,9 @@ export interface ActiveSession {
    *  context key and the Explorer's rename-instance-variable command. Latched at
    *  login (and re-probed after an install) — see refactoringAvailability.ts. */
   rbSupportAvailable?: boolean;
+  /** `System myUserProfile symbolList`, memoized on first use — see
+   *  `sessionSymbolListOop` in debugQueries.ts, which owns this field. */
+  symbolListOop?: bigint;
 }
 
 /**
@@ -105,9 +109,23 @@ export class SessionManager {
     return undefined;
   }
 
-  async resolveSession(): Promise<ActiveSession | undefined> {
+  /**
+   * The session a command should act in: the selected one, or an answer from the
+   * user when there isn't one.
+   *
+   * `alwaysAsk` asks even when a session IS selected, for a command consequential
+   * enough that "whichever session happens to be current" is not good enough — File
+   * In, which can redefine classes across a whole dictionary in whatever stone it
+   * lands in. The selected session leads the list and is marked, so accepting the
+   * default is one keystroke. With only one session logged in there is nothing to
+   * choose between, so it is used without asking however this is called.
+   */
+  async resolveSession(options?: {
+    alwaysAsk?: boolean;
+    placeHolder?: string;
+  }): Promise<ActiveSession | undefined> {
     const selected = this.getSelectedSession();
-    if (selected) return selected;
+    if (selected && !options?.alwaysAsk) return selected;
 
     const sessions = this.getSessions();
     if (sessions.length === 0) {
@@ -119,13 +137,18 @@ export class SessionManager {
       return sessions[0];
     }
 
-    const items = sessions.map((s) => ({
+    // Current first: the list is otherwise in login order, and the session the
+    // window is already showing is the likeliest answer.
+    const ordered = selected
+      ? [selected, ...sessions.filter((s) => s.id !== selected.id)]
+      : sessions;
+    const items = ordered.map((s) => ({
       label: loginLabel(s.login),
-      description: `Session ${s.id}`,
+      description: s.id === selected?.id ? `Session ${s.id} (current)` : `Session ${s.id}`,
       session: s,
     }));
     const pick = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a GemStone session for code execution',
+      placeHolder: options?.placeHolder ?? 'Select a GemStone session for code execution',
     });
     if (!pick) return undefined;
     this.selectSession(pick.session.id);
@@ -301,6 +324,11 @@ export class SessionManager {
     // login, kept alive via SessionTemps, never committed. Non-fatal on
     // failure — the session simply has no Transcript display.
     installTranscriptSink(session);
+
+    // Per-method history helper, installed the same way (SessionTemps, no commit,
+    // no plugin) so method history works on a bare stone. Non-fatal on failure —
+    // capture is soft-guarded, so the session simply records no history.
+    installMethodHistory(session);
 
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a

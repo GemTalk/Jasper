@@ -468,7 +468,7 @@ export class ProcessManager {
    */
   inspectLockAt(name: string, pid: number, rootPath: string): StaleLockReport {
     const lockPath = `${rootPath.replace(/\/+$/, '')}/locks/${name}..LCK`;
-    let psOutput = '';
+    let psOutput: string;
     try {
       // `|| echo GONE` collapses the "no such pid" exit into stdout so we get
       // one branch to parse instead of catching and decoding errno strings.

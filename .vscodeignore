@@ -13,6 +13,13 @@ TODO.md
 # be bundled into the .vsix (it is ~1GB and contains example private keys).
 client/tmp/**
 
+# Optional local download of GemTalk's copyrighted manuals (npm run docs:fetch),
+# a symlink to a ~22 MB cache outside the repo. Gitignored, but vsce does not
+# read .gitignore — without this line, packaging on a machine that ran the fetch
+# would follow the link and redistribute the PDFs inside the .vsix.
+gs-docs
+gs-docs/**
+
 # Contributor tooling and docs — not part of the shipped extension.
 .github/**
 acceptance/**
@@ -60,12 +67,12 @@ mcp-server/node_modules/**
 !node_modules/koffi/build/**
 
 client/src/**
-# listFilter.js, methodListView.js, debuggerView.js, and enhancedInspectorColumns.js are read at runtime
+# listFilter.js, methodListView.js, debuggerView.js, and millerColumns.js are read at runtime
 # via fs.readFileSync and injected into webviews as <script> tags. They must ship as standalone files —
 # they cannot be compiled into the bundle. (debuggerView.js is read at module load by debuggerPanel.ts,
 # which extension.ts imports eagerly, so omitting it here makes loading the packaged extension.js throw
-# and activation fail entirely. enhancedInspectorColumns.js is likewise read at module load by
-# enhancedInspector/enhancedInspector.ts.)
+# and activation fail entirely. millerColumns.js is likewise read at module load, by both
+# enhancedInspector/enhancedInspector.ts and basicInspector/basicInspector.ts.)
 !client/src/listFilter.js
 !client/src/methodListView.js
 !client/src/debuggerView.js
@@ -77,12 +84,14 @@ client/src/**
 !node_modules/@vscode/codicons/dist/codicon.css
 !node_modules/@vscode/codicons/dist/codicon.ttf
 !client/src/browserColumnResize.js
-!client/src/enhancedInspector/enhancedInspectorColumns.js
+!client/src/webview/millerColumns.js
+!client/src/basicInspector/basicInspectorView.js
 !client/src/refactoring/renameInstVarPanelView.js
 !client/src/refactoring/renameMethodEditorView.js
 !client/src/refactoring/renameMethodPanelView.js
 !client/src/refactoring/renameClassEditorView.js
 !client/src/refactoring/classHistoryPanelView.js
+!client/src/methodHistory/methodHistoryPanelView.js
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
 !client/src/omniSearch/omniSearchView.js

@@ -3,7 +3,12 @@
   "compilerOptions": {
     "outDir": "./out",
     "rootDir": "./src",
-    "allowJs": true
+    "allowJs": true,
+    // Hoisting puts 20 packages in the root node_modules/@types, and every one
+    // of them is an implicit type library for this project: chai, express,
+    // body-parser, qs, tough-cookie and friends, none of which the client
+    // touches. Name the one it does want.
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/gemStoneVersion.js"]
 }

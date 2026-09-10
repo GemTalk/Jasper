@@ -8,6 +8,15 @@ One folder per **distinct header content revision**, named after the earliest Ge
 
 `versions.md` maps every GemStone version we've checked to its content folder, with a sha256 per file and the date it was captured. Consult it before assuming a version not listed here is covered — an unlisted version simply hasn't been checked yet.
 
+## These are load-bearing, not just reference
+
+These headers are the ground truth that `client/src/gciLibrary/headerDeclarations.ts` parses and that the optional-function registry is *generated from* — `optionalFunctions.generated.ts` is derived from these files and committed, and CI reruns the generator and fails on any diff. That registry in turn is what the `GciLibrary` bindings are type-checked against. See [GCI cross-version compatibility](../../docs/explanation/gci-version-compatibility.md) for the whole chain.
+
+Two consequences:
+
+- **Don't edit the header files.** They are verbatim vendor copies, hashed in `versions.md`; a local "fix" silently changes what the registry is generated from.
+- **A GemStone release Jasper supports but hasn't vendored is not merely undocumented — it is answered wrongly.** Every check resolves "declared in all vendored revisions" to _required, present on every release_, so an unvendored release that dropped a symbol, or that added one we bind as required, passes every check and fails at `GciLibrary` construction on a user's install.
+
 ## Adding a new version
 
 1. Install the GemStone distribution (or locate it under `~/Documents/GemStone/GemStone64Bit<version>-*/include/`).
@@ -15,3 +24,5 @@ One folder per **distinct header content revision**, named after the earliest Ge
 3. If the hashes match an existing folder exactly, just add a row to `versions.md` pointing at that folder — no new folder needed.
 4. If any hash differs, create a new folder named after this version, copy those files in, and add a row.
 5. Run `npm run lint:gci-headers` to confirm the new row matches the files on disk.
+6. Run `npm run generate:gci-optional-functions`, then `npm run compile`. A genuinely new revision can move a floor in the optional-function registry, and the generator writes the new answer into `client/src/gciLibrary/optionalFunctions.generated.ts` — **review that diff, it is the point of committing the file.** If a revision _declares a new symbol_, the generator adds an entry for it and `npm run compile` then fails until it has a binding — Jasper binds every declared symbol, so bind the new one rather than looking for a way to exempt it (`docs/explanation/gci-version-compatibility.md`, "The cost of an entry").
+7. Run `npm test` for the rest of the chain: the registry's shape guards, the production-call gate, and the parser's own tests.

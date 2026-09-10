@@ -11,6 +11,22 @@ on:
 permissions:
   contents: read
 
+# Supersede in-flight runs of the same branch/PR instead of letting them
+# finish: a push that lands while the previous run is still going makes that
+# run's result obsolete, and the matrix is wide enough (and macOS runners
+# slow enough) that the wasted capacity delays the run that actually matters.
+#
+# `github.ref` gives one group per PR (`refs/pull/N/merge`), per `*/wip/*`
+# branch, and per merge-queue entry (those refs are unique per entry).
+#
+# `main` gets a per-commit group instead, so its runs never contend:
+# `cancel-in-progress: false` would not protect them, because GitHub cancels
+# a *pending* run as soon as a newer one queues behind the same in-progress
+# run — `cancel-in-progress` only governs the run that is executing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
 jobs:
   prepare:
     timeout-minutes: 1
@@ -83,7 +99,7 @@ jobs:
         # same supply-chain reason as the zizmor(unpinned-uses) actions above.
         run: docker run --rm -v "$(pwd)":/repo --workdir /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color # 1.7.12
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
         with:
           advanced-security: false
 
@@ -112,6 +128,23 @@ jobs:
         run: npm run lint:supply-chain
       - name: GCI header version map
         run: npm run lint:gci-headers
+      - name: GCI optional-functions registry
+        # The derived half of the optional-functions registry is generated from
+        # vendor/gci-headers/ and committed, which is what keeps a moved floor
+        # visible in a diff instead of silently adopted. Rerun the generator and
+        # fail if the tree moved: the npm script rather than bare tsx, so
+        # Prettier's normalization is part of what's compared, and `git status
+        # --porcelain` rather than `git diff --exit-code`, which exits 0 for a
+        # file that was never committed or one deleted and recreated untracked.
+        run: |
+          npm run generate:gci-optional-functions
+          if [ -n "$(git status --porcelain -- client/src/gciLibrary/optionalFunctions.generated.ts)" ]; then
+            echo "client/src/gciLibrary/optionalFunctions.generated.ts is stale: regenerating it from"
+            echo "vendor/gci-headers/ changed the file. Run 'npm run generate:gci-optional-functions'"
+            echo "and commit the result, reviewing the diff — a moved floor is a real change."
+            git --no-pager diff -- client/src/gciLibrary/optionalFunctions.generated.ts
+            exit 1
+          fi
       - name: Lockfile lint
         run: npm run lint:lockfile
       - name: Format check
@@ -125,10 +158,36 @@ jobs:
     # Each platform gets its own budget, scaled to its actual runtime plus
     # headroom, so a regression on one platform still trips the guard
     # instead of quietly passing under a slower platform's larger budget.
-    # Windows needs the most (WSL provisioning + GCI client download);
-    # macOS needs more than Linux (DMG mount + shared-memory setup); Linux
-    # is the baseline.
-    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":5,"windows-latest":10,"macos-latest":8}')[matrix.platform] }}
+    # The budgets are set by variance as much as by median. Windows has the
+    # highest median (WSL provisioning + GCI client download); macOS's median
+    # is closer to Linux's, but its runners are far more variable, so it
+    # shares Windows's budget rather than one scaled to its median — see the
+    # macOS note on the matrix `include` below. Linux is the baseline.
+    #
+    # The numbers come from measuring 3735 matrix legs across 300 runs
+    # (2026-08-26 to 2026-09-08), not from guesswork. Duration of the legs
+    # that passed, in minutes:
+    #
+    #   platform        median   p95    max
+    #   ubuntu-latest    3.17    3.63   4.17
+    #   windows-latest   6.27    7.08   9.30
+    #   macos-latest     4.38    5.51   7.43
+    #
+    # Linux and Windows sit at ~1.9x their median, macOS at 2.7x — the extra
+    # headroom is the runner variance described above. All three are
+    # comfortably above the observed max: close enough to catch a real
+    # regression, far enough that ordinary runner variance doesn't turn a PR
+    # red. The previous budgets (5/10/8) sat within 7-20% of the observed max
+    # on every platform, so all three were producing false timeouts — jobs
+    # that were merely on a slow runner, not hung.
+    #
+    # A false timeout is expensive here: on Windows the GemStone setup step
+    # doesn't acknowledge the cancel signal, so GitHub's 5-minute force-kill
+    # grace kicks in and the job burns 17 minutes, not 12. Genuine hangs are
+    # unbounded (the wedged step sits with no progress and would never
+    # finish), so a larger budget costs only those extra minutes on the rare
+    # hang while sparing every slow-but-healthy run.
+    timeout-minutes: ${{ fromJSON('{"ubuntu-latest":6,"windows-latest":12,"macos-latest":12}')[matrix.platform] }}
     name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
     runs-on: ${{ matrix.platform }}
@@ -159,7 +218,9 @@ jobs:
       SKIP_REPORT_PLUGIN_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
     strategy:
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS is deliberately absent from this axis — it gets a single
+        # leg via the `include` below instead of the full version sweep.
+        platform: [ubuntu-latest, windows-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
         node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
@@ -169,6 +230,26 @@ jobs:
         # and the Node floor, as a smoke test to verify tests run on the
         # Node floor too. This is to support older VS Code versions.
         include:
+          # Temporary: macOS ran the full version sweep like the other two
+          # platforms, but its runners show far more duration variance than
+          # ubuntu or windows, so those legs were the ones most likely to
+          # trip the timeout on a bad-runner day — noise that says nothing
+          # about the code under test. Cut to one leg while that variance is
+          # investigated; restore the platform to the axis above once it is
+          # understood. The macOS-specific mechanics are version-independent
+          # (the DMG mount and shared-memory setup are the same on every
+          # release), so one leg still covers those. What it gives up: the
+          # dropped legs were the only place a newer release's darwin GCI
+          # client got exercised.
+          #
+          # It runs the *oldest* supported version, not the newest: the newest
+          # is already exercised on ubuntu and windows, whereas the oldest is
+          # where GCI API gaps surface, and pairing that with the platform
+          # whose setup differs most is the combination least covered
+          # elsewhere.
+          - platform: macos-latest
+            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
+            node-version: '' # resolve Node from .nvmrc, like the dev legs above
           - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
             gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
             node-version: '22.15.1'   # pin the floor for the smoke-test
@@ -276,7 +357,11 @@ jobs:
           enableCrossOsArchive: true
       - name: Setup GemStone in Windows
         if: runner.os == 'Windows'
-        uses: ./.github/actions/setup-gemstone-in-windows
+        # actionlint 1.7.12 (latest release) doesn't recognize GitHub's
+        # newer '$/...' self-repository syntax yet, so it rejects that form
+        # as a malformed remote reference. './...' is understood by both
+        # linters; it's just not zizmor's preferred pinning form.
+        uses: ./.github/actions/setup-gemstone-in-windows # zizmor: ignore[self-repository]
         with:
           gemstone-version: ${{ matrix.gemstone-version }}
       - name: Configure macOS shared memory
@@ -340,6 +425,34 @@ jobs:
         with:
           name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
           path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
+          if-no-files-found: ignore
+      # A native GCI crash on Windows (SEH exception inside gcits.dll,
+      # e.g. "GciWindowsExceptionFilter called ...") doesn't fail a test —
+      # it kills a vitest fork worker, which vitest only reports as a
+      # generic "[vitest-pool]: Worker forks emitted error" / "Worker
+      # exited unexpectedly", with no indication of what actually crashed.
+      # GemStone's own exception filter already writes the real call stack
+      # to a %TEMP%\GCI*.tmp file when this happens, but nothing captured
+      # it before now — it was silently discarded when the runner was torn
+      # down. Copy it into the workspace first (upload-artifact's `path`
+      # doesn't expand shell/OS env vars like %TEMP%, only its own globs),
+      # then upload only if something's actually there.
+      - name: Collect GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path gci-crash-dumps | Out-Null
+          $dumps = Get-ChildItem "$env:TEMP\GCI*.tmp" -ErrorAction SilentlyContinue
+          Write-Host "Found $($dumps.Count) GCI crash dump(s) in $env:TEMP"
+          if ($dumps) { $dumps | Copy-Item -Destination gci-crash-dumps }
+      - name: Upload GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gci-crash-dumps-${{ matrix.platform }}-${{ matrix.gemstone-version }}
+          path: gci-crash-dumps
           if-no-files-found: ignore
 
   package-check:

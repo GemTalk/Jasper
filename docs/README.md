@@ -8,6 +8,8 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Using `overrides` in root `package.json`](how-to/npm-overrides.md) — an override may only narrow; violating that silently breaks packaging.
 - [Raising the VS Code / Node version floor](how-to/raising-the-version-floor.md) — the coordinated set of files that must move together.
 - [Publishing a release](how-to/publishing-a-release.md) — the maintainer-only release PR and the `Release` workflow that publishes it, plus the two registry tokens and why a success message is not yet a live release.
+- [Consulting the official GemStone manuals](how-to/consulting-the-gemstone-manuals.md) — the optional `npm run docs:fetch` download, and how the agent uses it.
+- [Diagnosing Windows GCI crashes in CI](how-to/diagnosing-windows-gci-crashes.md) — hit a generic `[vitest-pool]: Worker forks emitted error` on Windows health-check? Find the real native stack trace in the `gci-crash-dumps-*` artifact.
 
 ## Explanation
 
@@ -16,6 +18,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Why there are two browsers, and which one gets the work](explanation/system-browser-and-explorer.md) — the System Browser is frozen, the Explorer is where new features land; why "frozen" rather than deprecated or maintained, and the one gap still browser-only.
 - [The four kinds of tests](explanation/test-tiers.md) — unit, integration, GCI, and acceptance: what each proves, what it needs, and the names that mislead.
 - [Integration test isolation](explanation/integration-test-isolation.md) — why transaction-abort is the isolation mechanism for `useIntegrationTest`, and why the commit guard is armed per-session and irreversible.
+- [GCI cross-version compatibility](explanation/gci-version-compatibility.md) — how Jasper stays loadable across every supported GemStone release and platform: the vendored headers, the registry generated from them, and which tool catches which mistake.
 
 ## Reference
 

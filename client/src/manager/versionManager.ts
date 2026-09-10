@@ -558,6 +558,7 @@ export class VersionManager {
         throw new Error(
           `No Windows client distribution has been published for GemStone ${version}. ` +
             `Check ${WIN_CLIENT_BASE_URL} for available versions.`,
+          { cause: e },
         );
       }
       throw e;

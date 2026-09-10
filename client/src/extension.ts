@@ -84,6 +84,9 @@ import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
+import { BasicInspector } from './basicInspector/basicInspector';
+import { forgetSession as forgetSessionPins } from './exportSetPins';
+import { revealInspect } from './inspectRouter';
 import {
   maybeOfferServerSupport,
   runInstallServerSupport,
@@ -94,7 +97,6 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
-import { GemstoneNavigationHistory } from './gemstoneNavigationHistory';
 import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
@@ -102,14 +104,15 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
-import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
+import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
@@ -184,6 +187,7 @@ import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost, sessionsOnDatabase } from './databaseForLogin';
 import { describeHolder, isExtentLocked, sessionHolders, ExtentHolder } from './extentHolders';
 import { runQuickSetup } from './quickSetup';
+import { fileInCommand, fileInUris } from './fileTransfer/fileIn';
 import {
   isWindows,
   getWslInfoAsync,
@@ -753,20 +757,6 @@ export function activate(context: vscode.ExtensionContext) {
   fileInManager = new FileInManager(sessionManager, exportManager);
   fileInManager.register(context);
 
-  // ── Object Inspector ──────────────────────────────────────
-  const inspectorProvider = new InspectorTreeProvider(sessionManager);
-  // The debugger's "Inspect" falls back to this tree view when the session has
-  // no enhanced inspector; give the panel a handle to it (it isn't constructed
-  // with one — its factory is called from deep in codeExecutor).
-  DebuggerPanel.inspectorProvider = inspectorProvider;
-
-  const inspectorView = vscode.window.createTreeView('gemstoneInspector', {
-    treeDataProvider: inspectorProvider,
-    showCollapseAll: true,
-  });
-  inspectorProvider.setView(inspectorView);
-  context.subscriptions.push(inspectorView, inspectorProvider);
-
   // ── GemStone Explorer (cascading navigation panes) ───────────
   // The selector-at-position resolver lets the editor-triggered Rename Method
   // target a SENT selector under the cursor (LSP AST-based, so multi-part keyword
@@ -809,6 +799,19 @@ export function activate(context: vscode.ExtensionContext) {
     // would file the class back. The file system is built just below, so this forwards
     // rather than handing over an object that does not exist yet.
     (uri) => gemstoneFs.notifyChanged(uri),
+    // Selecting a class is the strongest signal its methods are about to be read, so
+    // warm that class's completions instead of making the first Ctrl+Space pay for
+    // them inline. The session id goes through with it — the prime is debounced, so
+    // a session switch inside that quarter-second would otherwise warm the class in
+    // whatever session had become selected by the time it fired. Forwarded for the
+    // same reason as its neighbours above: the completion provider is built below
+    // this call.
+    (sid, className) => completionProvider?.primeClass(sid, className),
+    // Refresh GemStone Explorer used to leave completion serving whatever it fetched on
+    // the session's first request: invalidateCache had exactly one caller, the
+    // palette-only "Refresh Browser" command, named after a browser Jasper no longer
+    // uses and reachable from no Explorer surface at all.
+    () => completionProvider?.invalidateCache(),
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────
@@ -819,6 +822,11 @@ export function activate(context: vscode.ExtensionContext) {
       isCaseSensitive: true,
     }),
   );
+
+  // ── Method-history side-by-side diff provider ───────────
+  // Serves the read-only virtual documents behind "Diff ⇄ current" in the method
+  // history viewer.
+  registerMethodHistoryDiff(context);
 
   // ── Workspace Symbol Provider (Cmd+T class search) ──────
   const symbolProvider = new GemStoneWorkspaceSymbolProvider(sessionManager);
@@ -878,6 +886,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
+    completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
     // Hosts the RB family under the native "Refactor…" menu in a saved
@@ -939,7 +948,10 @@ export function activate(context: vscode.ExtensionContext) {
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
               if (className !== 'new-class') {
-                explorer.onMethodCompiled(sessionId, className);
+                // parts[5] is the selector when the URI names a method; forwarding it
+                // lets the explorer refresh only that method's history panel instead
+                // of every panel open for the class.
+                explorer.onMethodCompiled(sessionId, className, parts[5]);
               }
             }
           }
@@ -1000,6 +1012,20 @@ export function activate(context: vscode.ExtensionContext) {
     sunitTestController.onDidChangeResults(() => sunitResultsChanged.fire()),
   );
 
+  // Completion caches a class's selectors and instance variables, and the image-wide
+  // class list, none of which the stone announces a change to. A compile is the
+  // commonest way they go stale — a new method is exactly a selector completion did
+  // not know about — so it is dropped here, per class rather than wholesale: throwing
+  // away the class list on every method save would refetch much the most expensive of
+  // the three. A class-definition compile can also introduce a name the list has
+  // never seen, so that drops the list too.
+  context.subscriptions.push(
+    gemstoneFs.onMethodCompiled((e) => completionProvider.invalidateForCompiledUri(e.uri)),
+    gemstoneFs.onClassDefinitionCompiled((e) =>
+      completionProvider.invalidateForCompiledUri(e.uri, true),
+    ),
+  );
+
   // Keep the pass/fail indicators honest. A compiled method or class definition
   // means the outcome shown beside it predates the code now in the stone: the
   // recompiled thing's own result is dropped, and everything still showing a
@@ -1027,6 +1053,31 @@ export function activate(context: vscode.ExtensionContext) {
       void sunitTestController.ensureTestsForDocument(editor?.document.uri);
     }),
   );
+
+  // In-editor entry to Method History: a title-bar button + context-menu item on a
+  // gemstone method editor, so the history is reachable from the source being
+  // edited without hunting for the row in the Explorer. The context key gates the
+  // menus to method editors only (not class-definition/comment/workspace editors).
+  const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.methodEditorActive',
+      isMethodEditorUri(editor?.document.uri),
+    );
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),
+    vscode.commands.registerCommand('gemstone.methodHistoryFromEditor', () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) return;
+      void explorer.openMethodHistoryForUri(uri).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Method history failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+  );
+  updateMethodEditorContext(vscode.window.activeTextEditor);
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);
@@ -1397,27 +1448,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Back/Forward history for gemstone:// editors (drives the title-bar arrows).
-  // Reopens as a preview so it reuses the single method tab, matching the flow it
-  // retraces; returns false when the URI can't be shown so its entry is pruned.
-  const gsHistory = new GemstoneNavigationHistory(async (uri) => {
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: true });
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (vscode.window.activeTextEditor) {
-    gsHistory.record(vscode.window.activeTextEditor.document.uri);
-  }
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) gsHistory.record(editor.document.uri);
-    }),
-  );
-
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1450,15 +1480,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
       },
     ),
-
-    // Thin wrappers so editor-history Back/Forward can appear as title-bar icon
-    // buttons on gemstone:// editors (a menu entry needs an icon our own command
-    // supplies). They walk gsHistory — our own view history — rather than VS
-    // Code's built-in Go Back/Forward, because a method opened in the reusable
-    // preview tab isn't recorded by the built-in history (that only tracks
-    // pinned/distinct tabs), so a first-time user couldn't get back.
-    vscode.commands.registerCommand('gemstone.navigateBack', () => gsHistory.back()),
-    vscode.commands.registerCommand('gemstone.navigateForward', () => gsHistory.forward()),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
@@ -2204,12 +2225,16 @@ export function activate(context: vscode.ExtensionContext) {
         // tabs are already closed when the browser is disposed above.
         void closeGemstoneTabsForSession(session.id);
         EnhancedInspector.disposeForSession(session.id);
+        BasicInspector.disposeForSession(session.id);
         // Dispose before logout so each panel's dispose() can still release its
         // suspended GsProcess against a live handle.
         DebuggerPanel.disposeForSession(session.id);
         sessionManager.logout(session.id);
+        // Every panel that held an export-set pin released it in its dispose()
+        // above; drop the registry's bookkeeping for the session anyway, since
+        // its export set went with it.
+        forgetSessionPins(session.id);
         treeProvider.refresh();
-        inspectorProvider.removeSessionItems(session.id);
         breakpointManager.clearAllForSession(session.id);
         stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
@@ -2258,6 +2283,13 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
+    // Drops everything read from the stone and held client-side: the workspace symbol
+    // corpus, completion's three caches, and the export manager's session state. Was
+    // titled "Refresh Browser", after the System Browser, which is no longer how anyone
+    // reaches this — and while it was the ONLY caller of the completion provider's
+    // invalidateCache, that name was also the only name for the fix to stale
+    // completion. The Explorer's own Refresh and the compile hooks cover that now, so
+    // this is the blunt instrument rather than the only instrument.
     vscode.commands.registerCommand('gemstone.refreshBrowser', async () => {
       symbolProvider.invalidateCache();
       completionProvider.invalidateCache();
@@ -2270,6 +2302,47 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.refreshTests', () => {
       sunitTestController.refresh();
     }),
+
+    // Read a Topaz `.gs` file on this machine back into the session (issue #539).
+    // The palette entry picks the file; the resource entry (gemstone.fileInFile, below)
+    // takes the one(s) already selected in VS Code's Explorer, the one an open editor
+    // names from its title bar or context menu, or the one whose "File In to GemStone"
+    // lens was clicked (gemstoneCodeLensProvider).
+    // Also the ⤓ on a session row in Logins & Sessions, and the one on the GemStone
+    // Explorer's Dictionaries pane (gemstone.explorer.fileIn): both already name a
+    // session, so they file straight into it instead of asking. From the palette
+    // (no row) the usual "which session?" applies.
+    vscode.commands.registerCommand('gemstone.fileIn', async (item?: GemStoneSessionItem) => {
+      await fileInCommand(sessionManager, context.globalState, item?.activeSession);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.fileInFile',
+      async (uri?: vscode.Uri, selected?: vscode.Uri[]) => {
+        // VS Code hands an Explorer context command the clicked resource AND the whole
+        // selection; the editor title bar, the editor context menu and the code lens
+        // each pass a single resource. Every route this command is wired to therefore
+        // arrives with a URI — the manifest keeps it out of the Command Palette
+        // (`"when": "false"`), since there it would have no file to act on. The
+        // active-editor fallback and the warning below are defence for a call from
+        // somewhere else — a user keybinding, or another extension's
+        // `executeCommand` — not for a palette entry.
+        const active = vscode.window.activeTextEditor?.document.uri;
+        const uris =
+          selected && selected.length > 0
+            ? selected
+            : uri
+              ? [uri]
+              : active?.scheme === 'file'
+                ? [active]
+                : [];
+        if (uris.length === 0) {
+          void vscode.window.showWarningMessage('Open or select a .gs file to file in.');
+          return;
+        }
+        await fileInUris(sessionManager, uris, context.globalState);
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.displayIt', async () => {
       await codeExecutor.displayIt();
@@ -2342,7 +2415,25 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.inspectIt', async () => {
-      await codeExecutor.inspectIt(inspectorProvider);
+      await codeExecutor.inspectIt();
+    }),
+
+    // Flip between "the basic tabbed one, always" — the default — and
+    // "whichever this session can have", the switch worth having on a keystroke,
+    // since the Enhanced Inspector cannot be conjured onto a session that lacks
+    // its server support, so `enhanced` is only ever a synonym for `auto`. Open
+    // panels are left alone: the choice decides where the NEXT Inspect It goes.
+    vscode.commands.registerCommand('gemstone.switchInspector', async () => {
+      const config = vscode.workspace.getConfiguration('gemstone');
+      const next =
+        config.get<string>('inspector.preferred', 'basic') === 'basic' ? 'auto' : 'basic';
+      await config.update('inspector.preferred', next, vscode.ConfigurationTarget.Global);
+      vscode.window.setStatusBarMessage(
+        next === 'basic'
+          ? 'Inspect It now opens the basic Inspector'
+          : 'Inspect It now opens the Enhanced Inspector where the session has it',
+        4000,
+      );
     }),
 
     vscode.commands.registerCommand('gemstone.showTranscript', () => {
@@ -2426,19 +2517,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.inspectGlobal',
       async (args: { className: string }) => {
-        // The reveal-existing dedup only applies to the classic Inspector tree: when
-        // the session has the Enhanced Inspector, inspectExpression opens a webview
-        // (not a tree root), so findRootByLabel could never match — skip the lookup
-        // and just inspect (a fresh panel, like editor Inspect It).
+        // Inspecting the same global twice from the Globals view focuses the
+        // panel it already opened rather than adding a duplicate editor tab for
+        // the one object — the classic Inspector tree's reveal-existing rule,
+        // which only ever applied to this command. See revealInspect: the
+        // Enhanced Inspector was excluded from it then and still is.
         const selected = sessionManager.getSelectedSession();
-        if (!selected?.enhancedInspectorAvailable) {
-          const existing = inspectorProvider.findRootByLabel(args.className);
-          if (existing) {
-            await inspectorView.reveal(existing, { select: true, focus: true });
-            return;
-          }
-        }
-        await codeExecutor.inspectExpression(inspectorProvider, args.className, args.className);
+        if (selected && revealInspect(selected, args.className)) return;
+        await codeExecutor.inspectExpression(args.className, args.className);
       },
     ),
 
@@ -2531,14 +2617,6 @@ export function activate(context: vscode.ExtensionContext) {
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
-
-    vscode.commands.registerCommand('gemstone.removeInspectorItem', (node?: InspectorNode) => {
-      if (node) inspectorProvider.removeRoot(node);
-    }),
-
-    vscode.commands.registerCommand('gemstone.clearInspector', () => {
-      inspectorProvider.clearAll();
-    }),
 
     vscode.commands.registerCommand('gemstone.searchMethods', async () => {
       const session = await sessionManager.resolveSession();

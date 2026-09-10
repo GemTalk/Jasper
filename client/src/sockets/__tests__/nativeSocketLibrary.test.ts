@@ -1,5 +1,5 @@
 import koffi from 'koffi';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NativeSocketLibrary } from '../nativeSocketLibrary';
 import { NativePOSIXSocketLibrary } from '../nativePOSIXSocketLibrary';
 import { PosixSocketLibrary } from '../bindings/posixSocketLibrary';
@@ -38,7 +38,12 @@ describe('Native socket library', () => {
     it('reports a socket readable when data is actually waiting on it', async () => {
       await loopbackConnection.writeFromServer('hi');
 
-      expect(library.isReadable(fd)).toBe(true);
+      // The write flushing on the server side doesn't guarantee the bytes
+      // have already landed in the client's kernel receive buffer. Under
+      // CI load, loopback delivery can lag the write callback by a beat, so
+      // poll until the OS actually reports it, rather than assuming it's
+      // instantaneous.
+      await vi.waitFor(() => expect(library.isReadable(fd)).toBe(true));
     });
 
     it('reports a socket not readable when nothing has arrived yet', async () => {
@@ -59,11 +64,12 @@ describe('Native socket library', () => {
       // dead-but-open handle through a real socket: it leaves the handle
       // itself open but errored, which reliably clears POLLRDNORM from
       // `revents` (the same as WSAPoll would for POLLHUP/POLLERR/POLLNVAL)
-      // without touching the handle's validity. On POSIX, resolving
-      // `resetFromServer()` only guarantees the peer has torn down its own
-      // socket, not that the RST has reached and been processed by the
-      // client fd's kernel state by the time `poll()` runs, so the same
-      // assertion is flaky there.
+      // without touching the handle's validity. This is Windows-specific
+      // behavior, not just a flakier version of the same assertion on
+      // POSIX: verified live via poll() on macOS, `poll()` leaves POLLIN set
+      // alongside POLLHUP/POLLERR for a reset connection, so
+      // `isReadable()` reports it readable there instead of throwing (see
+      // the POSIX equivalent below).
       it('reports the socket as unusable when it has been reset by its peer', async () => {
         await loopbackConnection.resetFromServer();
 
@@ -91,6 +97,22 @@ describe('Native socket library', () => {
     });
 
     onSupportedPosixDescribe('Error handling on POSIX', () => {
+      // Unlike WSAPoll (see the Windows reset test above), POSIX poll()
+      // leaves POLLIN set alongside POLLHUP/POLLERR for a socket whose peer
+      // sent an RST: a subsequent recv() would return promptly with
+      // ECONNRESET, so poll() reports it readable the same way it would for
+      // any other socket error, rather than treating it as unusable.
+      // Verified live via poll() on macOS.
+      it('reports a socket as readable when it has been reset by its peer', async () => {
+        await loopbackConnection.resetFromServer();
+
+        // Resolving resetFromServer() only guarantees the peer has torn
+        // down its own socket, not that the RST has reached and been
+        // processed by the client fd's kernel state by the time poll()
+        // runs, so poll for it rather than asserting once.
+        await vi.waitFor(() => expect(library.isReadable(fd)).toBe(true));
+      });
+
       // Closing the handle doesn't fail poll() itself: POLLNVAL comes back
       // through revents on an otherwise-successful call, same as the
       // Windows reset case reports POLLHUP/POLLERR.
