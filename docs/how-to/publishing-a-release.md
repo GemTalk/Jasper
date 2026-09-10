@@ -33,42 +33,79 @@ Open the PR and let it merge through the queue normally. Don't run the release g
 
 ## 2. Run the `Release` workflow
 
-**Actions → Release → Run workflow**, with:
+**Actions → Release → Run workflow**, dispatched from `main`, with:
 
 | Input | Meaning |
 | --- | --- |
-| `version` | the version to publish, e.g. `1.8.15` |
-| `ref` | the commit to publish; defaults to `main` |
-| `dry-run` | run every check and build the `.vsix`, but tag, publish and release nothing |
+| `version` | the version to publish, e.g. `1.9.1` |
+| `dry-run` | run every check, build the `.vsix` and scan it, but create nothing and publish nothing |
 
-A first release of the day is worth doing as a dry run: it exercises the token checks and the whole build without touching either registry.
+There is no `ref` input: the workflow publishes the tip of the branch it was dispatched against, and refuses to run anywhere but the default branch. A first release of the day is worth doing as a dry run — it exercises validation, the build and the secret scan without touching a registry or creating a tag.
 
-Before asking for approval, the workflow refuses to go on unless the ref is an ancestor of `main`, `package.json` is at the requested version, `CHANGELOG.md` has a dated section for it, no `vX.Y.Z` tag exists yet, and `ci-complete` concluded `success` on that exact commit.
+### What runs, and in what order
 
-It then waits on the `release` environment's reviewer. Once approved it verifies both tokens, packages, publishes, waits for both registries, tags, and creates the GitHub Release.
+```
+validate ──▶ package ──▶ scan ──▶ gate ──▶ release ──┬──▶ publish-vsce ──┐
+                                                     │                   ├──▶ verify
+                                                     └──▶ publish-ovsx ──┘
+```
 
-**The `.vsix` is built once and published as-is** to both registries via `--packagePath`, then attached to the GitHub Release. The artifact you can download from the run, the two the registries serve, and the one on the Release are the same bytes. (Run by hand, each publish command repackages from source instead, so the `.vsix` you built locally is *not* what gets uploaded.)
+| Job | What it does |
+| --- | --- |
+| `validate` | Checks nothing out. Over the API: the repository is `GemTalk/Jasper`, the dispatch was from the default branch, `package.json` is at `version`, `CHANGELOG.md` has a dated `[X.Y.Z]` section **and an empty `[Unreleased]`**, no `vX.Y.Z` tag exists, and the newest `ci-complete` on this exact commit concluded `success`. |
+| `package` | `npm ci`, then `npm run package` with `SOURCE_DATE_EPOCH` set from the commit date, so the zip is reproducible. Uploads the one `.vsix` every later job uses. |
+| `scan` | Unzips that `.vsix` and runs `gitleaks` over its **contents** — see [the secret scan](#the-secret-scan). |
+| `gate` | Does nothing at all. Its only content is the `release-approval` environment, which holds the run until a required reviewer approves. |
+| `release` | Creates the annotated tag, then the GitHub Release as a **draft**, attaches the `.vsix`, and publishes it. |
+| `publish-vsce`, `publish-ovsx` | Independent. Each downloads the `.vsix` **from the Release** and publishes that file. Neither waits for the other. |
+| `verify` | Polls both registries. Reports; does not gate. |
 
-The tag is created only after both registries are serving the version, so a failed or half-finished publish leaves no tag behind and the run can simply be repeated. `--skip-duplicate` on both commands makes that re-run safe.
+Two properties are worth understanding, because they are why the jobs are in this order rather than a simpler one.
+
+**Everything irreversible happens last.** Both registries are immutable per `(publisher, name, version)`: a version number, once taken, cannot be reused, and even deleting a version leaves the identity reserved. A publish that goes wrong therefore burns `X.Y.Z` for good — the recovery is always `X.Y.Z+1`, never a retry. So the build, the scan and the approval all happen before any registry is touched, and the reviewer approves a package that already exists and has already been scanned.
+
+**The Release is the source of the bytes.** `package` builds the `.vsix` once; `release` attaches it; both publish jobs download *that* file and publish it with `--packagePath`. The artifact on the run, the asset on the Release, and what each registry serves are the same object. A re-run cannot substitute different bytes, because the bytes come from an immutable Release rather than a fresh build. (Run by hand, each publish command repackages from source instead, so a locally built `.vsix` is *not* what gets uploaded.)
+
+### The secret scan
+
+Open VSX runs its own gitleaks-based scan **server-side, after accepting the upload**, and offers no way to allow a false positive. A hit leaves the version inactive or rejected — and the version number is already spent. This repo has been rejected that way twice, 1.7.6 and 1.8.3, both times on GemStone's *public* default password and both times failing only the Open VSX half after the Marketplace had already published.
+
+The `scan` job scans the **unzipped `.vsix`**, not the working tree and not git history. That is deliberate in both directions: the tree misses what actually ships (the esbuild bundles are in the package but not in git, and both historical rejections lived in bundled output) and floods on what does not (`.vscodeignore` drops `client/tmp/**`, ~1GB of fixtures including example private keys).
+
+Rules live in `.gitleaks.toml`. Two things there need to stay true:
+
+- **The allowlists are narrow, and matched on the secret text.** esbuild inlines every dependency into one `extension.js`, so our code and vendor code cannot be separated by path. The current entries cover two class identifiers from bundled ASN.1/PKCS libraries and PEM *delimiter* literals in PEM-handling code. A real key in the same file is still caught.
+- **`gemstone-password-literal` is a custom rule, and it is not redundant.** gitleaks' default ruleset does **not** flag the password form that Open VSX rejects, so scanning with the defaults alone would sail straight past the exact failure this job exists to prevent. It mirrors `client/src/__tests__/publishSecretScan.test.ts`, which stays: the unit test fails in seconds on every PR, while this covers the whole package.
+
+A finding fails the run before anything is published, and the report is uploaded as an artifact. Fix it and re-dispatch; nothing has been spent.
 
 ### A success message is not a live release
 
-Both CLIs print success as soon as the **upload** is accepted. The version then takes anywhere from ~2 to ~22 minutes to become publicly queryable, and the two registries are independent — either can be first. The workflow's wait step exists for this window, so normally you never see it. What it means when it fails:
+Both CLIs print success as soon as the **upload** is accepted. The version then takes anywhere from ~2 to ~22 minutes to become publicly queryable, and the two registries are independent — either can be first. The `verify` job exists for this window.
 
 - Open VSX answers `Extension not found` for the new version, and `ovsx publish` run again reports `already published, but currently isn't active and therefore not visible`. That message means *wait*, not *retry* — it has always resolved on its own. It is also proof the upload landed.
 - The Marketplace omits the version from gallery queries, so `vsce show` still reports the previous one.
 
-The wait step is only reached once both publish steps have returned success, so a timeout there is propagation rather than a failed publish: **re-publishing is not the fix.** (If a publish step itself fails, the run stops there and never reaches the wait — the following step is skipped, so a `vsce` failure means Open VSX was never published to at all.) Check both registries yourself before doing anything else:
+**A `verify` failure withholds nothing.** By the time it runs, the tag, the Release and both uploads already exist; nothing depends on it. It is telling you the registries are slower than its budget, not that the release is broken. Check them yourself:
 
 ```sh
-# Open VSX
-curl -s https://open-vsx.org/api/gemtalksystems/gemstone-ide | jq -r .version
-
-# VS Code Marketplace
-npx @vscode/vsce show gemtalksystems.gemstone-ide
+scripts/registry-state.sh openvsx 1.9.1        # visible | absent | unknown
+scripts/registry-state.sh marketplace 1.9.1
 ```
 
-If they are serving the version, the release landed and only the tag and GitHub Release are missing — re-run the workflow, which will skip both duplicate uploads and finish the job.
+`absent` is genuinely ambiguous and the script says so rather than guessing: Open VSX answers the same 404 for a version that was never uploaded, one that landed and is awaiting activation, and one its scanner rejected. Nothing readable from outside distinguishes them — the publish attempt's own error message is the only thing that does, which is why `scripts/publish-to-registry.sh` interprets it there.
+
+### If a job fails
+
+| Where | What it means | What to do |
+| --- | --- | --- |
+| `validate`, `package`, `scan` | Nothing has been created and nothing published. | Fix and re-dispatch. The version number is untouched. |
+| `release` | The tag may exist without a Release, or neither. Nothing has been published. | Delete the tag if it was created, then re-dispatch. |
+| One publish job | That registry does not have it; the other may. The Release and tag exist and are correct. | **"Re-run failed jobs"** — never "Re-run all jobs", which would fail at the artifact upload by design rather than rebuild different bytes. |
+| Both publish jobs | Nothing was accepted by either registry. | Re-run failed jobs. |
+| `verify` | Everything landed; the registries are slow. | Nothing. Check by hand if you want confirmation. |
+
+The one state with no way back is a publish that was **accepted** and then rejected server-side. The version number is spent: ship `X.Y.Z+1`.
 
 ## Releasing by hand
 
@@ -124,10 +161,16 @@ npx ovsx login gemtalksystems           # Open VSX
 
 ### Storing them for the workflow
 
-One-time repository setup, and the only place the tokens are shared:
+One-time repository setup. **The workflow is not safe until step 2 is done** — GitHub creates a referenced environment implicitly, with no protection rules, so without required reviewers the `gate` job approves itself and anyone who can dispatch a workflow can publish.
 
-1. Create a **`release` environment** (Settings → Environments).
-2. Add **required reviewers** to it. This is what makes the workflow's approval step a real gate, and it is where the audit trail of who released what comes from. Without it, anyone who can run a workflow can publish.
-3. Add `VSCE_PAT` and `OVSX_PAT` as **environment** secrets, not repository secrets, so no other workflow can reach them.
+1. Create three **environments** (Settings → Environments), so no environment holds more privilege than the job attached to it needs:
+   - `release-approval` — the gate. **No secrets.**
+   - `release-vsce` — holds `VSCE_PAT` only.
+   - `release-ovsx` — holds `OVSX_PAT` only.
+2. On `release-approval`, add **required reviewers** and enable **prevent self-review**. This is the approval gate and the audit trail of who released what.
+3. On all three, add a **deployment branch policy** restricting them to `main`. This is the backstop that does not depend on the workflow's own checks being right.
+4. Add each token as an **environment** secret, not a repository secret, so no other workflow can reach it.
 
-Because these are personal tokens, they expire — Azure DevOps allows at most a year — and they expire silently, surfacing only at the next release. The workflow verifies both before it builds anything, so an expired token fails the run in seconds rather than halfway through; but whoever owns the tokens should still expect to rotate them.
+Note for whoever does this: these are the repository's first third-party secrets — it holds only the automatic `GITHUB_TOKEN` today — so it is a governance change as much as a configuration one, and both tokens are one person's identity acting for the organisation.
+
+Because these are personal tokens, they expire — Azure DevOps allows at most a year, and retires global PATs entirely on **1 December 2026**, after which Marketplace PAT publishing stops working and the workflow will need `vsce publish --oidc` / `ovsx publish --trusted-publishing` (each needs `id-token: write` and a policy registered on the registry) — and they expire silently, surfacing only at the next release. The workflow verifies both before it builds anything, so an expired token fails the run in seconds rather than halfway through; but whoever owns the tokens should still expect to rotate them.
