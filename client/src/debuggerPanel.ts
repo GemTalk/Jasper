@@ -1742,6 +1742,10 @@ export class DebuggerPanel {
       // source in the source column and steals focus from the new-method editor we
       // just opened. The banner update clears the Create button and keeps focus on
       // the new-method tab so the user can type immediately.
+      //
+      // A banner does NOT end the webview's busy span (the Cancel path posts one
+      // mid-op), which is why `createDnuMethod` is not in its SERVER_BOUND set:
+      // otherwise this reply strands a spinner until the user saves.
       this.errorMessage =
         `Editing new method #${dnu.selector} below — fill in the body, then save it ` +
         '(Ctrl+S / Cmd+S) to create the method. Then press Resume (▶) to run it.';
@@ -1814,9 +1818,10 @@ export class DebuggerPanel {
    *
    * The target is resolved by method lookup on the receiver (`getBrowseTarget`),
    * so an inherited method opens on its DEFINING class — the source that's really
-   * executing — rather than the receiver's concrete class. Degrades to an
-   * in-panel message for a receiver we can't resolve, a selector not found in
-   * the chain, or a class outside the user's symbol list.
+   * executing — rather than the receiver's concrete class. Degrades through
+   * `browseDeclined` — a panel banner AND a toast — for a receiver we can't
+   * resolve, a selector not found in the chain, a class outside the user's
+   * symbol list, or a cascade the Explorer rejects.
    *
    * A doit frame normally never gets here at all: it carries `browsable: false`,
    * and the webview hides the Browse item for such a frame (see buildFrame and
@@ -1829,8 +1834,7 @@ export class DebuggerPanel {
     if (!frame) return;
     const raw = this.rawFrames.find((r) => r.serverLevel === frame.serverLevel);
     if (!raw || raw.isExecutedCode || !raw.selector) {
-      this.errorMessage = 'Cannot browse this frame — it has no class or method.';
-      this.postInit();
+      this.browseDeclined('Cannot browse this frame — it has no class or method.');
       return;
     }
 
@@ -1839,20 +1843,19 @@ export class DebuggerPanel {
       receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
-      this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
-      this.postInit();
+      this.browseDeclined(`Could not resolve the receiver of ${frame.label}.`);
       return;
     }
 
     const target = debug.getBrowseTarget(this.session, receiverOop, raw.selector);
     if (!target) {
-      this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
-      this.postInit();
+      this.browseDeclined(`Could not locate #${raw.selector} to browse it.`);
       return;
     }
     if (!target.dictName) {
-      this.errorMessage = `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`;
-      this.postInit();
+      this.browseDeclined(
+        `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`,
+      );
       return;
     }
 
@@ -1878,9 +1881,22 @@ export class DebuggerPanel {
       // session), and this call is fire-and-forget.
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       if (this.disposed) return;
-      this.errorMessage = `Could not browse ${target.className} >> #${raw.selector}.`;
-      this.postInit();
+      this.browseDeclined(`Could not browse ${target.className} >> #${raw.selector}.`);
     });
+  }
+
+  /**
+   * Report a Browse that could not go anywhere, in BOTH places: the panel's
+   * banner, and a toast.
+   *
+   * The banner alone was missed — Browse moves attention to the Explorer, so a
+   * line changing in the pane just looked away from reads as nothing happening.
+   * The Inspector's Browse Class already warns with a toast for the same refusal.
+   */
+  private browseDeclined(message: string): void {
+    this.errorMessage = message;
+    this.postInit();
+    void vscode.window.showWarningMessage(message);
   }
 
   /**
@@ -4196,9 +4212,11 @@ export class DebuggerPanel {
    * "is this executed code?", shared by buildFrame (labelling/classification)
    * and revealFrameSource (source-pane routing) so the two can never disagree.
    *
-   *  - in the session's symbol list → `uriInfo` set (editable via gemstone://);
-   *  - resolvable class but not in the symbol list → `uriInfo` undefined, but
-   *    definingClassName/selector are still set — a real method, NOT executed code;
+   *  - bound under its own name in the session's symbol list → `uriInfo` set
+   *    (editable via gemstone://), on the dictionary holding THAT class;
+   *  - resolvable class that no symbol-list slot binds under its own name →
+   *    `uriInfo` undefined, but definingClassName/selector are still set — a
+   *    real method, NOT executed code;
    *  - no resolvable class at all (a doit) → isExecutedCode true.
    */
   private resolveHomeMethod(homeMethodOop: bigint): {

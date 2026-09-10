@@ -1069,7 +1069,17 @@ describe('DebuggerPanel', () => {
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('no class or method');
+      expect(warned()).toContain('no class or method');
     });
+
+    // Every Browse refusal is reported twice — panel banner and toast — so the
+    // assertions below read both.
+    function warned(): string {
+      return vi
+        .mocked(vscode.window.showWarningMessage)
+        .mock.calls.map((c) => String(c[0]))
+        .join('\n');
+    }
 
     it('shows a message instead of browsing when the selector cannot be located', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce(undefined);
@@ -1081,6 +1091,7 @@ describe('DebuggerPanel', () => {
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('Could not locate #halt');
+      expect(warned()).toContain('Could not locate #halt');
     });
 
     it('shows a message instead of browsing when the class is outside the symbol list', () => {
@@ -1098,6 +1109,9 @@ describe('DebuggerPanel', () => {
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain("isn't in your symbol list");
+      // A banner alone was missed: Browse sends the user's eyes to the Explorer,
+      // so the refusal has to reach them where they are looking.
+      expect(warned()).toContain("isn't in your symbol list");
     });
 
     it('says so in the panel when the Explorer cascade rejects', async () => {
@@ -1121,6 +1135,7 @@ describe('DebuggerPanel', () => {
         expect(lastPosted(panel, 'init').errorMessage).toContain(
           'Could not browse JasperDebugDemo >> #halt',
         );
+        expect(warned()).toContain('Could not browse JasperDebugDemo >> #halt');
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
       }

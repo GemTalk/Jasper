@@ -447,6 +447,124 @@ describe('debugQueries', () => {
     });
   });
 
+  describe('class-side frames (the walk starts at the metaclass)', () => {
+    function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
+      const session = createMockSession();
+      let generated = '';
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        (_handle: unknown, code: string) => {
+          generated = code;
+          return '';
+        },
+      );
+      run(session);
+      return generated;
+    }
+
+    // A class-side method is in the METAclass's method dictionary, not the
+    // class's, so a lookup walk that starts at a class receiver itself finds
+    // nothing and every class-side frame reports "selector not found in the
+    // chain" — no class receiver was browsable at all. Starting at `rcvr class`
+    // covers both receiver kinds: an ordinary object's class, a class's
+    // metaclass.
+    it.each([
+      [
+        'the class that defines a running method',
+        (s: ActiveSession) => debug.getBrowseTarget(s, RECEIVER_OOP, 'foo'),
+      ],
+      [
+        'the implementation-candidate chain',
+        (s: ActiveSession) => debug.getReceiverClassChain(s, RECEIVER_OOP, 'foo'),
+      ],
+    ])("%s starts its walk at the receiver's class", (_label, run) => {
+      const code = generatedSmalltalkFrom(run);
+
+      expect(code).toContain('cls := rcvr class.');
+      expect(code).not.toContain('cls := rcvr.');
+    });
+
+    // The metaclass chain runs on into Class and its superclasses, which are
+    // instance-side, so the side has to come from the class the row is actually
+    // about rather than from what the receiver was.
+    it('reports the side of the class that defines the method, not of the receiver', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
+      );
+
+      expect(code).toContain("def isMeta ifTrue: ['class']");
+    });
+
+    it('reports the side of each candidate row, not of the receiver', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
+      );
+
+      expect(code).toContain("cls isMeta ifTrue: ['class']");
+    });
+
+    it('parses a chain that crosses from the metaclass side to the instance side', () => {
+      const session = createMockSession();
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        () =>
+          'Widget\tclass\tUserGlobals\t1\nObject\tclass\tGlobals\t0\nClass\tinstance\tGlobals\t1',
+      );
+
+      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'new')).toEqual([
+        { className: 'Widget', isMeta: true, dictName: 'UserGlobals', implementsSelector: true },
+        { className: 'Object', isMeta: true, dictName: 'Globals', implementsSelector: false },
+        { className: 'Class', isMeta: false, dictName: 'Globals', implementsSelector: true },
+      ]);
+    });
+  });
+
+  describe("home dictionary of a frame's class (resolved by identity, not by name)", () => {
+    const GS_PROCESS = 0x123n;
+
+    function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
+      const session = createMockSession();
+      let generated = '';
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        (_handle: unknown, code: string) => {
+          generated = code;
+          return '';
+        },
+      );
+      run(session);
+      return generated;
+    }
+
+    // Every query that answers "which dictionary owns this class" has to compare
+    // by identity. Scanning for a dictionary that merely holds the NAME picks a
+    // same-named class in another dictionary, and both of these build a
+    // gemstone:// URI from the answer — one the source pane opens for editing,
+    // one a new method is written through. Asserted on the generated Smalltalk
+    // because the round-trip is mocked in every other test here, so a lookup
+    // that resolved the wrong twin would parse just as cleanly.
+    const queries: [string, (session: ActiveSession) => void][] = [
+      ["a frame's method URI", (session) => debug.getMethodUriInfo(session, METHOD_OOP)],
+      ["a missing method's URI", (session) => debug.getDoesNotUnderstandInfo(session, GS_PROCESS)],
+      [
+        'the class that defines a running method',
+        (session) => debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
+      ],
+      [
+        'the implementation-candidate chain',
+        (session) => debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
+      ],
+    ];
+
+    it.each(queries)('%s compares the binding by identity', (_label, run) => {
+      const code = generatedSmalltalkFrom(run);
+
+      expect(code).toContain('ifAbsent: [nil])');
+      expect(code).toContain('==');
+    });
+
+    it.each(queries)('%s does not settle for a dictionary holding the name', (_label, run) => {
+      expect(generatedSmalltalkFrom(run)).not.toContain('includesKey:');
+    });
+  });
+
   describe('tab separators in generated Smalltalk (3.6.2-compatible via Character tab)', () => {
     const GS_PROCESS = 0x123n;
 

@@ -475,6 +475,38 @@ describe('DebuggerView.init — progress indicator (#9)', () => {
     );
   }
 
+  // Create answers with a `banner`, and a banner deliberately does NOT end a busy
+  // span — the Cancel path posts one mid-op and the spinner has to survive it. So
+  // a span started for Create had nothing to close it and ran until the user
+  // saved the method, which reads as a hang on top of an instruction to type.
+  it('starts no busy span for Create, whose reply is a banner that cannot end one', () => {
+    vi.useFakeTimers();
+    try {
+      const { refs, vscode } = setup(STACK, {
+        selector: 'foo:',
+        className: 'Array',
+        isMeta: false,
+      });
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'variables', groups: [] } }),
+      );
+
+      (refs.dnuBar!.querySelector('button.dnu-btn') as HTMLButtonElement).click();
+      expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'createDnuMethod' });
+
+      // The host's only reply is the guidance banner.
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'banner', text: 'Editing new method…' } }),
+      );
+      vi.advanceTimersByTime(5000);
+
+      expect(refs.busyOverlay!.style.display).toBe('none');
+      expect(document.body.classList.contains('busy')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows nothing while a server request finishes within the reveal delay', () => {
     vi.useFakeTimers();
     try {
