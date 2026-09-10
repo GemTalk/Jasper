@@ -509,7 +509,7 @@ describe('CodeExecutor', () => {
   // ── Debug It ───────────────────────────────────────────────
   //
   // Debug It runs the selection with the single-step flag so the server breaks
-  // on the FIRST statement, and opens the Enhanced debugger directly on that
+  // on the FIRST statement, and opens the GemStone Debugger directly on that
   // halt. Two things make stepping actually work and must not regress:
   //   1. the single-step flag is OR'd into the exec flags (display/execute must
   //      NOT set it), and
@@ -570,14 +570,14 @@ describe('CodeExecutor', () => {
     });
   });
 
-  // ── Debug It opens the Enhanced debugger directly on a halt ──
+  // ── Debug It opens the GemStone Debugger directly on a halt ──
   //
   // Unlike Execute It (which prompts the user to pick a debugger on an error),
   // Debug It's halt is an intentional first-statement stop, so it opens the
-  // Enhanced debugger straight away — no modal chooser, no DAP, and it must NOT
+  // GemStone Debugger straight away — no modal chooser, no DAP, and it must NOT
   // clear the stack (the panel owns the suspended process).
 
-  describe('debugIt opens the Enhanced debugger on the first-statement halt', () => {
+  describe('debugIt opens the GemStone Debugger on the first-statement halt', () => {
     function debuggableGci() {
       // Non-nil context (≠ OOP_NIL) makes fetchResultOop throw a DebuggableError,
       // exactly as the single-step breakpoint would on the server.
@@ -596,7 +596,7 @@ describe('CodeExecutor', () => {
       setActiveEditor(makeEditor('Array new add: 1; add: 2'));
     }
 
-    it('opens the Enhanced Debugger panel directly, with no completion callback', async () => {
+    it('opens the GemStone Debugger panel directly, with no completion callback', async () => {
       setup();
 
       await executor.debugIt();
@@ -614,7 +614,7 @@ describe('CodeExecutor', () => {
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
     });
 
-    it('does NOT clear the stack — the Enhanced debugger owns the suspended process', async () => {
+    it('does NOT clear the stack — the GemStone Debugger owns the suspended process', async () => {
       setup();
 
       await executor.debugIt();
@@ -622,7 +622,7 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsClearStack).not.toHaveBeenCalled();
     });
 
-    it('clears the stack if the Enhanced Debugger panel fails to open', async () => {
+    it('clears the stack if the GemStone Debugger panel fails to open', async () => {
       setup();
       vi.mocked(DebuggerPanel.create).mockImplementationOnce(() => {
         throw new Error('panel boom');
@@ -1405,12 +1405,12 @@ describe('CodeExecutor', () => {
 
   // ── What "Debug" opens ────
   //
-  // The notifier offers one debugger: the Enhanced Debugger panel, which then
+  // The notifier offers one debugger: the GemStone Debugger panel, which then
   // owns the suspended GsProcess. The DAP debugger stays registered and
   // reachable from Run and Debug, but the notifier never starts it. Dismissing
   // the dialog must open nothing and must clear the stalled GsProcess.
 
-  describe('opens the Enhanced Debugger on Debug', () => {
+  describe('opens the GemStone Debugger on Debug', () => {
     function debuggableGci() {
       return makeGci({
         GciTsNbResult: vi.fn(() => ({
@@ -1451,7 +1451,7 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, 0x123n);
     });
 
-    it('opens the Enhanced Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
+    it('opens the GemStone Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
       vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 
@@ -1472,7 +1472,7 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsClearStack).not.toHaveBeenCalled();
     });
 
-    it('passes a completion callback to the Enhanced Debugger for a halted Display It', async () => {
+    it('passes a completion callback to the GemStone Debugger for a halted Display It', async () => {
       vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 

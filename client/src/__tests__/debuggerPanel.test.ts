@@ -125,9 +125,11 @@ vi.mock('../enhancedInspector/enhancedInspector', () => ({
 }));
 
 // A declined layout carve is reported to the GCI log rather than swallowed, so
-// spy on logWarning; everything else in the module stays real.
+// spy on both levels it can be reported at — warning for the anomaly, info for
+// the older VS Code that has no grid to read. Everything else stays real.
 vi.mock('../gciLog', async (orig) => ({
   ...(await orig<typeof import('../gciLog')>()),
+  logInfo: vi.fn(),
   logWarning: vi.fn(),
 }));
 
@@ -156,9 +158,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
-import { logWarning } from '../gciLog';
+import { logInfo, logWarning } from '../gciLog';
 import { forgetSession as forgetSessionPins } from '../exportSetPins';
-import { EditorGroupLayout } from '../debuggerLayout';
+import { CARVE_SETTLE_MS, EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
   DebuggerPanel,
@@ -1098,6 +1100,32 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'init').errorMessage).toContain("isn't in your symbol list");
     });
 
+    it('says so in the panel when the Explorer cascade rejects', async () => {
+      // The cascade is fire-and-forget, and it can reject — it resolves a session
+      // and opens documents. Reporting nothing would leave the user looking at a
+      // debugger that swallowed their click, with only an unhandled rejection in
+      // the extension host to show for it.
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        cmd === 'gemstone.explorer.findClass'
+          ? Promise.reject(new Error('explorer is not having it'))
+          : Promise.resolve(undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        sendReady(panel);
+
+        sendMessage(panel, { command: 'browseFrame', level: 2 });
+        await flushMicrotasks();
+
+        expect(lastPosted(panel, 'init').errorMessage).toContain(
+          'Could not browse JasperDebugDemo >> #halt',
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
     it('#10 copyStack: assembles the batched dump rows into per-frame groups', () => {
       // One batched fetch returns flat rows; the panel buckets them back into
       // Receiver / Instance variables / Arguments & Temps / (stack temps).
@@ -1330,8 +1358,11 @@ describe('DebuggerPanel', () => {
   describe('source pane', () => {
     // Let revealFrameSource's awaited openTextDocument/showTextDocument settle.
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-    // Long enough for the carve's whole re-read back-off (CARVE_RETRY_DELAYS_MS).
-    const settleRetries = () => new Promise((resolve) => setTimeout(resolve, 300));
+    // Long enough for the carve's whole re-read back-off, derived from the
+    // schedule itself: a restated number goes stale the moment an entry is added
+    // to CARVE_RETRY_DELAYS_MS, and these tests would then under-wait and flake
+    // intermittently instead of failing.
+    const settleRetries = () => new Promise((resolve) => setTimeout(resolve, CARVE_SETTLE_MS + 60));
 
     const URI_INFO = {
       dictName: 'UserGlobals',
@@ -2028,12 +2059,14 @@ describe('DebuggerPanel', () => {
       }
     });
 
-    it('logs a declined carve and keeps the source in the debugger’s own column', async () => {
-      // The panel's group never turns up in the grid. Naming the column after it
-      // anyway is what grew the grid by a column: showTextDocument would have VS
-      // Code create that group, putting the source BESIDE the debugger. Undivided,
-      // the source belongs in the debugger's own column — and the decline is
-      // logged, since its only other symptom is a pane in the wrong place.
+    it('logs a declined carve and opens the source beside the panel, never over it', async () => {
+      // The panel's group never turns up in the grid, so no pair is carved and
+      // showTextDocument has VS Code create the source group on demand — a column
+      // beside the debugger. That is the degraded shape, and it is the safe one:
+      // an editor group shows ONE tab at a time, so putting the source in the
+      // panel's own column would cover the debugger and leave the user clicking
+      // frames in a panel they can no longer see. The decline is logged, since a
+      // pane in the wrong place is its only other symptom.
       (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
       const stale = { orientation: 0, groups: [{ size: 1200 }] };
       vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
@@ -2051,26 +2084,67 @@ describe('DebuggerPanel', () => {
           expect.anything(),
         );
         expect(logWarning).toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+        // The panel opened into column 2 (one pre-existing tab group), so the
+        // source lands in 3 — a column of its own. Anything that equalled the
+        // panel's column would mean the source had been opened ON TOP of the
+        // debugger.
         expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
           expect.anything(),
-          expect.objectContaining({ viewColumn: 2 }), // the panel's column, not a new one
+          expect.objectContaining({ viewColumn: 3 }),
         );
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
       }
     });
 
-    it('leaves the grid alone when it cannot be read', async () => {
-      // getEditorLayout unavailable (older VS Code) → no wholesale rewrite of a
-      // tree we could not inspect; the panel still has its own column.
-      vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+    // An unavailable `vscode.getEditorLayout` reaches us two ways: VS Code
+    // rejects a command it doesn't have, and a build that has it but answers
+    // nothing resolves empty. Both are the same "no grid to read" decline.
+    const unreadableGrid = {
+      'rejects the command': () =>
+        vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command')),
+      'answers no groups': () =>
+        vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined),
+    };
+    it.each(Object.entries(unreadableGrid))(
+      'leaves the grid alone, without warning, when it %s',
+      async (_case, arrange) => {
+        // No wholesale rewrite of a tree we could not inspect; the panel still
+        // has its own column.
+        //
+        // And no warning: an absent command is designed for, not an anomaly, so
+        // warning here would put a line in the GCI log on every halt for a user
+        // whose VS Code is simply older. It is logged at info instead, carrying
+        // whatever reason the read gave, so the decline stays diagnosable — the
+        // warning belongs to the decline the re-read exists to prevent (a
+        // readable grid that never comes to hold the panel's group).
+        arrange();
+        try {
+          openPanelWithStack();
+          await settleRetries();
+
+          expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+            'vscode.setEditorLayout',
+            expect.anything(),
+          );
+          expect(logWarning).not.toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+          expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+        } finally {
+          vi.mocked(vscode.commands.executeCommand).mockReset();
+        }
+      },
+    );
+
+    it('says why the grid could not be read, rather than logging a bare decline', async () => {
+      // The reason is nearly always "command not found", but an internal failure
+      // arrives the same way — and the one line logged for it is the only place
+      // it can be seen.
+      vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('kaboom in the grid'));
       try {
         openPanelWithStack();
-        await flush();
-        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
-          'vscode.setEditorLayout',
-          expect.anything(),
-        );
+        await settleRetries();
+
+        expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('kaboom in the grid'));
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
       }

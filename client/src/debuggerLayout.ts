@@ -46,6 +46,23 @@ export interface EditorGroupLayout {
   groups: EditorGroupNode[];
 }
 
+/**
+ * Back-off schedule for re-reading the editor grid while waiting for the
+ * debugger panel's own group to appear in it (see
+ * `DebuggerPanel.layoutContainingPanelGroup`). The first read is immediate —
+ * that's the usual case, and it keeps a debugger that opens into an
+ * already-registered group free of any delay.
+ *
+ * Here rather than on `DebuggerPanel` so a test that has to wait the whole
+ * schedule out can derive its timeout from the schedule itself; a restated
+ * number goes stale the moment an entry is added, and the tests then
+ * under-wait and flake.
+ */
+export const CARVE_RETRY_DELAYS_MS = [0, 16, 32, 64, 128];
+
+/** How long the carve's re-reads can take in total, for a test that waits them out. */
+export const CARVE_SETTLE_MS = CARVE_RETRY_DELAYS_MS.reduce((sum, ms) => sum + ms, 0);
+
 /** Source-group fraction of the debugger column when nothing's been saved (~1/3). */
 export const DEFAULT_SOURCE_RATIO = 0.33;
 /** The debugger column's share of the window's width (its panes want the room). */
@@ -64,24 +81,31 @@ const MAX_COLUMN_SHARE = 0.8;
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
+/** The axis a branch's children lie along, given its parent's — nesting alternates it. */
+const flip = (orientation: number): number => (orientation === HORIZONTAL ? VERTICAL : HORIZONTAL);
+
 /**
  * Flatten a layout's leaf groups in depth-first, left-to-right order — the same
  * order VS Code assigns ViewColumns (1-based), so leaf N maps to ViewColumn N+1.
- * Each entry carries its parent branch so callers can find a leaf's siblings.
+ * Each entry carries its parent branch so callers can find a leaf's siblings,
+ * and the `axis` those siblings lie along (HORIZONTAL = side by side, VERTICAL =
+ * stacked), which alternates with every level of nesting — the same rule
+ * `locateLeaf` applies.
  */
 export function flattenLayoutLeaves(
   layout: EditorGroupLayout,
-): { node: EditorGroupNode; parent: EditorGroupNode }[] {
-  const acc: { node: EditorGroupNode; parent: EditorGroupNode }[] = [];
+): { node: EditorGroupNode; parent: EditorGroupNode; axis: number }[] {
+  const acc: { node: EditorGroupNode; parent: EditorGroupNode; axis: number }[] = [];
   const root: EditorGroupNode = { groups: layout.groups };
-  const walk = (node: EditorGroupNode, parent: EditorGroupNode): void => {
+  const walk = (node: EditorGroupNode, parent: EditorGroupNode, axis: number): void => {
     if (node.groups && node.groups.length) {
-      for (const child of node.groups) walk(child, node);
+      for (const child of node.groups) walk(child, node, flip(axis));
     } else {
-      acc.push({ node, parent });
+      acc.push({ node, parent, axis });
     }
   };
-  for (const g of layout.groups) walk(g, root);
+  const rootAxis = layout.orientation ?? HORIZONTAL;
+  for (const g of layout.groups) walk(g, root, rootAxis);
   return acc;
 }
 
@@ -96,6 +120,14 @@ export function flattenLayoutLeaves(
  * shape: on a stack of rows the branch holds every other row too, so the source's
  * "share" would be of the whole window and every correction computed from it
  * would be wrong.
+ *
+ * Adjacency alone is not enough, though, so the siblings must also STACK. Where
+ * the carve declined, the source editor still opens at the panel's column plus
+ * one — VS Code creates that group on demand — and those two are adjacent while
+ * sitting SIDE BY SIDE. Both carve shapes put the pair on a vertical axis, so
+ * requiring that is what tells the pair we made from a pair we did not: without
+ * it, the fit pass would hand a height ratio to two widths, and the divider
+ * sampler would remember the result as the user's panel↔source position.
  */
 function locatePair(
   layout: EditorGroupLayout | undefined,
@@ -104,6 +136,7 @@ function locatePair(
   if (!layout || !sourceColumn || sourceColumn < 2) return undefined;
   const leaf = flattenLayoutLeaves(layout)[sourceColumn - 1];
   if (!leaf?.parent.groups) return undefined;
+  if (leaf.axis !== VERTICAL) return undefined; // adjacent, but side by side
   const index = leaf.parent.groups.indexOf(leaf.node);
   if (index < 1) return undefined; // nothing above it in this branch
   const panel = leaf.parent.groups[index - 1];
@@ -131,9 +164,6 @@ function cloneNode(node: EditorGroupNode): EditorGroupNode {
   if (node.groups) copy.groups = node.groups.map(cloneNode);
   return copy;
 }
-
-/** The other axis. Nesting alternates: a branch's children run across its parent's grain. */
-const flip = (orientation: number): number => (orientation === HORIZONTAL ? VERTICAL : HORIZONTAL);
 
 /**
  * Find the group at `column` (1-based, depth-first — see `flattenLayoutLeaves`),

@@ -266,8 +266,10 @@ source in the pane directly below it:
 - Right-click a frame to **Browse** it — the GemStone Explorer cascades to the
   class the running method is defined in and opens that method
 
-The VS Code (DAP) debugger is still registered: start it from the Run and Debug
-view or a `gemstone` launch configuration.
+The older VS Code (DAP) debugger has not been removed — the `gemstone` debug
+type is still registered — but nothing offers it any more, and it is not a route
+you can take from the Run and Debug view: attaching needs the GCI session id and
+the suspended process's OOP, which only a halt knows. Treat it as dormant.
 
 ### Breakpoints
 

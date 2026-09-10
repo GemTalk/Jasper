@@ -15,6 +15,7 @@ import { logError, logInfo, logWarning } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
 import { extensionPathFrom } from './extensionPath';
 import {
+  CARVE_RETRY_DELAYS_MS,
   DEFAULT_SOURCE_RATIO,
   EditorGroupLayout,
   columnPaneSizes,
@@ -79,9 +80,10 @@ const TOOLBAR_ICONS: Record<string, string> = {
  * GemStone Debugger — a roomy, Smalltalk-style debugger rendered as a VS Code
  * webview. It is what the error notifier's "Debug" opens, and it owns the
  * suspended `gsProcess` for that error; closing the panel releases (terminates)
- * that process. The DAP debugger is still registered and reachable from Run and
- * Debug / a launch configuration, but the notifier no longer offers it, so the
- * two never coexist on the same process.
+ * that process. The DAP debugger is still REGISTERED but is now dormant: its
+ * attach configuration requires `sessionId` and `gsProcess`, and nothing
+ * surfaces a live process OOP for a user to put in a launch configuration, so
+ * the two cannot coexist on one process.
  *
  * This panel is a SECOND consumer of the DAP-free data layer in
  * `debugQueries.ts` (the DAP `GemStoneDebugSession` is the first). It mirrors
@@ -1091,27 +1093,23 @@ export class DebuggerPanel {
     // Through the getter, never `this.panel` directly: this is read during
     // teardown, when the panel throws rather than answering.
     const panel = this.panelGroupColumn;
-    // The pair's second leaf is the column after the panel's — but only once the
-    // carve has actually made one. Naming it anyway when the carve declined is
-    // what grew the grid by a column: `showTextDocument` has VS Code CREATE the
-    // group on demand, so the source landed beside the debugger instead of
-    // inside it. Undivided, the debugger's own column is where the source goes;
-    // it opens as a tab alongside the panel rather than in a new column.
-    if (panel !== undefined) return this.sourceCarved ? panel + 1 : panel;
+    // The pair's second leaf is the column after the panel's. Where the carve
+    // declined there is no such group yet, so `showTextDocument` has VS Code
+    // create it on demand and the source arrives in a column of its own beside
+    // the debugger rather than below it. That costs a column, but both halves
+    // stay on screen — which the panel's OWN column cannot do: a group shows one
+    // tab at a time, so the source would cover the debugger and leave frames to
+    // be clicked in a panel that is no longer visible.
+    if (panel !== undefined) return panel + 1;
     return this.sourceColumn;
   }
   /**
-   * True once `carveDebuggerColumn` has split this debugger's column into the
-   * panel/source pair (or inherited one a sibling halt carved). While false there
-   * is no source group, only the panel's own — see `sourceGroupColumn`.
-   */
-  private sourceCarved = false;
-  /**
    * Resolves once the carve has settled — with the panel/source column pair in
-   * the editor grid, or with the decline that means there is none (see
-   * `sourceCarved`). Every source open awaits it, so the source editor always
-   * opens into a group that is already there at the right size, instead of
-   * splitting one on the fly and landing wherever the split happened to go.
+   * the editor grid, or with the decline that leaves VS Code to create the
+   * source group on demand (see `sourceGroupColumn`). Every source open awaits
+   * it, so the source editor opens into a group that is already there at the
+   * right size wherever it can, instead of splitting one on the fly and landing
+   * wherever the split happened to go.
    */
   private gridReady: Promise<void> = Promise.resolve();
   /**
@@ -1326,14 +1324,6 @@ export class DebuggerPanel {
    *   can render its result back in the workspace). Omitted when there's no
    *   result to surface (Execute It, or a halt not originating from a doit).
    */
-  /**
-   * Back-off schedule for re-reading the editor grid while waiting for the
-   * panel's own group to appear in it (see layoutContainingPanelGroup). The
-   * first read is immediate — that's the usual case, and it keeps a debugger
-   * that opens into an already-registered group free of any delay.
-   */
-  private static readonly CARVE_RETRY_DELAYS_MS = [0, 16, 32, 64, 128];
-
   static create(
     session: ActiveSession,
     gsProcess: bigint,
@@ -1366,15 +1356,7 @@ export class DebuggerPanel {
     // the webview's `ready` arrives asynchronously, so every source open awaits
     // this rather than racing it. A second halt joins the column the first one
     // carved, so it neither carves nor re-fits.
-    // Whether the column really is split is read from the first halt AFTER its
-    // carve settles, never snapshotted here: the carve is usually still in flight
-    // at this point, and a snapshot would say "not split" for a pair that is
-    // about to exist — sending this halt's source into the panel's own group.
-    debugger_.gridReady = shared
-      ? shared.gridReady.then(() => {
-          debugger_.sourceCarved = shared.carved();
-        })
-      : debugger_.carveDebuggerColumn();
+    debugger_.gridReady = shared ? shared.gridReady : debugger_.carveDebuggerColumn();
     if (shared) debugger_.fitPending = false;
     if (!DebuggerPanel.panels.has(session.id)) {
       DebuggerPanel.panels.set(session.id, new Set());
@@ -1878,13 +1860,27 @@ export class DebuggerPanel {
     // dictionaries would otherwise resolve to whichever entry comes first, which
     // can be a different class of the same name. The session id pins the reveal
     // to the stone this halt is on rather than whichever session is selected now.
-    void vscode.commands.executeCommand(
-      'gemstone.explorer.findClass',
-      target.className,
-      this.sessionId,
-      target.dictName,
-      { selector: raw.selector, isMeta: target.isMeta },
-    );
+    // Promise.resolve, not `.catch` straight off the call: `executeCommand`
+    // answers a `Thenable`, which is not promised to be a real Promise.
+    void Promise.resolve(
+      vscode.commands.executeCommand(
+        'gemstone.explorer.findClass',
+        target.className,
+        this.sessionId,
+        target.dictName,
+        { selector: raw.selector, isMeta: target.isMeta },
+      ),
+    ).catch((e: unknown) => {
+      // Every other way this method can fail says so in the panel. A rejected
+      // command must not be the one exception that reports nothing to the user
+      // and surfaces only as an unhandled rejection in the extension host — the
+      // Explorer's cascade can reject (it opens documents and resolves a
+      // session), and this call is fire-and-forget.
+      logError(this.sessionId, e instanceof Error ? e.message : String(e));
+      if (this.disposed) return;
+      this.errorMessage = `Could not browse ${target.className} >> #${raw.selector}.`;
+      this.postInit();
+    });
   }
 
   /**
@@ -3636,8 +3632,9 @@ export class DebuggerPanel {
    * Open `uri` in the companion source editor and return it. The editor lives in
    * the group directly below the panel — carved with the panel's column before
    * either existed (see `carveDebuggerColumn`), so this only has to open into it;
-   * where the carve declined, `sourceGroupColumn` keeps it in the debugger's own
-   * column rather than growing the grid. Focus stays in the panel so clicking
+   * where the carve declined there is no such group and VS Code creates one on
+   * demand, beside the panel rather than below it (see `sourceGroupColumn`).
+   * Focus stays in the panel so clicking
    * through frames stays fluid, and the doc opens as a reused preview tab (no
    * pile-up).
    */
@@ -3691,10 +3688,12 @@ export class DebuggerPanel {
    *
    * Everything that RESIZES goes through this. The pair is identified by column
    * arithmetic (see locatePair), which is sound as long as the two panes are the
-   * ones the carve made adjacent. If the carve declined an unfamiliar grid, or
-   * the source ended up somewhere else entirely, that arithmetic would name some
-   * pre-existing group of the user's as "the panel" and resize it. Requiring
-   * adjacency to our own column is what makes that impossible.
+   * ones the carve made adjacent. If the source ended up somewhere else entirely,
+   * that arithmetic would name some pre-existing group of the user's as "the
+   * panel" and resize it; requiring adjacency to our own column is what makes
+   * that impossible. Adjacency is not sufficient, though — a declined carve
+   * leaves the source adjacent but SIDE BY SIDE — so `locatePair` also requires
+   * the two to stack, and every resize path declines on a grid we didn't carve.
    */
   private get ourPairColumns(): { panelColumn: number; sourceColumn: number } | undefined {
     const panelColumn = this.panelGroupColumn;
@@ -3713,10 +3712,16 @@ export class DebuggerPanel {
    *
    * Best-effort: if the grid can't be read, or doesn't have the shape we just
    * made, it's left exactly as it is and the decline is LOGGED — a silent
-   * decline is how this went wrong before, since the only visible symptom is a
-   * source pane that turns up beside the debugger instead of below it. The
-   * source then opens as a tab in the panel's own column (see
-   * `sourceGroupColumn`), so a declined carve costs the split, never the shape.
+   * decline is how this went wrong before, since its only visible symptom is a
+   * source pane beside the debugger rather than below it. That is where the
+   * source lands on a decline (see `sourceGroupColumn`): a column of its own, so
+   * a declined carve costs a column, never a half you cannot see.
+   *
+   * The two declines are logged at different levels. A grid that cannot be read
+   * at all is an older VS Code without `vscode.getEditorLayout`: designed for,
+   * nothing wrong, and warning about it would put a line in the GCI log on every
+   * single halt. The warning is kept for the decline the re-read below exists to
+   * prevent — a grid we CAN read that never grew to hold the panel's group.
    *
    * Nothing undoes this on close: the panel and the source tab are the only
    * editors in the pair, so closing them leaves both groups empty and VS Code
@@ -3726,23 +3731,27 @@ export class DebuggerPanel {
    */
   private async carveDebuggerColumn(): Promise<void> {
     try {
+      const { layout, unreadable, reason } = await this.layoutContainingPanelGroup();
+      // The wait can span the whole back-off, and a panel closed inside it has
+      // already run its own empty-group sweep — splitting the column now would
+      // reshape whatever moved into it and leave a stray pane behind.
+      if (this.disposed) return;
       const panelColumn = this.panelGroupColumn;
-      const current = await this.layoutContainingPanelGroup(panelColumn);
-      const plan = planDebuggerGrid(current, panelColumn);
+      const plan = layout ? planDebuggerGrid(layout, panelColumn) : undefined;
       if (!plan) {
-        logWarning(
-          `Debugger could not carve a source pane below its panel in column ${panelColumn}; ` +
-            'the source will open in the panel’s own column.',
-        );
+        const decline =
+          `Debugger could not carve a source pane below its panel in column ${panelColumn}` +
+          `${reason ? ` (${reason})` : ''}; the source will open in a column beside it.`;
+        if (unreadable) logInfo(decline);
+        else logWarning(decline);
         return;
       }
       await vscode.commands.executeCommand('vscode.setEditorLayout', plan.layout);
       this.sourceColumn = plan.sourceColumn;
-      this.sourceCarved = true;
     } catch (e: unknown) {
       logWarning(
         `Debugger layout carve failed: ${e instanceof Error ? e.message : String(e)}; ` +
-          'the source will open in the panel’s own column.',
+          'the source will open in a column beside the panel.',
       );
     }
   }
@@ -3758,22 +3767,44 @@ export class DebuggerPanel {
    *
    * So: re-read until the grid has at least as many leaves as the panel's column
    * number, backing off a little each time. Only a grid that came back at all is
-   * retried; `getEditorLayout` answering nothing means the command isn't there
-   * (an older VS Code), and no amount of waiting changes that. Answers undefined
-   * when the group never showed up, which the caller reports as a decline.
+   * retried; `getEditorLayout` answering nothing — or rejecting, which is how VS
+   * Code reports a command it doesn't have — means the command isn't there (an
+   * older VS Code), and no amount of waiting changes that.
+   *
+   * `unreadable` separates that from the anomaly this re-read was written for: a
+   * grid that answers, but never grows to hold the panel's group. Both leave
+   * `layout` undefined and both decline; only the second is worth a warning.
+   *
+   * The panel's column is re-read on every pass rather than passed in: until VS
+   * Code registers the group, `panelGroupColumn` answers the number we ASKED for
+   * (seeded in `create`), and the whole reason to wait is that the panel cannot
+   * yet say where it is. A column captured before the loop would also miss any
+   * renumbering inside it, and `planDebuggerGrid` would then split a group that
+   * isn't ours.
    */
-  private async layoutContainingPanelGroup(
-    panelColumn: vscode.ViewColumn | undefined,
-  ): Promise<EditorGroupLayout | undefined> {
-    for (const delayMs of DebuggerPanel.CARVE_RETRY_DELAYS_MS) {
+  private async layoutContainingPanelGroup(): Promise<{
+    layout?: EditorGroupLayout;
+    unreadable: boolean;
+    reason?: string;
+  }> {
+    for (const delayMs of CARVE_RETRY_DELAYS_MS) {
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      const layout =
-        await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      if (!layout?.groups?.length) return undefined;
-      if (panelColumn === undefined) return layout;
-      if (flattenLayoutLeaves(layout).length >= panelColumn) return layout;
+      const panelColumn = this.panelGroupColumn;
+      let layout: EditorGroupLayout | undefined;
+      try {
+        layout = await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
+      } catch (e: unknown) {
+        // Carry the reason: this is nearly always "command not found" on an
+        // older VS Code, and the caller logs it at info — but an internal
+        // failure arrives the same way, and dropping its message would leave
+        // the one line we log saying nothing about why.
+        return { unreadable: true, reason: e instanceof Error ? e.message : String(e) };
+      }
+      if (!layout?.groups?.length) return { unreadable: true };
+      if (panelColumn === undefined) return { layout, unreadable: false };
+      if (flattenLayoutLeaves(layout).length >= panelColumn) return { layout, unreadable: false };
     }
-    return undefined;
+    return { unreadable: false };
   }
 
   /**
@@ -3828,8 +3859,6 @@ export class DebuggerPanel {
         panelColumn: vscode.ViewColumn;
         sourceColumn: vscode.ViewColumn;
         gridReady: Promise<void>;
-        /** Read after `gridReady`: whether that debugger's carve actually split the column. */
-        carved: () => boolean;
       }
     | undefined {
     // This session's panels only. Two sessions are two stones' worth of work,
@@ -3852,7 +3881,6 @@ export class DebuggerPanel {
           panelColumn,
           sourceColumn,
           gridReady: dbg.gridReady,
-          carved: () => dbg.sourceCarved,
         };
       }
     }
@@ -4000,7 +4028,7 @@ export class DebuggerPanel {
   /**
    * Walk the suspended process's stack and build a label per frame. The naming
    * logic deliberately mirrors the DAP `stackTraceRequest`
-   * (gemstoneDebugSession.ts) so the Enhanced Debugger's stack matches the Run
+   * (gemstoneDebugSession.ts) so the GemStone Debugger's stack matches the Run
    * and Debug Call Stack frame-for-frame. Proves the `debugQueries` pipe works
    * from this second consumer before Stage 1 builds the real layout on top.
    */

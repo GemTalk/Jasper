@@ -4586,8 +4586,16 @@ export class ExplorerController {
   // already resolved which dictionary owns the class it means — the Inspector's
   // Browse Class and the debugger's Browse both do. Without it a class name
   // shadowed across dictionaries resolves to whichever entry comes first, which
-  // can be the wrong class of the same name. Ignored when no entry matches it, so
-  // a stale hint still lands on the class rather than on nothing.
+  // can be the wrong class of the same name.
+  //
+  // A dictionary holding no class of that name is still fallen back on rather
+  // than refused — landing on the class beats landing on nothing, and the
+  // dictionary may simply be stale — but the fallback SAYS SO, naming the
+  // dictionary it landed in instead. Both callers resolve the dictionary from
+  // the live stone a call earlier, so a miss is as likely a disagreement as
+  // staleness, and the fallback lands on precisely the wrong-class-of-the-same-
+  // name this parameter exists to prevent: silently, on the class the user is
+  // least equipped to notice is wrong. Only a name in NO dictionary is refused.
   //
   // `method` lands on one of the class's methods rather than on the class: its
   // row is selected and its source opened. That's what Browse from a debugger
@@ -4624,11 +4632,25 @@ export class ExplorerController {
     if (name && name.trim()) {
       const trimmed = name.trim();
       const lower = trimmed.toLowerCase();
-      const inDict = dictName ? entries.filter((e) => e.dictName === dictName) : [];
-      const pool = inDict.length > 0 ? inDict : entries;
-      chosen =
+      const matchIn = (pool: queries.ClassNameEntry[]) =>
         pool.find((e) => e.className === trimmed) ??
         pool.find((e) => e.className.toLowerCase() === lower);
+      // The named dictionary first, and ONLY it: a pool that falls back to every
+      // class whenever the dictionary contributes none conflates "no such
+      // dictionary" with "not in that dictionary", and the second is the case
+      // that happens — a dictionary full of classes that doesn't hold this one.
+      chosen = dictName
+        ? matchIn(entries.filter((e) => e.dictName === dictName))
+        : matchIn(entries);
+      if (!chosen && dictName) {
+        chosen = matchIn(entries);
+        if (chosen) {
+          void vscode.window.showWarningMessage(
+            `No class "${trimmed}" in ${dictName}; showing the one in ${chosen.dictName} instead — ` +
+              'it may not be the one you meant.',
+          );
+        }
+      }
       if (!chosen) {
         void vscode.window.showWarningMessage(`No class matching "${trimmed}".`);
         return;

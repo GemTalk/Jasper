@@ -274,7 +274,7 @@ export class CodeExecutor {
 
   /**
    * Render a Display-It result after refocusing its editor. Used only by the
-   * debugger's resume-to-completion path: the Enhanced Debugger panel takes
+   * debugger's resume-to-completion path: the GemStone Debugger panel takes
    * focus and then disposes, so the workspace editor must be re-focused before
    * the result is shown — the Backspace (dismiss) / Enter (expand) keybindings
    * are gated on editorTextFocus. Falls back to the captured editor reference if
@@ -632,15 +632,16 @@ export class CodeExecutor {
 
   /**
    * Single shared notifier for a debuggable GemStone error. Offers ONE debugger
-   * — the Enhanced Debugger panel — plus the implicit Cancel/dismiss. Debug
+   * — the GemStone Debugger panel — plus the implicit Cancel/dismiss. Debug
    * OWNS the suspended `gsProcess`; dismissing clears the stack so the process
    * is released.
    *
    * The DAP debugger is not offered here. Two buttons for "debug this" is a
    * choice nobody wants at the moment their code broke, and the panel is the one
    * with the frame list, the variable pane, inline values and step points. The
-   * `gemstone` debug type stays registered (see extension.ts), so the DAP route
-   * remains reachable from Run and Debug and from a launch configuration.
+   * `gemstone` debug type stays registered (see extension.ts) rather than being
+   * torn out, but this notifier was its only caller: attaching needs a live
+   * `gsProcess` OOP, which nothing else surfaces, so the DAP route is dormant.
    */
   private async promptDebuggableError(
     session: ActiveSession,
