@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { DocumentManager } from '../../utils/documentManager';
-import { formatDocument } from '../formatting';
+import { formatDocument, isFormattableDocument } from '../formatting';
 import { FormatterSettings, DEFAULT_SETTINGS } from '../formatterSettings';
+import { detectFormat } from '../../utils/workspaceIndex';
 
 function format(source: string, overrides: Partial<FormatterSettings> = {}): string {
   const dm = new DocumentManager();
@@ -559,5 +560,69 @@ describe('Formatter Settings', () => {
       const input = 'run\n(a + b) + c\n%';
       expect(format(input, { removeUnnecessaryParens: false })).toContain('(a + b) + c');
     });
+  });
+});
+
+// ── Which documents Format Document touches ─────────────────
+//
+// `gemstone://` method editors reach the formatter through the same pipeline as a
+// Topaz file, but definition and comment editors must not — see
+// isFormattableDocument. These cases pin one document kind each; the class-comment
+// one is the regression that matters, because formatting prose destroys it.
+
+describe('isFormattableDocument', () => {
+  const METHOD_URI = 'gemstone://1/UserGlobals/V8Contact/instance/accessing/printOn:';
+  const CLASS_METHOD_URI = 'gemstone://1/UserGlobals/V8Contact/class/instance%20creation/new';
+  const DEFINITION_URI = 'gemstone://1/UserGlobals/V8Contact/definition';
+  const DEFINITION_URI_5 = 'gemstone://1/UserGlobals/V8Contact/definition/V8Contact';
+  const COMMENT_URI = 'gemstone://1/UserGlobals/V8Contact/comment';
+  const COMMENT_URI_5 = 'gemstone://1/UserGlobals/V8Contact/comment/V8Contact%20comment';
+
+  // Mirrors how the server builds a document: the format comes from the URI
+  // (server.ts:165), which is exactly what makes every gemstone:// document
+  // 'smalltalk' regardless of whether it holds a method, a definition or a comment.
+  function doc(uri: string, text: string) {
+    return new DocumentManager().update(uri, 1, text, detectFormat(uri));
+  }
+
+  it('formats an instance-side method editor', () => {
+    const d = doc(METHOD_URI, "printOn: s s nextPutAll: 'Addr(', street, ', ', city, ')'");
+    expect(isFormattableDocument(d)).toBe(true);
+    expect(formatDocument(d, DEFAULT_SETTINGS)[0].newText).toBe(
+      "printOn: s\n\n  s nextPutAll: 'Addr(' , street , ', ' , city , ')'.",
+    );
+  });
+
+  it('formats a class-side method editor', () => {
+    expect(isFormattableDocument(doc(CLASS_METHOD_URI, 'new ^super new init'))).toBe(true);
+  });
+
+  it('leaves a class-definition editor alone', () => {
+    expect(isFormattableDocument(doc(DEFINITION_URI, 'Object subclass: #V8Contact'))).toBe(false);
+    expect(isFormattableDocument(doc(DEFINITION_URI_5, 'Object subclass: #V8Contact'))).toBe(false);
+  });
+
+  it('leaves a class-comment editor alone, so prose is not reflowed as code', () => {
+    // The guard that matters. Run through the formatter this text loses its paragraph
+    // break and gains a line break at every sentence-ending period, because the parser
+    // reads them as statement separators.
+    const prose = 'An address. Holds a street and a city.\n\nSecond paragraph here.';
+    for (const uri of [COMMENT_URI, COMMENT_URI_5]) {
+      const d = doc(uri, prose);
+      expect(isFormattableDocument(d)).toBe(false);
+      // Confirm the damage is real, i.e. the guard is load-bearing rather than
+      // defensive: bypassing it does mangle the comment.
+      expect(formatDocument(d, DEFAULT_SETTINGS)[0].newText).not.toBe(prose);
+    }
+  });
+
+  it('formats a Topaz file, unchanged from before', () => {
+    expect(isFormattableDocument(doc('file:///x/foo.gs', 'method: Foo\nfoo ^self\n%'))).toBe(true);
+  });
+
+  it('leaves a Tonel file alone', () => {
+    expect(isFormattableDocument(doc('file:///x/Foo.class.st', 'Class { #name : #Foo }'))).toBe(
+      false,
+    );
   });
 });
