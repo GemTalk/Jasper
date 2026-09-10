@@ -2107,6 +2107,7 @@ describe('DebuggerPanel', () => {
       }[];
       groups.length = 0;
       groups.push({ viewColumn: 4, tabs: [{ input: {} }] });
+      const remembered = groups[0];
       const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [4] } });
       vi.mocked(vscode.window.tabGroups.close).mockClear();
 
@@ -2116,10 +2117,55 @@ describe('DebuggerPanel', () => {
       // The halt lands while the retire is still waiting out its back-off, and the
       // column it remembers has emptied in the meantime.
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      groups[0].tabs.length = 0;
+      remembered.tabs.length = 0;
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
+      // Named rather than asserting nothing closed at all: the panel this opens
+      // sweeps its own groups when it goes, and this is about ONE column.
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalledWith(remembered);
+    });
+
+    // What the reaping chain waits on is a tab close, which is as slow as VS Code makes
+    // it — so the chain can reach the retire long after the window it was armed for.
+    // The columns it carries were read off THAT layout: a debugger has carved since,
+    // every number in it names a different group, and one of those is the new
+    // debugger's source pane, carved empty. The generation is captured where the
+    // numbers are read and carried down, so a chain that slips gives up.
+    it('does not retire a remembered column once the chain reaches it after a carve', async () => {
+      const uri = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/size';
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      const sourceTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      groups.push({ viewColumn: 6, tabs: [sourceTab] }); // the tab to reap
+      groups.push({ viewColumn: 4, tabs: [] }); // the remembered pair, already empty
+      const remembered = groups[1];
+      // Hold the tab close open, so the chain behind it is still pending when the halt
+      // arrives — the slow close that lets a stale sweep outlive its window.
+      let landTabClose = (): void => {};
+      const close = vi.mocked(vscode.window.tabGroups.close);
+      close.mockClear();
+      close.mockImplementation((target: unknown) =>
+        target === sourceTab
+          ? new Promise<boolean>((resolve) => {
+              landTabClose = () => resolve(true);
+            })
+          : Promise.resolve(true),
+      );
+
+      DebuggerPanel.initSourceTabCleanup(
+        fakeMemento({ [ORPHAN_KEY]: { uris: [uri], columns: [4] } }),
+      );
+      await flush();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      landTabClose();
+      await flushMicrotasks();
+
+      // The tab it was sent to reap, yes. The column it remembered, no.
+      expect(close).toHaveBeenCalledWith(sourceTab);
+      expect(close).not.toHaveBeenCalledWith(remembered);
     });
 
     // The half the serializer alone could never reach: the companion source group is

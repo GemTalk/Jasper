@@ -1012,10 +1012,15 @@ export class DebuggerPanel {
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
     DebuggerPanel.orphanColumns = orphans.columns;
+    // The layout these numbers were read against. Captured HERE, once, and carried
+    // down every path below rather than read again when each retire finally runs:
+    // the work below is fire-and-forget, so a slow tab close can land it long after
+    // this window's layout stopped being the one the numbers describe.
+    const generation = DebuggerPanel.columnLayoutGeneration;
     // The columns are retired even with nothing to reap: a debugger that never showed a
     // source still carved a group, and that group is exactly the one with no tab in it.
     if (orphans.uris.length === 0) {
-      void DebuggerPanel.retireOrphanColumns();
+      void DebuggerPanel.retireOrphanColumns(generation);
       return;
     }
     const wanted = new Set(orphans.uris);
@@ -1035,8 +1040,10 @@ export class DebuggerPanel {
     void Promise.all(closing)
       .catch(() => {})
       .then(async () => {
-        for (const column of vacated) await DebuggerPanel.retireEmptyGroup(column);
-        await DebuggerPanel.retireOrphanColumns();
+        for (const column of vacated) {
+          await DebuggerPanel.retireEmptyGroup(column, generation);
+        }
+        await DebuggerPanel.retireOrphanColumns(generation);
       });
   }
 
@@ -1060,11 +1067,18 @@ export class DebuggerPanel {
    */
   private static columnLayoutGeneration = 0;
 
-  /** Retire whichever of the last window's debugger columns came back empty. Safe to
-   *  call more than once: retireEmptyGroup only closes a group with nothing in it. */
-  private static async retireOrphanColumns(): Promise<void> {
+  /**
+   * Retire whichever of the last window's debugger columns came back empty. Safe to
+   * call more than once: retireEmptyGroup only closes a group with nothing in it.
+   *
+   * `generation` is the layout the columns were read against, passed in rather than
+   * read here. Reading it here would re-authorize a call that has slipped: this runs
+   * from fire-and-forget chains, so it can start after a debugger has recarved the
+   * grid — and then every number it holds names a group it was not recorded for.
+   */
+  private static async retireOrphanColumns(generation: number): Promise<void> {
     for (const column of DebuggerPanel.orphanColumns) {
-      await DebuggerPanel.retireEmptyGroup(column);
+      await DebuggerPanel.retireEmptyGroup(column, generation);
     }
   }
 
@@ -1097,14 +1111,18 @@ export class DebuggerPanel {
    * a back-off is the only signal available. Collapsing them would mean either polling
    * a close we could have awaited, or awaiting a promise that does not exist.
    */
-  private static async retireEmptyGroup(column: vscode.ViewColumn | undefined): Promise<void> {
+  private static async retireEmptyGroup(
+    column: vscode.ViewColumn | undefined,
+    generation: number,
+  ): Promise<void> {
     if (column === undefined) return;
-    const generation = DebuggerPanel.columnLayoutGeneration;
     for (const delayMs of RETIRE_GROUP_RETRY_DELAYS_MS) {
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      // A debugger carved a pair while this was waiting, so `column` no longer names
-      // the group it was captured for — and one of the groups it now names is that
-      // debugger's empty source pane. Give up rather than close somebody else's group.
+      // A debugger has carved a pair since `column` was read off the layout, so it no
+      // longer names the group it was recorded for — and one of the groups it now
+      // names is that debugger's empty source pane. Checked before the first look as
+      // well as between retries, because the caller's chain may itself have been
+      // waiting: give up rather than close somebody else's group.
       if (DebuggerPanel.columnLayoutGeneration !== generation) return;
       const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
       if (!group) return; // already gone
@@ -1159,13 +1177,16 @@ export class DebuggerPanel {
         // window is still restoring keeps its place, which is the blank pane this is all
         // about. So the group is retired here as well.
         const column = panel.viewColumn;
+        // The layout both retires below are entitled to act on — read before the
+        // dispose that starts them, and not again afterwards (see retireOrphanColumns).
+        const generation = DebuggerPanel.columnLayoutGeneration;
         panel.dispose();
         // Its own column when VS Code reports one — during deserialization it may not
         // yet — and then the columns recorded before the window closed, which is what
         // covers the companion source group as well. This runs after activate(), so it
         // is also the pass at which the panel's own group is finally empty.
-        return DebuggerPanel.retireEmptyGroup(column).then(() =>
-          DebuggerPanel.retireOrphanColumns(),
+        return DebuggerPanel.retireEmptyGroup(column, generation).then(() =>
+          DebuggerPanel.retireOrphanColumns(generation),
         );
       },
     });
