@@ -25,17 +25,23 @@ interface FakeSessions {
   fireSelectionChanged(): void;
   fireSessionRemoved(): void;
 }
-function makeSessions(hasSession: boolean): FakeSessions {
+function makeSessions(hasSession: boolean, selectedId = 1): FakeSessions {
   const listeners: { selection: (() => void)[]; removed: (() => void)[] } = {
     selection: [],
     removed: [],
   };
+  const session = (id: number) => ({
+    id,
+    gci: {},
+    handle: `h${id}`,
+    login: { label: 'Test' },
+    stoneVersion: '3.7.2',
+  });
   const manager = {
-    getSelectedSession: vi.fn(() =>
-      hasSession
-        ? { id: 1, gci: {}, handle: 'h1', login: { label: 'Test' }, stoneVersion: '3.7.2' }
-        : undefined,
-    ),
+    getSelectedSession: vi.fn(() => (hasSession ? session(selectedId) : undefined)),
+    // Answers for any id asked for, so a test can pin which session the provider
+    // looked up rather than only which one was selected.
+    getSession: vi.fn((id: number) => (hasSession ? session(id) : undefined)),
     onDidChangeSelection: vi.fn((l: () => void) => {
       listeners.selection.push(l);
       return { dispose: () => {} };
@@ -324,8 +330,8 @@ describe('when the cached answers stop being true', () => {
 
   const doc = () => makeDocument('gemstone://1/Globals/Array/instance/accessing/size');
 
-  function primed() {
-    const sessions = makeSessions(true);
+  function primed(selectedId = 1) {
+    const sessions = makeSessions(true, selectedId);
     const provider = new GemStoneCompletionProvider(sessions.manager);
     mockGetAllSelectors.mockReturnValue(['size']);
     mockGetInstVarNames.mockReturnValue(['contents']);
@@ -368,6 +374,21 @@ describe('when the cached answers stop being true', () => {
 
     // A definition compile can introduce a name the list has never seen.
     expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
+  });
+
+  // The URI carries the session it belongs to in its authority, and that is the session
+  // whose entry goes: with two sessions open the compile can land on the one that is NOT
+  // selected, and clearing the selected session's entry instead would leave the stale
+  // entry sitting in the cache behind a cache that had visibly been cleared.
+  it("drops the compiled session's class, not the selected session's", () => {
+    const { provider } = primed(2);
+
+    provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/instance/x/y'));
+    provider.provideCompletionItems(doc());
+
+    // Session 2's Array was never stale, so it is still served from the cache.
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+    expect(mockGetInstVarNames).not.toHaveBeenCalled();
   });
 
   it('leaves another class alone when one class is compiled', () => {
@@ -420,18 +441,21 @@ describe('warming a class ahead of the first request', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
-  // In afterEach, not at the end of each test: a failing assertion would otherwise
-  // skip the restore and leave fake timers on for whatever ran next. clearAllTimers
-  // drops a prime still pending, so one test's debounce cannot fire inside another —
-  // which it did, and the order shuffling made it look intermittent.
+  // In afterEach, not at the end of each test: a failing assertion would otherwise skip
+  // the restore and leave the clock faked for whatever ran next — and within-file order
+  // is shuffled (sequence.shuffle in vitest.config.ts), so WHICH describe inherited it
+  // would be a per-seed lottery. useRealTimers rather than clearAllTimers, which drains
+  // the pending queue but leaves the fake clock installed: it uninstalls the clock and
+  // discards the queue with it, so a prime still pending cannot fire inside another test
+  // — which it did, and the shuffling made it look intermittent.
   afterEach(() => {
-    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it('does not touch the stone on the selection itself', () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
-    provider.primeClass('Array');
+    provider.primeClass(1, 'Array');
 
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
     expect(mockGetInstVarNames).not.toHaveBeenCalled();
@@ -440,7 +464,7 @@ describe('warming a class ahead of the first request', () => {
   it('fetches once the selection settles', () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
-    provider.primeClass('Array');
+    provider.primeClass(1, 'Array');
     vi.runAllTimers();
 
     expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.anything(), 'Array');
@@ -450,9 +474,9 @@ describe('warming a class ahead of the first request', () => {
   it('fetches only the class landed on when several are clicked through', () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
-    provider.primeClass('First');
-    provider.primeClass('Second');
-    provider.primeClass('Third');
+    provider.primeClass(1, 'First');
+    provider.primeClass(1, 'Second');
+    provider.primeClass(1, 'Third');
     vi.runAllTimers();
 
     expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
@@ -463,7 +487,7 @@ describe('warming a class ahead of the first request', () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
     mockGetAllSelectors.mockReturnValue(['size']);
 
-    provider.primeClass('Array');
+    provider.primeClass(1, 'Array');
     vi.runAllTimers();
     mockGetAllSelectors.mockClear();
     provider.provideCompletionItems(makeDocument('gemstone://1/Globals/Array/instance/a/size'));
@@ -471,10 +495,34 @@ describe('warming a class ahead of the first request', () => {
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });
 
+  // The prime is a quarter-second behind the gesture, so the selection can have moved
+  // to another session by the time it fires. It warms the session the class was
+  // selected in, which is the one whose completions the user is about to ask for.
+  it('warms the session it was handed, not whichever is selected when it fires', () => {
+    const sessions = makeSessions(true, 1);
+    const provider = new GemStoneCompletionProvider(sessions.manager);
+
+    provider.primeClass(7, 'Array');
+    vi.runAllTimers();
+
+    expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 'Array');
+    expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 'Array');
+  });
+
+  it('does nothing for a session that went away while the prime waited', () => {
+    const sessions = makeSessions(false);
+    const provider = new GemStoneCompletionProvider(sessions.manager);
+
+    provider.primeClass(7, 'Array');
+    vi.runAllTimers();
+
+    expect(mockGetAllSelectors).not.toHaveBeenCalled();
+  });
+
   it('drops a prime that has not fired yet when disposed', () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
-    provider.primeClass('Array');
+    provider.primeClass(1, 'Array');
     provider.dispose();
     vi.runAllTimers();
 

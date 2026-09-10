@@ -61,11 +61,19 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
    * A method or class definition was just compiled at `uri`, so whatever that URI's
    * class had cached is now a version behind. A class-definition compile can also
    * introduce a name the class list has never seen, hence the second drop.
+   *
+   * The session is read off the URI's authority, which is where a `gemstone://` URI
+   * carries the session it belongs to, and where the Explorer and GemStone Search
+   * hooks registered beside this one read it from. NOT from the current selection:
+   * with two sessions open, a compile can land on a document belonging to the one
+   * that is not selected, and keying off the selection there would drop the SELECTED
+   * session's entry and leave the genuinely stale one in the cache — worse than not
+   * invalidating at all, because a cache was cleared and the staleness survived.
    */
   invalidateForCompiledUri(uri: vscode.Uri, definitionChanged = false): void {
-    const session = this.sessionManager.getSelectedSession();
+    const sessionId = parseInt(uri.authority, 10);
     const className = this.extractClassName(uri);
-    if (session && className) this.invalidateClass(session.id, className);
+    if (!Number.isNaN(sessionId) && className) this.invalidateClass(sessionId, className);
     if (definitionChanged) this.invalidateClassNames();
   }
 
@@ -83,16 +91,22 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
    * inherited chain and is a strictly larger set. A warm-but-partial list is worse
    * than a cold correct one, because nothing would later notice it was short.
    *
+   * Warms the session the class was selected IN, which the Explorer passes through,
+   * rather than whatever is selected when the debounce expires: the two can differ,
+   * because the fetch is deliberately a quarter-second behind the gesture.
+   *
    * Best-effort throughout. Debounced, so clicking through classes does not fire a
    * fetch per row; off the gesture, so selection stays immediate; and failures are
    * swallowed exactly as the fetches below already swallow them — a prime that does
    * not happen costs a slow first completion, which is where this started.
    */
-  primeClass(className: string): void {
+  primeClass(sessionId: number, className: string): void {
     if (this.primeTimer) clearTimeout(this.primeTimer);
     this.primeTimer = setTimeout(() => {
       this.primeTimer = undefined;
-      const session = this.sessionManager.getSelectedSession();
+      // Gone in the meantime (logged out, session closed) — nothing to warm, and the
+      // caches for it were cleared by onDidRemoveSession anyway.
+      const session = this.sessionManager.getSession(sessionId);
       if (!session) return;
       // Straight through the same getters the provider uses, so a primed entry is
       // byte-for-byte what a request would have cached and can never disagree with it.

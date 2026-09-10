@@ -5704,7 +5704,20 @@ export class ExplorerController {
     // created visible and ready to file a method into, which is the point of
     // creating it. Note this writes the user's global preference, deliberately:
     // they asked for a category, and a category only exists in a grouped pane.
-    if (!this.groupMethodsByCategory()) await this.setGroupMethodsByCategory(true);
+    //
+    // And it says so. A user who deliberately turned grouping off is owed an
+    // account of why their pane now looks different and stays that way — a
+    // preference that changes itself with no signal is indistinguishable from a
+    // bug, and Global is the right target despite the blast radius (Workspace
+    // would silently shadow their own setting, and has nothing to write to when
+    // no folder is open, which is how Jasper is often used).
+    if (!this.groupMethodsByCategory()) {
+      await this.setGroupMethodsByCategory(true);
+      void vscode.window.showInformationMessage(
+        `Grouping methods by category was turned on so the new "${name}" category is visible. ` +
+          'Turn it back off with "Don\'t Group Methods by Category" in the Methods pane title bar.',
+      );
+    }
     this.methodProvider.refresh();
     this.syncTitles();
     // Select the new category (expanding the side node — the class side starts

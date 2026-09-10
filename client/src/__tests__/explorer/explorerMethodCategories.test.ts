@@ -120,6 +120,37 @@ describe('ExplorerController.newMethodCategory', () => {
     expect(ctl.methodCategories(false).some((c) => c.category === 'accessing')).toBe(true);
   });
 
+  // The switch writes a GLOBAL preference, so a user who deliberately turned grouping
+  // off has it changed for every workspace from now on. Doing that in silence is
+  // indistinguishable from a bug — the pane just looks different and stays that way —
+  // so the repair names itself, and names the toggle that undoes it.
+  it('says so when it turns grouping back on', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(info).toHaveBeenCalledTimes(1);
+    const said = String(info.mock.calls[0][0]);
+    expect(said).toContain('accessing');
+    expect(said).toContain("Don't Group Methods by Category");
+  });
+
+  it('stays quiet when the pane was already grouped', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', true);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(info).not.toHaveBeenCalled();
+  });
+
   // The switch is a repair for an unusable pane state, not a preference the command
   // owns: with grouping already on there is nothing to fix, so it must not write the
   // setting at all.

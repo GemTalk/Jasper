@@ -2119,7 +2119,13 @@ describe('DebuggerPanel', () => {
       await flush();
 
       const stored: { columns?: number[] } | undefined = memento.get(ORPHAN_KEY);
-      expect(stored?.columns?.length).toBeGreaterThan(0);
+      // Both halves of the carve, in the order persistLiveSourceUris writes them: the
+      // panel's own group (1) and the companion source group (2). Named rather than
+      // counted, because the source group is the whole reason the columns are
+      // persisted at all — carved EMPTY, it has no tab to reap and no other way back.
+      // A length check would be satisfied by the panel's column on its own, which the
+      // serializer retires from its own viewColumn without consulting this record.
+      expect(stored?.columns).toEqual([1, 2]);
     });
 
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {

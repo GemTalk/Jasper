@@ -801,9 +801,12 @@ export function activate(context: vscode.ExtensionContext) {
     (uri) => gemstoneFs.notifyChanged(uri),
     // Selecting a class is the strongest signal its methods are about to be read, so
     // warm that class's completions instead of making the first Ctrl+Space pay for
-    // them inline. Forwarded for the same reason as its neighbours above: the
-    // completion provider is built below this call.
-    (_sid, className) => completionProvider?.primeClass(className),
+    // them inline. The session id goes through with it — the prime is debounced, so
+    // a session switch inside that quarter-second would otherwise warm the class in
+    // whatever session had become selected by the time it fired. Forwarded for the
+    // same reason as its neighbours above: the completion provider is built below
+    // this call.
+    (sid, className) => completionProvider?.primeClass(sid, className),
     // Refresh GemStone Explorer used to leave completion serving whatever it fetched on
     // the session's first request: invalidateCache had exactly one caller, the
     // palette-only "Refresh Browser" command, named after a browser Jasper no longer

@@ -1070,6 +1070,18 @@ export class DebuggerPanel {
    * quietly, and never closes a group that has an editor in it — if the user has put
    * something there in the meantime, or VS Code has already retired it, there is
    * nothing to do and nothing of theirs is at risk.
+   *
+   * Why this POLLS while closeEmptyGroups waits: the difference is what each one has
+   * to go on, not two guesses at the same duration. closeEmptyGroups runs on the
+   * dispose path, where WE issued the tab closes and hold the promise for them, so it
+   * awaits that promise and sweeps the moment it settles; its deadline is not a guess
+   * at when the closes land but a ceiling on how long one DIRTY tab's modal save
+   * prompt may hold up the rest of the teardown, after which it sweeps what is already
+   * empty and sweeps again when the prompt is finally answered. This one runs on the
+   * restore path, where the closes are VS Code's own — the serializer's dispose and
+   * whatever the window restore is still doing — and there is no promise to await, so
+   * a back-off is the only signal available. Collapsing them would mean either polling
+   * a close we could have awaited, or awaiting a promise that does not exist.
    */
   private static async retireEmptyGroup(column: vscode.ViewColumn | undefined): Promise<void> {
     if (column === undefined) return;
