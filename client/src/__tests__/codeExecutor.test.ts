@@ -1406,9 +1406,11 @@ describe('CodeExecutor', () => {
   // ── What "Debug" opens ────
   //
   // The notifier offers one debugger: the GemStone Debugger panel, which then
-  // owns the suspended GsProcess. The DAP debugger stays registered and
-  // reachable from Run and Debug, but the notifier never starts it. Dismissing
-  // the dialog must open nothing and must clear the stalled GsProcess.
+  // owns the suspended GsProcess. The DAP debugger stays registered, but with
+  // nothing to supply its `sessionId`/`gsProcess` attach attributes it is
+  // dormant rather than a second way in -- the notifier was its only caller, and
+  // never starts it now. Dismissing the dialog must open nothing and must clear
+  // the stalled GsProcess.
 
   describe('opens the GemStone Debugger on Debug', () => {
     function debuggableGci() {

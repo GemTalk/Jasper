@@ -66,11 +66,12 @@ const FORKED_GEM =
 
 // A halt offers ONE debugger -- the GemStone Debugger panel. The DAP debugger is
 // still registered (`registerDebugAdapterDescriptorFactory('gemstone', ...)` in
-// extension.ts, plus the `gemstone` entry under contributes.debuggers), and stays
-// reachable from the Run and Debug view or a launch configuration the developer
-// wrote. What is fenced off here is the extension putting it in front of the user
-// unasked -- the two lines that would do it, on a halt path where no per-path unit
-// test would be looking.
+// extension.ts, plus the `gemstone` entry under contributes.debuggers), but
+// registration is not a way in: attaching needs the `sessionId` and `gsProcess`
+// attributes, and nothing supplies them any more, so it is dormant. What is
+// fenced off here is the extension re-growing a caller that puts it in front of
+// the user unasked -- the two lines that would do it, on a halt path where no
+// per-path unit test would be looking.
 const DAP_ENTRY_POINT =
   'Nothing in the extension may open the DAP debugger for the user: a halt offers the GemStone Debugger panel (DebuggerPanel.create). The `gemstone` debug type stays registered rather than torn out, but with no caller to supply its `sessionId`/`gsProcess` attach attributes it is dormant, not a second way in.';
 
@@ -227,9 +228,20 @@ export default tseslint.config(
     // comment or a string -- so a doc-comment naming `debug.startDebugging` to
     // explain why nothing calls it read as a violation. Tests and mocks are
     // excluded: `client/src/__mocks__/vscode.ts` has to DEFINE `debug.startDebugging`
-    // for the mocked API to be shaped like the real one.
+    // for the mocked API to be shaped like the real one, and a test asserting that
+    // nothing reveals the Run and Debug view has to name the command id to look
+    // for it.
+    //
+    // Matched by basename, not by path: most client tests live in a nested
+    // `__tests__` (client/src/enhancedInspector/__tests__/ and its siblings), which
+    // `client/src/__tests__/**` does not cover -- those files were exempt only
+    // because the `**/*.test.ts` block further down configures this same rule, and
+    // flat config *replaces* a rule's options rather than merging them, which
+    // silently dropped these selectors for everything it matched. That left the
+    // exclusion true by accident and false for a `__tests__/support/` helper, which
+    // is not a `*.test.ts` and so was covered by neither.
     files: ['client/src/**/*.ts'],
-    ignores: ['client/src/__tests__/**', 'client/src/__mocks__/**'],
+    ignores: ['**/__tests__/**', '**/__mocks__/**'],
     rules: {
       'no-restricted-syntax': [
         'error',
