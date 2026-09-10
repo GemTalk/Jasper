@@ -11,15 +11,16 @@ import { SMALLTALK_LANGUAGE } from './languageIds';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
 import { routeInspect, InspectorHandle } from './inspectRouter';
-import { SystemBrowser } from './systemBrowser';
-import { logError, logInfo } from './gciLog';
+import { logError, logInfo, logWarning } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
 import { extensionPathFrom } from './extensionPath';
 import {
+  CARVE_RETRY_DELAYS_MS,
   DEFAULT_SOURCE_RATIO,
   EditorGroupLayout,
   columnPaneSizes,
   fitSourceRatio,
+  flattenLayoutLeaves,
   planDebuggerGrid,
   setSourceRatioInLayout,
   sourceRatioFromLayout,
@@ -77,10 +78,12 @@ const TOOLBAR_ICONS: Record<string, string> = {
 
 /**
  * GemStone Debugger — a roomy, Smalltalk-style debugger rendered as a VS Code
- * webview, offered *alongside* the existing DAP debugger. Whichever entry point
- * the user picks (DAP "Debug" vs. this "Enhanced Debug") owns the suspended
- * `gsProcess` for that error, so the two never coexist on the same process.
- * Closing the panel releases (terminates) that suspended process.
+ * webview. It is what the error notifier's "Debug" opens, and it owns the
+ * suspended `gsProcess` for that error; closing the panel releases (terminates)
+ * that process. The DAP debugger is still REGISTERED but is now dormant: its
+ * attach configuration requires `sessionId` and `gsProcess`, and nothing
+ * surfaces a live process OOP for a user to put in a launch configuration, so
+ * the two cannot coexist on one process.
  *
  * This panel is a SECOND consumer of the DAP-free data layer in
  * `debugQueries.ts` (the DAP `GemStoneDebugSession` is the first). It mirrors
@@ -162,13 +165,18 @@ interface VarRow {
 }
 
 /**
- * A named group of variable rows. Stage 2 splits the flat list into Receiver
- * (`self`), Instance variables, Arguments & Temps, and a collapsed
- * `(stack temps)` group for the synthetic eval-stack temporaries.
+ * A named group of variable rows: Receiver (`self`), Instance variables, the
+ * enclosing method's Arguments & Temps on a block frame, this frame's own
+ * Arguments & Temps, and a collapsed `(stack temps)` group for the synthetic
+ * eval-stack temporaries.
+ *
+ * That is also scope order, innermost last, and every consumer relies on it: a
+ * later row of the same name shadows an earlier one, so a block temp wins over
+ * an enclosing temp of the same spelling, which wins over an instVar.
  */
 interface VarGroup {
   title: string;
-  kind: 'receiver' | 'instvars' | 'argtemps' | 'stacktemps';
+  kind: 'receiver' | 'instvars' | 'homeargtemps' | 'argtemps' | 'stacktemps';
   vars: VarRow[];
   /** Rendered collapsed by default (used for the noisy `(stack temps)` group). */
   collapsed?: boolean;
@@ -224,6 +232,48 @@ export function formatFrameLabel(p: FrameLabelParts): string {
     classPart = `${p.receiverClass} (${p.definingClass})`;
   }
   return `${prefix}${classPart}>>#${p.selector}`;
+}
+
+/** The dictionary that holds the GemStone kernel classes: a class bound there is
+ *  part of the base image rather than the user's own code. */
+const BASE_CLASS_DICT = 'Globals';
+
+/**
+ * One row of the "implement #<selector> in which class?" QuickPick — the label
+ * and its description.
+ *
+ * The label carries the SIDE (`Foo class`, the way `formatFrameLabel` writes a
+ * defining class). The chain crosses from a metaclass into `Class` and its
+ * instance-side superclasses, so a class receiver's chain holds BOTH
+ * `Object class` and `Object`; the picked row is what supplies `isMeta` for the
+ * `gemstone://` URI the method is written to. Bare class names would put two
+ * rows spelled `Object` in front of the user and then silently write to
+ * whichever one they didn't mean.
+ *
+ * A class whose home dictionary is `Globals` is a GemStone base class. Those
+ * rows are still offered — `Class`, `ClassDescription` and `Behavior` are real
+ * places to implement, and a genuine (if heavy) answer — but the row says what
+ * it is, because adding to or reimplementing a method there changes behaviour
+ * for every object in the stone, not just this receiver.
+ */
+export function implementTargetRow(
+  c: debug.ClassHomeInfo,
+  selector: string,
+): { label: string; description: string } {
+  const label = `${c.className}${c.isMeta ? ' class' : ''}`;
+  // No home dictionary → no editable gemstone:// URI; pickAndOpenImplementTemplate
+  // refuses such a pick, so the row says why rather than promising an editor.
+  if (!c.dictName) return { label, description: '(not in your symbol list)' };
+  const home =
+    c.dictName === BASE_CLASS_DICT
+      ? `in ${c.dictName} — a GemStone base class, take care`
+      : `in ${c.dictName}`;
+  return {
+    label,
+    description: c.implementsSelector
+      ? `already implements #${selector} — opens it to edit (${home})`
+      : `implement here (${home})`,
+  };
 }
 
 /**
@@ -679,6 +729,21 @@ const READONLY_SOURCE_SCHEME = 'gemstone-debug';
  */
 const EMPTY_GROUP_SWEEP_DEADLINE_MS = 2000;
 
+/** The webview type of a debugger panel. Shared by the panel it opens and the
+ *  serializer that declines to restore one (see declineRestoredPanels). */
+const DEBUGGER_VIEW_TYPE = 'gemstoneEnhancedDebugger';
+
+/** Back-off for retiring a group whose last tab was just closed. The close is
+ *  asynchronous, so the group can still report the tab for a tick or two. */
+const RETIRE_GROUP_RETRY_DELAYS_MS = [0, 32, 128, 512, 1000];
+
+/** What a window leaves behind for the next one when it closes with a debugger open:
+ *  the companion source tabs to reap, and the editor columns to retire. */
+interface PersistedOrphans {
+  uris: string[];
+  columns: number[];
+}
+
 /**
  * A fully-resolved stack frame, before display filtering and renumbering.
  * Carries the classification bits the stack filter needs (which `FrameSummary`,
@@ -933,11 +998,14 @@ export class DebuggerPanel {
    *
    * The companion source editor is a real text-editor tab (a `gemstone://`
    * method or our `gemstone-debug:` doc), which VS Code persists and restores
-   * across a window close — unlike the webview panel, which is dropped (we
-   * register no serializer). So if the window is closed while a debugger is
+   * across a window close. So if the window is closed while a debugger is
    * open, `dispose()` → `closeSourceEditors()` can't win the shutdown race (the
    * async tab close isn't persisted), and the source tab comes back next launch
    * orphaned — and broken, since there's no live session to resolve `gemstone://`.
+   *
+   * The panel itself is handled separately, by a serializer that closes whatever
+   * VS Code restores (see declineRestoredPanels) — that is what retires the empty
+   * group the panel came back into. This reap is only about the source tabs.
    *
    * Fix: keep the set of currently-open debugger source URIs in `workspaceState`
    * (rewritten as the union of all live panels whenever it changes; emptied on
@@ -976,19 +1044,200 @@ export class DebuggerPanel {
   static initSourceTabCleanup(state: vscode.Memento, extensionPath?: string): void {
     DebuggerPanel.orphanState = state;
     DebuggerPanel.extensionPath = extensionPath;
-    const orphans = state.get<string[]>(DebuggerPanel.ORPHAN_SOURCE_KEY, []);
+    DebuggerPanel.declineRestoredPanels();
+    const stored = state.get<PersistedOrphans | string[] | undefined>(
+      DebuggerPanel.ORPHAN_SOURCE_KEY,
+      undefined,
+    );
+    // A bare array is what an earlier version wrote (URIs only, before the columns were
+    // recorded), so a window upgraded across that change still gets its tabs reaped.
+    const orphans: PersistedOrphans = Array.isArray(stored)
+      ? { uris: stored, columns: [] }
+      : (stored ?? { uris: [], columns: [] });
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
-    if (orphans.length === 0) return;
-    const wanted = new Set(orphans);
+    DebuggerPanel.orphanColumns = orphans.columns;
+    // The layout these numbers were read against. Captured HERE, once, and carried
+    // down every path below rather than read again when each retire finally runs:
+    // the work below is fire-and-forget, so a slow tab close can land it long after
+    // this window's layout stopped being the one the numbers describe.
+    const generation = DebuggerPanel.columnLayoutGeneration;
+    // The columns are retired even with nothing to reap: a debugger that never showed a
+    // source still carved a group, and that group is exactly the one with no tab in it.
+    if (orphans.uris.length === 0) {
+      void DebuggerPanel.retireOrphanColumns(generation);
+      return;
+    }
+    const wanted = new Set(orphans.uris);
+    const closing: Thenable<unknown>[] = [];
+    // The columns these tabs are vacating. A reaped source tab leaves the companion
+    // source group empty, and that group is no more self-retiring than the panel's —
+    // both were emptied during a restore rather than by an ordinary close.
+    const vacated = new Set<vscode.ViewColumn>();
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
         if (tab.input instanceof vscode.TabInputText && wanted.has(tab.input.uri.toString())) {
-          void vscode.window.tabGroups.close(tab);
+          vacated.add(group.viewColumn);
+          closing.push(vscode.window.tabGroups.close(tab));
         }
       }
     }
+    void Promise.all(closing)
+      .catch(() => {})
+      .then(async () => {
+        for (const column of vacated) {
+          await DebuggerPanel.retireEmptyGroup(column, generation);
+        }
+        await DebuggerPanel.retireOrphanColumns(generation);
+      });
   }
+
+  /**
+   * The columns a debugger held when the window last closed, read back at activation.
+   * Kept until they are retired rather than consumed on the spot, because the panel's
+   * own tab is closed by the serializer — which VS Code calls AFTER activate() — so a
+   * sweep that ran only at activation would find the panel's group still occupied.
+   */
+  private static orphanColumns: number[] = [];
+
+  /**
+   * Bumped each time a debugger carves a fresh column pair. Both empty-group sweeps
+   * capture it and abandon their remaining passes if it moves, because everything
+   * they hold is a column NUMBER and a carve invalidates those two ways over: VS Code
+   * renumbers columns positionally as groups open and close, so the number no longer
+   * denotes the group it was captured for — and the pair's companion source group is
+   * carved EMPTY, which is exactly the shape a sweep closes. Without the check, a
+   * retire left over from activation (it polls for up to ~1.7s) could take away the
+   * source pane of a debugger opened while it was still waiting.
+   */
+  private static columnLayoutGeneration = 0;
+
+  /**
+   * Retire whichever of the last window's debugger columns came back empty. Safe to
+   * call more than once: retireEmptyGroup only closes a group with nothing in it.
+   *
+   * `generation` is the layout the columns were read against, passed in rather than
+   * read here. Reading it here would re-authorize a call that has slipped: this runs
+   * from fire-and-forget chains, so it can start after a debugger has recarved the
+   * grid — and then every number it holds names a group it was not recorded for.
+   */
+  private static async retireOrphanColumns(generation: number): Promise<void> {
+    for (const column of DebuggerPanel.orphanColumns) {
+      await DebuggerPanel.retireEmptyGroup(column, generation);
+    }
+  }
+
+  /**
+   * Close the group in `column` once it is empty, and only while it is.
+   *
+   * VS Code retires a group of its own accord when the group's last editor closes —
+   * during ordinary use. A group emptied while the window is still coming up does not
+   * get that treatment, and neither does one that was never occupied (which is why
+   * closeEmptyGroups exists for the carve). Both are how a debugger's column outlived
+   * the debugger.
+   *
+   * Retried on a short back-off because the tab close it follows is asynchronous: the
+   * group can still report the tab for a tick or two after dispose() returns. Gives up
+   * quietly, and never closes a group that has an editor in it — if the user has put
+   * something there in the meantime, or VS Code has already retired it, there is
+   * nothing to do and nothing of theirs is at risk. It also abandons the rest of its
+   * back-off if a debugger carves a pair while it waits, since the column number it
+   * holds no longer means what it meant (see columnLayoutGeneration).
+   *
+   * Why this POLLS while closeEmptyGroups waits: the difference is what each one has
+   * to go on, not two guesses at the same duration. closeEmptyGroups runs on the
+   * dispose path, where WE issued the tab closes and hold the promise for them, so it
+   * awaits that promise and sweeps the moment it settles; its deadline is not a guess
+   * at when the closes land but a ceiling on how long one DIRTY tab's modal save
+   * prompt may hold up the rest of the teardown, after which it sweeps what is already
+   * empty and sweeps again when the prompt is finally answered. This one runs on the
+   * restore path, where the closes are VS Code's own — the serializer's dispose and
+   * whatever the window restore is still doing — and there is no promise to await, so
+   * a back-off is the only signal available. Collapsing them would mean either polling
+   * a close we could have awaited, or awaiting a promise that does not exist.
+   */
+  private static async retireEmptyGroup(
+    column: vscode.ViewColumn | undefined,
+    generation: number,
+  ): Promise<void> {
+    if (column === undefined) return;
+    for (const delayMs of RETIRE_GROUP_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // A debugger has carved a pair since `column` was read off the layout, so it no
+      // longer names the group it was recorded for — and one of the groups it now
+      // names is that debugger's empty source pane. Checked before the first look as
+      // well as between retries, because the caller's chain may itself have been
+      // waiting: give up rather than close somebody else's group.
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
+      const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+      if (!group) return; // already gone
+      if (group.tabs.length > 0) continue; // the close has not landed yet, or is not ours
+      try {
+        await vscode.window.tabGroups.close(group);
+      } catch {
+        /* raced with VS Code retiring it — nothing left to do */
+      }
+      return;
+    }
+  }
+
+  /**
+   * Close any debugger panel VS Code restores, so the column it occupied goes with
+   * it instead of coming back as a blank pane.
+   *
+   * A debugger carves its own column out of the editor grid (carveDebuggerColumn):
+   * the panel group on top, the companion source group below. Closing the panel
+   * normally retires both — dispose closes the source tabs and then sweeps its own
+   * groups once empty. Closing the WINDOW with a debugger open is the one path where
+   * none of that runs: dispose cannot win the shutdown race, which is why the
+   * source tab is reaped on the next launch instead (see ORPHAN_SOURCE_KEY).
+   *
+   * The group was the half that reap never covered. VS Code persists the editor
+   * LAYOUT regardless of what was in it, so the panel's group came back — empty,
+   * because a webview is dropped unless a serializer claims it. And VS Code only
+   * retires a group when its last *editor closes*; a group restored empty never had
+   * one close, so nothing took it away. It then survived every later F5, and shifted
+   * the ViewColumn numbers along for the next debugger that tried to carve a column.
+   *
+   * Registering a serializer that immediately disposes what it restores puts that
+   * case back on the ordinary path: the tab is restored, closed, and its group is
+   * retired by VS Code itself — one mechanism instead of a second cleanup that has
+   * to guess at column numbers after the fact.
+   *
+   * It declines rather than revives because there is nothing to revive TO. The panel
+   * showed a process suspended at a halt; that process died with the session when
+   * the window closed, so a restored panel could only be a picture of a stack that
+   * no longer exists, with every button on it broken. Note this disposes the raw
+   * WebviewPanel and never builds a DebuggerPanel around it — the normal dispose
+   * path would try to clear a stack on a session that was never opened.
+   */
+  private static declineRestoredPanels(): void {
+    if (DebuggerPanel.restoreDeclinerRegistered) return;
+    DebuggerPanel.restoreDeclinerRegistered = true;
+    vscode.window.registerWebviewPanelSerializer(DEBUGGER_VIEW_TYPE, {
+      deserializeWebviewPanel(panel: vscode.WebviewPanel): Thenable<void> {
+        // Read the column BEFORE disposing: a disposed WebviewPanel throws rather than
+        // answering. Closing the tab is not enough on its own — VS Code retires a group
+        // when its last editor closes during ordinary use, but a group emptied while the
+        // window is still restoring keeps its place, which is the blank pane this is all
+        // about. So the group is retired here as well.
+        const column = panel.viewColumn;
+        // The layout both retires below are entitled to act on — read before the
+        // dispose that starts them, and not again afterwards (see retireOrphanColumns).
+        const generation = DebuggerPanel.columnLayoutGeneration;
+        panel.dispose();
+        // Its own column when VS Code reports one — during deserialization it may not
+        // yet — and then the columns recorded before the window closed, which is what
+        // covers the companion source group as well. This runs after activate(), so it
+        // is also the pass at which the panel's own group is finally empty.
+        return DebuggerPanel.retireEmptyGroup(column, generation).then(() =>
+          DebuggerPanel.retireOrphanColumns(generation),
+        );
+      },
+    });
+  }
+  /** Guards against a second registration, which VS Code rejects for one view type. */
+  private static restoreDeclinerRegistered = false;
 
   /**
    * Rewrite the persisted orphan set as the union of every live panel's open
@@ -1000,13 +1249,28 @@ export class DebuggerPanel {
     const state = DebuggerPanel.orphanState;
     if (!state) return;
     const uris = new Set<string>();
+    // The carved columns go with them. A window close cannot be raced — dispose loses
+    // it, which is why this set is rewritten continuously rather than at shutdown — so
+    // anything the next launch needs has to already be on disk when the window dies.
+    // The columns are that: the panel's group and the companion source group, which are
+    // what the next launch has to retire. Without them the source group is unreachable,
+    // because the carve creates it EMPTY: a debugger closed with no source ever shown
+    // leaves a group with no tab to reap and no record of where it was.
+    const columns = new Set<number>();
     for (const set of DebuggerPanel.panels.values()) {
       for (const dbg of set) {
         for (const u of dbg.shownSourceUris) uris.add(u);
         for (const u of dbg.dnuMethodUris) uris.add(u);
+        for (const c of [dbg.panelGroupColumn, dbg.sourceGroupColumn]) {
+          if (c !== undefined) columns.add(c);
+        }
       }
     }
-    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, uris.size ? Array.from(uris) : undefined);
+    const orphans: PersistedOrphans | undefined =
+      uris.size || columns.size
+        ? { uris: Array.from(uris), columns: Array.from(columns) }
+        : undefined;
+    void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, orphans);
   }
 
   private static ensureReadOnlySourceProvider(): void {
@@ -1090,14 +1354,23 @@ export class DebuggerPanel {
     // Through the getter, never `this.panel` directly: this is read during
     // teardown, when the panel throws rather than answering.
     const panel = this.panelGroupColumn;
+    // The pair's second leaf is the column after the panel's. Where the carve
+    // declined there is no such group yet, so `showTextDocument` has VS Code
+    // create it on demand and the source arrives in a column of its own beside
+    // the debugger rather than below it. That costs a column, but both halves
+    // stay on screen — which the panel's OWN column cannot do: a group shows one
+    // tab at a time, so the source would cover the debugger and leave frames to
+    // be clicked in a panel that is no longer visible.
     if (panel !== undefined) return panel + 1;
     return this.sourceColumn;
   }
   /**
-   * Resolves once the panel/source column pair exists in the editor grid. Every
-   * source open awaits it, so the source editor always opens into a group that
-   * is already there at the right size — instead of splitting one on the fly and
-   * landing wherever the split happened to go.
+   * Resolves once the carve has settled — with the panel/source column pair in
+   * the editor grid, or with the decline that leaves VS Code to create the
+   * source group on demand (see `sourceGroupColumn`). Every source open awaits
+   * it, so the source editor opens into a group that is already there at the
+   * right size wherever it can, instead of splitting one on the fly and landing
+   * wherever the split happened to go.
    */
   private gridReady: Promise<void> = Promise.resolve();
   /**
@@ -1326,9 +1599,12 @@ export class DebuggerPanel {
     // second halt joins the column the first one carved instead of growing the
     // grid by an error.
     const shared = DebuggerPanel.liveDebuggerColumns(session.id);
+    // A new pair renumbers the grid and adds an empty source group; a second halt
+    // joining the column the first carved does neither. See columnLayoutGeneration.
+    if (!shared) DebuggerPanel.columnLayoutGeneration++;
     const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
-      'gemstoneEnhancedDebugger',
+      DEBUGGER_VIEW_TYPE,
       'GemStone Debugger',
       { viewColumn: panelColumn, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
@@ -1350,6 +1626,11 @@ export class DebuggerPanel {
       DebuggerPanel.panels.set(session.id, new Set());
     }
     DebuggerPanel.panels.get(session.id)!.add(debugger_);
+    // Record the columns now, not when a source tab first opens. A debugger closed with
+    // the window before it ever showed a source still carved a group, and that group —
+    // carved empty, so with no tab to reap — is only reachable next launch if its column
+    // was written down while this window was alive.
+    DebuggerPanel.persistLiveSourceUris();
     // Single-stepping needs no session-wide setup here: the debugged process
     // started interpreted (GCI_PERFORM_FLAG_INTERPRETED at execution start —
     // GemStone can't step native code, error 6014) and every step/continue
@@ -1730,6 +2011,10 @@ export class DebuggerPanel {
       // source in the source column and steals focus from the new-method editor we
       // just opened. The banner update clears the Create button and keeps focus on
       // the new-method tab so the user can type immediately.
+      //
+      // A banner does NOT end the webview's busy span (the Cancel path posts one
+      // mid-op), which is why `createDnuMethod` is not in its SERVER_BOUND set:
+      // otherwise this reply strands a spinner until the user saves.
       this.errorMessage =
         `Editing new method #${dnu.selector} below — fill in the body, then save it ` +
         '(Ctrl+S / Cmd+S) to create the method. Then press Resume (▶) to run it.';
@@ -1745,11 +2030,16 @@ export class DebuggerPanel {
    * "Implement <selector> in <ReceiverClass>" (T2/T3 override): the selected
    * frame is running a method the receiver INHERITED; open an editor to implement
    * that selector somewhere along the receiver's inheritance chain. The candidate
-   * classes (getReceiverClassChain — the receiver's class up through Object) and
-   * the selector/arg-count come from the frame. With more than one candidate, a
-   * QuickPick lets the user choose where in the hierarchy to implement (the
-   * receiver's class is pre-selected); each entry notes its home dictionary and
-   * whether it ALREADY implements the selector.
+   * classes (getReceiverClassChain — the receiver's class and every superclass
+   * along the lookup chain) and the selector/arg-count come from the frame. For a
+   * CLASS receiver that chain is the metaclass one, which runs up through
+   * `Object class` and then crosses into `Class`, `ClassDescription`, `Behavior`
+   * and `Object` — instance-side entries, and real (if heavy) places to
+   * implement, so they are offered rather than withheld. With more than one
+   * candidate, a QuickPick lets the user choose where in the hierarchy to
+   * implement (the receiver's class is pre-selected); each entry names its side,
+   * its home dictionary, whether that dictionary makes it a GemStone base class,
+   * and whether it ALREADY implements the selector (see implementTargetRow).
    *
    * For a class that does NOT yet implement it → a pre-filled stub (reuses the
    * create-method-from-DNU template machinery). For one that ALREADY does → its
@@ -1770,18 +2060,21 @@ export class DebuggerPanel {
     const selector = raw?.selector;
     if (!selector) return;
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
       this.postInit();
       return;
     }
-    // The receiver's class and every superclass up to Object — each a place the
-    // selector could be implemented, flagged with whether it already is.
-    const chain = debug.getReceiverClassChain(this.session, receiverOop, selector);
+    // The class of the frame's `self` — the HOME receiver in a block frame, so a
+    // block frame resolves the same chain its method frame would — and every
+    // superclass along the lookup chain (the metaclass chain for a class
+    // receiver, which crosses into instance-side `Class` and above): each a place
+    // the selector could be implemented, flagged with whether it already is.
+    const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
       this.postInit();
@@ -1795,62 +2088,92 @@ export class DebuggerPanel {
   }
 
   /**
-   * "Browse" a stack frame (right-click menu): open a NEW System Browser to the
-   * right of the debugger pane, navigated to the class+method actually running in
-   * this frame. The target is resolved by method lookup on the receiver
-   * (`getBrowseTarget`), so an inherited method opens on its DEFINING class — the
-   * source that's really executing — rather than the receiver's concrete class.
-   * Degrades to an in-panel message for a doit frame, a receiver we can't resolve,
-   * a selector not found in the chain, or a class outside the user's symbol list.
+   * "Browse" a stack frame (right-click menu): cascade the GemStone Explorer's
+   * panes to the class+method actually running in this frame, and open that
+   * method's source. Class browsing lives in the Explorer, so this goes through
+   * its own `findClass` command rather than opening a System Browser.
+   *
+   * The target is resolved by method lookup on the receiver (`getBrowseTarget`),
+   * so an inherited method opens on its DEFINING class — the source that's really
+   * executing — rather than the receiver's concrete class. Degrades through
+   * `browseDeclined` — a panel banner AND a toast — for a receiver we can't
+   * resolve, a selector not found in the chain, a class outside the user's
+   * symbol list, or a cascade the Explorer rejects.
+   *
+   * A doit frame normally never gets here at all: it carries `browsable: false`,
+   * and the webview hides the Browse item for such a frame (see buildFrame and
+   * debuggerView's context-menu handler) — there is no class>>selector to land
+   * on, so withholding the action beats offering one that only apologises. The
+   * check below is the backstop for the two ever disagreeing.
    */
   private async browseFrame(displayLevel: number): Promise<void> {
     const frame = this.frames.find((f) => f.level === displayLevel);
     if (!frame) return;
     const raw = this.rawFrames.find((r) => r.serverLevel === frame.serverLevel);
     if (!raw || raw.isExecutedCode || !raw.selector) {
-      this.errorMessage = 'Cannot browse this frame — it has no class or method.';
-      this.postInit();
+      this.browseDeclined('Cannot browse this frame — it has no class or method.');
       return;
     }
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
-      this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
-      this.postInit();
+      this.browseDeclined(`Could not resolve the receiver of ${frame.label}.`);
       return;
     }
 
-    const target = debug.getBrowseTarget(this.session, receiverOop, raw.selector);
+    const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
-      this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
-      this.postInit();
+      this.browseDeclined(`Could not locate #${raw.selector} to browse it.`);
       return;
     }
     if (!target.dictName) {
-      this.errorMessage = `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`;
-      this.postInit();
+      this.browseDeclined(
+        `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`,
+      );
       return;
     }
 
-    // Open the browser to the RIGHT of the debugger pane: focus the debugger's
-    // group so ViewColumn.Beside resolves relative to it, then open a fresh
-    // browser there and navigate it to the running method's defining class.
-    this.panel.reveal(this.panel.viewColumn, false);
-    SystemBrowser.openAndNavigate(
-      this.session,
-      {
-        dictName: target.dictName,
-        className: target.className,
-        isMeta: target.isMeta,
-        selector: raw.selector,
-        category: target.category,
-        environmentId: 0,
-      },
-      vscode.ViewColumn.Beside,
-    );
+    // The dictionary goes along with the class name: a name shadowed across two
+    // dictionaries would otherwise resolve to whichever entry comes first, which
+    // can be a different class of the same name. The session id pins the reveal
+    // to the stone this halt is on rather than whichever session is selected now.
+    // Promise.resolve, not `.catch` straight off the call: `executeCommand`
+    // answers a `Thenable`, which is not promised to be a real Promise.
+    void Promise.resolve(
+      vscode.commands.executeCommand(
+        'gemstone.explorer.findClass',
+        target.className,
+        this.sessionId,
+        target.dictName,
+        { selector: raw.selector, isMeta: target.isMeta },
+      ),
+    ).catch((e: unknown) => {
+      // Every other way this method can fail says so in the panel. A rejected
+      // command must not be the one exception that reports nothing to the user
+      // and surfaces only as an unhandled rejection in the extension host — the
+      // Explorer's cascade can reject (it opens documents and resolves a
+      // session), and this call is fire-and-forget.
+      logError(this.sessionId, e instanceof Error ? e.message : String(e));
+      if (this.disposed) return;
+      this.browseDeclined(`Could not browse ${target.className} >> #${raw.selector}.`);
+    });
+  }
+
+  /**
+   * Report a Browse that could not go anywhere, in BOTH places: the panel's
+   * banner, and a toast.
+   *
+   * The banner alone was missed — Browse moves attention to the Explorer, so a
+   * line changing in the pane just looked away from reads as nothing happening.
+   * The Inspector's Browse Class already warns with a toast for the same refusal.
+   */
+  private browseDeclined(message: string): void {
+    this.errorMessage = message;
+    this.postInit();
+    void vscode.window.showWarningMessage(message);
   }
 
   /**
@@ -1869,20 +2192,16 @@ export class DebuggerPanel {
   private async implementSubclassResponsibility(): Promise<void> {
     const info = this.subclassRespInfo;
     if (!info) return;
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(
-        this.session,
-        this.gsProcess,
-        info.abstractServerLevel,
-      ).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of #${info.selector}.`;
       this.postInit();
       return;
     }
-    let chain = debug.getReceiverClassChain(this.session, receiverOop, info.selector);
+    let chain = debug.getReceiverClassChain(this.session, selfOop, info.selector);
     // Bound the chain at the abstract method's defining class (inclusive).
     const boundIdx = chain.findIndex((c) => c.className === info.definingClassName);
     if (boundIdx >= 0) chain = chain.slice(0, boundIdx + 1);
@@ -1919,22 +2238,21 @@ export class DebuggerPanel {
     // chain to implement (receiver's class first; each marked override vs edit).
     logInfo(
       `[GemStone Debugger] implement #${selector}: chain = ` +
-        chain.map((c) => `${c.className}${c.implementsSelector ? '(impl)' : ''}`).join(' → '),
+        chain
+          .map(
+            (c) =>
+              `${implementTargetRow(c, selector).label}${c.implementsSelector ? '(impl)' : ''}`,
+          )
+          .join(' → '),
     );
     let targetIndex = 0;
     if (chain.length > 1) {
       const pick = await vscode.window.showQuickPick(
-        chain.map((c, i) => ({
-          label: c.className,
-          description: !c.dictName
-            ? '(not in your symbol list)'
-            : c.implementsSelector
-              ? `already implements #${selector} — opens it to edit (in ${c.dictName})`
-              : `implement here (in ${c.dictName})`,
-          index: i,
-        })),
+        chain.map((c, i) => ({ ...implementTargetRow(c, selector), index: i })),
         {
-          placeHolder: `Implement #${selector} in which class? (receiver is ${chain[0].className})`,
+          placeHolder:
+            `Implement #${selector} in which class? ` +
+            `(receiver is ${implementTargetRow(chain[0], selector).label})`,
           // The pick is triggered from the webview, which keeps/regains focus —
           // without this the QuickPick loses focus and auto-dismisses before the
           // user can see it (it just flashes). Keep it open until an explicit pick.
@@ -2264,6 +2582,13 @@ export class DebuggerPanel {
       .filter((r) => r.group === 'argtemps')
       .map((r) => toRow(r, { kind: 'temp', index: r.index }))
       .sort(byName);
+    // The enclosing method's names on a block frame — read-only here, because
+    // their write index belongs to the home frame, not this one. Edit them from
+    // the home activation's own row in the stack.
+    const homeArgTemps = rows
+      .filter((r) => r.group === 'homeargtemps')
+      .map((r) => toRow(r))
+      .sort(byName);
     // Stack temps keep natural order (sorting `.t1/.t10/.t2` would look wrong).
     const stackTemps = rows.filter((r) => r.group === 'stacktemps').map((r) => toRow(r));
 
@@ -2271,6 +2596,12 @@ export class DebuggerPanel {
     if (receiver.length > 0) groups.push({ title: 'Receiver', kind: 'receiver', vars: receiver });
     if (instVars.length > 0)
       groups.push({ title: 'Instance variables', kind: 'instvars', vars: instVars });
+    if (homeArgTemps.length > 0)
+      groups.push({
+        title: 'Enclosing method’s Arguments & Temps',
+        kind: 'homeargtemps',
+        vars: homeArgTemps,
+      });
     if (argTemps.length > 0)
       groups.push({ title: 'Arguments & Temps', kind: 'argtemps', vars: argTemps });
     if (stackTemps.length > 0) {
@@ -2402,7 +2733,7 @@ export class DebuggerPanel {
     // The eval runs non-blocking so a runaway expression doesn't freeze the panel
     // and CAN be cancelled. The in-panel overlay owns cancel (suppressNotification),
     // and onStart marks it cancellable + captures the handle the Cancel button hits.
-    let value = '';
+    let value: string;
     let isError = false;
     try {
       value = await debug.evaluateInFrameNb(this.session, this.gsProcess, expr, serverLevel, {
@@ -2511,7 +2842,7 @@ export class DebuggerPanel {
       // only), so revert can restore the exact original object.
       this.captureUndoOriginal(serverLevel, kind, index, info);
       if (kind === 'instvar') {
-        debug.setInstVar(this.session, info.receiverOop, index, valueOop);
+        debug.setInstVar(this.session, info.selfOop, index, valueOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, valueOop);
       }
@@ -2608,7 +2939,7 @@ export class DebuggerPanel {
     if (this.undoOriginals.has(key)) return; // keep the FIRST original
     const originalOop =
       kind === 'instvar'
-        ? debug.getInstVarOop(this.session, info.receiverOop, index)
+        ? debug.getInstVarOop(this.session, info.selfOop, index)
         : info.argAndTempOops[index - 1];
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
@@ -2641,12 +2972,8 @@ export class DebuggerPanel {
     }
     try {
       if (kind === 'instvar') {
-        const receiverOop = debug.getFrameInfo(
-          this.session,
-          this.gsProcess,
-          serverLevel,
-        ).receiverOop;
-        debug.setInstVar(this.session, receiverOop, index, originalOop);
+        const selfOop = debug.getFrameInfo(this.session, this.gsProcess, serverLevel).selfOop;
+        debug.setInstVar(this.session, selfOop, index, originalOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
@@ -3490,10 +3817,16 @@ export class DebuggerPanel {
 
   /**
    * The in-scope, named variables for `serverLevel` as inline-overlay rows, in
-   * receiver → instVars → args/temps order (so a shadowing temp overrides an
-   * instVar of the same name; `computeInlineValueLines` lets later entries win).
+   * receiver → instVars → enclosing temps → own args/temps order (so a shadowing
+   * temp overrides an instVar of the same name, and a block's own temp overrides
+   * an enclosing one; `computeInlineValueLines` lets later entries win). That is
+   * the order {@link VarGroup} is built in, so iterating the groups is enough.
    * The collapsed `(stack temps)` group is dropped — those `.tN` temporaries have
    * no source name to match.
+   *
+   * The enclosing method's names matter here in particular: a block frame's
+   * source pane shows the ENCLOSING method's source, so without them the overlay
+   * had nothing to say about names plainly visible on those lines.
    */
   private inlineVarsForFrame(serverLevel: number): InlineVar[] {
     const vars: InlineVar[] = [];
@@ -3600,10 +3933,13 @@ export class DebuggerPanel {
 
   /**
    * Open `uri` in the companion source editor and return it. The editor lives in
-   * the group directly below the panel — `sourceColumn`, carved with the panel's
-   * column before either existed (see `carveDebuggerColumn`), so this only has
-   * to open into it. Focus stays in the panel so clicking through frames stays
-   * fluid, and the doc opens as a reused preview tab (no pile-up).
+   * the group directly below the panel — carved with the panel's column before
+   * either existed (see `carveDebuggerColumn`), so this only has to open into it;
+   * where the carve declined there is no such group and VS Code creates one on
+   * demand, beside the panel rather than below it (see `sourceGroupColumn`).
+   * Focus stays in the panel so clicking
+   * through frames stays fluid, and the doc opens as a reused preview tab (no
+   * pile-up).
    */
   private async showSourceEditor(uri: vscode.Uri): Promise<vscode.TextEditor> {
     await this.gridReady;
@@ -3655,10 +3991,12 @@ export class DebuggerPanel {
    *
    * Everything that RESIZES goes through this. The pair is identified by column
    * arithmetic (see locatePair), which is sound as long as the two panes are the
-   * ones the carve made adjacent. If the carve declined an unfamiliar grid, or
-   * the source ended up somewhere else entirely, that arithmetic would name some
-   * pre-existing group of the user's as "the panel" and resize it. Requiring
-   * adjacency to our own column is what makes that impossible.
+   * ones the carve made adjacent. If the source ended up somewhere else entirely,
+   * that arithmetic would name some pre-existing group of the user's as "the
+   * panel" and resize it; requiring adjacency to our own column is what makes
+   * that impossible. Adjacency is not sufficient, though — a declined carve
+   * leaves the source adjacent but SIDE BY SIDE — so `locatePair` also requires
+   * the two to stack, and every resize path declines on a grid we didn't carve.
    */
   private get ourPairColumns(): { panelColumn: number; sourceColumn: number } | undefined {
     const panelColumn = this.panelGroupColumn;
@@ -3676,9 +4014,17 @@ export class DebuggerPanel {
    * an inspector) comes through unchanged.
    *
    * Best-effort: if the grid can't be read, or doesn't have the shape we just
-   * made, it's left exactly as it is. The panel is still in a column of its own,
-   * and the source editor opens into the column after it — VS Code creates that
-   * group on demand, just without our sizing.
+   * made, it's left exactly as it is and the decline is LOGGED — a silent
+   * decline is how this went wrong before, since its only visible symptom is a
+   * source pane beside the debugger rather than below it. That is where the
+   * source lands on a decline (see `sourceGroupColumn`): a column of its own, so
+   * a declined carve costs a column, never a half you cannot see.
+   *
+   * The two declines are logged at different levels. A grid that cannot be read
+   * at all is an older VS Code without `vscode.getEditorLayout`: designed for,
+   * nothing wrong, and warning about it would put a line in the GCI log on every
+   * single halt. The warning is kept for the decline the re-read below exists to
+   * prevent — a grid we CAN read that never grew to hold the panel's group.
    *
    * Nothing undoes this on close: the panel and the source tab are the only
    * editors in the pair, so closing them leaves both groups empty and VS Code
@@ -3688,15 +4034,80 @@ export class DebuggerPanel {
    */
   private async carveDebuggerColumn(): Promise<void> {
     try {
-      const current =
-        await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      const plan = planDebuggerGrid(current, this.panelGroupColumn);
-      if (!plan) return;
+      const { layout, unreadable, reason } = await this.layoutContainingPanelGroup();
+      // The wait can span the whole back-off, and a panel closed inside it has
+      // already run its own empty-group sweep — splitting the column now would
+      // reshape whatever moved into it and leave a stray pane behind.
+      if (this.disposed) return;
+      const panelColumn = this.panelGroupColumn;
+      const plan = layout ? planDebuggerGrid(layout, panelColumn) : undefined;
+      if (!plan) {
+        const decline =
+          `Debugger could not carve a source pane below its panel in column ${panelColumn}` +
+          `${reason ? ` (${reason})` : ''}; the source will open in a column beside it.`;
+        if (unreadable) logInfo(decline);
+        else logWarning(decline);
+        return;
+      }
       await vscode.commands.executeCommand('vscode.setEditorLayout', plan.layout);
       this.sourceColumn = plan.sourceColumn;
-    } catch {
-      /* best-effort layout — see the note above */
+    } catch (e: unknown) {
+      logWarning(
+        `Debugger layout carve failed: ${e instanceof Error ? e.message : String(e)}; ` +
+          'the source will open in a column beside the panel.',
+      );
     }
+  }
+
+  /**
+   * The editor grid, read back once the panel's own group is IN it.
+   *
+   * `createWebviewPanel` returns before VS Code has registered the group it
+   * opened into, so the grid read immediately afterwards can still be the one
+   * from before the panel existed. `planDebuggerGrid` locates the panel by
+   * counting leaves, so against that grid it finds nothing, declines, and the
+   * pair is never carved — the whole failure, and it leaves no trace.
+   *
+   * So: re-read until the grid has at least as many leaves as the panel's column
+   * number, backing off a little each time. Only a grid that came back at all is
+   * retried; `getEditorLayout` answering nothing — or rejecting, which is how VS
+   * Code reports a command it doesn't have — means the command isn't there (an
+   * older VS Code), and no amount of waiting changes that.
+   *
+   * `unreadable` separates that from the anomaly this re-read was written for: a
+   * grid that answers, but never grows to hold the panel's group. Both leave
+   * `layout` undefined and both decline; only the second is worth a warning.
+   *
+   * The panel's column is re-read on every pass rather than passed in: until VS
+   * Code registers the group, `panelGroupColumn` answers the number we ASKED for
+   * (seeded in `create`), and the whole reason to wait is that the panel cannot
+   * yet say where it is. A column captured before the loop would also miss any
+   * renumbering inside it, and `planDebuggerGrid` would then split a group that
+   * isn't ours.
+   */
+  private async layoutContainingPanelGroup(): Promise<{
+    layout?: EditorGroupLayout;
+    unreadable: boolean;
+    reason?: string;
+  }> {
+    for (const delayMs of CARVE_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const panelColumn = this.panelGroupColumn;
+      let layout: EditorGroupLayout | undefined;
+      try {
+        layout = await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
+      } catch (e: unknown) {
+        // Carry the reason: this is nearly always "command not found" on an
+        // older VS Code, and the caller logs it at info — but an internal
+        // failure arrives the same way, and dropping its message would leave
+        // the one line we log saying nothing about why.
+        return { unreadable: true, reason: e instanceof Error ? e.message : String(e) };
+      }
+      if (!layout?.groups?.length) return { unreadable: true };
+      if (panelColumn === undefined) return { layout, unreadable: false };
+      if (flattenLayoutLeaves(layout).length >= panelColumn) return { layout, unreadable: false };
+    }
+    return { unreadable: false };
   }
 
   /**
@@ -3746,10 +4157,12 @@ export class DebuggerPanel {
    * second halt shares it instead of carving another one (`panels` holds every
    * live panel; two halts in one session can be open at once).
    */
-  private static liveDebuggerColumns(
-    sessionId: number,
-  ):
-    | { panelColumn: vscode.ViewColumn; sourceColumn: vscode.ViewColumn; gridReady: Promise<void> }
+  private static liveDebuggerColumns(sessionId: number):
+    | {
+        panelColumn: vscode.ViewColumn;
+        sourceColumn: vscode.ViewColumn;
+        gridReady: Promise<void>;
+      }
     | undefined {
     // This session's panels only. Two sessions are two stones' worth of work,
     // and sharing a column across them would also let one debugger's teardown
@@ -3767,7 +4180,11 @@ export class DebuggerPanel {
         // Its carve, too: the column pair exists only once that has finished,
         // and a second halt arriving mid-carve must wait for the same thing the
         // first one is waiting for rather than assume the split is already there.
-        return { panelColumn, sourceColumn, gridReady: dbg.gridReady };
+        return {
+          panelColumn,
+          sourceColumn,
+          gridReady: dbg.gridReady,
+        };
       }
     }
     return undefined;
@@ -3914,7 +4331,7 @@ export class DebuggerPanel {
   /**
    * Walk the suspended process's stack and build a label per frame. The naming
    * logic deliberately mirrors the DAP `stackTraceRequest`
-   * (gemstoneDebugSession.ts) so the Enhanced Debugger's stack matches the Run
+   * (gemstoneDebugSession.ts) so the GemStone Debugger's stack matches the Run
    * and Debug Call Stack frame-for-frame. Proves the `debugQueries` pipe works
    * from this second consumer before Stage 1 builds the real layout on top.
    */
@@ -4017,7 +4434,7 @@ export class DebuggerPanel {
       // inherited methods (non-block frames only — see formatFrameLabel).
       if (!isBlock) {
         try {
-          receiverClass = debug.getObjectClassName(this.session, info.receiverOop);
+          receiverClass = debug.getObjectClassName(this.session, info.selfOop);
         } catch {
           /* best-effort; fall back to defining class only */
         }
@@ -4082,9 +4499,11 @@ export class DebuggerPanel {
    * "is this executed code?", shared by buildFrame (labelling/classification)
    * and revealFrameSource (source-pane routing) so the two can never disagree.
    *
-   *  - in the session's symbol list → `uriInfo` set (editable via gemstone://);
-   *  - resolvable class but not in the symbol list → `uriInfo` undefined, but
-   *    definingClassName/selector are still set — a real method, NOT executed code;
+   *  - bound under its own name in the session's symbol list → `uriInfo` set
+   *    (editable via gemstone://), on the dictionary holding THAT class;
+   *  - resolvable class that no symbol-list slot binds under its own name →
+   *    `uriInfo` undefined, but definingClassName/selector are still set — a
+   *    real method, NOT executed code;
    *  - no resolvable class at all (a doit) → isExecutedCode true.
    */
   private resolveHomeMethod(homeMethodOop: bigint): {
@@ -4724,7 +5143,12 @@ export class DebuggerPanel {
   ): Promise<void> {
     const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
     if (wanted.length === 0) return;
+    // Captured before the wait below, which a modal save prompt can stretch out for
+    // as long as the user leaves the dialog standing — long enough for another
+    // debugger to open and renumber the columns these are. See columnLayoutGeneration.
+    const generation = DebuggerPanel.columnLayoutGeneration;
     const sweep = (): void => {
+      if (DebuggerPanel.columnLayoutGeneration !== generation) return;
       for (const group of vscode.window.tabGroups.all) {
         if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
           void Promise.resolve(vscode.window.tabGroups.close(group)).catch(() => {});

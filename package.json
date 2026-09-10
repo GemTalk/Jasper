@@ -341,7 +341,7 @@
           "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
             "default": true,
-            "description": "Group methods in the GemStone Explorer's Methods pane under their categories. Turn off to list a class's methods flat, without the category level. Toggle quickly from the Methods pane title bar."
+            "description": "Group methods in the GemStone Explorer's Methods pane under their categories. Turn off to list a class's methods flat, without the category level. Toggle quickly from the Methods pane title bar. Creating a method category turns this back on and says so, because a category has no row to appear on in a flat list."
           },
           "gemstone.sessionMode": {
             "type": "string",
@@ -1176,7 +1176,7 @@
       },
       {
         "command": "gemstone.refreshBrowser",
-        "title": "Refresh Browser",
+        "title": "Refresh Cached Stone Data",
         "category": "GemStone",
         "icon": "$(refresh)"
       },
@@ -3563,7 +3563,7 @@
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
-    "@eslint/js": "^9.19.0",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@types/node": "~22.15",
     "@vitest/eslint-plugin": "^1.6.27",

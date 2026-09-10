@@ -298,7 +298,7 @@ export class CodeExecutor {
 
   /**
    * Render a Display-It result after refocusing its editor. Used only by the
-   * debugger's resume-to-completion path: the Enhanced Debugger panel takes
+   * debugger's resume-to-completion path: the GemStone Debugger panel takes
    * focus and then disposes, so the workspace editor must be re-focused before
    * the result is shown — the Backspace (dismiss) / Enter (expand) keybindings
    * are gated on editorTextFocus. Falls back to the captured editor reference if
@@ -506,8 +506,8 @@ export class CodeExecutor {
    * halts behaves exactly like halted workspace code.
    *
    * Answers whether the code raised, or whether the user cancelled it — and no
-   * more than that. Once the process is suspended it belongs to whichever
-   * debugger the user picked, so its eventual fate isn't ours to report. A
+   * more than that. Once the process is suspended it belongs to the debugger the
+   * user opened on it, so its eventual fate isn't ours to report. A
    * cancel (a soft or hard break) is reported as `cancelled`, not `raised`, and
    * never opens a debugger: it was the user's decision, not the code's fault.
    * Throws when the execution could not be started at all.
@@ -655,11 +655,17 @@ export class CodeExecutor {
   }
 
   /**
-   * Single shared notifier for a debuggable GemStone error. Offers two
-   * debuggers — the DAP "Debug" (Run and Debug view) and the webview
-   * "Enhanced Debug" — plus the implicit Cancel/dismiss. Whichever debugger the
-   * user picks OWNS the suspended `gsProcess`; dismissing clears the stack so
-   * the process is released. The two debuggers never coexist on one process.
+   * Single shared notifier for a debuggable GemStone error. Offers ONE debugger
+   * — the GemStone Debugger panel — plus the implicit Cancel/dismiss. Debug
+   * OWNS the suspended `gsProcess`; dismissing clears the stack so the process
+   * is released.
+   *
+   * The DAP debugger is not offered here. Two buttons for "debug this" is a
+   * choice nobody wants at the moment their code broke, and the panel is the one
+   * with the frame list, the variable pane, inline values and step points. The
+   * `gemstone` debug type stays registered (see extension.ts) rather than being
+   * torn out, but this notifier was its only caller: attaching needs a live
+   * `gsProcess` OOP, which nothing else surfaces, so the DAP route is dormant.
    */
   private async promptDebuggableError(
     session: ActiveSession,
@@ -667,31 +673,12 @@ export class CodeExecutor {
     msg: string,
     onComplete?: (resultOop: bigint) => void,
   ): Promise<void> {
-    // Button array order maps to right-to-left placement in the modal, so
-    // 'Enhanced Debug' first puts it to the RIGHT of 'Debug'.
     const choice = await vscode.window.showErrorMessage(
       `GemStone error: ${msg}`,
       { modal: true },
-      'Enhanced Debug',
       'Debug',
     );
     if (choice === 'Debug') {
-      await vscode.debug.startDebugging(
-        undefined,
-        {
-          type: 'gemstone',
-          name: 'GemStone Error',
-          request: 'attach',
-          sessionId: session.id,
-          gsProcess: gsProcess.toString(),
-          errorMessage: msg,
-        },
-        { suppressSaveBeforeStart: true },
-      );
-      // Reveal the Run and Debug view so the call stack is immediately visible
-      // instead of silently populating a hidden view.
-      await vscode.commands.executeCommand('workbench.view.debug');
-    } else if (choice === 'Enhanced Debug') {
       try {
         DebuggerPanel.create(session, gsProcess, msg, onComplete);
       } catch (err: unknown) {

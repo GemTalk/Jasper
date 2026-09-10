@@ -426,6 +426,34 @@ jobs:
           name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
           path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
           if-no-files-found: ignore
+      # A native GCI crash on Windows (SEH exception inside gcits.dll,
+      # e.g. "GciWindowsExceptionFilter called ...") doesn't fail a test —
+      # it kills a vitest fork worker, which vitest only reports as a
+      # generic "[vitest-pool]: Worker forks emitted error" / "Worker
+      # exited unexpectedly", with no indication of what actually crashed.
+      # GemStone's own exception filter already writes the real call stack
+      # to a %TEMP%\GCI*.tmp file when this happens, but nothing captured
+      # it before now — it was silently discarded when the runner was torn
+      # down. Copy it into the workspace first (upload-artifact's `path`
+      # doesn't expand shell/OS env vars like %TEMP%, only its own globs),
+      # then upload only if something's actually there.
+      - name: Collect GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path gci-crash-dumps | Out-Null
+          $dumps = Get-ChildItem "$env:TEMP\GCI*.tmp" -ErrorAction SilentlyContinue
+          Write-Host "Found $($dumps.Count) GCI crash dump(s) in $env:TEMP"
+          if ($dumps) { $dumps | Copy-Item -Destination gci-crash-dumps }
+      - name: Upload GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gci-crash-dumps-${{ matrix.platform }}-${{ matrix.gemstone-version }}
+          path: gci-crash-dumps
+          if-no-files-found: ignore
 
   package-check:
     name: Verify vsce packaging

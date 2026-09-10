@@ -10,6 +10,7 @@ vi.mock('vscode', () => ({
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as debug from '../debugQueries';
+import { homeDictionaryNameExpr } from '../queries/util';
 
 const noErr = {
   number: 0,
@@ -126,6 +127,25 @@ function expectNoMultiWordSelectors(session: ActiveSession): void {
     const selector = call[2] as string;
     expect(selector).not.toContain(' ');
   }
+}
+
+/**
+ * Runs a generator against a session that captures the Smalltalk handed to it
+ * instead of evaluating it, and returns that source for inspection.
+ */
+function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
+  const session = createMockSession();
+  let generated = '';
+  (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+    (_handle: unknown, code: string) => {
+      generated = code;
+      return '';
+    },
+  );
+
+  run(session);
+
+  return generated;
 }
 
 describe('debugQueries', () => {
@@ -447,27 +467,117 @@ describe('debugQueries', () => {
     });
   });
 
-  describe('tab separators in generated Smalltalk (3.6.2-compatible via Character tab)', () => {
-    const GS_PROCESS = 0x123n;
+  describe('class-side frames (the walk starts at the metaclass)', () => {
+    // A class-side method is in the METAclass's method dictionary, not the
+    // class's, so a lookup walk that starts at a class receiver itself finds
+    // nothing and every class-side frame reports "selector not found in the
+    // chain" — no class receiver was browsable at all. Starting at `rcvr class`
+    // covers both receiver kinds: an ordinary object's class, a class's
+    // metaclass.
+    it.each([
+      [
+        'the class that defines a running method',
+        (s: ActiveSession) => debug.getBrowseTarget(s, RECEIVER_OOP, 'foo'),
+      ],
+      [
+        'the implementation-candidate chain',
+        (s: ActiveSession) => debug.getReceiverClassChain(s, RECEIVER_OOP, 'foo'),
+      ],
+    ])("%s starts its walk at the receiver's class", (_label, run) => {
+      const code = generatedSmalltalkFrom(run);
 
-    /**
-     * Runs a generator against a session that captures the Smalltalk handed to it
-     * instead of evaluating it, and returns that source for inspection.
-     */
-    function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
-      const session = createMockSession();
-      let generated = '';
-      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
-        (_handle: unknown, code: string) => {
-          generated = code;
-          return '';
-        },
+      expect(code).toContain('cls := rcvr class.');
+      expect(code).not.toContain('cls := rcvr.');
+    });
+
+    // The metaclass chain runs on into Class and its superclasses, which are
+    // instance-side, so the side has to come from the class the row is actually
+    // about rather than from what the receiver was.
+    it('reports the side of the class that defines the method, not of the receiver', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
       );
 
-      run(session);
+      expect(code).toContain("def isMeta ifTrue: ['class']");
+    });
 
-      return generated;
-    }
+    it('reports the side of each candidate row, not of the receiver', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
+      );
+
+      expect(code).toContain("cls isMeta ifTrue: ['class']");
+    });
+
+    it('parses a chain that crosses from the metaclass side to the instance side', () => {
+      const session = createMockSession();
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        () =>
+          'Widget\tclass\tUserGlobals\t1\nObject\tclass\tGlobals\t0\nClass\tinstance\tGlobals\t1',
+      );
+
+      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'new')).toEqual([
+        { className: 'Widget', isMeta: true, dictName: 'UserGlobals', implementsSelector: true },
+        { className: 'Object', isMeta: true, dictName: 'Globals', implementsSelector: false },
+        { className: 'Class', isMeta: false, dictName: 'Globals', implementsSelector: true },
+      ]);
+    });
+  });
+
+  describe("home dictionary of a frame's class (resolved by identity, not by name)", () => {
+    const GS_PROCESS = 0x123n;
+
+    // Every query that answers "which dictionary owns this class" has to compare
+    // by identity. Scanning for a dictionary that merely holds the NAME picks a
+    // same-named class in another dictionary, and both of these build a
+    // gemstone:// URI from the answer — one the source pane opens for editing,
+    // one a new method is written through. Asserted on the generated Smalltalk
+    // because the round-trip is mocked in every other test here, so a lookup
+    // that resolved the wrong twin would parse just as cleanly.
+    // Each query with the temp it holds its non-meta class in, so the assertion
+    // below can ask for that query's own home-dictionary expression.
+    const queries: [string, (session: ActiveSession) => void, string][] = [
+      [
+        "a frame's method URI",
+        (session) => debug.getMethodUriInfo(session, METHOD_OOP),
+        'baseClass',
+      ],
+      [
+        "a missing method's URI",
+        (session) => debug.getDoesNotUnderstandInfo(session, GS_PROCESS),
+        'base',
+      ],
+      [
+        'the class that defines a running method',
+        (session) => debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
+        'base',
+      ],
+      [
+        'the implementation-candidate chain',
+        (session) => debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
+        'base',
+      ],
+    ];
+
+    // Asserted as the shared expression verbatim, not as the idioms inside it: an
+    // `==` anywhere in the generated Smalltalk would satisfy a `toContain('==')`,
+    // including a hand-rolled identity check that got its receiver or its
+    // `ifAbsent:` wrong — which is precisely what the two loops this replaced
+    // were. Going through `queries/util` is the property under test, so a query
+    // that stops doing so fails here whatever it re-rolls in its place.
+    it.each(queries)('%s compares the binding by identity', (_label, run, classVar) => {
+      const code = generatedSmalltalkFrom(run);
+
+      expect(code).toContain(homeDictionaryNameExpr(classVar));
+    });
+
+    it.each(queries)('%s does not settle for a dictionary holding the name', (_label, run) => {
+      expect(generatedSmalltalkFrom(run)).not.toContain('includesKey:');
+    });
+  });
+
+  describe('tab separators in generated Smalltalk (3.6.2-compatible via Character tab)', () => {
+    const GS_PROCESS = 0x123n;
 
     it('delimits the fields of a stack frame method location lookup', () => {
       const code = generatedSmalltalkFrom((session) => debug.getMethodUriInfo(session, METHOD_OOP));
@@ -584,6 +694,34 @@ describe('debugQueries', () => {
     });
   });
 
+  // The payload getFrameEvalContext brings back in one round trip. The layering
+  // it encodes is the whole point: for a block frame the doit emits the HOME
+  // method's names first and the block's own second, so a same-named block
+  // binding is the one that survives into the symbol dictionary.
+  describe('parseFrameEvalContext', () => {
+    it('reads self, the degraded flag, and the bindings in order', () => {
+      const ctx = debug.parseFrameEvalContext(
+        ['self\t119\t0', 'b\tcoll\t200', 'b\ttag\t201', 'b\teach\t202', ''].join('\n'),
+      );
+      expect(ctx).toEqual({
+        selfOop: 119n,
+        selfIsUnavailable: false,
+        names: ['coll', 'tag', 'each'],
+        oops: [200n, 201n, 202n],
+      });
+    });
+
+    it('reports a block frame whose home activation is gone', () => {
+      const ctx = debug.parseFrameEvalContext('self\t20\t1\nb\teach\t202\n');
+      expect(ctx).toMatchObject({ selfOop: 20n, selfIsUnavailable: true, names: ['each'] });
+    });
+
+    it('answers undefined for a payload with no self record to build on', () => {
+      expect(debug.parseFrameEvalContext('')).toBeUndefined();
+      expect(debug.parseFrameEvalContext('b\teach\t202\n')).toBeUndefined();
+    });
+  });
+
   // Regression for the eval-bar bug: typing "3 + 4" raised
   //   NameError 2404, _framePerform:withArgs:onLevel:, There is no Symbol …
   // because evaluateInFrame called a primitive that does NOT exist on 3.7.x (so
@@ -595,7 +733,7 @@ describe('debugQueries', () => {
   describe('evaluateInFrame ("3 + 4" regression)', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
-    const FRAME_RECEIVER = 0x77n; // becomes `self` for the evaluation
+    const FRAME_SELF = 0x77n; // becomes `self` for the evaluation
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n; // the oop the evaluation returned
     const SYSTEM_CLASS = 0xd3n;
@@ -606,10 +744,12 @@ describe('debugQueries', () => {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` and no named bindings.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\n`),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         // getFrameInfo reads [10]=receiver (0-indexed 9); [9]=names (0-indexed 8) = nil → skip names.
         GciTsFetchOops: vi.fn(() => ({
-          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
+          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_SELF],
           err: { ...noErr },
         })),
         resolveSymbol: vi.fn(() => SYSTEM_CLASS),
@@ -642,7 +782,7 @@ describe('debugQueries', () => {
       expect(debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3)).toBe('7');
     });
 
-    it('evaluates the expression string with self bound to the frame receiver', () => {
+    it("evaluates the expression string with self bound to the frame's self", () => {
       const session = evalSession();
       debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
@@ -653,7 +793,7 @@ describe('debugQueries', () => {
       );
       expect(evalCall).toBeDefined();
       expect(evalCall![1]).toBe(EXPR_STRING); // the receiver of the send is the expression String
-      expect(evalCall![4]).toEqual([FRAME_RECEIVER, SESSION_SYMBOL_LIST]);
+      expect(evalCall![4]).toEqual([FRAME_SELF, SESSION_SYMBOL_LIST]);
     });
 
     // The one-argument String>>evaluateInContext: does not exist before GemStone
@@ -678,6 +818,43 @@ describe('debugQueries', () => {
         false,
       );
     });
+
+    // A frame we could not read is NOT a frame with nothing to offer. The second
+    // still evaluates — the block's own names bind, and a failure through the
+    // missing receiver carries an explanation. The first has nothing to evaluate
+    // against, and evaluating anyway is indistinguishable from a real answer:
+    // `self` prints nil and every name comes back "undefined symbol", each of
+    // which reads as a verdict on the expression the user typed.
+    describe('when the frame contents cannot be read at all', () => {
+      const unreadable = /Could not read the contents of frame 3/;
+
+      it('blames the frame instead of evaluating against an empty context', () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockImplementation(() => {
+          throw new Error('the gem went away');
+        });
+
+        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+      });
+
+      it('blames the frame when the server answers a payload with no receiver in it', () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockReturnValue('');
+
+        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+      });
+
+      // evaluateInFrameNb is not an `async` function, so a synchronous throw out
+      // of the frame setup would bypass the caller's promise chain entirely.
+      it('rejects the non-blocking evaluation rather than throwing out of the call', async () => {
+        const session = evalSession();
+        (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockReturnValue('');
+
+        await expect(debug.evaluateInFrameNb(session, GS_PROCESS, 'limit', 3)).rejects.toThrow(
+          unreadable,
+        );
+      });
+    });
   });
 
   // When the frame has *named* args/temps, evaluateInFrame must bind them so a
@@ -688,7 +865,7 @@ describe('debugQueries', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
     const NAMES_ARRAY = 0xa1n;
-    const FRAME_RECEIVER = 0x77n;
+    const FRAME_SELF = 0x77n;
     const AMOUNT_NAME = 0xb1n; // the name string 'amount' in the names array
     const AMOUNT_VALUE = 0x96n; // oop of the temp's value (75)
     const AMOUNT_SYMBOL = 0xc1n; // interned #amount
@@ -701,6 +878,8 @@ describe('debugQueries', () => {
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` plus the one named binding.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\nb\tamount\t${AMOUNT_VALUE}\n`),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>
           name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
         ),
@@ -714,7 +893,7 @@ describe('debugQueries', () => {
             ? { oops: [AMOUNT_NAME], err: { ...noErr } }
             : {
                 // frame contents: [9]=names (idx8), [10]=receiver (idx9), [11+]=values
-                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_RECEIVER, AMOUNT_VALUE],
+                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_SELF, AMOUNT_VALUE],
                 err: { ...noErr },
               },
         ),
@@ -764,7 +943,7 @@ describe('debugQueries', () => {
       const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
       );
-      expect(evalCall![4]).toEqual([FRAME_RECEIVER, 0xddcn]);
+      expect(evalCall![4]).toEqual([FRAME_SELF, 0xddcn]);
     });
 
     it('interns each temp name and stores its value in the dictionary', () => {
@@ -796,7 +975,7 @@ describe('debugQueries', () => {
       const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
       );
-      expect(evalCall![4]).toEqual([FRAME_RECEIVER, 0xddan]); // the user symbol list, unwrapped
+      expect(evalCall![4]).toEqual([FRAME_SELF, 0xddan]); // the user symbol list, unwrapped
     });
 
     /**
@@ -835,7 +1014,7 @@ describe('debugQueries', () => {
   describe('evaluateInFrameNb (non-blocking eval)', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
-    const FRAME_RECEIVER = 0x77n;
+    const FRAME_SELF = 0x77n;
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n;
     const NB_SESSION_SYMBOL_LIST = 0xddan;
@@ -847,9 +1026,11 @@ describe('debugQueries', () => {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` and no named bindings.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\n`),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         GciTsFetchOops: vi.fn(() => ({
-          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
+          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_SELF],
           err: { ...noErr },
         })),
         resolveSymbol: vi.fn(() => 0xd3n),
@@ -892,7 +1073,7 @@ describe('debugQueries', () => {
       expect(nbCalls).toHaveLength(1);
       expect(nbCalls[0][1]).toBe(EXPR_STRING); // receiver = the expression String
       expect(nbCalls[0][3]).toBe('evaluateInContext:symbolList:');
-      expect(nbCalls[0][4]).toEqual([FRAME_RECEIVER, NB_SESSION_SYMBOL_LIST]);
+      expect(nbCalls[0][4]).toEqual([FRAME_SELF, NB_SESSION_SYMBOL_LIST]); // self = the frame's self
     });
 
     it('rejects when the expression string cannot be created', async () => {
@@ -931,6 +1112,8 @@ describe('debugQueries', () => {
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` plus the one named binding.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\nb\tamount\t${AMOUNT_VALUE}\n`),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>
           name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
         ),
@@ -942,7 +1125,7 @@ describe('debugQueries', () => {
           oop === NAMES_ARRAY
             ? { oops: [AMOUNT_NAME], err: { ...noErr } }
             : {
-                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_RECEIVER, AMOUNT_VALUE],
+                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_SELF, AMOUNT_VALUE],
                 err: { ...noErr },
               },
         ),
@@ -982,8 +1165,8 @@ describe('debugQueries', () => {
 
       const nbCalls = (session.gci.GciTsNbPerform as ReturnType<typeof vi.fn>).mock.calls;
       expect(nbCalls[0][3]).toBe('evaluateInContext:symbolList:'); // symbol-list selector
-      expect(nbCalls[0][4][0]).toBe(FRAME_RECEIVER); // self
-      expect(nbCalls[0][4]).toHaveLength(2); // [receiver, symbolList]
+      expect(nbCalls[0][4][0]).toBe(FRAME_SELF); // self
+      expect(nbCalls[0][4]).toHaveLength(2); // [self, symbolList]
     });
   });
 
