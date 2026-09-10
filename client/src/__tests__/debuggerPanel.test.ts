@@ -611,11 +611,28 @@ describe('stackDumpFileName / stackDumpTimestamp (#11)', () => {
   });
 });
 
+// The serializer is registered once per process — VS Code rejects a second
+// registration for one view type — so a test that asserts on the registration has to
+// clear that latch first. Test order is shuffled, so it cannot rely on being the
+// first initSourceTabCleanup call in the file.
+function rearmRestoreDecliner(): void {
+  (DebuggerPanel as unknown as { restoreDeclinerRegistered: boolean }).restoreDeclinerRegistered =
+    false;
+}
+
+// The columns a window left behind are static — they have to outlive activate() to be
+// there when VS Code deserializes the panel — so within a test file they also outlive
+// the test that recorded them, and would add a group close to whatever ran next.
+function forgetOrphanColumns(): void {
+  (DebuggerPanel as unknown as { orphanColumns: number[] }).orphanColumns = [];
+}
+
 describe('DebuggerPanel', () => {
   let session: ActiveSession;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    forgetOrphanColumns();
     // Inspect opens the tabbed Inspector by default, whatever the session has
     // installed; the two tests here that want the Enhanced one ask for `auto`
     // themselves. Cleared per test because the mock's config store is
@@ -1941,6 +1958,12 @@ describe('DebuggerPanel', () => {
     // gemstone://). We persist the open source URIs to workspaceState and reap
     // the leftovers on the next activation.
     const ORPHAN_KEY = 'jasper.debugger.orphanSourceUris';
+    // What the window leaves for the next one: the source tabs to reap AND the editor
+    // columns to retire. The columns matter on their own — a debugger that never showed
+    // a source still carved a group, so that group has no tab to reap and would be
+    // unreachable without them.
+    const trackedUris = (m: { get(k: string): unknown }): string[] =>
+      (m.get(ORPHAN_KEY) as { uris?: string[] } | undefined)?.uris ?? [];
     function fakeMemento(initial: Record<string, unknown> = {}): vscode.Memento {
       const store = new Map<string, unknown>(Object.entries(initial));
       return {
@@ -1956,6 +1979,8 @@ describe('DebuggerPanel', () => {
 
     it('reaps a debugger source tab a prior session left open, then re-arms the set', () => {
       const orphan = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/finish';
+      // Seeded in the pre-columns shape on purpose: a window upgraded across that
+      // change still has a bare array on disk and its tabs must still be reaped.
       const memento = fakeMemento({ [ORPHAN_KEY]: [orphan] });
       const orphanTab = { input: new vscode.TabInputText(vscode.Uri.parse(orphan)) };
       // An unrelated tab the user opened independently (e.g. System Browser) — never ours.
@@ -1978,6 +2003,207 @@ describe('DebuggerPanel', () => {
       expect(memento.get(ORPHAN_KEY)).toBeUndefined();
     });
 
+    // Closing the window with a debugger open is the one path where dispose never
+    // runs, so neither half of the debugger's column is cleaned up by it. The source
+    // tab is handled by the reap above. The panel's GROUP was the half nothing
+    // covered: VS Code persists the editor layout whatever was in it, so the group
+    // came back — empty, because a webview is dropped unless a serializer claims it —
+    // and VS Code only retires a group when its last editor CLOSES, which a group
+    // restored empty never does. It survived every later window open and shifted the
+    // ViewColumn numbers along for the next debugger trying to carve a column.
+    it('registers a serializer so a restored panel is closed rather than revived', () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      expect(register).toHaveBeenCalledTimes(1);
+      expect(register.mock.calls[0][0]).toBe('gemstoneEnhancedDebugger');
+    });
+
+    it('disposes what it restores, so the group it came back into is retired', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const restored = { dispose: vi.fn(), webview: { html: '' }, viewColumn: 2 };
+
+      await serializer.deserializeWebviewPanel(restored, undefined);
+
+      // There is nothing to revive to, since the suspended process died with the session.
+      expect(restored.dispose).toHaveBeenCalledTimes(1);
+      // And no debugger was built around it — the normal dispose path would try to
+      // clear a stack on a session that was never opened.
+      expect(restored.webview.html).toBe('');
+    });
+
+    // Closing the tab is not enough on its own. VS Code retires a group when its last
+    // editor closes during ordinary use, but a group emptied while the window is still
+    // restoring keeps its place — which is the blank pane the whole item is about, and
+    // the reason the flash of a restored debugger was followed by an empty box.
+    it('retires the group the restored panel leaves empty', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 7, tabs: [] }); // the group it came back into, now empty
+      const emptied = groups[groups.length - 1];
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 7 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    // The guarantee that makes the sweep safe: it only ever closes a group that is
+    // genuinely empty, so anything the user put there survives.
+    it('leaves the column alone when an editor is sitting in it', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 8, tabs: [{ input: {} }] }); // the user's own editor
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 8 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
+    });
+
+    // The activation retire polls for up to ~1.7s, because the closes it follows are
+    // VS Code's own and there is no promise to await. A halt inside that window carves
+    // a fresh pair, which renumbers the grid AND adds an empty source group — so a
+    // remembered number from the last window no longer names the group it was recorded
+    // for, and one of the groups it now names is a live debugger's source pane. The
+    // retire gives up instead of closing it.
+    it('abandons a pending retire once a debugger has carved a new column pair', async () => {
+      // Occupied at the first poll, so the retire goes round the back-off rather than
+      // finishing inside the call.
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push({ viewColumn: 4, tabs: [{ input: {} }] });
+      const remembered = groups[0];
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [4] } });
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      // The halt lands while the retire is still waiting out its back-off, and the
+      // column it remembers has emptied in the meantime.
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      remembered.tabs.length = 0;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      // Named rather than asserting nothing closed at all: the panel this opens
+      // sweeps its own groups when it goes, and this is about ONE column.
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalledWith(remembered);
+    });
+
+    // What the reaping chain waits on is a tab close, which is as slow as VS Code makes
+    // it — so the chain can reach the retire long after the window it was armed for.
+    // The columns it carries were read off THAT layout: a debugger has carved since,
+    // every number in it names a different group, and one of those is the new
+    // debugger's source pane, carved empty. The generation is captured where the
+    // numbers are read and carried down, so a chain that slips gives up.
+    it('does not retire a remembered column once the chain reaches it after a carve', async () => {
+      const uri = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/size';
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      const sourceTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      groups.push({ viewColumn: 6, tabs: [sourceTab] }); // the tab to reap
+      groups.push({ viewColumn: 4, tabs: [] }); // the remembered pair, already empty
+      const remembered = groups[1];
+      // Hold the tab close open, so the chain behind it is still pending when the halt
+      // arrives — the slow close that lets a stale sweep outlive its window.
+      let landTabClose = (): void => {};
+      const close = vi.mocked(vscode.window.tabGroups.close);
+      close.mockClear();
+      close.mockImplementation((target: unknown) =>
+        target === sourceTab
+          ? new Promise<boolean>((resolve) => {
+              landTabClose = () => resolve(true);
+            })
+          : Promise.resolve(true),
+      );
+
+      DebuggerPanel.initSourceTabCleanup(
+        fakeMemento({ [ORPHAN_KEY]: { uris: [uri], columns: [4] } }),
+      );
+      await flush();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      landTabClose();
+      await flushMicrotasks();
+
+      // The tab it was sent to reap, yes. The column it remembered, no.
+      expect(close).toHaveBeenCalledWith(sourceTab);
+      expect(close).not.toHaveBeenCalledWith(remembered);
+    });
+
+    // The half the serializer alone could never reach: the companion source group is
+    // carved EMPTY, so a debugger closed with no source ever shown leaves a group with
+    // no tab to reap. Its column has to have been written down while the window was
+    // alive, because dispose cannot win the shutdown race.
+    it('retires a recorded column that came back with nothing in it', async () => {
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [5] } });
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 5, tabs: [] });
+      const emptied = groups[groups.length - 1];
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    it('records the columns a live debugger holds, not just its source tabs', async () => {
+      const memento = fakeMemento();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      openPanelWithStack();
+      await flush();
+
+      const stored: { columns?: number[] } | undefined = memento.get(ORPHAN_KEY);
+      // Both halves of the carve, in the order persistLiveSourceUris writes them: the
+      // panel's own group (1) and the companion source group (2). Named rather than
+      // counted, because the source group is the whole reason the columns are
+      // persisted at all — carved EMPTY, it has no tab to reap and no other way back.
+      // A length check would be satisfied by the panel's column on its own, which the
+      // serializer retires from its own viewColumn without consulting this record.
+      expect(stored?.columns).toEqual([1, 2]);
+    });
+
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
@@ -1994,7 +2220,7 @@ describe('DebuggerPanel', () => {
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
       expect(uri).toContain('orphanProbeA'); // our just-opened source…
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // …is now tracked for reaping.
+      expect(trackedUris(memento)).toContain(uri); // …is now tracked for reaping.
     });
 
     it('drops the URI from the tracked set on a clean panel close (nothing to reap)', async () => {
@@ -2011,12 +2237,12 @@ describe('DebuggerPanel', () => {
       const uri = (
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // tracked while open…
+      expect(trackedUris(memento)).toContain(uri); // tracked while open…
 
       closePanel(panel);
 
       // …and dropped on a clean dispose, so the next launch has nothing to reap.
-      expect(memento.get(ORPHAN_KEY) ?? []).not.toContain(uri);
+      expect(trackedUris(memento)).not.toContain(uri);
     });
 
     // ── Double-click-to-edit inline values (#5 Phase 2) ───────────────────

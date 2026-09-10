@@ -298,6 +298,24 @@ export class ClassCategoryItem extends vscode.TreeItem {
   }
 }
 
+// A class row's version tag and its explanation, in one place because two panes
+// render the same thing: the Classes pane (ClassItem) and the Class Hierarchy pane
+// (HierarchyItem).
+//
+// The `v` is what makes the numbers mean something. A bare `[3/3]` reads as a count
+// of anything the row might have — methods, subclasses, variables — and the tag is
+// the only place the class history surfaces in the pane, so there is nothing else on
+// screen to infer it from. The tooltip then says it in words for anyone still unsure.
+function versionTagOf(version: queries.ClassVersionInfo | undefined): string | undefined {
+  return version ? `v${version.current}/${version.total}` : undefined;
+}
+function versionTooltipOf(
+  className: string,
+  version: queries.ClassVersionInfo | undefined,
+): string {
+  return version ? `${className} — version ${version.current} of ${version.total}` : className;
+}
+
 // Exported for the unit tests that pin the class row's expansion chevron, and for the
 // Classes pane's drag controller, which carries only real class rows.
 export class ClassItem extends vscode.TreeItem {
@@ -311,13 +329,19 @@ export class ClassItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     hasVars = false,
-    versionTag?: string,
+    version?: queries.ClassVersionInfo,
     hasComment = false,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasVars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
+    // Without this the hover just repeats the label, so `Foo[v3/3]` explained
+    // `Foo[v3/3]`. Says the tag in words, and stays the plain name when untagged.
+    // decorateTestRow appends its result note to a tooltip already here rather than
+    // replacing it, so a test class keeps both lines.
+    this.tooltip = versionTooltipOf(className, version);
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
@@ -578,14 +602,17 @@ export class HierarchyItem extends vscode.TreeItem {
     // Position in the ancestor→self chain; -1 for subclasses.
     public readonly chainIndex: number,
     hasChildren: boolean,
-    // A `[current/total]` class-history version tag, when the class has more than
-    // one version (same rule as the Classes pane). Affects only the label, never the id.
-    versionTag?: string,
+    // The class's position in its class history, when it has more than one version
+    // (same rule as the Classes pane). Rendered as a `[vcurrent/total]` tag on the
+    // label and spelled out in the tooltip; never affects the id.
+    version?: queries.ClassVersionInfo,
   ) {
+    const versionTag = versionTagOf(version);
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
+    this.tooltip = versionTooltipOf(className, version);
     this.id = `h:${role}:${chainIndex}:${className}`;
     this.contextValue = 'explorerHierClass';
     // The current class is shown by keeping it *selected* in this pane (synced
@@ -1023,6 +1050,16 @@ export class ExplorerController {
      *  commands here that rewrite something an editor can be sitting on without going
      *  through a save — refiling a class rewrites the category line in its definition. */
     private readonly notifyDocumentChanged?: (uri: vscode.Uri) => void,
+    /** Called when a class becomes the selected one, so a view that caches per-class data
+     *  (completion's selector / instance-variable lists) can warm it before it is asked
+     *  for. Selecting a class is the strongest signal its methods are about to be read. */
+    private readonly onClassSelected?: (sessionId: number, className: string) => void,
+    /** Called when the user asks the Explorer to re-read the image (the Refresh button),
+     *  so anything cached FROM the image is dropped rather than surviving the refresh.
+     *  The compile hooks catch the common case on their own; this is the escape hatch for
+     *  the one they cannot see — a class or method created by executing code in a
+     *  workspace, which the stone announces to nobody. */
+    private readonly onImageReread?: () => void,
   ) {}
 
   /**
@@ -1420,6 +1457,8 @@ export class ExplorerController {
   // selection highlighted across a data refresh on its own (stable row ids), so
   // skipping reveal loses nothing but the unwanted jump.
   async refreshRetainingSelection({ reveal = true }: { reveal?: boolean } = {}): Promise<void> {
+    // Before anything is re-read, not after: a refresh means what is held is suspect.
+    this.onImageReread?.();
     const session = this.session();
     const { dictName, dictIndex, className } = this.state;
     // Remember the method row currently selected so it can be re-revealed.
@@ -1810,6 +1849,9 @@ export class ExplorerController {
     if (revealHierarchy) void this.revealHierarchySelf();
     this.syncTitles();
     this.recordLanding();
+    // Warming this class's completions is best-effort and debounced on the other side,
+    // so a click-through does not fetch per row and selection stays immediate.
+    if (session) this.onClassSelected?.(session.id, item.className);
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
@@ -2260,12 +2302,13 @@ export class ExplorerController {
     return this.commentedClasses.has(className);
   }
 
-  // The class's `current/total` version tag when it has more than one version in
-  // the current dictionary (so the row renders `Foo[2/3]`), or undefined for a
-  // single-version class (rendered as a plain `Foo`).
-  classVersion(className: string): string | undefined {
-    const v = this.classVersions.get(className);
-    return v ? `${v.current}/${v.total}` : undefined;
+  // The class's position in its class history when it has more than one version in
+  // the current dictionary (so the row renders `Foo[v2/3]` and says "version 2 of 3"
+  // on hover), or undefined for a single-version class (a plain `Foo`). The two item
+  // classes do the formatting — see versionTagOf / versionTooltipOf — so the tag and
+  // its explanation cannot drift apart between the Classes and Hierarchy panes.
+  classVersion(className: string): queries.ClassVersionInfo | undefined {
+    return this.classVersions.get(className);
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.
@@ -5653,6 +5696,28 @@ export class ExplorerController {
     if (!name) return;
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
+    // With grouping off the pane renders selectors only, so there is no category
+    // row for the reveal below to land on: it rejected, the rejection was
+    // swallowed, and creating a category looked like it had done nothing at all.
+    // (It had not — the name went into the fresh overlay and turning grouping back
+    // on showed it.) Switching the pane to grouped is what makes the thing just
+    // created visible and ready to file a method into, which is the point of
+    // creating it. Note this writes the user's global preference, deliberately:
+    // they asked for a category, and a category only exists in a grouped pane.
+    //
+    // And it says so. A user who deliberately turned grouping off is owed an
+    // account of why their pane now looks different and stays that way — a
+    // preference that changes itself with no signal is indistinguishable from a
+    // bug, and Global is the right target despite the blast radius (Workspace
+    // would silently shadow their own setting, and has nothing to write to when
+    // no folder is open, which is how Jasper is often used).
+    if (!this.groupMethodsByCategory()) {
+      await this.setGroupMethodsByCategory(true);
+      void vscode.window.showInformationMessage(
+        `Grouping methods by category was turned on so the new "${name}" category is visible. ` +
+          'Turn it back off with "Don\'t Group Methods by Category" in the Methods pane title bar.',
+      );
+    }
     this.methodProvider.refresh();
     this.syncTitles();
     // Select the new category (expanding the side node — the class side starts
@@ -7052,6 +7117,11 @@ export function registerGemStoneExplorer(
   // Announces a stone-side change to a `gemstone://` document (the FS provider's
   // `notifyChanged`), so an open editor on it re-reads.
   notifyDocumentChanged?: (uri: vscode.Uri) => void,
+  // Called when a class becomes the selected one, so completion can warm that class's
+  // selector / instance-variable lists before the first request pays for them inline.
+  onClassSelected?: (sessionId: number, className: string) => void,
+  // Called when the Refresh button re-reads the image, so caches derived from it drop.
+  onImageReread?: () => void,
 ): ExplorerHandle {
   const ctl = new ExplorerController(
     sessionManager,
@@ -7060,6 +7130,8 @@ export function registerGemStoneExplorer(
     context.globalState,
     sunit,
     notifyDocumentChanged,
+    onClassSelected,
+    onImageReread,
   );
 
   // A run starting or finishing changes what these rows should say, so repaint the
