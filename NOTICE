@@ -14,7 +14,8 @@ This product includes vendored third-party software:
 - The Enhanced Inspector server-side payload -- feenk's GToolkit remote
   inspector (GT4GemStone, RemotePhlow, wire encoding) plus the libraries it
   needs on the stone (RemoteServiceReplication, Announcements, STON). MIT
-  License, across six upstream repositories:
+  License, across six upstream repositories (seven counting GemTalk/Rowan
+  for the STON port):
   Copyright (c) 2021 feenk -- https://github.com/feenkcom/gt4gemstone
   Copyright (c) 2019 Juraj Kubelka -- https://github.com/feenkcom/gtoolkit-remote
   Copyright (c) 2024 feenk -- https://github.com/feenkcom/gtoolkit-wireencoding
