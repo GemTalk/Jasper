@@ -126,7 +126,7 @@ describe('openGemstoneDocument', () => {
       expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
     });
 
-    it('adds a new pin without stealing the view from the method being read', async () => {
+    it('leaves the newly pinned document showing rather than parking it', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(NAV));
       placement.remember(Uri.parse(SIDE));
@@ -136,20 +136,16 @@ describe('openGemstoneDocument', () => {
 
       await openGemstoneDocument(methodDoc(), 'pin', placement);
 
-      expect(showTextDocument).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: false }),
-      );
       expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
-      // Restores the previously-visible tab (SIDE), so the new pin parks in the
-      // background rather than switching what you're reading.
-      const restore = showTextDocument.mock.calls.find((c) => c[1]?.preserveFocus === true);
-      expect(restore).toBeDefined();
-      expect(String(restore?.[0])).toBe(SIDE);
-      expect(restore?.[1]).toMatchObject({ viewColumn: 2 });
+      // The previously-showing tab (SIDE) is NOT re-shown: an explicit pin is a
+      // request to look at the thing, so it stays raised. Exactly one showTextDocument
+      // call, for the document being pinned.
+      expect(showTextDocument).toHaveBeenCalledTimes(1);
+      expect(String(showTextDocument.mock.calls[0][0].uri)).toBe(SOURCE);
+      expect(showTextDocument.mock.calls.filter((c) => String(c[0]) === SIDE)).toHaveLength(0);
     });
 
-    it('restores the browsed method as a preview tab, not promoting it, when pinning another', async () => {
+    it('does not re-show the browsed preview tab when pinning another document', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(NAV));
       placement.remember(Uri.parse(SIDE));
@@ -157,11 +153,12 @@ describe('openGemstoneDocument', () => {
 
       await openGemstoneDocument(methodDoc(), 'pin', placement);
 
-      const restore = showTextDocument.mock.calls.find((c) => String(c[0]) === SIDE);
-      expect(restore?.[1]).toMatchObject({ viewColumn: 2, preview: true, preserveFocus: true });
+      // Nothing promotes or re-shows the preview — it keeps its preview state by being
+      // left alone, so the next single-click navigation still reuses it.
+      expect(showTextDocument.mock.calls.filter((c) => String(c[0]) === SIDE)).toHaveLength(0);
     });
 
-    it('does not restore the view when the pinned method was the one already showing', async () => {
+    it('pins the document that was already showing without re-showing anything', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(SOURCE));
       setGroups([{ viewColumn: 2, tabs: [{ uri: SOURCE, active: true }] }]);
@@ -169,9 +166,7 @@ describe('openGemstoneDocument', () => {
       await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
-      expect(showTextDocument.mock.calls.filter((c) => c[1]?.preserveFocus === true)).toHaveLength(
-        0,
-      );
+      expect(showTextDocument).toHaveBeenCalledTimes(1);
     });
 
     it('opens the first pin in the active group when nothing is open yet', async () => {
