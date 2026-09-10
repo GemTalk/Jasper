@@ -78,9 +78,11 @@ emit_header() {
     echo "!           NOTICE at the root of https://github.com/GemTalk/Jasper"
     echo "!"
     echo "! Vendored into Jasper and filed into the stone by the Enhanced Inspector"
-    echo "! installer. DO NOT EDIT BY HAND - regenerated from upstream by"
-    echo "! update_enhanced_inspector_support.sh, which re-applies this header and rewrites"
-    echo "! class placement from Globals to the dedicated GsEnhancedInspector dictionary."
+    echo "! installer. DO NOT EDIT BY HAND - refreshed from upstream by"
+    echo "! update_enhanced_inspector_support.sh, then post-processed by"
+    echo "! gs-src/enhancedInspector/build/apply_jasper_transforms.sh, which writes this"
+    echo "! header from its attribution table and rewrites class placement from Globals"
+    echo "! to the dedicated GsEnhancedInspector dictionary."
     echo "$DASHES"
 }
 
