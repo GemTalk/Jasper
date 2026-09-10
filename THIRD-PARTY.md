@@ -127,6 +127,13 @@ SOFTWARE.
 > (`Announcements-Core-GemStone…`, `STON-Core` / `STON-GemStone-Kernel`) belong
 > to `GemTalk/Announcements` and to STON respectively, not to feenk. The
 > copyright holders above are the ones named in those projects' `LICENSE` files.
+> STON's row, unlike Announcements', is an inference: no gt4gemstone script
+> documents that export, so the lineage is established from the payload itself —
+> by package name (`STON-Core`, `STON-GemStoneBase`, `STON-GemStone-Kernel`, all
+> present in `GemTalk/Rowan` at `platforms/gemstone/projects/STON/src/`) and by a
+> `STON` class comment byte-identical to that project's
+> `STON-Core/STON.class.st` at `masterV3.4`. Re-check it on a re-vendor rather
+> than re-deriving it.
 
 ### MIT License
 
