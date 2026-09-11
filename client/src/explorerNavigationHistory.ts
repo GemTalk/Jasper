@@ -236,6 +236,36 @@ export class ExplorerNavigationHistory {
     this.onChange();
   }
 
+  /**
+   * Forget every landing on a class that has gone from the stone.
+   *
+   * `goToLanding` already drops a landing that no longer resolves, but only once someone
+   * presses Back onto it. That is too late for the pinned "In …" line, which is drawn from the
+   * CURRENT landing: an undo that removed the class the panes were on left that line naming it,
+   * so the Explorer went on saying "In UserGlobals · NewCat · Foo" over panes that had correctly
+   * let Foo go. When we already know the class is gone, drop it eagerly — including the coarser
+   * landings on its methods, which are gone with it.
+   *
+   * The cursor follows the removals so it still points at the landing it was on; with the
+   * current one itself removed it falls back to the nearest earlier landing, which is where
+   * Back would have taken the user anyway.
+   */
+  forgetClass(sessionId: number, className: string): void {
+    const chain = this.chains.get(sessionId);
+    if (!chain) return;
+    let removed = 0;
+    for (let i = chain.landings.length - 1; i >= 0; i--) {
+      if (chain.landings[i].className !== className) continue;
+      chain.landings.splice(i, 1);
+      if (i <= chain.cursor) chain.cursor -= 1;
+      removed += 1;
+    }
+    if (removed === 0) return;
+    if (chain.cursor < 0 && chain.landings.length > 0) chain.cursor = 0;
+    if (chain.landings.length === 0) chain.cursor = -1;
+    this.onChange();
+  }
+
   /** Forget the shown session's chain, leaving other sessions' chains alone. */
   clear(): void {
     if (this.activeSessionId === undefined) return;

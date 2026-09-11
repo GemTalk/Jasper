@@ -32,6 +32,7 @@ import {
   saveIfDirty,
   codePointsBefore,
 } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** Run the extract-temporary flow for the active method editor. */
 export async function extractTemporaryCommand(sessions: SessionManager): Promise<void> {
@@ -182,7 +183,10 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
   const result = await showExtractTemporaryPanel(newName, start, replaceAll, {
     loadPage: async (off) =>
       parsePage(await queries.pageExtractTemporaryPreview(session, token, off, PREVIEW_PAGE_BYTES)),
-    apply: async () => parseApplyResult(await queries.applyExtractTemporary(session, token)),
+    apply: async () =>
+      parseApplyResult(
+        await queries.applyExtractTemporary(session, token, `Extract temporary '${newName}'`),
+      ),
     cleanup: safeClear,
   });
   if (!result) {
@@ -209,5 +213,5 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
   // The method was recompiled server-side (no commit). Reload the editor from the
   // stone so it shows the saved, rewritten source, and re-focus it.
   await reloadMethodEditor(editor);
-  void vscode.window.setStatusBarMessage(`Extracted '${newName}'`, 4000);
+  notifyRefactoringApplied(session, `Extracted '${newName}'.`);
 }

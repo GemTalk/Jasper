@@ -153,7 +153,7 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     );
     expect(sender?.newSource).toContain('put: nil');
 
-    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, []));
+    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(definesSelector('csigStore:put:')).toBe(true);
@@ -187,7 +187,7 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     expect(impl?.newSelector).toBe('csigMoveY:x:');
     expect(impl?.newSource).toContain('csigMoveY: yVal x: xVal');
 
-    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, []));
+    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(definesSelector('csigMoveY:x:')).toBe(true);
@@ -221,7 +221,7 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     const impl = start.page.changes.find((c) => c.kind === 'methodRename' && c.className === BASE);
     expect(impl?.newSelector).toBe('csigKeep:');
 
-    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, []));
+    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(definesSelector('csigKeep:')).toBe(true);
@@ -310,7 +310,9 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     );
     expect(sender).toBeDefined();
 
-    const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [sender!.id]));
+    const result = parseApplyResult(
+      await applyChangeSignature(asyncExec, token, [sender!.id], 'test undo'),
+    );
 
     expect(result.failed).toEqual([]);
     expect(definesSelector('csigStore:put:')).toBe(true);

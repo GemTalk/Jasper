@@ -19,6 +19,7 @@ import { parseAnalysis, parseStartPreview, parsePage, parseApplyResult } from '.
 import { showPushMethodPanel } from './pushMethodPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface PushMethodRequest {
   session: ActiveSession;
@@ -144,7 +145,15 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
         await queries.pagePushMethodPreview(session, direction, token, off, PREVIEW_PAGE_BYTES),
       ),
     apply: async (deselected) =>
-      parseApplyResult(await queries.applyPushMethod(session, direction, token, deselected)),
+      parseApplyResult(
+        await queries.applyPushMethod(
+          session,
+          direction,
+          token,
+          deselected,
+          `Push ${direction} from ${sourceClass}`,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) return undefined;
@@ -177,10 +186,12 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
   const n = moved.length;
   const where =
     direction === 'up' ? `to ${start.targetClass ?? 'the superclass'}` : 'to the subclasses';
-  void vscode.window.showInformationMessage(
+  notifyRefactoringApplied(
+    session,
     n === 1
       ? `Pushed #${moved[0]} ${direction} ${where}.`
       : `Pushed ${n} methods ${direction} ${where}.`,
+    'toast',
   );
   const targetClass = direction === 'up' ? (start.targetClass ?? analysis.targetClass) : null;
   // Where to reveal + highlight the moved method: the superclass for push-up; for push-down,

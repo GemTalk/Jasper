@@ -298,6 +298,105 @@ describe('explorer queries (integration)', () => {
       expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
       expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
     });
+
+    it('CREATES a category the class does not have yet, rather than refusing', () => {
+      // The Explorer's "+ new category" leaves the stone untouched until something is
+      // filed there, so dropping a method on one of those rows targets a category that
+      // does not exist yet: bare `moveMethod:toCategory:` answers classErrMethCatNotFound.
+      defineWidget();
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('fresh-category');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'fresh-category');
+
+      expect(selectorsIn(WIDGET, false, 'fresh-category')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('does not fall over on a category that IS already there', () => {
+      // `addCategory:` raises classErrMethCatExists on one that exists, so it is guarded.
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'baz ^0');
+
+      expect(q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated').trim()).toBe('ok');
+    });
+
+    it('moves back into a category a RENAME emptied out of existence', () => {
+      // The exact sequence that failed in the Explorer: rename `accessing` away, which
+      // takes its methods AND the category itself with it, then create a fresh `accessing`
+      // with the "+" button (client overlay only) and drag a method into it. The target
+      // category has a familiar name but no server existence at all.
+      defineWidget();
+      q.renameCategory(session(), WIDGET, false, 'accessing', 'accessing-renamed');
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'accessing');
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing-renamed')).not.toContain('bar');
+    });
+
+    it('creates the category on the CLASS side when that is the side being moved', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'building');
+
+      expect(selectorsIn(WIDGET, true, 'building')).toContain('make');
+      // The instance side is left alone — the two sides have separate category lists.
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('building');
+    });
+  });
+
+  describe('removeMethodCategory', () => {
+    it('removes an empty category', () => {
+      defineWidget();
+      // Emptied by moving its one method away — the category itself survives that.
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'elsewhere');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('ok');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+    });
+
+    it('REFUSES a category that holds methods, and leaves them alone', () => {
+      // The fact the guard exists for: GemStone's `removeCategory:` does not refuse a
+      // category with methods in it, it deletes them along with the category. Pinned here so
+      // it cannot change underneath the undo that relies on being told first.
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('holds:1');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('bare removeCategory: really does take the methods with it', () => {
+      // The unguarded behaviour, stated outright so the guard above reads as necessary
+      // rather than defensive.
+      defineWidget();
+
+      exec(`(UserGlobals at: #'${WIDGET}') removeCategory: 'accessing'. 'ok'`);
+
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') includesSelector: #bar) printString`).trim(),
+      ).toBe('false');
+    });
+
+    it('answers not-found rather than raising on a category the class does not have', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'no-such-category').trim()).toBe(
+        'not-found',
+      );
+    });
+
+    it('keeps the two sides apart', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, true, 'accessing').trim()).toBe('not-found');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+    });
   });
 
   describe('renameCategory', () => {

@@ -23,7 +23,10 @@ vi.mock('../browserQueries', () => ({
   deleteClass: vi.fn(),
   removeDictionary: vi.fn(),
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
 }));
+// The undo recorder's symbol-list read — mocked so the flow records without a stone (#434).
+vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
 
 import * as vscode from 'vscode';
 import { FileInManager, newClassTemplate } from '../fileInManager';
@@ -33,6 +36,8 @@ import { GemStoneLogin } from '../loginTypes';
 import { fileInClass } from '../topazFileIn';
 import { SystemBrowser } from '../systemBrowser';
 import * as queries from '../browserQueries';
+import { captureDictionary } from '../undo/queries/dictionaryQueries';
+import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 
 function createMockSession(overrides?: Partial<GemStoneLogin>): ActiveSession {
   return {
@@ -513,6 +518,54 @@ describe('FileInManager', () => {
         'MyClass',
       );
       expect(SystemBrowser.refresh).toHaveBeenCalledWith(mockSession.id);
+    });
+
+    it('records the removal, so Undo can put the dictionary back (#434)', () => {
+      // Deleting the mirror directory is the same destructive act as the Explorer's Remove
+      // Dictionary, and gets the same way back -- including the POSITION it held.
+      resetUndoStacks();
+      vi.mocked(captureDictionary).mockReturnValue({
+        present: true,
+        name: 'Published',
+        index: 3,
+      });
+      const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/3-Published';
+
+      deleteHandler({ files: [createUri(fsPath)] });
+
+      const entry = peekUndoEntry(mockSession.id);
+      expect(entry).toMatchObject({
+        kind: 'dictionaryEdit',
+        label: 'Remove dictionary Published',
+        before: { present: true, name: 'Published', index: 3 },
+        after: { present: false },
+      });
+      // The dictionary itself is pinned in SessionTemps: unlisting does not destroy it, but
+      // nothing else references it once it is off the list.
+      expect(entry?.kind === 'dictionaryEdit' && entry.stashKey).not.toBeNull();
+      // The name is taken from the directory, with the index prefix stripped.
+      expect(captureDictionary).toHaveBeenCalledWith(
+        expect.anything(),
+        'Published',
+        expect.any(String),
+      );
+    });
+
+    it('records nothing when the removal itself failed', () => {
+      resetUndoStacks();
+      vi.mocked(captureDictionary).mockReturnValue({
+        present: true,
+        name: 'Published',
+        index: 3,
+      });
+      vi.mocked(queries.removeDictionary).mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+      const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/3-Published';
+
+      deleteHandler({ files: [createUri(fsPath)] });
+
+      expect(undoStackDepth(mockSession.id)).toBe(0);
     });
 
     it('removes dictionary from GemStone when directory is deleted', () => {

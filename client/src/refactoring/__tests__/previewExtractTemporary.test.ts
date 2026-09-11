@@ -80,7 +80,7 @@ describe('previewExtractTemporary query builders', () => {
   it('applyExtractTemporary sends an empty deselected set (single all-or-nothing change)', async () => {
     const s = spy();
 
-    await applyExtractTemporary(s.exec, 'tok');
+    await applyExtractTemporary(s.exec, 'tok', 'test undo');
 
     expect(s.code).toContain("applyForToken: 'tok'");
     expect(s.code).toContain('deselected: #()');

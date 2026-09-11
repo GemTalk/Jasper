@@ -330,7 +330,13 @@ describe('move method command', () => {
     expect(page.done).toBe(false);
 
     const result = await ops.apply(['b']);
-    expect(queries.applyMoveMethod).toHaveBeenCalledWith(expect.anything(), token, ['b']);
+    // The apply carries an undo label (#434) so the move can be reversed afterwards.
+    expect(queries.applyMoveMethod).toHaveBeenCalledWith(
+      expect.anything(),
+      token,
+      ['b'],
+      'Move #bar to Baz',
+    );
     expect(result.applied).toBe(2);
 
     ops.cleanup();
