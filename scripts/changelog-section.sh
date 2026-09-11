@@ -3,11 +3,18 @@
 # Prints the CHANGELOG.md body for one released version, and fails if that
 # version has no *dated* section yet.
 #
-# Used twice by the release workflow: as a pre-flight guard (an entry still
-# sitting under `## [Unreleased]` means the changelog was never promoted, and
-# publishing it would ship a version whose own changelog calls it unreleased),
-# and to supply the GitHub Release notes. Kept as one script so the guard and
-# the notes can never disagree about which text belongs to a version.
+# Run twice by the release workflow, which is the reason it is a script rather
+# than an inline awk: `package` runs it as a guard and throws the output away,
+# and `release` runs it to supply the GitHub Release notes. Both therefore get
+# the same answer to "which text belongs to this version" — a changelog that
+# would produce unusable notes fails in the first job, before anything is
+# built, instead of one step after the tag has been created.
+#
+# `validate` has its own, weaker pre-check: it reads CHANGELOG.md over the API
+# and requires a dated heading plus an empty `[Unreleased]`. It deliberately
+# checks nothing out, so it cannot run this, and its grep is satisfied by a
+# bare heading where this also requires a body. That is why the guard in
+# `package` exists: it is the first point where the real test can run.
 #
 # Usage: scripts/changelog-section.sh <version>      # e.g. 1.8.15
 

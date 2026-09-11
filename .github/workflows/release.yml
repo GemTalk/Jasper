@@ -185,6 +185,17 @@ jobs:
           # zizmor(artipacked): checkout must not persist the token past
           # this job. Nothing here pushes; the Release is made through the API.
           persist-credentials: false
+      # `validate` runs before this and has no checkout, so it can only ask the
+      # API whether a dated heading exists. That is a weaker question than the
+      # one that matters: `release` renders the notes with the script below,
+      # and the script also requires the section to have a body. A dated but
+      # empty section satisfies validate, passes the scan, is approved at the
+      # gate, gets tagged — and only then fails, one step after the tag, in the
+      # one place the docs' failure table says needs manual cleanup. Running
+      # the real script here, in the first job that has a checkout, moves that
+      # whole class of failure to before anything irreversible has happened.
+      - name: Require the release notes to render
+        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
       - name: Setup Node.js
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v6

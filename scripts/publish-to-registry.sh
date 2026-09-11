@@ -26,8 +26,11 @@
 # success here; the flag stays on as a backstop for the race between a state
 # check and the upload.
 #
-# Prints one of `published`, `already-published`, `awaiting-activation` on
-# success. Exits non-zero only when the version is genuinely not up.
+# On success, stdout is exactly one line — `result: published`,
+# `result: already-published` or `result: awaiting-activation` — so a caller
+# can read the outcome with `$(...)`. Everything else, including the CLI's own
+# output, goes to stderr. Exits non-zero only when the version is genuinely
+# not up.
 #
 # Usage: scripts/publish-to-registry.sh <marketplace|openvsx> <path-to-vsix>
 # Env:   VSCE_PAT (marketplace) or OVSX_PAT (openvsx)
@@ -56,16 +59,24 @@ case "$registry" in
         ;;
 esac
 
-echo "Publishing $(basename "$vsix") to $registry..."
+echo "Publishing $(basename "$vsix") to $registry..." >&2
 
-# Capture rather than stream so the message can be classified; echo it back
-# either way, so the log still shows exactly what the CLI said.
+# The message has to be captured to be classified, but capturing it alone
+# would lose it exactly when it matters most: the publish steps run under
+# `timeout-minutes: 5`, and a hung CLI is killed by the runner, so a plain
+# `$(...)` would leave the log with the line above and nothing else — no CLI
+# output at all — in the one case where the CLI's own words are the only
+# evidence of whether the upload went out. `tee` to stderr keeps the log live
+# and still yields the text to classify.
+#
+# `$?` is the CLI's status, not tee's, because of the `pipefail` above.
+# ${PIPESTATUS[0]} would NOT work here: the pipeline runs inside the command
+# substitution's subshell, so the parent's PIPESTATUS is that of the
+# assignment itself and always reads 0.
 set +e
-output=$("$@" 2>&1)
+output=$("$@" 2>&1 | tee /dev/stderr)
 status=$?
 set -e
-
-printf '%s\n' "$output"
 
 if [ "$status" -eq 0 ]; then
     echo "result: published"
@@ -75,14 +86,14 @@ fi
 # Order matters: the inactive message also contains "is already published",
 # so the more specific case is tested first.
 if printf '%s' "$output" | grep -qiF "isn't active and therefore not visible"; then
-    echo "result: awaiting-activation" >&2
+    echo "result: awaiting-activation"
     echo "This version was already uploaded and is waiting for the registry to activate it." >&2
     echo "That is not a failure and re-publishing cannot fix it — the version is taken." >&2
     exit 0
 fi
 
 if printf '%s' "$output" | grep -qiE "is already published|already exists"; then
-    echo "result: already-published" >&2
+    echo "result: already-published"
     echo "This version is already on $registry; nothing to do." >&2
     exit 0
 fi
