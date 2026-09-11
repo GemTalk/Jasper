@@ -46,10 +46,11 @@ export interface McpOwnerReport {
  * with a reason — where we can see that it does not. Opening a duplicate
  * window is a worse outcome than no button: it looks like the switch worked.
  *
- * The case we cannot see is a folder reachable by two paths (a bind mount or
- * symlink, e.g. `/uffda1/x` and `/export/uffda1/x`): both windows record the
- * path they were opened with, and nothing here can tell they are the same
- * directory. Ask It to Release needs no navigation and is unaffected.
+ * The case we cannot see is one directory reachable by two paths — a symlink
+ * or a bind mount, so that `/a/project` and `/mnt/a/project` are the same
+ * place. Each window records the path it was opened with, and nothing here
+ * can tell the two apart, so the jump opens a second window. Ask It to
+ * Release needs no navigation and is unaffected.
  */
 export function canRevealOwnerWindow(info: {
   workspacePath: string;

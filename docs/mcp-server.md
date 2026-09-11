@@ -148,11 +148,11 @@ It is also where the actions are, including the two that need each other:
   window is a worse outcome than no button, because it looks like the switch
   worked.
 
-  One case cannot be detected: a folder reachable by two paths (a bind mount or
-  symlink, e.g. `/uffda1/x` and `/export/uffda1/x`). Each window records the
-  path it was opened with, and nothing can tell they are the same directory, so
-  the jump opens a second window. **Ask It to Release needs no navigation and
-  is unaffected** — it is the reliable route in every case.
+  One case cannot be detected: one directory reachable by two paths — a symlink
+  or a bind mount, so that `/a/project` and `/mnt/a/project` are the same place.
+  Each window records the path it was opened with, and nothing can tell the two
+  apart, so the jump opens a second window. **Ask It to Release needs no
+  navigation and is unaffected** — it is the reliable route in every case.
 - **Refresh** re-reads ownership from the socket and sidecar.
 
 **Open MCP Inspector is deliberately not on the tab.** It shells out to `npx`,
