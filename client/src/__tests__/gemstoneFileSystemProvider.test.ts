@@ -17,6 +17,9 @@ vi.mock('../browserQueries', () => ({
   getClassCategory: vi.fn(() => ''),
   classExistsInDictionary: vi.fn(() => false),
   recategorizeClass: vi.fn(),
+  // The class-category recorder's read, taken either side of a definition save so a
+  // category-only change is still undoable (#434).
+  getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassComment: vi.fn(() => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
@@ -90,7 +93,7 @@ import { BrowserQueryError } from '../browserQueries';
 import type { ExportManager } from '../exportManager';
 import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
 import { captureClassSlots } from '../undo/queries/classSlotQueries';
-import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
+import { peekUndoEntry, popUndoEntry, resetUndoStacks } from '../undo/undoStack';
 
 // `clearAllMocks` clears recorded CALLS without removing an implementation, so a
 // `mockReturnValue` set anywhere in this file stays in force for every test that runs after
@@ -2463,6 +2466,10 @@ describe('recording a class definition save for revert (#434)', () => {
     vi.mocked(queries.compileClassDefinition).mockReturnValue('Array');
     vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Array');
     vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
+    // `clearAllMocks` clears recorded calls but leaves a `mockReturnValueOnce` queue in place,
+    // and a save that records a class edit never consumes the category recorder's second read —
+    // so without this reset one test's leftover listing answers the next one's first read.
+    vi.mocked(queries.getClassesWithCategory).mockReset().mockReturnValue([]);
   });
 
   it('stashes the bound version before compiling, not after', () => {
@@ -2505,6 +2512,85 @@ describe('recording a class definition save for revert (#434)', () => {
 
     write(definitionUri, DEF);
 
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records the refiling when a save changes only the class category', () => {
+    // The class object is the same one either side — an unchanged shape is not re-versioned,
+    // and `category:` is a label rather than a reshape — so the class recording has nothing to
+    // reverse. Without the category recording the save went unrecorded, and Undo went on
+    // offering the change BEFORE it: pressing it on a class you had just recategorized reverted
+    // the creation and took the class away.
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat2', hasComment: false }]);
+
+    write(definitionUri, "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: 'NewCat2'");
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classCategoryEdit',
+      label: 'Move class Array to category NewCat2',
+      changes: [{ className: 'Array', before: 'NewCat', after: 'NewCat2' }],
+    });
+  });
+
+  it('names an emptied category line for what it does', () => {
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: '', hasComment: false }]);
+
+    write(definitionUri, "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: ''");
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classCategoryEdit',
+      label: 'Clear the class category of Array',
+    });
+  });
+
+  it('records one entry, not two, when a save reshapes the class AND refiles it', () => {
+    // The earlier class version carries its own category, so rebinding it puts both back. A
+    // second entry would make the user press Undo twice for one save.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([boundState('1')])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat2', hasComment: false }]);
+
+    write(
+      definitionUri,
+      "Object subclass: 'Array'\n  instVarNames: #('a' 'b')\n  category: 'NewCat2'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Redefine class Array',
+    });
+    popUndoEntry(session.id);
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records nothing when a new class lands in a category, since creating it is the change', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([{ className: 'Fresh', category: 'NewCat', hasComment: false }]);
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: 'Fresh'\n  inDictionary: UserGlobals\n  category: 'NewCat'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Fresh',
+    });
+    popUndoEntry(session.id);
     expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 

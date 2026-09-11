@@ -16,6 +16,7 @@ import { extractSelector } from './methodPattern';
 import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
 import { beginClassEdit } from './undo/recordClassEdit';
+import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
 import { beginClassCommentEdit } from './undo/recordClassComment';
 import { MethodSlot, slotLabel, UndoEntry } from './undo/undoTypes';
 
@@ -1020,6 +1021,18 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       ? beginClassEdit(session, [{ dict: dictRef, className: undoName }])
       : undefined;
 
+    // And snapshot what every class in the dictionary is filed under, for the save whose ONLY
+    // change is the `category:` line. That save rebinds nothing: GemStone answers the SAME class
+    // object when a definition recompiles with an unchanged shape, and `Class>>category:` is a
+    // label rather than a reshape — so the class recording above compares one version against
+    // itself, records nothing, and the save was silently unundoable. Worse than unundoable, in
+    // fact: the Undo button went on naming the change BEFORE it, so pressing it on a class you
+    // had just recategorized removed the class (#434). Taken before the compile, because that
+    // is the only time the earlier categories can still be read; committed below only when the
+    // class recording found nothing, since a save that DID reshape the class is put back by
+    // rebinding the earlier version, which carries its own category with it.
+    const categoryRecording = beginClassCategoryEdit(session, dictRef);
+
     const className = queries.compileClassDefinition(session, defSource);
 
     // Apply the category the subclass message could not carry — always, including an
@@ -1061,9 +1074,20 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       const message = created
         ? `Class created: ${className}`
         : `Class definition updated for ${className}`;
+      const classEntry = recording?.commit(
+        created ? `Add class ${className}` : `Redefine class ${className}`,
+      );
+      // Labelled exactly as the Explorer's own Move Class to Category labels it: the user files
+      // a class under another category either way, and the Undo tooltip should not care which
+      // of the two they reached for.
       notifyUndoable(
         message,
-        recording?.commit(created ? `Add class ${className}` : `Redefine class ${className}`),
+        classEntry ??
+          categoryRecording?.commit(
+            desiredCategory
+              ? `Move class ${className} to category ${desiredCategory}`
+              : `Clear the class category of ${className}`,
+          ),
       );
     }
 

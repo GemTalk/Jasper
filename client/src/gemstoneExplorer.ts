@@ -1478,6 +1478,10 @@ export class ExplorerController {
   // reloads in place (new/removed classes, recompiled methods) while the user
   // stays where they were. Unlike reset(), state and filters are preserved.
   //
+  // The one thing NOT preserved is a selection the stone has stopped holding: a class the
+  // re-read listing does not have is dropped, along with the category that only it was
+  // filed under (see dropVanishedSelection).
+  //
   // `reveal` re-highlights (and scrolls to) the retained rows, which also forces
   // the Explorer view visible/forward. That's wanted for the in-Explorer Refresh
   // button, but NOT for an abort fired from another view (e.g. the Sessions
@@ -1488,7 +1492,7 @@ export class ExplorerController {
     // Before anything is re-read, not after: a refresh means what is held is suspect.
     this.onImageReread?.();
     const session = this.session();
-    const { dictName, dictIndex, className } = this.state;
+    const { dictName, dictIndex } = this.state;
     // Remember the method row currently selected so it can be re-revealed.
     const selectedMethod = this.views?.method.selection.find((n) => n instanceof MethodItem);
     const revealMethod = selectedMethod
@@ -1524,18 +1528,23 @@ export class ExplorerController {
     // Reload the dictionary's class listing (+ ivar counts) and, when a class is
     // selected, its method environment and hierarchy. Keep stale data on a failed
     // fetch rather than blanking the tree out from under the user.
+    let listingRead = true;
     try {
       this.classCategoryEntries = queries.getClassesWithCategory(session, currentDictIndex);
     } catch {
-      /* keep stale on failure */
+      listingRead = false; /* keep stale on failure */
     }
     this.loadClassRowMetadata();
-    if (className !== undefined) {
+    // Only against a listing that was actually re-read: a failed fetch leaves the stale one,
+    // which says nothing about what is bound now.
+    if (listingRead) this.dropVanishedSelection();
+    const stillSelected = this.state.className;
+    if (stillSelected !== undefined) {
       try {
         this.envLines = queries.getClassEnvironments(
           session,
           currentDictIndex,
-          className,
+          stillSelected,
           this.maxEnv(),
         );
       } catch {
@@ -1552,6 +1561,49 @@ export class ExplorerController {
 
     if (reveal) await this.revealRetainedSelection(revealMethod);
     this.syncTitles();
+  }
+
+  // Drop a retained selection the stone no longer holds, once the class listing has been
+  // re-read. A refresh is the only thing that tells the Explorer a class went away behind its
+  // back — an undo of "create class", a session abort, a delete from another view — and a
+  // vanished class left selected is not cosmetic: New Method, New Method Category and the rest
+  // all build their doits from `state.className`, so they compile into a class that is not
+  // there and fail with an error about the class rather than about the selection (#434).
+  //
+  // The class CATEGORY goes the same way and for the same reason: the Classes pane filters on
+  // it, so a category whose last class has just been undone away leaves the pane showing
+  // nothing at all while the dictionary is still full of classes. A category made by the "+"
+  // button survives — `allCategoryPaths` includes the overlay, and an empty one there is
+  // exactly what the user asked for.
+  //
+  // So does the NAVIGATION CHAIN, which is the third place the class's name is on screen: the
+  // Actions & Navigation pane pins the current landing as "In UserGlobals · NewCat · Foo", and
+  // clearing the panes while that line still named Foo just moved the confusion one pane over.
+  private dropVanishedSelection(): void {
+    const { className, classCategory } = this.state;
+    if (
+      className !== undefined &&
+      !this.classCategoryEntries.some((e) => e.className === className)
+    ) {
+      this.state.className = undefined;
+      this.state.selectedSelector = undefined;
+      this.state.selectedIsMeta = undefined;
+      this.state.selectedMethodCategory = undefined;
+      this.newMethodCategories.instance.clear();
+      this.newMethodCategories.meta.clear();
+      this.pendingNewMethod = undefined;
+      this.envLines = [];
+      this.hierChain = [];
+      this.hierSubs = [];
+      const sessionId = this.session()?.id;
+      if (sessionId !== undefined) this.history.forgetClass(sessionId, className);
+    }
+    if (
+      classCategory !== undefined &&
+      !this.allCategoryPaths().some((path) => categoryMatches(path, classCategory))
+    ) {
+      this.state.classCategory = undefined;
+    }
   }
 
   // Re-highlight the retained dict/category/class/method rows after a refresh.
@@ -1675,9 +1727,15 @@ export class ExplorerController {
   // when the controller's className has been cleared (e.g. by a category click)
   // but a class row is still visually selected — actions should act on what the
   // user sees selected. Returns undefined if the selection isn't a class row.
+  //
+  // A row can outlive its class: the highlight is VS Code's, held on an element the rebuilt
+  // tree no longer produces, so a class an undo has just removed can still be sitting in
+  // `selection`. Adopting that would put it straight back into `state.className` — undoing
+  // what `dropVanishedSelection` just did — so the listing has the final say.
   private selectedClassInTree(): ClassItem | undefined {
     const node = this.views?.klass.selection?.[0];
-    return node instanceof ClassItem ? node : undefined;
+    if (!(node instanceof ClassItem)) return undefined;
+    return this.classCategoryEntries.some((e) => e.className === node.className) ? node : undefined;
   }
 
   // Record which side / method-category the user last touched in the Methods
@@ -4150,6 +4208,15 @@ export class ExplorerController {
 
   // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
+  //
+  // A category with NO methods under it is not a stale row and not a pseudo-category:
+  // GemStone keeps a category in the class after its last method leaves — `removeSelector:`
+  // unfiles the method and nothing else — so an empty one is still in `_unifiedCategorys:`,
+  // still files out with the class, and comes back from every re-read. It shows here for the
+  // same reason: the row is where you remove it (the 🗑 runs `removeCategory`). That includes
+  // 'as yet unclassified', which is a REAL category name GemStone files uncategorized methods
+  // under, not a label this pane invents. The only computed rows are SESSION and the
+  // ALL_METHODS lookup key below.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
     const real = [...new Set(lines.map((l) => l.category).filter((c) => c && c.length))];
