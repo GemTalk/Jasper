@@ -435,22 +435,6 @@
             "default": false,
             "description": "Enable enhanced inspector perf tracking: count GCI round trips in the enhanced inspector. When enabled, shows a status bar counter and logs to the 'GemStone Enhanced Inspector Perf' output channel. Intended for performance tuning only."
           },
-          "gemstone.rowan.loadAfterAddingDependency": {
-            "type": "string",
-            "enum": [
-              "ask",
-              "always",
-              "never"
-            ],
-            "enumDescriptions": [
-              "After adding a dependency while connected, offer to load the project so the database has its code.",
-              "Load the project automatically after adding a dependency.",
-              "Never offer to load after adding a dependency."
-            ],
-            "default": "ask",
-            "description": "What to do after adding a dependency to the open Rowan project while a database is connected. Adding a dependency only writes files on disk; the database does not have the code until the project is loaded. Only applies while connected. The buttons on the prompt update this setting.",
-            "scope": "window"
-          },
           "gemstone.autoStartDatabase": {
             "type": "string",
             "enum": [
