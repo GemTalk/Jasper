@@ -573,6 +573,7 @@ describe('Formatter Settings', () => {
 describe('isFormattableDocument', () => {
   const METHOD_URI = 'gemstone://1/UserGlobals/V8Contact/instance/accessing/printOn:';
   const CLASS_METHOD_URI = 'gemstone://1/UserGlobals/V8Contact/class/instance%20creation/new';
+  const NEW_METHOD_URI = 'gemstone://1/UserGlobals/V8Contact/instance/accessing/new-method';
   const DEFINITION_URI = 'gemstone://1/UserGlobals/V8Contact/definition';
   const DEFINITION_URI_5 = 'gemstone://1/UserGlobals/V8Contact/definition/V8Contact';
   const COMMENT_URI = 'gemstone://1/UserGlobals/V8Contact/comment';
@@ -595,6 +596,14 @@ describe('isFormattableDocument', () => {
 
   it('formats a class-side method editor', () => {
     expect(isFormattableDocument(doc(CLASS_METHOD_URI, 'new ^super new init'))).toBe(true);
+  });
+
+  it('formats a new-method editor, which has no compiled method behind it yet', () => {
+    // The document kind a user reaches without an existing method to open. It is a
+    // method editor to the formatter for the same reason as any other: the region kind
+    // is decided by the 6-segment path, which a new-method URI has — nothing in the
+    // path says "method", so pin it.
+    expect(isFormattableDocument(doc(NEW_METHOD_URI, 'foo ^self'))).toBe(true);
   });
 
   it('leaves a class-definition editor alone', () => {

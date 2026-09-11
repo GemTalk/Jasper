@@ -20,6 +20,8 @@ Fine-tune the Smalltalk formatter under `gemstoneSmalltalk.formatter.*` in your 
 
 **Format Document** (`Shift+Alt+F`, or the editor context menu) works on Topaz files and on the method editors the GemStone Explorer opens — including new-method editors. It reformats the whole method: pattern, temporaries and body.
 
-Class **definition** and class **comment** editors are deliberately left alone. A comment is prose, not code, so running it through the Smalltalk parser would break each sentence onto its own line and drop the paragraph breaks; a definition would come back reflowed with a trailing `.`. Format Document is a no-op on both.
+Class **definition** and class **comment** editors are deliberately left alone. A comment is prose, not code, so running it through the Smalltalk parser would break each sentence onto its own line and drop the paragraph breaks; a definition would come back reflowed with a trailing `.`.
+
+Neither leaves you guessing. A comment editor is not offered a formatter at all, so VS Code answers the command itself — "There is no formatter for 'gemstone-class-comment' files installed." A definition editor shares its language with documents that *do* format, so the command is offered and Jasper declines it by hand, with "Format Document is not available for class definitions." The definition exclusion is temporary, pending a check of the `compileClassDefinition` round trip; the message goes when the exclusion does.
 
 **Format Selection** (`Ctrl+K Ctrl+F`) is not offered — on a method editor the only useful range is the whole method, which Format Document already covers.

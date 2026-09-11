@@ -310,16 +310,17 @@ export function isNoOpChange(
  * error string to show inline, or undefined when acceptable.
  *
  * `argCount` — how many arguments the edit actually carries — is checked against the
- * part count when given, because shape alone does not make a legal method pattern: a
+ * arity the parts imply, because shape alone does not make a legal method pattern: a
  * one-keyword selector with zero arguments (`fullAddress:` bound to nothing) is
  * well-shaped part-by-part and still cannot be compiled. Nothing downstream counts
- * them, so without this the request reaches the engine. Optional so callers that only
- * have the parts (the live preview's shape check) keep working.
+ * them, so without this the request reaches the engine. Required rather than
+ * optional: an entry point that forgot to count would silently skip the check with
+ * no compile error to say so, which is the hole this closes.
  */
 export function validateSignatureParts(
   parts: string[],
   oldSelector: string,
-  argCount?: number,
+  argCount: number,
 ): string | undefined {
   if (parts.length === 0) return 'A selector needs at least one part.';
   if (parts.some((p) => p.trim().length === 0)) return 'Selector parts cannot be empty.';
@@ -336,14 +337,13 @@ export function validateSignatureParts(
   } else {
     return 'A selector with more than one part must use keyword parts (each ending in a colon).';
   }
-  if (argCount !== undefined) {
-    // A keyword selector binds exactly one argument per keyword; a unary or binary
-    // selector binds none and one respectively — but M5 never changes a binary
-    // selector's arity, so only the keyword and unary cases can go wrong here.
-    const expected = anyKeyword ? parts.length : isBinarySelector(parts[0]) ? 1 : 0;
-    if (argCount !== expected) {
-      return `'${buildSelector(parts)}' takes ${expected} argument${expected === 1 ? '' : 's'}, but ${argCount} ${argCount === 1 ? 'was' : 'were'} given.`;
-    }
+  // A keyword selector binds exactly one argument per keyword; a unary or binary
+  // selector binds none and one respectively. `selectorArgCount` is that rule — asked
+  // rather than re-derived here so there is no second copy to drift from
+  // selectorShape.ts (see its header).
+  const expected = selectorArgCount(buildSelector(parts));
+  if (argCount !== expected) {
+    return `'${buildSelector(parts)}' takes ${expected} argument${expected === 1 ? '' : 's'}, but ${argCount} ${argCount === 1 ? 'was' : 'were'} given.`;
   }
   if (buildSelector(parts) === oldSelector) {
     // Same selector is fine ONLY when the arguments are being reordered/added/removed

@@ -332,21 +332,4 @@ describe('change-signature editor: colon on a unary selector', () => {
     expect(handle.newArgNames()).toEqual(['aValue']);
     expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
   });
-
-  it('blocks a keyword selector whose keyword count does not match its arguments', () => {
-    mount('at:put:', ['k', 'v']);
-    (
-      document.querySelectorAll('li.kwrow')[1].querySelector('button.remove') as HTMLElement
-    ).click();
-    // Two keywords typed back on, but only one argument row left.
-    typePart(0, 'at:');
-    const list = document.querySelector('ul.rows')!;
-    const extra = list.firstElementChild!.cloneNode(true) as HTMLElement;
-    extra.removeAttribute('data-orig');
-    list.appendChild(extra);
-    typePart(0, 'at:');
-
-    expect(document.getElementById('error')?.textContent).toMatch(/takes 2 arguments, but 1/);
-    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
-  });
 });

@@ -142,7 +142,6 @@ describe('openGemstoneDocument', () => {
       // call, for the document being pinned.
       expect(showTextDocument).toHaveBeenCalledTimes(1);
       expect(String(showTextDocument.mock.calls[0][0].uri)).toBe(SOURCE);
-      expect(showTextDocument.mock.calls.filter((c) => String(c[0]) === SIDE)).toHaveLength(0);
     });
 
     it('does not re-show the browsed preview tab when pinning another document', async () => {
@@ -154,8 +153,12 @@ describe('openGemstoneDocument', () => {
       await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       // Nothing promotes or re-shows the preview — it keeps its preview state by being
-      // left alone, so the next single-click navigation still reuses it.
-      expect(showTextDocument.mock.calls.filter((c) => String(c[0]) === SIDE)).toHaveLength(0);
+      // left alone, so the next single-click navigation still reuses it. Pinned on the
+      // call COUNT rather than on the argument: a re-show would be a second call
+      // whatever it passed, where filtering on the argument only catches a re-show that
+      // happens to pass a Uri.
+      expect(showTextDocument).toHaveBeenCalledTimes(1);
+      expect(String(showTextDocument.mock.calls[0][0].uri)).toBe(SOURCE);
     });
 
     it('pins the document that was already showing without re-showing anything', async () => {
