@@ -192,7 +192,7 @@ body {
   color: var(--vscode-foreground);
   background: var(--vscode-editor-background);
 }
-.state { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .35rem; }
+.state { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .35rem; flex-wrap: wrap; }
 .dot { width: .6rem; height: .6rem; border-radius: 50%; flex: none; }
 .dot.this { background: var(--gm-ok); }
 .dot.other { background: var(--gm-warn); }
@@ -229,5 +229,7 @@ dd button.link {
 .section { border-top: 1px solid var(--gm-line); padding-top: 1rem; margin-top: 1.2rem; }
 .section h2 { font-size: .82rem; text-transform: uppercase; letter-spacing: .06em;
   color: var(--vscode-descriptionForeground); margin: 0 0 .7rem; font-weight: 600; }
-.stamp { color: var(--vscode-descriptionForeground); font-size: .85em; margin-top: 1.4rem; }
+/* Sits at the end of the title line, so the evidence that Refresh ran is on
+   screen even when the rest of the page is not. */
+.stamp { color: var(--vscode-descriptionForeground); font-size: .85em; margin-left: auto; }
 `;

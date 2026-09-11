@@ -284,6 +284,29 @@ describe('the MCP Server tab', () => {
     expect(posted).toEqual([{ command: 'refresh' }]);
   });
 
+  it('puts the read stamp on the title line, not at the end of the page', () => {
+    // At the bottom it is the first thing to scroll out of a short window —
+    // and it is the only evidence Refresh did anything.
+    view().render(root, serving, '10:04:05', vscode);
+
+    const stamp = root.querySelector('.stamp');
+    const actions = root.querySelector('.actions');
+    if (!stamp || !actions) throw new Error('expected a stamp and an actions row');
+
+    expect(stamp.textContent).toBe('Read at 10:04:05');
+    expect(stamp.parentElement?.classList.contains('state')).toBe(true);
+    // Ahead of the actions, so it cannot be pushed off by a long owner section.
+    const stampComesFirst = Boolean(
+      stamp.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(stampComesFirst).toBe(true);
+  });
+
+  it('omits the stamp entirely when there is no read time', () => {
+    view().render(root, serving, undefined, vscode);
+    expect(root.querySelector('.stamp')).toBeNull();
+  });
+
   it('redraws rather than appending, so a refresh does not stack panels', () => {
     view().render(root, elsewhere, '10:00:00', vscode);
     view().render(root, serving, '10:00:01', vscode);

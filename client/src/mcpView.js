@@ -273,6 +273,10 @@
     var head = el('div', 'state');
     head.appendChild(el('span', 'dot ' + report.state));
     head.appendChild(el('h1', null, TITLES[report.state] || 'MCP Server'));
+    // The read time rides on the title line rather than trailing the page: it
+    // is the feedback that Refresh did something, and at the bottom it is the
+    // first thing to fall off the end of a short window.
+    if (readAt) head.appendChild(el('span', 'stamp', 'Read at ' + readAt));
     root.appendChild(head);
     root.appendChild(el('p', 'detail', report.detail));
 
@@ -280,8 +284,6 @@
 
     if (report.state === 'this') renderThisWindow(root, report, vscode);
     if (report.state === 'other' && report.owner) renderOwningWindow(root, report, vscode);
-
-    if (readAt) root.appendChild(el('p', 'stamp', 'Read at ' + readAt));
   }
 
   var api = {
