@@ -246,8 +246,8 @@ export class SysadminStorage {
     for (const entry of fs.readdirSync(rootPath)) {
       if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
       const full = path.join(rootPath, entry);
-      let isLocal = false;
-      let isDir = false;
+      let isLocal: boolean;
+      let isDir: boolean;
       try {
         const st = fs.lstatSync(full);
         isLocal = st.isSymbolicLink();

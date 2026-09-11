@@ -26,7 +26,9 @@ vi.mock('../debugQueries', () => ({
   getFrameInfo: vi.fn((_s: unknown, _p: unknown, level: number) => ({
     methodOop: BigInt(level),
     ipOffset: 5,
-    receiverOop: BigInt(level * 100),
+    selfOop: BigInt(level * 100),
+    selfIsUnavailable: false,
+    homeMethodOop: OOP_NIL,
     argAndTempNames: [],
     argAndTempOops: [],
   })),
@@ -40,8 +42,8 @@ vi.mock('../debugQueries', () => ({
     if (oop === 2n) return { className: 'Object', selector: 'halt' };
     return { className: 'JasperDebugDemo', selector: 'accumulateFrom:to:' };
   }),
-  getObjectClassName: vi.fn((_s: unknown, receiverOop: bigint) =>
-    receiverOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
+  getObjectClassName: vi.fn((_s: unknown, selfOop: bigint) =>
+    selfOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
   ),
   getLineForIp: vi.fn(() => 12),
   getStepPoint: vi.fn(() => 2),
@@ -92,7 +94,7 @@ vi.mock('../debugQueries', () => ({
     environmentId: 0,
   })),
   // Whole-stack dump (#10/#11): one batched call. Default = a Receiver row per
-  // frame whose printString/oop mirror the per-frame receiverOop (level * 100).
+  // frame whose printString/oop mirror the per-frame selfOop (level * 100).
   fetchStackDump: vi.fn(() =>
     [1, 2, 3, 4, 5].map((l) => ({
       serverLevel: l,
@@ -124,12 +126,23 @@ vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
 }));
 
+// A declined layout carve is reported to the GCI log rather than swallowed, so
+// spy on both levels it can be reported at — warning for the anomaly, info for
+// the older VS Code that has no grid to read. Everything else stays real.
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig<typeof import('../gciLog')>()),
+  logInfo: vi.fn(),
+  logWarning: vi.fn(),
+}));
+
 vi.mock('../basicInspector/basicInspector', () => ({
   BasicInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
 }));
 
-// "Browse" a frame opens a System Browser — stub the static entry point so the
-// test doesn't pull in the whole browser module (and its many dependencies).
+// The frozen System Browser is stubbed, not exercised: Browse from a frame goes
+// to the GemStone Explorer now, and a test below asserts this entry point is
+// never called. The stub also keeps the whole browser module (and its many
+// dependencies) out of the test.
 vi.mock('../systemBrowser', () => ({ SystemBrowser: { openAndNavigate: vi.fn() } }));
 
 // Source offsets for the step-point highlight. These are GemStone `_sourceOffsets`,
@@ -147,8 +160,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
+import { logInfo, logWarning } from '../gciLog';
 import { forgetSession as forgetSessionPins } from '../exportSetPins';
-import { EditorGroupLayout } from '../debuggerLayout';
+import { CARVE_SETTLE_MS, EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
   DebuggerPanel,
@@ -179,6 +193,7 @@ import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
+import { OOP_NIL } from '../gciConstants';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -341,6 +356,22 @@ function lastPosted(panel: ReturnType<typeof lastPanel>, command: string) {
  * is enough.
  */
 const tick = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+// A grid the carve can work with: `leaves` plain columns, so `planDebuggerGrid`
+// can find the panel's own group and split it into the panel/source pair. Tests
+// that assert where the companion source lands need one — with no readable grid
+// the carve declines (by design) and the source opens as a tab in the panel's own
+// column instead. Each read answers a fresh object, since the fit pass rewrites
+// the layout it is handed.
+function mockEditorGrid(leaves: number): void {
+  vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+    Promise.resolve(
+      cmd === 'vscode.getEditorLayout'
+        ? { orientation: 0, groups: Array.from({ length: leaves }, () => ({ size: 600 })) }
+        : undefined,
+    ),
+  );
+}
 /** Drain a few macrotasks — enough for a chain of awaits to settle. */
 const flushMicrotasks = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await tick();
@@ -608,11 +639,28 @@ describe('stackDumpFileName / stackDumpTimestamp (#11)', () => {
   });
 });
 
+// The serializer is registered once per process — VS Code rejects a second
+// registration for one view type — so a test that asserts on the registration has to
+// clear that latch first. Test order is shuffled, so it cannot rely on being the
+// first initSourceTabCleanup call in the file.
+function rearmRestoreDecliner(): void {
+  (DebuggerPanel as unknown as { restoreDeclinerRegistered: boolean }).restoreDeclinerRegistered =
+    false;
+}
+
+// The columns a window left behind are static — they have to outlive activate() to be
+// there when VS Code deserializes the panel — so within a test file they also outlive
+// the test that recorded them, and would add a group close to whatever ran next.
+function forgetOrphanColumns(): void {
+  (DebuggerPanel as unknown as { orphanColumns: number[] }).orphanColumns = [];
+}
+
 describe('DebuggerPanel', () => {
   let session: ActiveSession;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    forgetOrphanColumns();
     // Inspect opens the tabbed Inspector by default, whatever the session has
     // installed; the two tests here that want the Enhanced one ask for `auto`
     // themselves. Cleared per test because the mock's config store is
@@ -625,7 +673,9 @@ describe('DebuggerPanel', () => {
     forgetSessionPins(1);
     // clearAllMocks() clears call history but NOT mockImplementation overrides;
     // re-apply the captured factory defaults so a sticky override from one test
-    // doesn't leak into the next under sequence.shuffle.
+    // doesn't leak into the next under sequence.shuffle. Same for the shared
+    // executeCommand mock, which mockEditorGrid and the layout tests override.
+    vi.mocked(vscode.commands.executeCommand).mockReset();
     restoreDebugDefaults();
     // The read-only content provider is registered once per module lifetime
     // (guarded by the static providerRegistered flag); reset it (and the backing
@@ -777,6 +827,7 @@ describe('DebuggerPanel', () => {
       { viewColumn: 1, tabs: [] },
       { viewColumn: 2, tabs: [] },
     );
+    mockEditorGrid(3); // the panel opens into column 3 and carves its pair there
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     await tick();
     const panel = lastPanel();
@@ -948,7 +999,7 @@ describe('DebuggerPanel', () => {
       // … then a detail block: separator, repeated heading, Receiver with self + oop.
       expect(text).toContain('---------------------------------');
       expect(text).toContain('Receiver:');
-      expect(text).toContain('    self = <print 100>   {100}'); // frame 1 receiverOop = 100
+      expect(text).toContain('    self = <print 100>   {100}'); // frame 1 selfOop = 100
     });
 
     it('writes a single frame (no leading number) to the clipboard on copyFrame', () => {
@@ -980,38 +1031,77 @@ describe('DebuggerPanel', () => {
       expect(stack.every((f) => f.browsable === true)).toBe(true);
     });
 
-    it('opens a browser on the running method’s defining class beside the debugger', () => {
+    // Browse lands in the GemStone Explorer (where class browsing lives), not in
+    // a System Browser: findClass cascades its panes and opens the method.
+    const findClassCalls = (): unknown[][] =>
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.filter((c) => c[0] === 'gemstone.explorer.findClass');
+
+    it('cascades the Explorer to the running method’s defining class and opens the method', () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).toHaveBeenCalledWith(
-        session,
-        {
-          dictName: 'UserGlobals',
-          className: 'JasperDebugDemo',
-          isMeta: false,
-          selector: 'halt',
-          category: 'running',
-          environmentId: 0,
-        },
-        vscode.ViewColumn.Beside,
-      );
+      // The dictionary rides along so a class name shadowed across dictionaries
+      // resolves to THIS class; the session id pins the reveal to this stone.
+      expect(findClassCalls()).toEqual([
+        [
+          'gemstone.explorer.findClass',
+          'JasperDebugDemo',
+          session.id,
+          'UserGlobals',
+          { selector: 'halt', isMeta: false },
+        ],
+      ]);
+      // The frozen System Browser is not involved any more.
+      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
     });
 
-    it('does not open a browser for an unknown frame level', () => {
+    it('does not browse an unknown frame level', () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);
 
       sendMessage(panel, { command: 'browseFrame', level: 999 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
     });
 
-    it('shows a message instead of opening a browser when the selector cannot be located', () => {
+    it('marks a doit frame unbrowsable, and refuses to browse it if asked anyway', () => {
+      // A doit has no class>>selector to land on. The webview hides the Browse
+      // item for a frame whose `browsable` is false (its own test covers that),
+      // so this is the host's backstop: asked to browse one regardless, it says
+      // so rather than navigating the Explorer somewhere misleading.
+      vi.mocked(debug.getMethodInfo).mockImplementation(() => {
+        throw new Error('doit: no class');
+      });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      sendReady(panel);
+
+      const stack = initPayload(panel).stack as Array<{ level: number; browsable?: boolean }>;
+      expect(stack.every((f) => f.browsable === false)).toBe(true);
+
+      sendMessage(panel, { command: 'browseFrame', level: stack[0].level });
+
+      expect(findClassCalls()).toEqual([]);
+      expect(lastPosted(panel, 'init').errorMessage).toContain('no class or method');
+      expect(warned()).toContain('no class or method');
+    });
+
+    // Every Browse refusal is reported twice — panel banner and toast — so the
+    // assertions below read both.
+    function warned(): string {
+      return vi
+        .mocked(vscode.window.showWarningMessage)
+        .mock.calls.map((c) => String(c[0]))
+        .join('\n');
+    }
+
+    it('shows a message instead of browsing when the selector cannot be located', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce(undefined);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
@@ -1019,11 +1109,12 @@ describe('DebuggerPanel', () => {
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('Could not locate #halt');
+      expect(warned()).toContain('Could not locate #halt');
     });
 
-    it('shows a message instead of opening a browser when the class is outside the symbol list', () => {
+    it('shows a message instead of browsing when the class is outside the symbol list', () => {
       vi.mocked(debug.getBrowseTarget).mockReturnValueOnce({
         className: 'Loner',
         isMeta: false,
@@ -1036,8 +1127,38 @@ describe('DebuggerPanel', () => {
 
       sendMessage(panel, { command: 'browseFrame', level: 2 });
 
-      expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
+      expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain("isn't in your symbol list");
+      // A banner alone was missed: Browse sends the user's eyes to the Explorer,
+      // so the refusal has to reach them where they are looking.
+      expect(warned()).toContain("isn't in your symbol list");
+    });
+
+    it('says so in the panel when the Explorer cascade rejects', async () => {
+      // The cascade is fire-and-forget, and it can reject — it resolves a session
+      // and opens documents. Reporting nothing would leave the user looking at a
+      // debugger that swallowed their click, with only an unhandled rejection in
+      // the extension host to show for it.
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        cmd === 'gemstone.explorer.findClass'
+          ? Promise.reject(new Error('explorer is not having it'))
+          : Promise.resolve(undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        sendReady(panel);
+
+        sendMessage(panel, { command: 'browseFrame', level: 2 });
+        await flushMicrotasks();
+
+        expect(lastPosted(panel, 'init').errorMessage).toContain(
+          'Could not browse JasperDebugDemo >> #halt',
+        );
+        expect(warned()).toContain('Could not browse JasperDebugDemo >> #halt');
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
     });
 
     it('#10 copyStack: assembles the batched dump rows into per-frame groups', () => {
@@ -1272,6 +1393,11 @@ describe('DebuggerPanel', () => {
   describe('source pane', () => {
     // Let revealFrameSource's awaited openTextDocument/showTextDocument settle.
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    // Long enough for the carve's whole re-read back-off, derived from the
+    // schedule itself: a restated number goes stale the moment an entry is added
+    // to CARVE_RETRY_DELAYS_MS, and these tests would then under-wait and flake
+    // intermittently instead of failing.
+    const settleRetries = () => new Promise((resolve) => setTimeout(resolve, CARVE_SETTLE_MS + 60));
 
     const URI_INFO = {
       dictName: 'UserGlobals',
@@ -1312,6 +1438,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens the method source (gemstone://) in a group BELOW the panel, keeping focus', async () => {
+      mockEditorGrid(1);
       const panel = openPanelWithStack();
       vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // for the reveal of frame 3
       sendMessage(panel, { command: 'selectFrame', level: 3 });
@@ -1504,7 +1631,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: BigInt(level * 100),
+            selfOop: BigInt(level * 100),
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -1535,7 +1664,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: 100n,
+            selfOop: 100n,
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -1911,17 +2042,148 @@ describe('DebuggerPanel', () => {
       }
     });
 
-    it('leaves the grid alone when it cannot be read', async () => {
-      // getEditorLayout unavailable (older VS Code) → no wholesale rewrite of a
-      // tree we could not inspect; the panel still has its own column.
-      vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+    it('shows the top frame’s source as the debugger opens, before any frame is clicked', async () => {
+      // The webview default-selects the top frame the moment the stack renders
+      // (see debuggerView's own test), and that select is what opens the source.
+      // So the panel and its companion pane come up together: no click involved,
+      // and the pane is the one the carve made below the panel.
+      mockEditorGrid(1);
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      const panel = openPanelWithStack();
+      sendMessage(panel, { command: 'selectFrame', level: 1 }); // the default select
+      await flush();
+
+      expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preserveFocus: true }),
+      );
+    });
+
+    it('waits for the panel’s own group to reach the grid before planning the carve', async () => {
+      // createWebviewPanel returns before VS Code has registered the group it
+      // opened into, so the grid read straight afterwards can still be the one
+      // from before the panel existed. planDebuggerGrid locates the panel by
+      // counting leaves, so against that grid it finds nothing and declines —
+      // and the pair is never carved. Re-reading is what makes the carve hold.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const stale = { orientation: 0, groups: [{ size: 1200 }] }; // panel's group not in it yet
+      const settled = { orientation: 0, groups: [{ size: 800 }, { size: 400 }] };
+      let reads = 0;
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) => {
+        if (cmd !== 'vscode.getEditorLayout') return Promise.resolve(undefined);
+        reads += 1;
+        return Promise.resolve(reads === 1 ? stale : settled);
+      });
       try {
-        openPanelWithStack();
+        const panel = openPanelWithStack();
+        await settleRetries();
+
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.find((c) => c[0] === 'vscode.setEditorLayout')?.[1] as EditorGroupLayout;
+        expect(applied).toBeDefined();
+        expect(applied.groups[1].groups).toEqual([{}, {}]); // the pair, in the panel's column
+        expect(reads).toBeGreaterThan(1); // it re-read rather than declining
+
+        // …and the source opens into the group the carve created, not beside it.
+        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+        sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
+        expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ viewColumn: 3 }),
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('logs a declined carve and opens the source beside the panel, never over it', async () => {
+      // The panel's group never turns up in the grid, so no pair is carved and
+      // showTextDocument has VS Code create the source group on demand — a column
+      // beside the debugger. That is the degraded shape, and it is the safe one:
+      // an editor group shows ONE tab at a time, so putting the source in the
+      // panel's own column would cover the debugger and leave the user clicking
+      // frames in a panel they can no longer see. The decline is logged, since a
+      // pane in the wrong place is its only other symptom.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const stale = { orientation: 0, groups: [{ size: 1200 }] };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? stale : undefined),
+      );
+      try {
+        const panel = openPanelWithStack();
+        await settleRetries();
+        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        await flush();
+
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
           'vscode.setEditorLayout',
           expect.anything(),
         );
+        expect(logWarning).toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+        // The panel opened into column 2 (one pre-existing tab group), so the
+        // source lands in 3 — a column of its own. Anything that equalled the
+        // panel's column would mean the source had been opened ON TOP of the
+        // debugger.
+        expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ viewColumn: 3 }),
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    // An unavailable `vscode.getEditorLayout` reaches us two ways: VS Code
+    // rejects a command it doesn't have, and a build that has it but answers
+    // nothing resolves empty. Both are the same "no grid to read" decline.
+    const unreadableGrid = {
+      'rejects the command': () =>
+        vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command')),
+      'answers no groups': () =>
+        vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined),
+    };
+    it.each(Object.entries(unreadableGrid))(
+      'leaves the grid alone, without warning, when it %s',
+      async (_case, arrange) => {
+        // No wholesale rewrite of a tree we could not inspect; the panel still
+        // has its own column.
+        //
+        // And no warning: an absent command is designed for, not an anomaly, so
+        // warning here would put a line in the GCI log on every halt for a user
+        // whose VS Code is simply older. It is logged at info instead, carrying
+        // whatever reason the read gave, so the decline stays diagnosable — the
+        // warning belongs to the decline the re-read exists to prevent (a
+        // readable grid that never comes to hold the panel's group).
+        arrange();
+        try {
+          openPanelWithStack();
+          await settleRetries();
+
+          expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+            'vscode.setEditorLayout',
+            expect.anything(),
+          );
+          expect(logWarning).not.toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+          expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('could not carve'));
+        } finally {
+          vi.mocked(vscode.commands.executeCommand).mockReset();
+        }
+      },
+    );
+
+    it('says why the grid could not be read, rather than logging a bare decline', async () => {
+      // The reason is nearly always "command not found", but an internal failure
+      // arrives the same way — and the one line logged for it is the only place
+      // it can be seen.
+      vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('kaboom in the grid'));
+      try {
+        openPanelWithStack();
+        await settleRetries();
+
+        expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('kaboom in the grid'));
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
       }
@@ -1934,6 +2196,12 @@ describe('DebuggerPanel', () => {
     // gemstone://). We persist the open source URIs to workspaceState and reap
     // the leftovers on the next activation.
     const ORPHAN_KEY = 'jasper.debugger.orphanSourceUris';
+    // What the window leaves for the next one: the source tabs to reap AND the editor
+    // columns to retire. The columns matter on their own — a debugger that never showed
+    // a source still carved a group, so that group has no tab to reap and would be
+    // unreachable without them.
+    const trackedUris = (m: { get(k: string): unknown }): string[] =>
+      (m.get(ORPHAN_KEY) as { uris?: string[] } | undefined)?.uris ?? [];
     function fakeMemento(initial: Record<string, unknown> = {}): vscode.Memento {
       const store = new Map<string, unknown>(Object.entries(initial));
       return {
@@ -1949,6 +2217,8 @@ describe('DebuggerPanel', () => {
 
     it('reaps a debugger source tab a prior session left open, then re-arms the set', () => {
       const orphan = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/finish';
+      // Seeded in the pre-columns shape on purpose: a window upgraded across that
+      // change still has a bare array on disk and its tabs must still be reaped.
       const memento = fakeMemento({ [ORPHAN_KEY]: [orphan] });
       const orphanTab = { input: new vscode.TabInputText(vscode.Uri.parse(orphan)) };
       // An unrelated tab the user opened independently (e.g. System Browser) — never ours.
@@ -1971,6 +2241,207 @@ describe('DebuggerPanel', () => {
       expect(memento.get(ORPHAN_KEY)).toBeUndefined();
     });
 
+    // Closing the window with a debugger open is the one path where dispose never
+    // runs, so neither half of the debugger's column is cleaned up by it. The source
+    // tab is handled by the reap above. The panel's GROUP was the half nothing
+    // covered: VS Code persists the editor layout whatever was in it, so the group
+    // came back — empty, because a webview is dropped unless a serializer claims it —
+    // and VS Code only retires a group when its last editor CLOSES, which a group
+    // restored empty never does. It survived every later window open and shifted the
+    // ViewColumn numbers along for the next debugger trying to carve a column.
+    it('registers a serializer so a restored panel is closed rather than revived', () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      expect(register).toHaveBeenCalledTimes(1);
+      expect(register.mock.calls[0][0]).toBe('gemstoneEnhancedDebugger');
+    });
+
+    it('disposes what it restores, so the group it came back into is retired', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const restored = { dispose: vi.fn(), webview: { html: '' }, viewColumn: 2 };
+
+      await serializer.deserializeWebviewPanel(restored, undefined);
+
+      // There is nothing to revive to, since the suspended process died with the session.
+      expect(restored.dispose).toHaveBeenCalledTimes(1);
+      // And no debugger was built around it — the normal dispose path would try to
+      // clear a stack on a session that was never opened.
+      expect(restored.webview.html).toBe('');
+    });
+
+    // Closing the tab is not enough on its own. VS Code retires a group when its last
+    // editor closes during ordinary use, but a group emptied while the window is still
+    // restoring keeps its place — which is the blank pane the whole item is about, and
+    // the reason the flash of a restored debugger was followed by an empty box.
+    it('retires the group the restored panel leaves empty', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 7, tabs: [] }); // the group it came back into, now empty
+      const emptied = groups[groups.length - 1];
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 7 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    // The guarantee that makes the sweep safe: it only ever closes a group that is
+    // genuinely empty, so anything the user put there survives.
+    it('leaves the column alone when an editor is sitting in it', async () => {
+      const memento = fakeMemento();
+      const register = vi.mocked(vscode.window.registerWebviewPanelSerializer);
+      register.mockClear();
+      rearmRestoreDecliner();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      const serializer = register.mock.calls[0][1] as {
+        deserializeWebviewPanel(panel: unknown, state: unknown): Thenable<void>;
+      };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 8, tabs: [{ input: {} }] }); // the user's own editor
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      await serializer.deserializeWebviewPanel({ dispose: vi.fn(), viewColumn: 8 }, undefined);
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalled();
+    });
+
+    // The activation retire polls for up to ~1.7s, because the closes it follows are
+    // VS Code's own and there is no promise to await. A halt inside that window carves
+    // a fresh pair, which renumbers the grid AND adds an empty source group — so a
+    // remembered number from the last window no longer names the group it was recorded
+    // for, and one of the groups it now names is a live debugger's source pane. The
+    // retire gives up instead of closing it.
+    it('abandons a pending retire once a debugger has carved a new column pair', async () => {
+      // Occupied at the first poll, so the retire goes round the back-off rather than
+      // finishing inside the call.
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push({ viewColumn: 4, tabs: [{ input: {} }] });
+      const remembered = groups[0];
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [4] } });
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      // The halt lands while the retire is still waiting out its back-off, and the
+      // column it remembers has emptied in the meantime.
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      remembered.tabs.length = 0;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      // Named rather than asserting nothing closed at all: the panel this opens
+      // sweeps its own groups when it goes, and this is about ONE column.
+      expect(vi.mocked(vscode.window.tabGroups.close)).not.toHaveBeenCalledWith(remembered);
+    });
+
+    // What the reaping chain waits on is a tab close, which is as slow as VS Code makes
+    // it — so the chain can reach the retire long after the window it was armed for.
+    // The columns it carries were read off THAT layout: a debugger has carved since,
+    // every number in it names a different group, and one of those is the new
+    // debugger's source pane, carved empty. The generation is captured where the
+    // numbers are read and carried down, so a chain that slips gives up.
+    it('does not retire a remembered column once the chain reaches it after a carve', async () => {
+      const uri = 'gemstone://1/UserGlobals/JasperDebugDemo/instance/accessing/size';
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      const sourceTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      groups.push({ viewColumn: 6, tabs: [sourceTab] }); // the tab to reap
+      groups.push({ viewColumn: 4, tabs: [] }); // the remembered pair, already empty
+      const remembered = groups[1];
+      // Hold the tab close open, so the chain behind it is still pending when the halt
+      // arrives — the slow close that lets a stale sweep outlive its window.
+      let landTabClose = (): void => {};
+      const close = vi.mocked(vscode.window.tabGroups.close);
+      close.mockClear();
+      close.mockImplementation((target: unknown) =>
+        target === sourceTab
+          ? new Promise<boolean>((resolve) => {
+              landTabClose = () => resolve(true);
+            })
+          : Promise.resolve(true),
+      );
+
+      DebuggerPanel.initSourceTabCleanup(
+        fakeMemento({ [ORPHAN_KEY]: { uris: [uri], columns: [4] } }),
+      );
+      await flush();
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      landTabClose();
+      await flushMicrotasks();
+
+      // The tab it was sent to reap, yes. The column it remembered, no.
+      expect(close).toHaveBeenCalledWith(sourceTab);
+      expect(close).not.toHaveBeenCalledWith(remembered);
+    });
+
+    // The half the serializer alone could never reach: the companion source group is
+    // carved EMPTY, so a debugger closed with no source ever shown leaves a group with
+    // no tab to reap. Its column has to have been written down while the window was
+    // alive, because dispose cannot win the shutdown race.
+    it('retires a recorded column that came back with nothing in it', async () => {
+      const memento = fakeMemento({ [ORPHAN_KEY]: { uris: [], columns: [5] } });
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 5, tabs: [] });
+      const emptied = groups[groups.length - 1];
+      vi.mocked(vscode.window.tabGroups.close).mockClear();
+
+      DebuggerPanel.initSourceTabCleanup(memento);
+      await flush();
+
+      expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(emptied);
+    });
+
+    it('records the columns a live debugger holds, not just its source tabs', async () => {
+      const memento = fakeMemento();
+      DebuggerPanel.initSourceTabCleanup(memento);
+      openPanelWithStack();
+      await flush();
+
+      const stored: { columns?: number[] } | undefined = memento.get(ORPHAN_KEY);
+      // Both halves of the carve, in the order persistLiveSourceUris writes them: the
+      // panel's own group (1) and the companion source group (2). Named rather than
+      // counted, because the source group is the whole reason the columns are
+      // persisted at all — carved EMPTY, it has no tab to reap and no other way back.
+      // A length check would be satisfied by the panel's column on its own, which the
+      // serializer retires from its own viewColumn without consulting this record.
+      expect(stored?.columns).toEqual([1, 2]);
+    });
+
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
@@ -1987,7 +2458,7 @@ describe('DebuggerPanel', () => {
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
       expect(uri).toContain('orphanProbeA'); // our just-opened source…
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // …is now tracked for reaping.
+      expect(trackedUris(memento)).toContain(uri); // …is now tracked for reaping.
     });
 
     it('drops the URI from the tracked set on a clean panel close (nothing to reap)', async () => {
@@ -2004,12 +2475,12 @@ describe('DebuggerPanel', () => {
       const uri = (
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
       ).toString();
-      expect(memento.get(ORPHAN_KEY) as string[]).toContain(uri); // tracked while open…
+      expect(trackedUris(memento)).toContain(uri); // tracked while open…
 
       closePanel(panel);
 
       // …and dropped on a clean dispose, so the next launch has nothing to reap.
-      expect(memento.get(ORPHAN_KEY) ?? []).not.toContain(uri);
+      expect(trackedUris(memento)).not.toContain(uri);
     });
 
     // ── Double-click-to-edit inline values (#5 Phase 2) ───────────────────
@@ -2345,7 +2816,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -2390,6 +2863,27 @@ describe('DebuggerPanel', () => {
         { name: 'amount', value: '<print 11>', oop: '11', edit: { kind: 'temp', index: 1 } },
         { name: 'total', value: '<print 22>', oop: '22', edit: { kind: 'temp', index: 2 } },
       ]);
+    });
+
+    it("groups the enclosing method's names read-only, ahead of the frame's own", () => {
+      vi.mocked(debug.fetchFrameVariables).mockImplementation(() => [
+        { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
+        { group: 'argtemps', name: 'each', value: '<print 11>', oop: '11', index: 1 },
+        { group: 'homeargtemps', name: 'coll', value: '<print 22>', oop: '22', index: 0 },
+      ]);
+      const panel = openPanel();
+
+      sendMessage(panel, { command: 'selectFrame', level: 2 });
+
+      const groups = lastPosted(panel, 'variables').groups;
+      const home = groups.find((g: { kind: string }) => g.kind === 'homeargtemps');
+      // No `edit`: the write index of an enclosing name addresses the enclosing
+      // frame, so applying it at this level would land on the wrong slot.
+      expect(home.vars).toEqual([{ name: 'coll', value: '<print 22>', oop: '22' }]);
+      // Scope order, innermost last — a same-named own temp has to shadow it
+      // wherever later entries win, the inline overlay above all.
+      const kinds = groups.map((g: { kind: string }) => g.kind);
+      expect(kinds.indexOf('homeargtemps')).toBeLessThan(kinds.indexOf('argtemps'));
     });
 
     it('alphabetizes instVars and named args/temps while preserving each slot write index', () => {
@@ -2639,7 +3133,7 @@ describe('DebuggerPanel', () => {
       // receiver (300) with one instVar `count` (#1). getInstVarOop returns the
       // instVar's *original* oop (700) when captured before the first edit.
       beforeEach(() => {
-        // The WRITE path still uses getFrameInfo (receiverOop) + getInstVarOop
+        // The WRITE path still uses getFrameInfo (selfOop) + getInstVarOop
         // (capture original); the PANE display now comes from fetchFrameVariables.
         vi.mocked(debug.getFrameInfo).mockImplementation(
           (_s: unknown, _p: unknown, level: number) =>
@@ -2647,14 +3141,18 @@ describe('DebuggerPanel', () => {
               ? {
                   methodOop: 2n,
                   ipOffset: 5,
-                  receiverOop: 300n,
+                  selfOop: 300n,
+                  selfIsUnavailable: false,
+                  homeMethodOop: OOP_NIL,
                   argAndTempNames: ['amount'],
                   argAndTempOops: [11n],
                 }
               : {
                   methodOop: BigInt(level),
                   ipOffset: 5,
-                  receiverOop: BigInt(level * 100),
+                  selfOop: BigInt(level * 100),
+                  selfIsUnavailable: false,
+                  homeMethodOop: OOP_NIL,
                   argAndTempNames: [],
                   argAndTempOops: [],
                 },
@@ -3133,7 +3631,9 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getFrameInfo).mockReturnValue({
           methodOop: 50n,
           ipOffset: 5,
-          receiverOop: 0n,
+          selfOop: 0n,
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         });
@@ -3214,7 +3714,9 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getFrameInfo).mockReturnValue({
           methodOop: 1n,
           ipOffset: 5,
-          receiverOop: 300n,
+          selfOop: 300n,
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         });
@@ -3298,7 +3800,9 @@ describe('DebuggerPanel', () => {
           (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
-            receiverOop: 100n,
+            selfOop: 100n,
+            selfIsUnavailable: false,
+            homeMethodOop: OOP_NIL,
             argAndTempNames: [],
             argAndTempOops: [],
           }),
@@ -3646,7 +4150,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -3804,7 +4310,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -3832,7 +4340,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 ? 10n : BigInt(level), // the home method's own activation
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -3930,7 +4440,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 7 ? HOME : BigInt(level), // the home method's own activation
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4022,7 +4534,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 4 ? 10n : BigInt(level), // home activation is server 4
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4077,7 +4591,9 @@ describe('DebuggerPanel', () => {
         (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 || level === 6 ? HOME : BigInt(level), // two `foo` activations
           ipOffset: 5,
-          receiverOop: BigInt(level * 100),
+          selfOop: BigInt(level * 100),
+          selfIsUnavailable: false,
+          homeMethodOop: OOP_NIL,
           argAndTempNames: [],
           argAndTempOops: [],
         }),
@@ -4184,6 +4700,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens a pre-filled new-method template BELOW the panel and hints to fill+save', async () => {
+      mockEditorGrid(1);
       const panel = openWithDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
       sendMessage(panel, { command: 'createDnuMethod' });
@@ -4362,6 +4879,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens a new-method template for the receiver class + frame selector, with banner help (no init)', async () => {
+      mockEditorGrid(1);
       const panel = openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
       sendMessage(panel, { command: 'implementInReceiver', level: 2 });
@@ -4473,6 +4991,10 @@ describe('DebuggerPanel', () => {
       ]);
       expect(items[0].description).toMatch(/implement here/i);
       expect(items[2].description).toMatch(/already implements/i);
+      // Interval's home is Globals — a base class, so its row says take care;
+      // the Kernel rows are ordinary targets and say nothing extra.
+      expect(items[0].description).toMatch(/GemStone base class, take care/i);
+      expect(items[1].description).not.toMatch(/base class/i);
       // A stub template for the chosen (non-implementing) superclass.
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       expect(uri.toString()).toContain('/Kernel/SequenceableCollection/instance/');
@@ -4495,6 +5017,71 @@ describe('DebuggerPanel', () => {
       expect(uri.toString()).not.toContain('new-method');
       const editor = await vi.mocked(vscode.window.showTextDocument).mock.results.at(-1)!.value;
       expect(editor.edit).not.toHaveBeenCalled(); // existing source left intact
+    });
+
+    // A CLASS receiver: the chain is the metaclass one up through `Object class`,
+    // then crosses into `Class` and its instance-side superclasses. `Object` is
+    // therefore in it twice, once per side.
+    const META_CHAIN = [
+      { className: 'Widget', isMeta: true, dictName: 'UserGlobals', implementsSelector: false },
+      { className: 'Object', isMeta: true, dictName: 'Globals', implementsSelector: false },
+      { className: 'Class', isMeta: false, dictName: 'Globals', implementsSelector: false },
+      { className: 'Behavior', isMeta: false, dictName: 'Globals', implementsSelector: false },
+      { className: 'Object', isMeta: false, dictName: 'Globals', implementsSelector: true },
+    ];
+
+    it('names the side of each class-side candidate, so the two Object rows differ', async () => {
+      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      // Pick `Object class` (index 1) — indistinguishable from `Object` (index 4)
+      // if the label dropped the side, and it is `isMeta` that picks the URI side.
+      vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
+        async (items: unknown) => (items as { index: number }[])[1] as never,
+      );
+      const panel = openPanel();
+      vi.mocked(vscode.workspace.openTextDocument).mockClear();
+      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await flush();
+
+      const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
+        label: string;
+        description: string;
+      }[];
+      expect(items.map((i) => i.label)).toEqual([
+        'Widget class',
+        'Object class',
+        'Class',
+        'Behavior',
+        'Object',
+      ]);
+      // Every row spelled differently — no two candidates the user must guess between.
+      expect(new Set(items.map((i) => i.label)).size).toBe(items.length);
+      // The class-side pick writes to the class side.
+      const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(uri.toString()).toContain('/Globals/Object/class/');
+    });
+
+    it('offers the base classes the metaclass chain crosses into, marked as base classes', async () => {
+      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
+        async (items: unknown) => (items as { index: number }[])[2] as never,
+      ); // Class — a genuine target, offered rather than withheld
+      const panel = openPanel();
+      vi.mocked(vscode.workspace.openTextDocument).mockClear();
+      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await flush();
+
+      const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
+        label: string;
+        description: string;
+      }[];
+      // Widget class is the user's own (UserGlobals); the rest live in Globals and
+      // say so, so "implement #foo in Behavior" is not offered as if it were routine.
+      expect(items[0].description).not.toMatch(/base class/i);
+      expect(items[1].description).toMatch(/GemStone base class, take care/i);
+      expect(items[3].description).toMatch(/GemStone base class, take care/i);
+      // Offered, not withheld: picking Class opens its template.
+      const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(uri.toString()).toContain('/Globals/Class/instance/');
     });
 
     it('warns that a subclass implementation shadows an override placed higher up', async () => {
@@ -4733,8 +5320,8 @@ describe('DebuggerPanel', () => {
     // mockImplementations leak past clearAllMocks — restore the base 5-frame stack.
     afterEach(() => {
       vi.mocked(debug.getStackDepth).mockImplementation(() => 5);
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 200n ? 'SmallInteger' : 'JasperDebugDemo',
       );
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'finish' };
@@ -4751,11 +5338,11 @@ describe('DebuggerPanel', () => {
       return panel;
     }
 
-    // Make the level-2 frame (receiverOop 200) a class-side method `buildIt`
+    // Make the level-2 frame (selfOop 200) a class-side method `buildIt`
     // inherited from JasperMakerBase, run with `receiverClassName` as the receiver.
     function classSideInheritedAtLevel2(receiverClassName: string) {
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 200n ? receiverClassName : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 200n ? receiverClassName : 'JasperDebugDemo',
       );
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'finish' };
@@ -4886,10 +5473,10 @@ describe('DebuggerPanel', () => {
     // --- editable Variables on a class-side frame (classInstVars) ---
 
     it('shows + edits a class-instance variable on a class-side frame (receiver is a class)', () => {
-      // Frame at level 3 (receiverOop 300) has a class receiver; its named
+      // Frame at level 3 (selfOop 300) has a class receiver; its named
       // instVars are the class-instance variables (e.g. `registry`).
-      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, receiverOop: bigint) =>
-        receiverOop === 300n ? 'JasperClassSideDemo class' : 'JasperDebugDemo',
+      vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
+        selfOop === 300n ? 'JasperClassSideDemo class' : 'JasperDebugDemo',
       );
       // The one-trip query returns the class-instance var as an instvars row.
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
@@ -5179,6 +5766,7 @@ describe('DebuggerPanel', () => {
 
     it('retires its own groups once they are empty, so the grid does not accumulate', async () => {
       (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      mockEditorGrid(2); // the panel opens into column 2 and carves 3 below it
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
       sendReady(panel);

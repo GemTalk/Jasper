@@ -40,7 +40,7 @@ To install, manage, and run a GemStone server locally:
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
-4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone release from its Versions list.
+4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone version from its Versions list.
 5. Click **New Database** in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
@@ -74,17 +74,17 @@ Versions live in the **Databases & Versions** panel, opened with **Manage Databa
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
-The panel header carries **Install Version…**, which lists the releases you do not yet have. A release you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
+The panel header carries **Install Version…**, which lists the versions you do not yet have. A version you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
 
 On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
-A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone release from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record. The same distinction holds in the sidebar, where a registered row offers Unregister rather than Delete, and neither **Replace Extent** nor the extent backups, which reach for files the installation owns. On Windows the product directory has to be one inside WSL (a `\\wsl$\<distro>\…` path in the folder dialog) — GemStone has no Windows build, so a tree on the Windows side is refused with that reason.
+A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone version from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record. The same distinction holds in the sidebar, where a registered row offers Unregister rather than Delete, and neither **Replace Extent** nor the extent backups, which reach for files the installation owns. On Windows the product directory has to be one inside WSL (a `\\wsl$\<distro>\…` path in the folder dialog) — GemStone has no Windows build, so a tree on the Windows side is refused with that reason.
 
 Each database node expands to show:
 
@@ -258,14 +258,24 @@ Installing the support does not by itself change what **Inspect It** opens. The 
 
 ### Debugging
 
-When code execution hits an error, a **Debug** button opens the VS Code debugger with:
+When code execution hits an error, a **Debug** button opens the GemStone
+Debugger — a Smalltalk-style panel in its own editor column, with the frame's
+source in the pane directly below it:
 
 - Full stack trace with `ClassName >> #selector` frame names
-- Click any frame to view its method source
-- **Arguments & Temps** and **Receiver** variable scopes with drill-down
-- Step Over, Step Into, Step Out, and Continue
-- Restart Frame support
-- Evaluate expressions in the Debug Console in any frame context
+- The top frame's source opens with the debugger; selecting another frame swaps it
+- **Receiver**, **Instance variables** and **Arguments & Temps** panes, with
+  drill-down into any value and single-level revert of an edited slot
+- Step Over, Step Into, Step Through, Restart Frame, Run to Cursor and Resume
+- Evaluate an expression in any frame's context, and see values inline in the source
+- Save the source pane to recompile and re-enter the method (edit-and-continue)
+- Right-click a frame to **Browse** it — the GemStone Explorer cascades to the
+  class the running method is defined in and opens that method
+
+The older VS Code (DAP) debugger has not been removed — the `gemstone` debug
+type is still registered — but nothing offers it any more, and it is not a route
+you can take from the Run and Debug view: attaching needs the GCI session id and
+the suspended process's OOP, which only a halt knows. Treat it as dormant.
 
 ### Breakpoints
 

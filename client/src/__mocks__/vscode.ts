@@ -334,6 +334,12 @@ export const window = {
     reveal: vi.fn(),
     dispose: () => {},
   })),
+  // Restoring a webview across a window reload goes through a serializer, so a
+  // deliberate refusal to restore is only observable if the registration is
+  // recorded. Tests read the registered serializer back off this mock and call it.
+  registerWebviewPanelSerializer: vi.fn((_viewType: string, _serializer: unknown) => ({
+    dispose: () => {},
+  })),
   registerFileDecorationProvider: vi.fn(() => ({ dispose: () => {} })),
   createOutputChannel: vi.fn(() => ({
     append: vi.fn(),
