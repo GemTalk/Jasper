@@ -136,8 +136,11 @@ describe('Explorer remove method (integration)', () => {
 
     await controllerOnFixture().removeMethod(methodNode(TEST_SELECTOR));
 
+    // Against a real stone the undo capture succeeds, so the safe-delete notice is also the
+    // one that carries the way back — one notice for one deletion (#434).
     expect(showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining(`Removed method #${TEST_SELECTOR}`),
+      'Undo',
     );
   });
 

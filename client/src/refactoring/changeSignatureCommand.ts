@@ -35,6 +35,7 @@ import { showChangeSignatureEditor } from './changeSignatureEditor';
 import { showChangeSignaturePanel } from './changeSignaturePanel';
 import { logInfo } from '../gciLog';
 import { resolveMethodEditor, ensureRbSupport, refuse, saveIfDirty } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** What the shared change-signature flow needs to start. */
 export interface ChangeSignatureTarget {
@@ -183,7 +184,14 @@ export async function beginChangeSignature(
         await queries.pageChangeSignaturePreview(session, token, offset, PREVIEW_PAGE_BYTES),
       ),
     apply: async (deselected) =>
-      parseApplyResult(await queries.applyChangeSignature(session, token, deselected)),
+      parseApplyResult(
+        await queries.applyChangeSignature(
+          session,
+          token,
+          deselected,
+          `Change signature #${oldSelector} to #${newSelector}`,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) return false; // cancelled/closed
@@ -208,9 +216,11 @@ export async function beginChangeSignature(
     );
     return true;
   }
-  void vscode.window.showInformationMessage(
+  notifyRefactoringApplied(
+    session,
     `Changed signature '${oldSelector}' → '${newSelector}' (${result.applied} change` +
       `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+    'toast',
   );
   return true;
 }
