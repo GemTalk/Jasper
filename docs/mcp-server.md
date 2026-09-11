@@ -64,23 +64,89 @@ The socket and HTTPS port are global resources, so only one Jasper window can se
   the well-known `mcpServers.jasper` entry into `~/.claude.json` and into
   Claude Desktop's global config. Both entries point at the **fixed** socket
   path, so they're correct no matter which window ends up owning it. No
-  ownership claim is made here — a window that opens but never logs in stays
-  passive. With the setting off, the window does none of this: no config is
-  written, no socket or port is claimed, and the MCP commands and the session
-  row's button are gated out of the UI (`jasper.mcpAvailable`, which also
-  covers the no-folder-open case) rather than left to fail when used.
-- **On the first GemStone login**, the window that just acquired a session
-  attempts to bind the socket and HTTPS port. The successful claimant becomes
-  the **MCP owner** for the rest of that VS Code run and writes a sidecar file
-  at `~/.jasper/mcp.owner.json` so other Jasper windows can tell that someone
-  else holds the role.
+  window then attempts to bind the socket and HTTPS port straight away, before
+  it has a session: Claude Code fails the proxy on a short timeout, so the
+  socket has to be live by the time it spawns the proxy on the same window
+  reload. With the setting off, the window does none of this: no config is
+  written, no socket or port is claimed, and the MCP commands are gated out of
+  the UI (`jasper.mcpAvailable`, which also covers the no-folder-open case)
+  rather than left to fail when used.
+- **The successful claimant** becomes the **MCP owner** for the rest of that
+  VS Code run, and writes a sidecar file at `~/.jasper/mcp.owner.json` so other
+  Jasper windows can tell that someone else holds the role — and which window
+  that is.
 - **Once owned, the socket stays bound across logout/login cycles.** Tool calls
   during a logged-out gap return "no session selected"; the moment the user
   logs back in, tools resume working. Claude Code's MCP connection never sees
   a disconnect.
+- **Ownership is released only by its owner** — `GemStone: Stop MCP Server`, or
+  the window closing. A claim from another window cannot take a socket that is
+  still bound, which is why the owning window has to be identified and told to
+  stop rather than simply overruled.
+- **A passive window can ask for it.** `mcp.release-request.json`, written
+  beside the sidecar, names the pid being asked; the owner is already watching
+  that directory, sees its own pid, releases and deletes the request. The
+  asking window then polls for the socket to come free and claims it. The
+  request is a request, not a seizure: the owner closes its own socket and
+  HTTPS listener in its own process, a request naming a different pid is left
+  alone, a window never honours its own request (which would be a release
+  loop), and anything older than a minute is ignored so an asker that died
+  cannot unseat the next owner. A window running a Jasper without this
+  protocol simply never answers — the asker reports a timeout rather than
+  hanging, and points at Stop MCP in that window.
 
 This means MCP "follows the work" — the window the user is actually using is
 the one the AI talks to.
+
+## The MCP Server tab
+
+`GemStone: Show MCP Server`, or the plug button on the **Databases** section
+header, opens one tab that answers every MCP question in a single place:
+whether this window serves MCP, which session its tools act on, the socket path
+(in every state — there is one per machine, and it is what Claude's config
+points at) and the HTTPS endpoint, each copied by clicking it, and — when
+another window holds the server — that window's workspace, pid, claim time and
+selected session.
+
+Every value carries the sentence explaining it, which the removed pane could
+only fit on a row tooltip: what the socket is for, what the HTTPS endpoint is
+for, and that switching the active session in the owning window changes which
+database the tools hit without any re-claim. An owning window holding the
+server with *no* session selected says so explicitly — every tool call fails,
+which is strictly worse than an unclaimed server.
+
+It is also where the actions are, including the two that need each other:
+
+- **Claim MCP Server** takes the server for this window.
+- **Stop MCP** releases it, so another window can claim it. The old pane had no
+  release at all — when a window owned the server it showed status and nothing
+  to act on — so the only way to hand MCP over was to close or disable Jasper
+  in the owning window.
+- **Ask It to Release** is the remote form of that: it has the *other* window
+  let go, then claims here. This is the action offered when another window
+  holds the server, because Claim alone cannot succeed against a bound socket.
+- **Open Owning Window** focuses the window currently serving MCP, by opening
+  its workspace folder — VS Code focuses an already-open folder rather than
+  opening it twice. Best effort: an owner with no folder open, or one whose
+  sidecar recorded only the first folder of a multi-root workspace, cannot be
+  reached this way and says so.
+- **Refresh** re-reads ownership from the socket and sidecar.
+
+**Open MCP Inspector is deliberately not on the tab.** It shells out to `npx`,
+whose first run on a machine installs around 130 packages — minutes on a slow
+link, with almost no output — and then prints a token-bearing URL that exists
+only in terminal scrollback. That is a detour, not a readout, so it stays the
+`GemStone: Open MCP Inspector` palette command.
+
+The tab is offered even with `jasper.mcp.enabled` off, because that is exactly
+when someone is hunting for why Claude has no GemStone tools — it is the thing
+that says so.
+
+The **Databases** section header carries the same state at a glance —
+`MCP: this window`, `MCP: other window`, or `MCP: unclaimed`, and nothing at all
+when MCP is off in this window. It is on that header, rather than on a session
+or database row, because claiming the server is a property of the *window*:
+there is exactly one Databases header per window, and a user has several rows.
 
 ## Which session does MCP use?
 
@@ -90,11 +156,11 @@ the owning window has two logins, MCP tools act on whichever one is active
 *right now*. Switching sessions in the owning window changes which database
 the AI sees on the next tool call.
 
-The **Logins & Sessions** view shows the live answer on the session itself:
-the row MCP is serving is marked `· MCP`, and every session row offers
-**Serve MCP from This Session** (the robot icon), which selects that session
-and claims the server in one step. There is no separate MCP pane — ownership is
-a property of a session, so it is reported where the sessions are.
+The **Logins & Sessions** view shows the live answer on the session itself: the
+row MCP is serving is marked `· MCP` in its description. That is the only thing
+a session row says about MCP, and the only part of MCP that is genuinely
+session-scoped — claiming the server belongs to the window, and lives on the
+Databases header and in the MCP Server tab.
 
 ## Client registration
 
@@ -134,6 +200,11 @@ Three clients are wired up out of the box. Each gets the same `jasper` entry poi
 - Runs `npx @modelcontextprotocol/inspector` in a dedicated terminal with
   `NODE_EXTRA_CA_CERTS` set so Node's TLS stack accepts Jasper's self-signed
   cert (OS keychain trust does not apply to Node).
+- The command is run **without** `npx --yes`, so the first launch on a machine
+  stops at npx's own `Ok to proceed? (y)` prompt and waits for an answer in
+  that terminal. That is deliberate: Jasper does not approve a package
+  installation on the user's behalf. It does mean the Inspector appears to hang
+  until the prompt is answered, so the button that launches it says so.
 
 ### Other clients
 
@@ -179,9 +250,12 @@ Trusting the cert is per-machine, not per-workspace. You only do it once.
 ## Multiple VS Code windows
 
 Several Jasper windows can run side-by-side, but only one serves MCP at a
-time. In a passive window no session row is marked `· MCP`, and the
-**Serve MCP from This Session** button's tooltip says another window owns the
-server. To run two MCP-serving windows simultaneously:
+time. In a passive window no session row is marked `· MCP`, the Databases
+header reads `MCP: other window`, and the MCP Server tab names the window that
+holds it and offers to open it. Taking the server over is **Ask It to Release**
+in the MCP Server tab, which has the owner let go and then claims here; failing
+that (an owner too old to answer), **Stop MCP** there and **Claim MCP Server**
+here. To run two MCP-serving windows simultaneously:
 
 - The stdio surface is one-per-machine (fixed socket path).
 - Override `jasper.mcp.httpPort` in the second workspace's
@@ -236,7 +310,12 @@ a human looking at the Browser/Inspector would see.
 - [`client/src/mcpHttpServer.ts`](../client/src/mcpHttpServer.ts) — HTTPS/SSE listener, TLS cert plumbing.
 - [`client/src/mcpTools.ts`](../client/src/mcpTools.ts) — tool registration; the one place every tool is declared.
 - [`client/src/mcpOwnerSidecar.ts`](../client/src/mcpOwnerSidecar.ts) — sidecar read/write/PID-liveness check behind the ownership readout.
-- [`client/src/mcpServerTreeProvider.ts`](../client/src/mcpServerTreeProvider.ts) — `resolveOwnership`, which reduces socket state + sidecar to the three-state answer the session rows render. (The tree provider in this file is no longer contributed as a view; see [`loginTreeProvider.ts`](../client/src/loginTreeProvider.ts) for what renders the answer now.)
+- [`client/src/mcpReleaseRequest.ts`](../client/src/mcpReleaseRequest.ts) — the release-request file, and the rules an owner applies before honouring one.
+- [`client/src/mcpOwnership.ts`](../client/src/mcpOwnership.ts) — `McpOwnershipController`: claiming, releasing, and the handover handshake. It takes a dependency bag rather than living in `activate()`, because these are the decisions worth testing and nothing in `activate()` can be reached by a test.
+- [`client/src/mcpServerTreeProvider.ts`](../client/src/mcpServerTreeProvider.ts) — `resolveOwnership`, which reduces socket state + sidecar to a three-state answer. (The tree provider in this file is no longer contributed as a view.)
+- [`client/src/mcpWindowStatus.ts`](../client/src/mcpWindowStatus.ts) — turns that answer into the report the Databases header and the MCP Server tab both render.
+- [`client/src/mcpPanel.ts`](../client/src/mcpPanel.ts) + [`client/src/mcpView.js`](../client/src/mcpView.js) — the MCP Server tab: host and webview.
+- [`client/src/loginTreeProvider.ts`](../client/src/loginTreeProvider.ts) — `sessionMcpState`, the `· MCP` mark on the served session row.
 - [`client/src/claudeCodeUserMcpConfig.ts`](../client/src/claudeCodeUserMcpConfig.ts) — `~/.claude.json` writer.
 - [`mcp-server/src/index.ts`](../mcp-server/src/index.ts) — the stdio proxy script that clients launch.
 - [`client/src/tlsCert.ts`](../client/src/tlsCert.ts) — TLS cert generation and on-disk layout.

@@ -51,9 +51,12 @@ describe('sessionMcpState', () => {
     expect(sessionMcpState(owned(undefined), makeSession(7), true)).toBe('idle');
   });
 
-  it('reports another window as the owner, for every row', () => {
-    expect(sessionMcpState(elsewhere, makeSession(7), true)).toBe('elsewhere');
-    expect(sessionMcpState(elsewhere, makeSession(8), false)).toBe('elsewhere');
+  it('marks no row when another window owns the server', () => {
+    // Who owns the server is a property of a window, reported on the Databases
+    // header and in the MCP Server tab. A session row says one thing only:
+    // whether Claude's tools act on this session — and here they do not.
+    expect(sessionMcpState(elsewhere, makeSession(7), true)).toBe('idle');
+    expect(sessionMcpState(elsewhere, makeSession(8), false)).toBe('idle');
   });
 });
 
@@ -65,21 +68,18 @@ describe('the session row', () => {
   });
 
   it('says nothing about MCP on any other row', () => {
-    for (const state of ['off', 'idle', 'elsewhere'] as const) {
-      expect(new GemStoneSessionItem(makeSession(8), false, state).description).not.toContain(
-        'MCP',
-      );
+    for (const state of ['off', 'idle'] as const) {
+      const row = new GemStoneSessionItem(makeSession(8), false, state);
+      expect(row.description).not.toContain('MCP');
+      expect(String(row.tooltip)).not.toContain('MCP');
     }
-    expect(String(new GemStoneSessionItem(makeSession(8), false, 'elsewhere').tooltip)).toContain(
-      'Another VS Code window',
-    );
   });
 
   it('keeps one contextValue whatever MCP is doing, so the row keeps its actions', () => {
     // File In, Commit, Abort, Session Configuration, Logout and the backup pair
     // are all contributed for `viewItem == gemstoneSession`. Marking the served
     // row with a contextValue of its own took every one of them off that row.
-    for (const state of ['off', 'idle', 'serving', 'elsewhere'] as const) {
+    for (const state of ['off', 'idle', 'serving'] as const) {
       expect(new GemStoneSessionItem(makeSession(7), true, state).contextValue).toBe(
         'gemstoneSession',
       );

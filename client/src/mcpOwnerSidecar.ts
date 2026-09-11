@@ -7,6 +7,13 @@ import { extensionPathFrom } from './extensionPath';
 // window on claim, deleted on dispose. A stale sidecar (owner crashed) is
 // detected by probing the pid; any subsequent claimant overwrites it.
 
+/**
+ * What `workspacePath` says when the owning window had no folder open. The MCP
+ * Server tab cannot offer to open such a window, so it checks for this rather
+ * than trying to open a path that names nothing.
+ */
+export const NO_WORKSPACE_RECORDED = '(no workspace)';
+
 export interface McpOwnerInfo {
   pid: number;
   workspacePath: string;

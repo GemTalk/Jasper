@@ -40,16 +40,21 @@ export class GemStoneLoginItem extends vscode.TreeItem {
 }
 
 /**
- * What a session row says about MCP. The server answers tool calls against
- * whichever session is selected in the window that owns it, so exactly one row
- * across all windows can be `serving` — and only ever a selected one.
+ * What a session row says about MCP. Only one thing, deliberately: whether
+ * Claude's tools are acting on *this* session. Everything else about the
+ * server — who owns it, where its socket is, how to take it — belongs to the
+ * window rather than to any session, and lives on the Databases section header
+ * and in the MCP Server tab (see mcpWindowStatus).
+ *
+ * The server answers tool calls against whichever session is selected in the
+ * window that owns it, so exactly one row across all windows can be `serving`,
+ * and only ever a selected one.
  *
  * - `off`      MCP is disabled, or no folder is open: say nothing.
- * - `idle`     available, but this row is not the one being served.
+ * - `idle`     running somewhere, but this row is not the one being served.
  * - `serving`  this window owns the server and this is its selected session.
- * - `elsewhere` another window owns the server; this row can take it over.
  */
-export type SessionMcpState = 'off' | 'idle' | 'serving' | 'elsewhere';
+export type SessionMcpState = 'off' | 'idle' | 'serving';
 
 /**
  * Reduce MCP ownership to what one session row should show. `ownership` is
@@ -61,7 +66,6 @@ export function sessionMcpState(
   isSelected: boolean,
 ): SessionMcpState {
   if (!ownership) return 'off';
-  if (ownership.kind === 'other') return 'elsewhere';
   // Ownership alone isn't enough: the tools follow the selected session, so an
   // unselected row is not the one being served even in the owning window.
   if (ownership.kind === 'this' && isSelected && ownership.selectedSession?.id === session.id) {
@@ -88,19 +92,13 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     if (mcp === 'serving') {
       this.tooltip +=
         '\n\nClaude Code and Claude Desktop run their GemStone tools against this session.';
-    } else if (mcp === 'elsewhere') {
-      this.tooltip +=
-        '\n\nAnother VS Code window owns the MCP server. Serve MCP from This Session to ' +
-        'take it over — it will only succeed once that window releases it.';
     }
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
     // Every session row keeps this one contextValue, MCP state included: each of
-    // the row's other actions — File In, Commit, Abort, Session Configuration,
-    // Logout, and the backup pair in the context menu — is contributed for
+    // the row's actions — File In, Commit, Abort, Session Configuration, Logout,
+    // and the backup pair in the context menu — is contributed for
     // `viewItem == gemstoneSession`, so a row given a different value to mark it
-    // as the served one loses all of them. `· MCP` above is the marker instead,
-    // and Serve MCP from This Session stays on the served row, where it is a
-    // harmless no-op.
+    // as the served one loses all of them. `· MCP` above is the marker instead.
     this.contextValue = 'gemstoneSession';
   }
 }

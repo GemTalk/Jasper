@@ -10,7 +10,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ActiveSession } from './sessionManager';
 import { registerMcpTools } from './mcpTools';
 import { appendSysadmin } from './sysadminChannel';
-import { defaultSidecarPath, deleteOwnerSidecar, writeOwnerSidecar } from './mcpOwnerSidecar';
+import {
+  NO_WORKSPACE_RECORDED,
+  defaultSidecarPath,
+  deleteOwnerSidecar,
+  writeOwnerSidecar,
+} from './mcpOwnerSidecar';
 import { extensionPathFrom } from './extensionPath';
 import { isWindows } from './wslBridge';
 
@@ -187,7 +192,7 @@ export class McpSocketServer {
       writeOwnerSidecar(
         {
           pid: process.pid,
-          workspacePath: this.options.workspacePath ?? '(no workspace)',
+          workspacePath: this.options.workspacePath ?? NO_WORKSPACE_RECORDED,
           socketPath: this.socketPath,
           claimedAt: this.claimedAtIso,
           ...(label !== undefined ? { selectedSession: label } : {}),

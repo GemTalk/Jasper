@@ -178,6 +178,11 @@ import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer'
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
 import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
+import { NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
+import { mcpHeader, mcpReport } from './mcpWindowStatus';
+import { defaultReleaseRequestPath } from './mcpReleaseRequest';
+import { McpOwnershipController } from './mcpOwnership';
+import { McpPanel } from './mcpPanel';
 import { DEFAULT_MCP_HTTP_PORT, McpHttpServer } from './mcpHttpServer';
 import { readMcpSetting } from './mcpSettings';
 import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
@@ -712,6 +717,66 @@ export function activate(context: vscode.ExtensionContext) {
   // returns undefined and the rows show no MCP state at all.
   let mcpOwnership: () => McpOwnership | undefined = () => undefined;
   const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+
+  // MCP is a property of this window, so its readout goes on the Databases
+  // section header — of which there is exactly one — and the detail goes in the
+  // MCP Server tab. The header is created further down, after the MCP block, so
+  // the view is held here and the redraw is a no-op until it exists.
+  const databases: { view?: vscode.TreeView<DatabaseNode> } = {};
+  const refreshMcpSurfaces = () => {
+    treeProvider.refresh();
+    const header = mcpHeader(mcpReport(mcpOwnership()));
+    if (databases.view) {
+      databases.view.description = header.description;
+      databases.view.message = header.message;
+    }
+    McpPanel.refreshIfOpen();
+  };
+  // Claim, Stop and the release request, as the MCP Server tab calls them.
+  // Replaced by the MCP block when the surface is running; until then they
+  // explain why nothing is going to happen rather than failing silently.
+  const mcpUnavailable = async () => {
+    vscode.window.showWarningMessage(
+      'MCP is not running in this window. Set jasper.mcp.enabled to true and open a folder, ' +
+        'then reload the window.',
+    );
+  };
+  let mcpClaim: () => Promise<void> = mcpUnavailable;
+  let mcpStop: () => Promise<void> = mcpUnavailable;
+  let mcpRequestRelease: () => Promise<void> = mcpUnavailable;
+
+  /**
+   * Focus the VS Code window that owns the MCP server. Opening a folder that is
+   * already open focuses that window rather than opening a second one, which is
+   * the only handle an extension has on another window. It is a best effort: an
+   * owner with no folder recorded, or a multi-root workspace (whose sidecar
+   * records only the first folder), cannot be reached this way and says so
+   * instead of opening something the user did not ask for.
+   */
+  const revealMcpOwner = async (workspacePath: string) => {
+    if (!workspacePath || workspacePath === NO_WORKSPACE_RECORDED) {
+      vscode.window.showWarningMessage(
+        'The window serving MCP did not record a workspace folder, so Jasper cannot open it. ' +
+          'Look for another VS Code window with Jasper active and stop MCP there.',
+      );
+      return;
+    }
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspacePath), {
+      forceNewWindow: false,
+    });
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jasper.showMcpServer', () =>
+      McpPanel.show({
+        report: () => mcpReport(mcpOwnership()),
+        claim: () => mcpClaim(),
+        stop: () => mcpStop(),
+        requestRelease: () => mcpRequestRelease(),
+        revealOwner: revealMcpOwner,
+      }),
+    ),
+  );
 
   const treeView = vscode.window.createTreeView('gemstoneLogins', {
     treeDataProvider: treeProvider,
@@ -2975,23 +3040,26 @@ export function activate(context: vscode.ExtensionContext) {
   // takes effect on the next window reload — matching how a claimed socket
   // behaves anyway (it stays bound for the rest of the VS Code run).
   //
-  // Ownership of the live socket (and the HTTPS port) is claimed on the
-  // first GemStone login in this window, not on activation. That way the
-  // window MCP talks to is the one actually working with GemStone — a window
-  // that opens but never logs in stays passive.
+  // Ownership of the live socket (and the HTTPS port) is claimed eagerly at
+  // activation — see tryClaimMcpOwnership below for why it cannot wait for a
+  // login.
   //
   // Once claimed, the socket stays bound for the rest of this VS Code run,
   // even if the user logs out. That keeps Claude Code's MCP connection alive
   // across logout/login cycles — tools just return "no session selected"
-  // during the gap and resume working when the user logs back in.
+  // during the gap and resume working when the user logs back in. The one
+  // thing that releases it is Stop MCP, which exists because a socket held by
+  // one window cannot be taken by another.
   //
   // Claude Code:    user-scope `mcpServers.jasper` in `~/.claude.json`.
   // Claude Desktop: `mcpServers.jasper` in `claude_desktop_config.json`.
   const workspaceRoots = vscode.workspace.workspaceFolders;
   const mcpEnabled = readMcpSetting<boolean>('enabled', true);
-  // Gates the session row's "Serve MCP from This Session" button. False when the
-  // setting is off and when no folder is open, which are exactly the cases where
-  // gemstone.sessionServeMcp is not registered.
+  // Gates the MCP commands that would fail — Claim, Stop, the copy pair, the
+  // cert install and the inspector. False when the setting is off and when no
+  // folder is open, which are exactly the cases where none of them is
+  // registered. Show MCP Server is deliberately not gated on it: with MCP off,
+  // that tab is the thing that says so.
   void vscode.commands.executeCommand(
     'setContext',
     'jasper.mcpAvailable',
@@ -3056,11 +3124,13 @@ export function activate(context: vscode.ExtensionContext) {
     let httpServer: McpHttpServer | undefined;
     let httpStarted = false;
 
-    // Who owns the MCP server, and which session it answers for, is reported on
-    // the session rows in Logins & Sessions rather than in a pane of its own:
-    // the answer is a property of a session, and that is where the user already
-    // is. resolveOwnership reads it on demand from the socket server + sidecar
-    // file, so redrawing the tree is all that's needed when either changes.
+    // Where a window asks the current owner to let go. Beside the sidecar, so
+    // the directory watcher below already sees it appear.
+    const releaseRequestPath = defaultReleaseRequestPath();
+
+    // Who owns the MCP server, and which session it answers for. resolveOwnership
+    // reads it on demand from the socket server + sidecar file, so redrawing is
+    // all that's needed when either changes.
     const mcpDeps: McpServerTreeDeps = {
       isOwner: () => mcpSocketServer.isOwner,
       socketPath: mcpSocketServer.socketPath,
@@ -3069,14 +3139,22 @@ export function activate(context: vscode.ExtensionContext) {
       sidecarPath: mcpSocketServer.sidecarPath,
     };
     mcpOwnership = () => resolveOwnership(mcpDeps);
-    treeProvider.refresh();
+    refreshMcpSurfaces();
     // Watch the sidecar file so passive windows pick up ownership changes
-    // from elsewhere without polling.
+    // from elsewhere without polling — including another window releasing the
+    // server, which is what makes a claim from here start working.
     const sidecarWatcher = fs.watch(
       path.dirname(mcpSocketServer.sidecarPath),
       (_event, filename) => {
-        if (!filename || filename === path.basename(mcpSocketServer.sidecarPath)) {
-          treeProvider.refresh();
+        const name = filename ?? '';
+        // A null filename means "something here changed", so both arms run.
+        // A request naming this process is another window asking for the
+        // server; handleReleaseRequest ignores anything else.
+        if (name === '' || name === path.basename(releaseRequestPath)) {
+          void mcpController.handleReleaseRequest();
+        }
+        if (name === '' || name === path.basename(mcpSocketServer.sidecarPath)) {
+          refreshMcpSurfaces();
         }
       },
     );
@@ -3093,48 +3171,82 @@ export function activate(context: vscode.ExtensionContext) {
     // and serve "no session selected" until you log in there or hand off
     // ownership (disable Jasper in that workspace; click "Claim MCP Server"
     // in the workspace you actually want).
-    let claimAttemptInFlight = false;
-    const tryClaimMcpOwnership = async () => {
-      if (mcpSocketServer.isOwner || claimAttemptInFlight) return;
-      claimAttemptInFlight = true;
+    // Bringing up the HTTPS/SSE listener, which rides along with socket
+    // ownership. Kept here rather than in the controller because it owns the
+    // TLS cert this extension also offers to install.
+    const startMcpHttps = async () => {
+      const tls = await ensureSelfSignedCert(context.globalStorageUri.fsPath);
+      certPathForTrust = tls.certPath;
+      if (tls.generated) {
+        appendSysadmin(`Generated self-signed MCP TLS cert at ${tls.certPath}`);
+        appendSysadmin(`Trust it once with: ${trustCertCommand(tls.certPath)}`);
+        appendSysadmin(`Or run the "GemStone: Install MCP TLS Certificate" command.`);
+      }
+      httpServer = new McpHttpServer({
+        getSession: () => sessionManager.getSelectedSession(),
+        port: httpPort,
+        tls: { cert: tls.cert, key: tls.key },
+      });
       try {
-        const claimed = await mcpSocketServer.start();
-        treeProvider.refresh();
-        if (!claimed) return;
-
-        const tls = await ensureSelfSignedCert(context.globalStorageUri.fsPath);
-        certPathForTrust = tls.certPath;
-        if (tls.generated) {
-          appendSysadmin(`Generated self-signed MCP TLS cert at ${tls.certPath}`);
-          appendSysadmin(`Trust it once with: ${trustCertCommand(tls.certPath)}`);
-          appendSysadmin(`Or run the "GemStone: Install MCP TLS Certificate" command.`);
-        }
-        httpServer = new McpHttpServer({
-          getSession: () => sessionManager.getSelectedSession(),
-          port: httpPort,
-          tls: { cert: tls.cert, key: tls.key },
-        });
-        try {
-          await httpServer.start();
-          httpStarted = true;
-          appendSysadmin(`MCP HTTPS listening at ${httpServer.url}`);
-        } catch (err) {
-          const e = err as NodeJS.ErrnoException;
-          if (e.code === 'EADDRINUSE') {
-            appendSysadmin(
-              `MCP HTTPS port ${httpPort} in use; skipping (another Jasper window may own it). Override jasper.mcp.httpPort per-workspace to run two windows simultaneously.`,
-            );
-          } else {
-            appendSysadmin(`MCP HTTPS server failed to start: ${e.message}`);
-          }
-        }
-        treeProvider.refresh();
+        await httpServer.start();
+        httpStarted = true;
+        appendSysadmin(`MCP HTTPS listening at ${httpServer.url}`);
       } catch (err) {
-        appendSysadmin(`MCP claim failed: ${(err as Error).message}`);
-      } finally {
-        claimAttemptInFlight = false;
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'EADDRINUSE') {
+          appendSysadmin(
+            `MCP HTTPS port ${httpPort} in use; skipping (another Jasper window may own it). Override jasper.mcp.httpPort per-workspace to run two windows simultaneously.`,
+          );
+        } else {
+          appendSysadmin(`MCP HTTPS server failed to start: ${e.message}`);
+        }
       }
     };
+
+    const stopMcpHttps = async () => {
+      if (!httpServer) return;
+      await httpServer.dispose();
+      httpServer = undefined;
+      httpStarted = false;
+    };
+
+    // Claiming, releasing and handing over live in McpOwnershipController, so
+    // they can be tested; see mcpOwnership.test.ts. Everything VS Code-shaped
+    // is injected here.
+    const mcpController = new McpOwnershipController({
+      socket: mcpSocketServer,
+      startHttps: startMcpHttps,
+      stopHttps: stopMcpHttps,
+      ownership: () => resolveOwnership(mcpDeps),
+      selectedSessionLabel: () => {
+        const session = sessionManager.getSelectedSession();
+        return session ? `session ${session.id} (${loginLabel(session.login)})` : undefined;
+      },
+      pid: process.pid,
+      releaseRequestPath,
+      notifier: {
+        info: (message) => void vscode.window.showInformationMessage(message),
+        warn: (message, ...actions) =>
+          Promise.resolve(vscode.window.showWarningMessage(message, ...actions)),
+        // withProgress answers a Thenable; the controller's contract is a
+        // Promise, so adopt it rather than widening the contract.
+        progress: async (title, task) =>
+          await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title },
+            task,
+          ),
+        log: appendSysadmin,
+      },
+      onChanged: refreshMcpSurfaces,
+      revealOwner: revealMcpOwner,
+      showPanel: async () => {
+        await vscode.commands.executeCommand('jasper.showMcpServer');
+      },
+    });
+
+    mcpClaim = () => mcpController.claim();
+    mcpStop = () => mcpController.stop();
+    mcpRequestRelease = () => mcpController.requestRelease();
 
     // Session changes have two effects when we're the owner: tools see the
     // new session immediately (via getSession), and the sidecar needs an
@@ -3145,51 +3257,17 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       sessionManager.onDidChangeSelection(() => {
         mcpSocketServer.refreshSidecar();
-        treeProvider.refresh();
-        void tryClaimMcpOwnership();
+        refreshMcpSurfaces();
+        void mcpController.tryClaim();
       }),
     );
-    void tryClaimMcpOwnership();
+    void mcpController.tryClaim();
 
     context.subscriptions.push(
-      vscode.commands.registerCommand('jasper.claimMcpServer', async () => {
-        if (mcpSocketServer.isOwner) {
-          vscode.window.showInformationMessage('This window already owns the MCP server.');
-          return;
-        }
-        await tryClaimMcpOwnership();
-        if (!mcpSocketServer.isOwner) {
-          vscode.window.showWarningMessage(
-            'Could not claim the MCP server — another Jasper window still owns it. ' +
-              'Close or disable Jasper in that window, then try again.',
-          );
-        }
-      }),
-      // The session-row action that replaced the MCP pane's Claim button. Two
-      // steps in one gesture, because the pane's two-step version ("claim here,
-      // then remember that tools follow the selected session") is the part
-      // people got wrong: select the session, then own the server.
-      vscode.commands.registerCommand(
-        'gemstone.sessionServeMcp',
-        async (item?: GemStoneSessionItem) => {
-          const session = item ? item.activeSession : await sessionManager.resolveSession();
-          if (!session) return;
-          sessionManager.selectSession(session.id);
-          await tryClaimMcpOwnership();
-          if (mcpSocketServer.isOwner) {
-            vscode.window.showInformationMessage(
-              `MCP tools now run against session ${session.id} (${loginLabel(session.login)}).`,
-            );
-          } else {
-            // selectSession still took effect, so this window is ready to serve
-            // the moment the other one lets go.
-            vscode.window.showWarningMessage(
-              'Another VS Code window owns the MCP server, so tools still run against its ' +
-                'session. Close or disable Jasper there, then try again.',
-            );
-          }
-          treeProvider.refresh();
-        },
+      vscode.commands.registerCommand('jasper.claimMcpServer', () => mcpController.claim()),
+      vscode.commands.registerCommand('jasper.stopMcpServer', () => mcpController.stop()),
+      vscode.commands.registerCommand('jasper.requestMcpRelease', () =>
+        mcpController.requestRelease(),
       ),
       vscode.commands.registerCommand('jasper.copyMcpUrl', async () => {
         if (!httpStarted || !httpServer) {
@@ -3277,12 +3355,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Databases
   const databaseProvider = new DatabaseTreeProvider(sysadminStorage, processManager);
-  context.subscriptions.push(
-    vscode.window.createTreeView('gemstoneDatabases', {
-      treeDataProvider: databaseProvider,
-      showCollapseAll: true,
-    }),
-  );
+  databases.view = vscode.window.createTreeView('gemstoneDatabases', {
+    treeDataProvider: databaseProvider,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(databases.view);
+  // The section header carries this window's MCP state; the MCP block above ran
+  // before the view existed, so draw it once now that it does.
+  refreshMcpSurfaces();
 
   // Processes have no sidebar section of their own any more — a database's own
   // stone and NetLDI are shown on its row in the Databases & Versions panel. The

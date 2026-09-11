@@ -53,11 +53,31 @@ describe('openMcpInspector', () => {
     });
   });
 
-  it('disposes the previous terminal when opened again', () => {
+  it('reveals the running terminal instead of restarting the Inspector', () => {
+    // Relaunching used to be unconditional, so a second click killed an npx
+    // install already minutes deep — a 130-package download that shows almost
+    // nothing while it runs, which is exactly what invites a second click.
     const s = state();
     const first = openMcpInspector('https://127.0.0.1:27101/sse', s);
+    vi.mocked(first.show).mockClear();
+
     const second = openMcpInspector('https://127.0.0.1:27101/sse', s);
 
+    expect(second).toBe(first);
+    expect(first.dispose).not.toHaveBeenCalled();
+    expect(first.show).toHaveBeenCalled();
+    expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(first.sendText).mock.calls).toHaveLength(1);
+  });
+
+  it('replaces a terminal whose shell has exited', () => {
+    const s = state();
+    const first = openMcpInspector('https://127.0.0.1:27101/sse', s);
+    (first as { exitStatus?: { code: number | undefined } }).exitStatus = { code: 0 };
+
+    const second = openMcpInspector('https://127.0.0.1:27101/sse', s);
+
+    expect(second).not.toBe(first);
     expect(first.dispose).toHaveBeenCalled();
     expect(s.terminal).toBe(second);
     expect(vscode.window.createTerminal).toHaveBeenCalledTimes(2);

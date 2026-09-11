@@ -370,7 +370,7 @@
           "jasper.mcp.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Serve the Jasper MCP server, so Claude Code and Claude Desktop can run GemStone tools against the session selected in this window. When off, Jasper claims no MCP socket, starts no HTTPS/SSE listener and writes no client configuration, and the MCP commands and the session row's 'Serve MCP from This Session' button leave the UI. Takes effect on window reload."
+            "description": "Serve the Jasper MCP server, so Claude Code and Claude Desktop can run GemStone tools against the session selected in this window. When off, Jasper claims no MCP socket, starts no HTTPS/SSE listener and writes no client configuration, and the MCP commands leave the UI — except Show MCP Server, whose tab is what reports that MCP is off. Takes effect on window reload."
           },
           "jasper.mcp.registerWithClaudeDesktop": {
             "type": "boolean",
@@ -830,6 +830,23 @@
       {
         "command": "jasper.claimMcpServer",
         "title": "Claim MCP Server",
+        "category": "GemStone",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "jasper.showMcpServer",
+        "title": "Show MCP Server",
+        "category": "GemStone",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "jasper.stopMcpServer",
+        "title": "Stop MCP Server",
+        "category": "GemStone"
+      },
+      {
+        "command": "jasper.requestMcpRelease",
+        "title": "Ask the Other Window to Release MCP",
         "category": "GemStone"
       },
       {
@@ -900,12 +917,6 @@
         "title": "Logout",
         "category": "GemStone",
         "icon": "$(debug-disconnect)"
-      },
-      {
-        "command": "gemstone.sessionServeMcp",
-        "title": "Serve MCP from This Session",
-        "category": "GemStone",
-        "icon": "$(robot)"
       },
       {
         "command": "gemstone.selectSession",
@@ -2401,10 +2412,6 @@
           "when": "gemstone.hasActiveSession"
         },
         {
-          "command": "gemstone.sessionServeMcp",
-          "when": "false"
-        },
-        {
           "command": "gemstone.rowanAddRepo",
           "when": "false"
         },
@@ -2430,6 +2437,14 @@
         },
         {
           "command": "jasper.openMcpInspector",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.stopMcpServer",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.requestMcpRelease",
           "when": "jasper.mcpAvailable"
         }
       ],
@@ -2624,6 +2639,11 @@
           "command": "gemstone.refreshDatabases",
           "when": "view == gemstoneDatabases",
           "group": "navigation@3"
+        },
+        {
+          "command": "jasper.showMcpServer",
+          "when": "view == gemstoneDatabases",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -3090,11 +3110,6 @@
           "command": "gemstone.showSessionConfiguration",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
-        },
-        {
-          "command": "gemstone.sessionServeMcp",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession && jasper.mcpAvailable",
-          "group": "inline@5"
         },
         {
           "command": "gemstone.sessionLogout",
