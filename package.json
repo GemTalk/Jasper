@@ -367,6 +367,11 @@
             "default": "~/Documents/GemStone",
             "description": "Root directory for GemStone installations and databases. Supports ~ for home directory."
           },
+          "jasper.mcp.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Serve the Jasper MCP server, so Claude Code and Claude Desktop can run GemStone tools against the session selected in this window. When off, Jasper claims no MCP socket, starts no HTTPS/SSE listener and writes no client configuration, and the MCP commands leave the UI — except Show MCP Server, whose tab is what reports that MCP is off. Takes effect on window reload."
+          },
           "jasper.mcp.registerWithClaudeDesktop": {
             "type": "boolean",
             "default": true,
@@ -429,22 +434,6 @@
             "type": "boolean",
             "default": false,
             "description": "Enable enhanced inspector perf tracking: count GCI round trips in the enhanced inspector. When enabled, shows a status bar counter and logs to the 'GemStone Enhanced Inspector Perf' output channel. Intended for performance tuning only."
-          },
-          "gemstone.rowan.loadAfterAddingDependency": {
-            "type": "string",
-            "enum": [
-              "ask",
-              "always",
-              "never"
-            ],
-            "enumDescriptions": [
-              "After adding a dependency while connected, offer to load the project so the database has its code.",
-              "Load the project automatically after adding a dependency.",
-              "Never offer to load after adding a dependency."
-            ],
-            "default": "ask",
-            "description": "What to do after adding a dependency to the open Rowan project while a database is connected. Adding a dependency only writes files on disk; the database does not have the code until the project is loaded. Only applies while connected. The buttons on the prompt update this setting.",
-            "scope": "window"
           },
           "gemstone.autoStartDatabase": {
             "type": "string",
@@ -672,21 +661,6 @@
           "icon": "$(key)"
         },
         {
-          "id": "gemstoneRowan",
-          "name": "Rowan",
-          "contextualTitle": "GemStone Rowan",
-          "type": "tree",
-          "icon": "$(package)"
-        },
-        {
-          "id": "jasperMcpServer",
-          "name": "MCP Server",
-          "contextualTitle": "Jasper MCP Server",
-          "type": "tree",
-          "icon": "$(remote-explorer)",
-          "visibility": "collapsed"
-        },
-        {
           "id": "gemstoneBreakpoints",
           "name": "Breakpoints",
           "contextualTitle": "GemStone Breakpoints",
@@ -709,21 +683,6 @@
       {
         "view": "gemstoneLogins",
         "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "Not connected.",
-        "when": "gemstone.workspaceIsRowanProject"
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "This folder isn't a Rowan project.\n[Create Rowan Project](command:gemstone.rowanInitHere)",
-        "when": "gemstone.rowanProjectChecked && !gemstone.workspaceIsRowanProject && workspaceFolderCount != 0"
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "Open a folder to work with Rowan.\n[New Rowan Project…](command:gemstone.rowanNewProject)",
-        "when": "workspaceFolderCount == 0"
       },
       {
         "view": "gemstoneDatabases",
@@ -871,6 +830,23 @@
       {
         "command": "jasper.claimMcpServer",
         "title": "Claim MCP Server",
+        "category": "GemStone",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "jasper.showMcpServer",
+        "title": "Show MCP Server",
+        "category": "GemStone",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "jasper.stopMcpServer",
+        "title": "Stop MCP Server",
+        "category": "GemStone"
+      },
+      {
+        "command": "jasper.requestMcpRelease",
+        "title": "Ask the Other Window to Release MCP",
         "category": "GemStone"
       },
       {
@@ -2434,6 +2410,42 @@
         {
           "command": "gemstone.stopSeaside",
           "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.rowanAddRepo",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.rowanRefreshView",
+          "when": "false"
+        },
+        {
+          "command": "jasper.claimMcpServer",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.copyMcpUrl",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.copyMcpSocketPath",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.installMcpTlsCertificate",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.openMcpInspector",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.stopMcpServer",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.requestMcpRelease",
+          "when": "jasper.mcpAvailable"
         }
       ],
       "testing/item/context": [
@@ -2599,24 +2611,9 @@
           "group": "navigation@4"
         },
         {
-          "command": "gemstone.rowanNewProject",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@0"
-        },
-        {
           "command": "gemstone.rowanAddDependency",
           "when": "view == gemstoneRowanProject",
           "group": "navigation@0"
-        },
-        {
-          "command": "gemstone.rowanAddRepo",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@1"
-        },
-        {
-          "command": "gemstone.rowanRefreshView",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@2"
         },
         {
           "command": "gemstone.addLogin",
@@ -2642,6 +2639,11 @@
           "command": "gemstone.refreshDatabases",
           "when": "view == gemstoneDatabases",
           "group": "navigation@3"
+        },
+        {
+          "command": "jasper.showMcpServer",
+          "when": "view == gemstoneDatabases",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -3066,41 +3068,6 @@
           "group": "inline@9"
         },
         {
-          "command": "gemstone.rowanUpdateRepo",
-          "when": "view == gemstoneRowan && viewItem =~ /^rowanRepo.*Git$/",
-          "group": "inline@0"
-        },
-        {
-          "command": "gemstone.rowanLoadRepo",
-          "when": "view == gemstoneRowan && (viewItem == rowanRepo || viewItem == rowanRepoGit || viewItem == rowanRepoWorkspace)",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.rowanRemoveRepo",
-          "when": "view == gemstoneRowan && viewItem =~ /^rowanRepo/ && viewItem != rowanRepoWorkspace && viewItem != rowanRepoWorkspaceNoSpec",
-          "group": "rowan@1"
-        },
-        {
-          "command": "gemstone.rowanOpenProjectDiff",
-          "when": "view == gemstoneRowan && viewItem == rowanChangesProject",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.rowanOpenProjectDiff",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@0"
-        },
-        {
-          "command": "gemstone.rowanExportProject",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@1"
-        },
-        {
-          "command": "gemstone.unloadRowanProject",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@2"
-        },
-        {
           "command": "gemstone.login",
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || (viewItem == gemstoneLoginConnected && gemstone.multipleSessions))",
           "group": "inline@1"
@@ -3147,7 +3114,7 @@
         {
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@5"
+          "group": "inline@6"
         },
         {
           "command": "gemstone.fullLogicalBackup",

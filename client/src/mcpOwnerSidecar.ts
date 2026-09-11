@@ -7,6 +7,13 @@ import { extensionPathFrom } from './extensionPath';
 // window on claim, deleted on dispose. A stale sidecar (owner crashed) is
 // detected by probing the pid; any subsequent claimant overwrites it.
 
+/**
+ * What `workspacePath` says when the owning window had no folder open. The MCP
+ * Server tab cannot offer to open such a window, so it checks for this rather
+ * than trying to open a path that names nothing.
+ */
+export const NO_WORKSPACE_RECORDED = '(no workspace)';
+
 export interface McpOwnerInfo {
   pid: number;
   workspacePath: string;
@@ -15,10 +22,32 @@ export interface McpOwnerInfo {
   /**
    * Human-readable label of the owning window's currently selected GemStone
    * session — e.g. `"foo (id 12)"`. Omitted when the owner has no session
-   * selected. Lets passive Jasper windows show "MCP is owned by /path/to/X —
-   * no session selected" so the user can spot the wrong-window-owner case.
+   * selected, which is worth showing: a window can hold the server and answer
+   * nothing.
    */
   selectedSession?: string;
+  /**
+   * `vscode.workspace.name` in the owning window — what its title bar says,
+   * including the `(Workspace)` suffix for a multi-root. This is how a user
+   * actually picks that window out of a row of them; `workspacePath` is only
+   * the first folder, which for a multi-root workspace names neither the
+   * window nor anything the user would recognise.
+   *
+   * Optional: a sidecar written by an older Jasper has no such field, and a
+   * window with no folder open has no name.
+   */
+  workspaceName?: string;
+  /**
+   * `vscode.workspace.workspaceFile` in the owning window — set only for a
+   * multi-root workspace opened from a `.code-workspace` file.
+   *
+   * Recorded because it is the one case we can *detect* where
+   * `workspacePath` is not the window's identity: it holds the first folder,
+   * and opening that gets a new single-folder window rather than the
+   * multi-root one. Its presence is what withholds the offer to open the
+   * owner (see `canRevealOwnerWindow`).
+   */
+  workspaceFile?: string;
 }
 
 export function defaultSidecarPath(): string {
@@ -60,6 +89,12 @@ export function readOwnerSidecar(
       };
       if (typeof parsed.selectedSession === 'string') {
         result.selectedSession = parsed.selectedSession;
+      }
+      if (typeof parsed.workspaceName === 'string') {
+        result.workspaceName = parsed.workspaceName;
+      }
+      if (typeof parsed.workspaceFile === 'string') {
+        result.workspaceFile = parsed.workspaceFile;
       }
       return result;
     }

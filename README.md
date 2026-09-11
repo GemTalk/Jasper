@@ -130,9 +130,13 @@ Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted
 
 A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
-### MCP Server view
+### MCP Server
 
-The **MCP Server** view shows which Jasper window is currently serving MCP tool calls, the active session it's bound to, the socket path, and the HTTPS URL when available. Click **Socket:** or **HTTPS:** to copy the value to the clipboard. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
+Jasper can serve MCP tool calls so Claude Code and Claude Desktop work directly against your GemStone session. Only one VS Code window serves it at a time — the socket is machine-wide — and it runs against the **active session of whichever window owns the server**.
+
+Because that is a fact about the *window*, it is reported where there is one per window. The **Databases** section header reads `MCP: this window`, `MCP: other window` or `MCP: unclaimed` at a glance, and its plug button opens the **MCP Server** tab (`GemStone: Show MCP Server`), which is the one place to see and change everything: the session being served, the socket path and HTTPS endpoint (click either to copy), **Claim MCP Server**, **Stop MCP**, **Refresh** — and, when another window holds the server, that window's name as its title bar shows it, its workspace, pid and session — with the path clickable to switch to that window where doing so would actually reach it (an extension cannot focus another window directly; opening its folder is the only lever, so the jump is withheld, with the reason, where the folder does not identify the window). Each value carries the sentence that explains it, rather than hiding it on a tooltip the way the old pane had to. Taking the server over is **Ask It to Release**, which needs no navigation at all: it has the owning window let go and then claims here — a bound socket is only ever released by its owner, and the old MCP pane had no way to release at all. If that window is running a Jasper too old to answer, you get a timeout rather than a hang, and can open it and use **Stop MCP**. In **Logins & Sessions**, the session actually being served is marked `· MCP`.
+
+`GemStone: Show MCP Server`, `Claim MCP Server`, `Stop MCP Server`, `Ask the Other Window to Release MCP`, `Copy MCP Server URL`, `Copy MCP Socket Path`, `Install MCP TLS Certificate` and `Open MCP Inspector` are in the Command Palette. Turn the whole thing off with the **`jasper.mcp.enabled`** setting — no socket, no HTTPS listener, no client configuration written, and those commands leave the UI rather than failing when used. The MCP Server tab stays available even then, since it is what tells you MCP is off. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
 
 ## IDE Features
 
@@ -153,6 +157,8 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
+
+The session Claude Code and Claude Desktop run their GemStone tools against is marked `· MCP` in its description — see [MCP Server](#mcp-server), which is set up from the **Databases** header rather than from a session row, since it belongs to the window.
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 

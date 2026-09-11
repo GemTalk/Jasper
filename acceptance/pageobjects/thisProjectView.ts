@@ -24,9 +24,8 @@ export class ThisProjectView {
     //
     // The activity bar has both "Explorer" and "GemStone Explorer" — anchor to
     // the file Explorer, then confirm it's the active sidebar by waiting for a
-    // GemStone-only section ("Versions") to disappear. The GemStone sidebar has
-    // its own "Rowan Section" pane, so until the switch settles the match below
-    // would be ambiguous.
+    // GemStone-only section ("Versions") to disappear, so the match below runs
+    // against a settled sidebar.
     await touch(this.page.getByRole('tab', { name: /^Explorer/ }));
     await expect(this.sidebar.getByRole('button', { name: 'Versions Section' })).toBeHidden({
       timeout: 30_000,
