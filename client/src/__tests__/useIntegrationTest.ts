@@ -435,7 +435,9 @@ export function useIntegrationTest(
         throw error;
       }
 
-      throw new Error(integrationTestInitializationErrorBanner + JSON.stringify(error, null, 2));
+      throw new Error(integrationTestInitializationErrorBanner + JSON.stringify(error, null, 2), {
+        cause: error,
+      });
     }
   }
 
