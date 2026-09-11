@@ -13,7 +13,6 @@ import {
   parseUri,
   parseMethodUri,
   listOpenGemstoneTabs,
-  tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
 import { gemstoneDocumentLanguage } from './languageIds';
@@ -155,12 +154,16 @@ const ivarHighlightDecoration = vscode.window.createTextEditorDecorationType({
 //   - 'keep': a double-click open — the same doc re-shown as a permanent (non-
 //     preview) tab, promoting the preview in place so a later single click won't
 //     replace it.
-//   - 'pin': the 📌 action — a pinned tab added to the group WITHOUT stealing the
-//     view (the tab you were reading stays showing).
+//   - 'pin': the 📌 action — a pinned tab added to the group AND raised, so the
+//     thing you explicitly asked to keep is the one you are looking at. Explicit
+//     beats implicit: a later single-click navigation opens in the preview tab and
+//     leaves the pin alone, so the pin outlives the browsing it interrupts. Focus
+//     follows the view into the editor (unlike 'preview'/'keep', which keep it in
+//     the tree) because a pin is a request to read the thing, not to navigate past it.
 export type OpenSourceMode = 'preview' | 'keep' | 'pin';
 
 // Open a gemstone:// source document in the editor area. All of this Explorer's
-// source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
+// source editors live as tabs in ONE group (see sourceEditorPlacement.ts), so the
 // preview tab and every pinned tab sit next to each other in one row. `placement`
 // scopes this to editors this Explorer opened, so it never invades the System
 // Browser's group (see sourceEditorPlacement.ts).
@@ -190,16 +193,19 @@ export async function openGemstoneDocument(
     return;
   }
 
-  // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
-  // what's showing, add + pin the tab, then restore what was showing so a new pin
-  // just parks a background tab beside the one you're reading. Pinning the method
-  // that's currently the preview simply promotes it to a pinned tab.
-  const uriStr = doc.uri.toString();
-  const showingTab =
-    sourceColumn !== undefined
-      ? vscode.window.tabGroups.all.find((g) => g.viewColumn === sourceColumn)?.activeTab
-      : undefined;
-  const showing = showingTab ? tabInputUri(showingTab)?.toString() : undefined;
+  // PIN. Bring the document into our group, make it the active tab, and pin it. The
+  // active-tab step is not just presentation: `workbench.action.pinEditor` acts on
+  // whatever is active, so the target has to be raised before it can be pinned at
+  // all — hence `preserveFocus: false`. We then leave it raised. Pinning the
+  // document that is already the preview simply promotes it to a pinned tab.
+  //
+  // We deliberately do NOT restore whichever tab was showing before. Doing so used
+  // to park the pin as a background tab, which made 📌 read as a flicker that did
+  // nothing — you had to hunt the tab row for what you had just asked to keep. The
+  // concern that motivated the restore was that a pin must not silently promote the
+  // preview tab you were browsing; that still holds, and it still does not happen —
+  // the previous preview keeps its own preview state and is simply no longer active,
+  // so the next single-click navigation reuses it exactly as before.
   await vscode.window.showTextDocument(doc, {
     viewColumn: targetColumn,
     preview: false,
@@ -207,15 +213,6 @@ export async function openGemstoneDocument(
   });
   await vscode.commands.executeCommand('workbench.action.pinEditor');
   placement.remember(doc.uri);
-  if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
-    // Restore whatever was showing in its ORIGINAL preview/permanent state — a pin
-    // action must not silently promote the preview method you were just browsing.
-    await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
-      viewColumn: sourceColumn,
-      preview: showingTab?.isPreview ?? false,
-      preserveFocus: true,
-    });
-  }
 }
 
 // ── GemStone Explorer ───────────────────────────────────────────────────────
