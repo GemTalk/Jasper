@@ -10,7 +10,8 @@ import { escapeString } from './queries/util';
 import { logError } from './gciLog';
 
 /**
- * A breakpoint that only stops when its condition holds.
+ * The rule a breakpoint carries: stop only when a condition holds, write a line
+ * to the log and carry on, or both.
  *
  * **A condition cannot be applied before the stop.** A GemStone method
  * breakpoint always unwinds to the client as error 6005 with the suspended
@@ -50,7 +51,7 @@ import { logError } from './gciLog';
  * one key that each run overwrites, which is never committed and goes away with
  * the session — the same lifetime as the breakpoints it serves.
  */
-export interface ConditionSpec {
+export interface BreakpointRule {
   /**
    * Smalltalk expression resolving the compiled method the breakpoint is in —
    * `compiledMethodExpr`'s output. An expression rather than an OOP so no round
@@ -59,8 +60,28 @@ export interface ConditionSpec {
    */
   methodExpr: string;
   stepPoint: number;
-  /** The Smalltalk expression the developer typed into VS Code. */
-  condition: string;
+  /**
+   * The Smalltalk expression that has to answer true to stop here. Undefined on
+   * a pure logpoint, which never stops and so has nothing to test.
+   */
+  condition?: string;
+  /**
+   * What to write to the log each time this breakpoint is reached (and its
+   * condition holds), already compiled to a Smalltalk expression answering a
+   * String — see `logMessageExpression`. Undefined on a plain breakpoint.
+   *
+   * A rule with one of these **never stops**: it logs and resumes, which is what
+   * makes a logpoint a way of instrumenting a method without editing it.
+   */
+  logMessage?: string;
+  /**
+   * How to name this breakpoint's method in a log line — `Account>>deposit:`.
+   *
+   * Presentation only: the gem is handed `methodExpr`, and this exists so a
+   * logpoint's output can say where each line came from without the client
+   * spending a round trip to turn an expression back into a class and selector.
+   */
+  label?: string;
 }
 
 /** What came of running a suspended process past its false conditions. */
@@ -71,7 +92,7 @@ export type ConditionOutcome =
   | { kind: 'completed'; resultOop: bigint; skipped: number }
   /** The developer's code raised while we were skipping past false conditions. */
   | { kind: 'raised'; description: string; context: bigint; skipped: number }
-  /** The condition itself could not be evaluated, or did not answer a Boolean. */
+  /** A condition or a log message could not be evaluated. */
   | { kind: 'conditionFailed'; message: string; skipped: number };
 
 /**
@@ -86,8 +107,17 @@ export const DECISION = {
   Stop: 1,
   /** Skip: the condition answered false. */
   Go: 2,
-  /** The condition could not be evaluated, or did not answer a Boolean. */
+  /** The condition could not be evaluated, so it cannot be honoured. */
   Failed: 3,
+  /** Write the answered text to the log, then carry on. Never stops. */
+  Log: 4,
+  /**
+   * The log message could not be evaluated. Reported, then carried on from —
+   * a logpoint that cannot say anything is still a logpoint, and hijacking the
+   * run into a debugger the developer did not ask for is the wrong answer to a
+   * typo in a message.
+   */
+  LogFailed: 5,
 } as const;
 
 /** GemStone's "method breakpoint encountered". */
@@ -129,6 +159,51 @@ function yieldToTimers(): Promise<void> {
 /** A Smalltalk string literal for `text`. */
 function literal(text: string): string {
   return `'${escapeString(text)}'`;
+}
+
+/**
+ * Compile a logpoint's message into one Smalltalk expression answering a String.
+ *
+ * The message is plain text with `{…}` placeholders, as VS Code writes them.
+ * Text outside the braces is literal; what is inside is an expression evaluated
+ * in the suspended frame, with the same names in scope a condition gets — the
+ * method's arguments and temporaries, a block's own variables, `self`, instance
+ * and class variables, and the symbol list.
+ *
+ * The whole message becomes **one** expression rather than one per placeholder,
+ * so a message with six of them costs the same single evaluation and single
+ * string fetch as a message with one.
+ *
+ * Each placeholder is wrapped in `printString`, so `{each}` is written rather
+ * than `{each printString}`. GemStone has no `displayString`, so a String logs
+ * with its quotes — `'demo'` rather than `demo` — which is at least unambiguous.
+ *
+ * An unclosed `{` is treated as literal text: a message is prose, and refusing
+ * to log because a brace was left open would be worse than logging the brace.
+ */
+export function logMessageExpression(message: string): string {
+  const parts: string[] = [];
+  let rest = message;
+
+  while (rest.length > 0) {
+    const open = rest.indexOf('{');
+    if (open === -1) break;
+    const close = rest.indexOf('}', open + 1);
+    if (close === -1) break; // unclosed — the remainder is literal
+
+    if (open > 0) parts.push(literal(rest.slice(0, open)));
+    const expression = rest.slice(open + 1, close).trim();
+    // `{}` says nothing; treat it as the literal braces rather than compiling
+    // an empty expression, which would not compile at all.
+    if (expression === '') parts.push(literal('{}'));
+    else parts.push(`(${expression}) printString`);
+    rest = rest.slice(close + 1);
+  }
+  if (rest.length > 0) parts.push(literal(rest));
+
+  // A message that is entirely literal, or empty, still has to answer a String.
+  if (parts.length === 0) return literal('');
+  return parts.join(', ');
 }
 
 /**
@@ -178,20 +253,23 @@ const DECIDER_KEY = 'JasperConditionalBreakpointDecider';
  * already finished is an error, so each exit assigns `answerArray` and the
  * steps after it are guarded on its being nil.
  */
-export function deciderSource(specs: ConditionSpec[]): string {
+export function deciderSource(specs: BreakpointRule[]): string {
   const specLines = specs
     .map(
       (spec) =>
         `specs add: (Array with: ([ ${spec.methodExpr} ] on: Error do: [:ex | nil ]) ` +
-        `with: ${spec.stepPoint} with: ${literal(spec.condition)}).`,
+        `with: ${spec.stepPoint} ` +
+        `with: ${spec.condition === undefined ? 'nil' : literal(spec.condition)} ` +
+        `with: ${spec.logMessage === undefined ? 'nil' : literal(spec.logMessage)}).`,
     )
     .join('\n');
 
   return `| specs decider |
 specs := Array new.
 ${specLines}
-decider := [:p | | answerArray fc frameMethod home sp spec rcvr found lvl depth names dict sl answer |
+decider := [:p | | answerArray fc frameMethod home sp spec idx rcvr found lvl depth names dict sl answer |
   answerArray := nil.
+  idx := 0.
   fc := p _frameContentsAt: 1.
   fc isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ].
   answerArray isNil ifTrue: [
@@ -200,7 +278,12 @@ decider := [:p | | answerArray fc frameMethod home sp spec rcvr found lvl depth 
               ifTrue: [ frameMethod homeMethod ]
               ifFalse: [ frameMethod ].
     sp := p _stepPointAt: 1.
-    spec := specs detect: [:e | ((e at: 1) == home) and: [ (e at: 2) = sp ]] ifNone: [ nil ].
+    "The index, not just the spec: a log line has to name which logpoint wrote
+     it, and this is the only place that knows which one matched."
+    1 to: specs size do: [:k |
+      (idx = 0 and: [ (((specs at: k) at: 1) == home) and: [ ((specs at: k) at: 2) = sp ] ])
+        ifTrue: [ idx := k ] ].
+    spec := idx = 0 ifTrue: [ nil ] ifFalse: [ specs at: idx ].
     spec isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ] ].
   answerArray isNil ifTrue: [
     rcvr := fc at: 10.
@@ -222,29 +305,52 @@ decider := [:p | | answerArray fc frameMethod home sp spec rcvr found lvl depth 
         (nm isEmpty or: [ (nm at: 1) == $. ]) ifFalse: [
           dict at: nm asSymbol put: (fc at: 10 + k) ] ] ].
     sl := (SymbolList with: dict), System myUserProfile symbolList.
-    answer := [ (spec at: 3) evaluateInContext: rcvr symbolList: sl ]
-                on: Error
-                do: [:ex |
-                  answerArray := Array with: ${DECISION.Failed}
-                                       with: (ex messageText ifNil: [ ex class name asString ]).
-                  nil ].
+    "A rule with no condition always applies; one with a condition has to answer
+     true, and anything that is not a Boolean is a mistake worth reporting
+     rather than a quiet 'no'."
+    (spec at: 3) ifNotNil: [
+      answer := [ (spec at: 3) evaluateInContext: rcvr symbolList: sl ]
+                  on: Error
+                  do: [:ex |
+                    answerArray := Array with: ${DECISION.Failed}
+                                         with: (ex messageText ifNil: [ ex class name asString ]).
+                    nil ].
+      answerArray isNil ifTrue: [
+        (answer == true or: [ answer == false ])
+          ifFalse: [
+            answerArray := Array with: ${DECISION.Failed}
+                                 with: ('the condition answered ',
+                                        ([ answer printString ] on: Error do: [:ex | answer class name asString ]),
+                                        ', not true or false') ]
+          ifTrue: [ answer ifFalse: [ answerArray := Array with: ${DECISION.Go} with: nil ] ] ] ].
+    "Here the rule applies: no condition, or one that held."
     answerArray isNil ifTrue: [
-      (answer == true or: [ answer == false ])
-        ifTrue: [
-          answerArray := Array with: (answer ifTrue: [ ${DECISION.Stop} ] ifFalse: [ ${DECISION.Go} ])
-                               with: nil ]
-        ifFalse: [
-          answerArray := Array with: ${DECISION.Failed}
-                               with: ('the condition answered ',
-                                      ([ answer printString ] on: Error do: [:ex | answer class name asString ]),
-                                      ', not true or false') ] ] ].
-  answerArray ].
+      (spec at: 4)
+        ifNil: [ answerArray := Array with: ${DECISION.Stop} with: nil ]
+        ifNotNil: [ | text |
+          text := [ ((spec at: 4) evaluateInContext: rcvr symbolList: sl) ]
+                    on: Error
+                    do: [:ex |
+                      answerArray := Array with: ${DECISION.LogFailed}
+                                           with: (ex messageText ifNil: [ ex class name asString ]).
+                      nil ].
+          answerArray isNil ifTrue: [
+            answerArray := Array with: ${DECISION.Log}
+                                 with: ([ text asString ] on: Error do: [:ex | text printString ]) ] ] ] ].
+  answerArray , (Array with: idx) ].
 SessionTemps current at: #'${DECIDER_KEY}' put: decider.
 decider`;
 }
 
 /** One stop's verdict, as the loop reads it. */
-export type Decision = { kind: 'stop' } | { kind: 'go' } | { kind: 'failed'; message: string };
+export type Decision =
+  | { kind: 'stop' }
+  | { kind: 'go' }
+  /** `rule` is the index into the rules the decider was built with, 1-based. */
+  | { kind: 'log'; text: string; rule: number }
+  /** A logpoint whose message would not evaluate. Reported, never stopped at. */
+  | { kind: 'logFailed'; message: string; rule: number }
+  | { kind: 'failed'; message: string };
 
 /**
  * Read the doit's `{ decision. message }` back.
@@ -253,10 +359,14 @@ export type Decision = { kind: 'stop' } | { kind: 'go' } | { kind: 'failed'; mes
  * a breakpoint, so opening the debugger on it is both true and the reading that
  * loses nothing.
  */
-export function decodeDecision(decision: number, message: string): Decision {
+export function decodeDecision(decision: number, message: string, rule = 0): Decision {
   switch (decision) {
     case DECISION.Go:
       return { kind: 'go' };
+    case DECISION.Log:
+      return { kind: 'log', text: message, rule };
+    case DECISION.LogFailed:
+      return { kind: 'logFailed', message, rule };
     case DECISION.Failed:
       return { kind: 'failed', message };
     default:
@@ -269,7 +379,7 @@ export function decodeDecision(decision: number, message: string): Decision {
  *
  * One doit per run of skipping, however many hits it goes on to judge.
  */
-function installDecider(session: ActiveSession, specs: ConditionSpec[]): bigint {
+function installDecider(session: ActiveSession, specs: BreakpointRule[]): bigint {
   const { result, err } = session.gci.GciTsExecute(
     session.handle,
     deciderSource(specs),
@@ -302,19 +412,24 @@ function decideWith(session: ActiveSession, decider: bigint, process: bigint): D
   );
   if (err.number !== 0) throw new Error(err.message || `GemStone error ${err.number}`);
 
-  const { oops, err: fetchErr } = session.gci.GciTsFetchOops(session.handle, arrayOop, 1n, 2);
+  // Three slots in one fetch: the decision, its message, and which rule matched.
+  const { oops, err: fetchErr } = session.gci.GciTsFetchOops(session.handle, arrayOop, 1n, 3);
   if (fetchErr.number !== 0) {
     throw new Error(fetchErr.message || `GemStone error ${fetchErr.number}`);
   }
   const decision = Number(session.gci.oopToInteger(session.handle, oops[0]));
+  const rule =
+    oops[2] === undefined ? 0 : Number(session.gci.oopToInteger(session.handle, oops[2]));
 
   let message = '';
-  if (decision === DECISION.Failed && oops[1] !== OOP_NIL) {
+  const carriesText =
+    decision === DECISION.Failed || decision === DECISION.Log || decision === DECISION.LogFailed;
+  if (carriesText && oops[1] !== OOP_NIL) {
     const fetched = session.gci.GciTsFetchChars(session.handle, oops[1], 1n, MAX_MESSAGE);
     if (fetched.err.number === 0) message = fetched.data;
     else logError(session.id, fetched.err.message || `GCI error ${fetched.err.number}`);
   }
-  return decodeDecision(decision, message);
+  return decodeDecision(decision, message, rule);
 }
 
 /**
@@ -328,31 +443,43 @@ function decideWith(session: ActiveSession, decider: bigint, process: bigint): D
  * whatever hit the run has reached, which is a real place to be — the process is
  * suspended at a breakpoint either way.
  */
-export async function skipUntilConditionMet(
+export async function applyBreakpointRules(
   session: ActiveSession,
   processOop: bigint,
-  specs: ConditionSpec[],
+  specs: BreakpointRule[],
+  onLog?: (text: string, rule: BreakpointRule | undefined) => void,
+  /**
+   * A logpoint whose message would not evaluate, reported **once per rule** —
+   * the message is wrong for every hit, and a thousand identical complaints
+   * would bury the run's real output.
+   */
+  onLogFailure?: (message: string, rule: BreakpointRule | undefined) => void,
 ): Promise<ConditionOutcome> {
   const decider = installDecider(session, specs);
   let process = processOop;
   let skipped = 0;
+  let logged = 0;
+  const reportedBadLog = new Set<number>();
   let lastYield = Date.now();
   let cancelled = false;
-  let report: ((skipped: number) => void) | undefined;
+  let report: (() => void) | undefined;
   let closeProgress: (() => void) | undefined;
 
   const progressTimer = setTimeout(() => {
     void vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'GemStone: skipping breakpoints whose condition is false',
+        title: 'GemStone: applying breakpoint conditions',
         cancellable: true,
       },
       (progress, token) =>
         new Promise<void>((resolve) => {
           closeProgress = resolve;
-          report = (n) => progress.report({ message: `${n} hits skipped` });
-          report(skipped);
+          report = () =>
+            progress.report({
+              message: logged > 0 ? `${skipped} skipped, ${logged} logged` : `${skipped} skipped`,
+            });
+          report();
           token.onCancellationRequested(() => {
             cancelled = true;
           });
@@ -366,6 +493,19 @@ export async function skipUntilConditionMet(
       if (decision.kind === 'stop') return { kind: 'stopped', skipped };
       if (decision.kind === 'failed') {
         return { kind: 'conditionFailed', message: decision.message, skipped };
+      }
+      // A logpoint writes its line and carries on. It never stops, which is the
+      // whole point: it instruments a method without editing it.
+      if (decision.kind === 'log') {
+        onLog?.(decision.text, specs[decision.rule - 1]);
+        logged += 1;
+      }
+      // …and a logpoint whose message is broken carries on too. Stopping would
+      // drop the developer into a debugger they did not ask for, over a typo in
+      // a message, and take the run with it.
+      if (decision.kind === 'logFailed' && !reportedBadLog.has(decision.rule)) {
+        reportedBadLog.add(decision.rule);
+        onLogFailure?.(decision.message, specs[decision.rule - 1]);
       }
       // Asked to stop: this hit is as good a place as any, and the process is
       // suspended at a real breakpoint.
@@ -381,7 +521,7 @@ export async function skipUntilConditionMet(
         CONTINUE_FLAGS,
       );
       skipped += 1;
-      report?.(skipped);
+      report?.();
 
       if (Date.now() - lastYield >= YIELD_EVERY_MS) {
         await yieldToTimers();

@@ -352,9 +352,33 @@ the thing it was set in goes away:
   recompiled to make any of this work, and nothing is written to the repository. A
   breakpoint reached while skipping still stops if *it* has no condition, and an
   error raised by your code while skipping opens the debugger on the error
-- **Not honoured: hit counts and log messages.** VS Code's *Edit Breakpoint*
-  accepts both; GemStone breakpoints stop every time the step point is reached
-  regardless, so Jasper warns when you set one rather than quietly ignoring it
+- **Logpoints — print without stopping, and without editing the method.** Right-click
+  the gutter → *Add Logpoint…* and type a message. Every time the breakpoint is
+  reached, the message is written to the **GemStone Logpoints** panel in Output
+  and execution carries straight on. It is the `Transcript show:` you would
+  otherwise add — except there is nothing to compile, nothing to commit, and
+  nothing to remember to take out afterwards, and it works on code you cannot or
+  should not edit.
+
+  `{…}` in the message is an expression, evaluated in the suspended frame with
+  exactly the scope a condition gets: `each={each} running={running}`,
+  `{self orders size} orders for {self label}`. Each placeholder is printed for
+  you, so write `{each}` rather than `{each printString}`; GemStone has no
+  `displayString`, so a String logs with its quotes. However many placeholders a
+  message has, it costs one evaluation.
+
+  Give a logpoint a **condition** as well and it logs only when the condition
+  holds — and still never stops. Each line names the method and step point that
+  wrote it (`Account>>deposit: @4`, with `[env 1]` when the method is not in
+  environment 0) and carries a timestamp, so two logpoints in one run stay
+  distinguishable. A message that cannot be evaluated — naming a variable the
+  method does not have, say — is reported once in the log and once as a warning,
+  and the run **carries on**: a typo in a message is not a reason to hijack a run
+  into the debugger. Open the panel from the *Show logpoint output* link on the
+  hover, or **GemStone: Show Logpoint Output**
+- **Not honoured: hit counts.** VS Code's *Edit Breakpoint* accepts one; GemStone
+  breakpoints stop, or log, every time the step point is reached regardless, so
+  Jasper warns when you set one rather than quietly ignoring it
 - **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
   the Breakpoints panel header). It greys the breakpoints out in the panel, but
   the VS Code API exposes no way for an extension to observe that state — so

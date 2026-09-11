@@ -143,6 +143,7 @@ import { SmalltalkNotebookController } from './smalltalkNotebookController';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
+import { getLogpointChannel, showLogpointChannel } from './logpointChannel';
 import { getGciLog } from './gciLog';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
@@ -606,6 +607,7 @@ export function activate(context: vscode.ExtensionContext) {
     getGciLog(),
     getTranscriptChannel(),
     getSysadminChannel(),
+    getLogpointChannel(),
   );
 
   initializeBundledGci(context.extensionPath);
@@ -2787,6 +2789,10 @@ export function activate(context: vscode.ExtensionContext) {
       const editor = vscode.window.activeTextEditor;
       if (editor) breakpointManager.clearMethodBreakpoints(editor);
     }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.showLogpointOutput', () =>
+      showLogpointChannel(),
+    ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.editConditionAtCursor', () => {
       const editor = vscode.window.activeTextEditor;

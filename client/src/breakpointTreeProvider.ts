@@ -22,12 +22,26 @@ export type BreakpointNode =
  */
 const MAX_ROW_CONDITION = 40;
 
-/** A condition as a row's trailing description, beside its step point. */
-export function conditionDescription(condition: string): string {
-  const oneLine = condition.replace(/\s+/g, ' ').trim();
+/**
+ * A rule as a row's trailing description, beside its step point.
+ *
+ * A logpoint says `logs` rather than repeating its message: the message is prose
+ * and a row is one line, and what the reader needs from the row is which *kind*
+ * of breakpoint this is. The message is in the tooltip.
+ */
+export function ruleDescription(rule?: { condition?: string; logMessage?: string }): string {
+  if (!rule) return '';
+  const parts: string[] = [];
+  if (rule.condition !== undefined) parts.push(`if ${elide(rule.condition)}`);
+  if (rule.logMessage !== undefined) parts.push('logs');
+  return parts.length === 0 ? '' : ` \u00b7 ${parts.join(' \u00b7 ')}`;
+}
+
+function elide(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > MAX_ROW_CONDITION
-    ? `if ${oneLine.slice(0, MAX_ROW_CONDITION - 1)}\u2026`
-    : `if ${oneLine}`;
+    ? `${oneLine.slice(0, MAX_ROW_CONDITION - 1)}\u2026`
+    : oneLine;
 }
 
 /** Label for a class heading — `Foo class` for the metaclass, as Smalltalk writes it. */
@@ -211,21 +225,20 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
     }
 
     const bp = element.bp;
-    const condition = this.breakpoints.conditionForStoneBreakpoint(bp);
+    const rule = this.breakpoints.ruleForStoneBreakpoint(bp);
     const item = new vscode.TreeItem(bp.selector === '' ? '(executed code)' : bp.selector);
-    item.description =
-      condition === undefined
-        ? `@ ${bp.stepPoint}`
-        : `@ ${bp.stepPoint} \u00b7 ${conditionDescription(condition)}`;
+    item.description = `@ ${bp.stepPoint}${ruleDescription(rule)}`;
     item.checkboxState = bp.disabled
       ? vscode.TreeItemCheckboxState.Unchecked
       : vscode.TreeItemCheckboxState.Checked;
-    item.tooltip = breakpointTooltip(bp, condition);
+    item.tooltip = breakpointTooltip(bp, rule);
     // A conditional breakpoint gets the icon VS Code's own Breakpoints view
     // gives one, so the two views agree on sight. The plain rows keep no icon at
     // all: their checkbox already carries enabled-vs-disabled, and an icon on
     // every row would make the conditional ones harder to pick out, not easier.
-    if (condition !== undefined) {
+    if (rule?.logMessage !== undefined) {
+      item.iconPath = new vscode.ThemeIcon('debug-breakpoint-log');
+    } else if (rule?.condition !== undefined) {
       item.iconPath = new vscode.ThemeIcon('debug-breakpoint-conditional');
     }
     // Only a real method can be opened; a doit's source is long gone.
@@ -294,7 +307,10 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
   }
 }
 
-function breakpointTooltip(bp: GemStoneBreakpoint, condition?: string): vscode.MarkdownString {
+function breakpointTooltip(
+  bp: GemStoneBreakpoint,
+  rule?: { condition?: string; logMessage?: string },
+): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   const where =
     bp.className === ''
@@ -303,8 +319,17 @@ function breakpointTooltip(bp: GemStoneBreakpoint, condition?: string): vscode.M
   md.appendMarkdown(`**${where}**\n\nStep point ${bp.stepPoint}`);
   if (bp.disabled) md.appendMarkdown(' — disabled');
   // In full, and unelided — the row above had to cut it short.
-  if (condition !== undefined) {
-    md.appendMarkdown(`\n\nStops only when:\n\n\`\`\`smalltalk\n${condition}\n\`\`\``);
+  if (rule?.condition !== undefined) {
+    md.appendMarkdown(
+      `\n\n${rule.logMessage === undefined ? 'Stops only when' : 'Logs only when'}:` +
+        `\n\n\`\`\`smalltalk\n${rule.condition}\n\`\`\``,
+    );
+  }
+  if (rule?.logMessage !== undefined) {
+    md.appendMarkdown(
+      `\n\nWrites to the **GemStone Logpoints** panel in Output, without stopping:` +
+        `\n\n\`\`\`\n${rule.logMessage}\n\`\`\``,
+    );
   }
   if (bp.dictName) md.appendMarkdown(`\n\nDictionary: ${bp.dictName}`);
   if (bp.environmentId > 0) md.appendMarkdown(`\n\nEnvironment: ${bp.environmentId}`);

@@ -7,8 +7,8 @@ import { GemStoneBreakpoint } from './browserQueries';
 import { FunctionBreakpointResolver } from './functionBreakpoints';
 import { messageOf } from './serverPlugin/installHelpers';
 import { compiledMethodExpr } from './queries/util';
-import { ConditionSpec } from './conditionalBreakpoints';
-import { describeMethodResult } from './methodResultsPicker';
+import { BreakpointRule, logMessageExpression } from './conditionalBreakpoints';
+import { describeMethodResult, methodLabel } from './methodResultsPicker';
 import {
   StepPointModel,
   StepPointInfo,
@@ -44,6 +44,12 @@ export interface AppliedBreakpoint {
    * step point. See `conditionalBreakpoints.ts` for how it is honoured.
    */
   condition?: string;
+  /**
+   * What to write to the log each time this breakpoint is reached, as the
+   * developer typed it — text with `{…}` placeholders. A breakpoint with one
+   * never stops: it logs and carries on.
+   */
+  logMessage?: string;
 }
 
 /**
@@ -130,12 +136,61 @@ const MAX_CONDITION_LABEL = 48;
  * characters, and a condition long enough to be elided was being elided before.
  */
 export function conditionLabel(condition: string): string {
-  const oneLine = condition.replace(/\s+/g, ' ').trim();
-  const shown =
-    oneLine.length > MAX_CONDITION_LABEL
-      ? `${oneLine.slice(0, MAX_CONDITION_LABEL - 1)}…`
-      : oneLine;
-  return `Break if ${shown}`;
+  return `Break if ${elide(condition)}`;
+}
+
+/**
+ * The label for a breakpoint that logs rather than stops.
+ *
+ * Says `Log` rather than `Break`, because that is the whole difference: this one
+ * never stops. With a condition as well it reads `Log if …`, and the message
+ * itself is left to the hover — a message is prose and routinely longer than
+ * the line it annotates.
+ */
+export function logpointLabel(logMessage: string, condition?: string): string {
+  return condition === undefined ? `Log ${elide(logMessage)}` : `Log if ${elide(condition)}`;
+}
+
+/**
+ * What the label's hover says: the rule in full, and for a logpoint where its
+ * output goes, with a link that opens the channel.
+ *
+ * A logpoint's output lands in a panel the developer has to go and find, and
+ * "Logs: …" on its own does not say which — so the one hover attached to the
+ * label itself carries both the destination and a way to it.
+ */
+function labelHover(bp: AppliedBreakpoint): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.isTrusted = true;
+  md.supportThemeIcons = true;
+
+  if (bp.logMessage !== undefined) {
+    md.appendMarkdown(
+      `$(debug-breakpoint-log) **Logpoint** — writes to the **GemStone Logpoints** ` +
+        `panel in Output, and does not stop.\n\n\`\`\`\n${bp.logMessage}\n\`\`\`\n\n`,
+    );
+  }
+  if (bp.condition !== undefined) {
+    md.appendMarkdown(
+      `${bp.logMessage === undefined ? 'Stops' : 'Logs'} only when:\n\n` +
+        `\`\`\`smalltalk\n${bp.condition}\n\`\`\`\n\n`,
+    );
+  }
+  if (bp.logMessage !== undefined) {
+    md.appendMarkdown(
+      `[$(output) Show logpoint output](command:gemstone.breakpoints.showLogpointOutput ` +
+        `"Open the GemStone Logpoints panel in Output")`,
+    );
+  }
+  return md;
+}
+
+/** One line of text, short enough not to push the code off the screen. */
+function elide(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > MAX_CONDITION_LABEL
+    ? `${oneLine.slice(0, MAX_CONDITION_LABEL - 1)}…`
+    : oneLine;
 }
 
 /**
@@ -258,7 +313,13 @@ export class BreakpointManager {
   applyToUri(
     session: ActiveSession,
     uri: vscode.Uri,
-    requests?: { line: number; character?: number; enabled: boolean; condition?: string }[],
+    requests?: {
+      line: number;
+      character?: number;
+      enabled: boolean;
+      condition?: string;
+      logMessage?: string;
+    }[],
   ): VerifiedBreakpoint[] {
     // The one statement of "a breakpoint can be armed here" (see
     // client/src/languageIds.ts), shared with the rule that decides which
@@ -365,6 +426,11 @@ export class BreakpointManager {
           : req.condition === undefined
             ? undefined
             : existing?.condition,
+        // A log message collapses the other way round from a condition: two
+        // breakpoints on one step point mean two things to say, and the gem
+        // stops there once — so the first one's message stands rather than
+        // being silently dropped for having company.
+        logMessage: first ? req.logMessage : (existing?.logMessage ?? req.logMessage),
       });
     }
 
@@ -814,11 +880,16 @@ export class BreakpointManager {
     stepPoint: number,
   ): Promise<void> {
     const existing = this.vsCodeBreakpointFor(uri, info, stepPoint);
+    // What the condition gates depends on what the breakpoint is: a logpoint
+    // does not stop, so "leave empty to stop every time" would be a lie on one.
+    const logs = existing?.logMessage !== undefined;
     const typed = await vscode.window.showInputBox({
-      title: `Breakpoint condition — step point ${stepPoint}`,
+      title: `${logs ? 'Logpoint' : 'Breakpoint'} condition — step point ${stepPoint}`,
       prompt:
-        'A Smalltalk expression answering true or false, evaluated in the ' +
-        'suspended frame. Leave empty to stop every time.',
+        'A Smalltalk expression answering true or false, evaluated in the suspended frame. ' +
+        (logs
+          ? 'Leave empty to log every time. Lines go to the GemStone Logpoints panel in Output.'
+          : 'Leave empty to stop every time.'),
       placeHolder: 'e.g. amount > 100',
       value: existing?.condition ?? '',
       ignoreFocusOut: true,
@@ -846,24 +917,25 @@ export class BreakpointManager {
   }
 
   /**
-   * Every armed conditional breakpoint in `session`'s gem, as the in-gem skip
-   * loop needs to see them.
+   * Every armed breakpoint in `session`'s gem that carries a rule — a
+   * condition, a log message, or both — as the decider needs to see them.
    *
    * Only *enabled* ones: a disabled breakpoint is not armed, so it cannot be the
-   * reason execution stopped and a spec for it would only be dead weight in the
-   * doit. Empty when nothing is conditional, which is what lets the whole
-   * mechanism cost nothing at all in the ordinary case.
+   * reason execution stopped and a rule for it would only be dead weight. Empty
+   * when every breakpoint is plain, which is what lets the whole mechanism cost
+   * nothing at all in the ordinary case.
    */
-  conditionSpecsFor(session: ActiveSession): ConditionSpec[] {
+  breakpointRulesFor(session: ActiveSession): BreakpointRule[] {
     const prefix = `gemstone://${session.id}/`;
-    const specs: ConditionSpec[] = [];
+    const rules: BreakpointRule[] = [];
     for (const [uriStr, applied] of this.applied) {
       if (!uriStr.startsWith(prefix)) continue;
       const method = methodSourceRef(vscode.Uri.parse(uriStr));
       if (!method) continue;
       for (const bp of applied) {
-        if (!bp.enabled || bp.condition === undefined) continue;
-        specs.push({
+        if (!bp.enabled) continue;
+        if (bp.condition === undefined && bp.logMessage === undefined) continue;
+        rules.push({
           methodExpr: compiledMethodExpr(
             method.className,
             method.isMeta,
@@ -872,18 +944,23 @@ export class BreakpointManager {
           ),
           stepPoint: bp.stepPoint,
           condition: bp.condition,
+          // Compiled here, not in the gem: turning `{…}` placeholders into one
+          // Smalltalk expression is the client's job, and doing it once per run
+          // keeps it out of the per-hit path entirely.
+          logMessage: bp.logMessage === undefined ? undefined : logMessageExpression(bp.logMessage),
+          label: methodLabel(method),
         });
       }
     }
-    return specs;
+    return rules;
   }
 
   /**
-   * The condition on a breakpoint the gem reported, when Jasper set it and it
-   * has one. Lets the breakpoint manager view show a condition it has no other
-   * way of knowing about — the gem does not record one.
+   * The rule on a breakpoint the gem reported, when Jasper set it and it has
+   * one. Lets the breakpoint manager view show a condition or a log message it
+   * has no other way of knowing about — the gem records neither.
    */
-  conditionForStoneBreakpoint(bp: GemStoneBreakpoint): string | undefined {
+  ruleForStoneBreakpoint(bp: GemStoneBreakpoint): AppliedBreakpoint | undefined {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return undefined;
     const prefix = `gemstone://${session.id}/`;
@@ -901,7 +978,7 @@ export class BreakpointManager {
         continue;
       }
       const match = applied.find((a) => a.stepPoint === bp.stepPoint);
-      if (match?.condition !== undefined) return match.condition;
+      if (match && (match.condition !== undefined || match.logMessage !== undefined)) return match;
     }
     return undefined;
   }
@@ -1209,15 +1286,23 @@ export class BreakpointManager {
       // on — never after the step point's own token, which is routinely mid
       // statement.
       const first = spans[0];
-      if (bp.condition !== undefined && first !== undefined && withCondition) {
+      const label =
+        bp.logMessage !== undefined
+          ? logpointLabel(bp.logMessage, bp.condition)
+          : bp.condition !== undefined
+            ? conditionLabel(bp.condition)
+            : undefined;
+      if (label !== undefined && first !== undefined && withCondition) {
         const endOfLine = editor.document.lineAt(positionOf(editor.document, first.start).line)
           .range.end;
         conditions.push({
           range: new vscode.Range(endOfLine, endOfLine),
-          hoverMessage: new vscode.MarkdownString(
-            `Breakpoint condition:\n\n\`\`\`smalltalk\n${bp.condition}\n\`\`\``,
-          ),
-          renderOptions: { after: { contentText: conditionLabel(bp.condition) } },
+          // The label's OWN hover, which is where a developer looking at the
+          // label actually points. It has to say where a logpoint's output goes
+          // and offer a way there: the step-point hover and the Breakpoints row
+          // say so too, but neither is what the pointer is over here.
+          hoverMessage: labelHover(bp),
+          renderOptions: { after: { contentText: label } },
         });
       }
     }
@@ -1334,31 +1419,32 @@ export class BreakpointManager {
   }
 
   /**
-   * Say so when a breakpoint carries a hit count or a log message.
+   * Say so when a breakpoint carries a hit count.
    *
-   * VS Code offers both through *Edit Breakpoint* and they are honoured entirely
-   * by the debugger — Jasper does not implement either, so the breakpoint stops
-   * every time it is reached regardless. Left unsaid, that is the worst kind of
-   * failure this feature has: the developer has written down a precise intent,
-   * the UI accepts it, and execution quietly ignores it. The fields are still
-   * carried across enable/disable and name-conversion, so nothing is lost if
-   * they are honoured later.
+   * VS Code offers it through *Edit Breakpoint* and it is honoured entirely by
+   * the debugger — Jasper does not implement it, so the breakpoint stops (or
+   * logs) every time it is reached regardless. Left unsaid, that is the worst
+   * kind of failure this feature has: the developer has written down a precise
+   * intent, the UI accepts it, and execution quietly ignores it. The field is
+   * still carried across enable/disable and name-conversion, so nothing is lost
+   * if it is honoured later.
    *
-   * Conditions are **not** on this list any more — see
-   * `conditionalBreakpoints.ts`, which evaluates them in the suspended frame.
+   * Conditions and log messages are **not** on this list: both are evaluated in
+   * the suspended frame — see `conditionalBreakpoints.ts`.
    */
   private warnAboutUnsupportedFields(breakpoints: readonly vscode.Breakpoint[]): void {
     const ignored = breakpoints.filter(
       (bp) =>
         bp instanceof vscode.SourceBreakpoint &&
         bp.location.uri.scheme === 'gemstone' &&
-        (bp.hitCondition !== undefined || bp.logMessage !== undefined),
+        bp.hitCondition !== undefined,
     );
     if (ignored.length === 0) return;
     vscode.window.showWarningMessage(
-      'GemStone breakpoints ignore hit counts and log messages — ' +
-        `${ignored.length === 1 ? 'this breakpoint' : 'these breakpoints'} will stop every time ` +
-        'the step point is reached. Conditions are honoured.',
+      'GemStone breakpoints ignore hit counts — ' +
+        `${ignored.length === 1 ? 'this breakpoint' : 'these breakpoints'} will stop, or log, ` +
+        'every time the step point is reached. Conditions are honoured, and a log message is ' +
+        'written to the GemStone Logpoints panel in Output.',
     );
   }
 
@@ -1384,9 +1470,13 @@ export function gemstoneBreakpoints(): vscode.SourceBreakpoint[] {
  * (VS Code counts from 0) and a column-0 breakpoint reports no column at all, so
  * a gutter click stays distinguishable from an inline breakpoint in column 0.
  */
-function readVsCodeBreakpoints(
-  uri: vscode.Uri,
-): { line: number; character?: number; enabled: boolean; condition?: string }[] {
+function readVsCodeBreakpoints(uri: vscode.Uri): {
+  line: number;
+  character?: number;
+  enabled: boolean;
+  condition?: string;
+  logMessage?: string;
+}[] {
   const uriStr = uri.toString();
   return gemstoneBreakpoints()
     .filter((bp) => bp.location.uri.toString() === uriStr)
@@ -1400,6 +1490,9 @@ function readVsCodeBreakpoints(
         // typed, and an accidentally blank one must not turn into a breakpoint
         // that can never stop.
         condition: bp.condition?.trim() ? bp.condition.trim() : undefined,
+        // A log message may legitimately be all spaces — it is prose — so only
+        // an entirely absent one means "not a logpoint".
+        logMessage: bp.logMessage === undefined ? undefined : bp.logMessage,
       };
     });
 }

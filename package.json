@@ -1299,6 +1299,12 @@
         "icon": "$(debug-breakpoint-conditional)"
       },
       {
+        "command": "gemstone.breakpoints.showLogpointOutput",
+        "title": "Show Logpoint Output",
+        "category": "GemStone",
+        "icon": "$(output)"
+      },
+      {
         "command": "gemstone.breakpoints.enableAll",
         "title": "Enable All Breakpoints",
         "category": "GemStone",

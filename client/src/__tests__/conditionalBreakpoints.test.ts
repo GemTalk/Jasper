@@ -3,16 +3,17 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import {
   BREAKPOINT_ERROR,
-  ConditionSpec,
+  BreakpointRule,
   DECISION,
   deciderSource,
   decodeDecision,
-  skipUntilConditionMet,
+  applyBreakpointRules,
+  logMessageExpression,
 } from '../conditionalBreakpoints';
 import { OOP_NIL } from '../gciConstants';
 import type { ActiveSession } from '../sessionManager';
 
-const spec = (over: Partial<ConditionSpec> = {}): ConditionSpec => ({
+const spec = (over: Partial<BreakpointRule> = {}): BreakpointRule => ({
   methodExpr: '(Account compiledMethodAt: #deposit: environmentId: 0)',
   stepPoint: 7,
   condition: 'amount > 100',
@@ -120,9 +121,51 @@ describe('deciderSource', () => {
     ]);
     expect(source).toContain("with: 3 with: 'x > 1'");
     expect(source).toContain("with: 9 with: 'y isNil'");
+    // Each stop looks up whichever rule claims the step point it landed on —
+    // and remembers which, so a log line can name its own logpoint.
     expect(source).toContain(
-      'spec := specs detect: [:e | ((e at: 1) == home) and: [ (e at: 2) = sp ]] ifNone: [ nil ]',
+      '(idx = 0 and: [ (((specs at: k) at: 1) == home) and: [ ((specs at: k) at: 2) = sp ] ])',
     );
+  });
+});
+
+describe('logMessageExpression', () => {
+  it('compiles a message with no placeholders to a literal', () => {
+    expect(logMessageExpression('reached here')).toBe("'reached here'");
+  });
+
+  it('evaluates a placeholder and prints it', () => {
+    // `{each}` rather than `{each printString}` — the ceremony is ours to add.
+    expect(logMessageExpression('hit {each}')).toBe("'hit ', (each) printString");
+  });
+
+  it('joins several placeholders into ONE expression', () => {
+    // Six placeholders must cost the same single evaluation and single fetch as
+    // one, or a message becomes more expensive than the breakpoint it is on.
+    expect(logMessageExpression('{a} and {b}')).toBe("(a) printString, ' and ', (b) printString");
+  });
+
+  it('takes any expression, not just a variable name', () => {
+    expect(logMessageExpression('{self orders size}')).toBe('(self orders size) printString');
+  });
+
+  it('doubles a quote in the literal text', () => {
+    expect(logMessageExpression("it's here")).toBe("'it''s here'");
+  });
+
+  it('leaves an unclosed brace as literal text', () => {
+    // A message is prose. Refusing to log because a brace was left open would
+    // be worse than logging the brace.
+    expect(logMessageExpression('a { b')).toBe("'a { b'");
+  });
+
+  it('treats an empty placeholder as literal braces', () => {
+    // An empty expression would not compile at all.
+    expect(logMessageExpression('x{}y')).toBe("'x', '{}', 'y'");
+  });
+
+  it('still answers a String for an empty message', () => {
+    expect(logMessageExpression('')).toBe("''");
   });
 });
 
@@ -139,6 +182,14 @@ describe('decodeDecision', () => {
     expect(decodeDecision(DECISION.Failed, 'undefined symbol nope')).toEqual({
       kind: 'failed',
       message: 'undefined symbol nope',
+    });
+  });
+
+  it('reads a log line, and which rule wrote it', () => {
+    expect(decodeDecision(DECISION.Log, 'hit 7', 2)).toEqual({
+      kind: 'log',
+      text: 'hit 7',
+      rule: 2,
     });
   });
 
@@ -181,7 +232,8 @@ function stubSession(
       const decision = decisions[Math.min(decisionIndex, decisions.length - 1)];
       decisionIndex += 1;
       return {
-        oops: [1000n + BigInt(decision), message === '' ? OOP_NIL : 77n],
+        // decision, message, matched-rule index
+        oops: [1000n + BigInt(decision), message === '' ? OOP_NIL : 77n, 1001n],
         err: { number: 0, message: '' },
       };
     },
@@ -215,11 +267,11 @@ const hitsBreakpoint = (process: bigint) => ({
   err: { number: BREAKPOINT_ERROR, message: 'Method breakpoint encountered.', context: process },
 });
 
-describe('skipUntilConditionMet', () => {
+describe('applyBreakpointRules', () => {
   it('stops without resuming when the condition holds at the first hit', async () => {
     const { session, continues } = stubSession([DECISION.Stop], []);
 
-    await expect(skipUntilConditionMet(session, 7n, [spec()])).resolves.toEqual({
+    await expect(applyBreakpointRules(session, 7n, [spec()])).resolves.toEqual({
       kind: 'stopped',
       skipped: 0,
     });
@@ -234,7 +286,7 @@ describe('skipUntilConditionMet', () => {
       'GciTsExecute',
     );
 
-    await skipUntilConditionMet(session, 7n, [spec()]);
+    await applyBreakpointRules(session, 7n, [spec()]);
 
     expect(execute.mock.calls[0][5]).toBe(0);
   });
@@ -247,7 +299,7 @@ describe('skipUntilConditionMet', () => {
       [hitsBreakpoint(8n), hitsBreakpoint(9n), hitsBreakpoint(10n)],
     );
 
-    await skipUntilConditionMet(session, 7n, [spec()]);
+    await applyBreakpointRules(session, 7n, [spec()]);
 
     expect(executed).toHaveLength(1);
     expect(performed).toHaveLength(4);
@@ -262,7 +314,7 @@ describe('skipUntilConditionMet', () => {
       [hitsBreakpoint(8n), hitsBreakpoint(9n)],
     );
 
-    await expect(skipUntilConditionMet(session, 7n, [spec()])).resolves.toEqual({
+    await expect(applyBreakpointRules(session, 7n, [spec()])).resolves.toEqual({
       kind: 'stopped',
       skipped: 2,
     });
@@ -276,7 +328,7 @@ describe('skipUntilConditionMet', () => {
     // run; dropping interpreted would make the stop unsteppable.
     const { session, continues } = stubSession([DECISION.Go, DECISION.Stop], [hitsBreakpoint(8n)]);
 
-    await skipUntilConditionMet(session, 7n, [spec()]);
+    await applyBreakpointRules(session, 7n, [spec()]);
 
     expect(continues[0].flags & 1).toBe(1); // ENABLE_DEBUG
     expect(continues[0].flags & 0x20).toBe(0x20); // INTERPRETED
@@ -285,7 +337,7 @@ describe('skipUntilConditionMet', () => {
   it('answers a completed run with its result', async () => {
     const { session } = stubSession([DECISION.Go], [{ result: 4242n, err: { number: 0 } }]);
 
-    await expect(skipUntilConditionMet(session, 7n, [spec()])).resolves.toEqual({
+    await expect(applyBreakpointRules(session, 7n, [spec()])).resolves.toEqual({
       kind: 'completed',
       resultOop: 4242n,
       skipped: 1,
@@ -298,7 +350,7 @@ describe('skipUntilConditionMet', () => {
       [{ err: { number: 2010, message: 'doesNotUnderstand: #foo', context: 91n } }],
     );
 
-    await expect(skipUntilConditionMet(session, 7n, [spec()])).resolves.toEqual({
+    await expect(applyBreakpointRules(session, 7n, [spec()])).resolves.toEqual({
       kind: 'raised',
       description: 'doesNotUnderstand: #foo',
       context: 91n,
@@ -328,7 +380,7 @@ describe('skipUntilConditionMet', () => {
     }, 0);
 
     try {
-      await skipUntilConditionMet(session, 7n, [spec()]);
+      await applyBreakpointRules(session, 7n, [spec()]);
     } finally {
       now.mockRestore();
     }
@@ -336,10 +388,66 @@ describe('skipUntilConditionMet', () => {
     expect(timerRan).toBe(true);
   });
 
+  it('writes a logpoint line and carries on rather than stopping', async () => {
+    // The whole point of a logpoint: it never stops, so the run reaches its end
+    // and the developer gets a line per hit instead of a debugger.
+    const { session } = stubSession(
+      [DECISION.Log, DECISION.Log, DECISION.Log],
+      [hitsBreakpoint(8n), hitsBreakpoint(9n), { result: 42n, err: { number: 0 } }],
+      'hit 7',
+    );
+    const lines: string[] = [];
+
+    const outcome = await applyBreakpointRules(
+      session,
+      7n,
+      [spec({ logMessage: "'hit ', (each) printString" })],
+      (text) => lines.push(text),
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', resultOop: 42n, skipped: 3 });
+    expect(lines).toEqual(['hit 7', 'hit 7', 'hit 7']);
+  });
+
+  it('tells the sink which rule wrote the line', async () => {
+    // With several logpoints armed, a line has to be attributable to one.
+    const { session } = stubSession([DECISION.Log], [{ result: 1n, err: { number: 0 } }], 'x');
+    const rules = [spec({ logMessage: "'x'" })];
+    const seen: (BreakpointRule | undefined)[] = [];
+
+    await applyBreakpointRules(session, 7n, rules, (_text, rule) => seen.push(rule));
+
+    expect(seen).toEqual([rules[0]]);
+  });
+
+  it('carries on past a logpoint whose message will not evaluate', async () => {
+    // Stopping there would drop the developer into a debugger they did not ask
+    // for, over a typo in a message, and take the run down with it.
+    const { session } = stubSession(
+      [DECISION.LogFailed, DECISION.LogFailed, DECISION.LogFailed],
+      [hitsBreakpoint(8n), hitsBreakpoint(9n), { result: 42n, err: { number: 0 } }],
+      'undefined symbol  i',
+    );
+    const failures: string[] = [];
+
+    const outcome = await applyBreakpointRules(
+      session,
+      7n,
+      [spec({ logMessage: '(i) printString' })],
+      undefined,
+      (message) => failures.push(message),
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', resultOop: 42n, skipped: 3 });
+    // Reported ONCE, not once per hit: the message is wrong for every hit, and a
+    // thousand identical complaints would bury the run's real output.
+    expect(failures).toEqual(['undefined symbol  i']);
+  });
+
   it('answers a condition that could not be evaluated', async () => {
     const { session, continues } = stubSession([DECISION.Failed], [], 'undefined symbol  nope');
 
-    await expect(skipUntilConditionMet(session, 7n, [spec()])).resolves.toEqual({
+    await expect(applyBreakpointRules(session, 7n, [spec()])).resolves.toEqual({
       kind: 'conditionFailed',
       message: 'undefined symbol  nope',
       skipped: 0,

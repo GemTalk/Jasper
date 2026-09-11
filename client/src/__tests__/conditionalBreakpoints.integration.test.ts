@@ -5,7 +5,11 @@ import { GciLibrary } from '../gciLibrary';
 import * as queries from '../browserQueries';
 import * as debugQueries from '../debugQueries';
 import { compiledMethodExpr } from '../queries/util';
-import { ConditionSpec, skipUntilConditionMet } from '../conditionalBreakpoints';
+import {
+  BreakpointRule,
+  applyBreakpointRules,
+  logMessageExpression,
+} from '../conditionalBreakpoints';
 import {
   GCI_PERFORM_FLAG_ENABLE_DEBUG,
   GCI_PERFORM_FLAG_INTERPRETED,
@@ -137,7 +141,7 @@ describe('conditional breakpoints (integration)', () => {
     return BigInt(err.context);
   };
 
-  const specFor = (selector: string, needle: string, condition: string): ConditionSpec => ({
+  const specFor = (selector: string, needle: string, condition: string): BreakpointRule => ({
     methodExpr: compiledMethodExpr(TEST_CLASS, false, selector, 0),
     stepPoint: stepPointAt(selector, needle),
     condition,
@@ -156,7 +160,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('countTo:', 'total := total + i', 'i >= 150'),
     ]);
 
@@ -176,7 +180,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('countTo:', 'total := total + i', 'i >= 9999'),
     ]);
 
@@ -196,7 +200,7 @@ describe('conditional breakpoints (integration)', () => {
       `(${TEST_CLASS} new limit: 99) sumOf: (1 to: 200) asArray`,
     );
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('sumOf:', 'total := total + each', 'each >= 150'),
     ]);
 
@@ -215,7 +219,7 @@ describe('conditional breakpoints (integration)', () => {
       `(${TEST_CLASS} new limit: 99) sumOf: (1 to: 200) asArray`,
     );
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor(
         'sumOf:',
         'total := total + each',
@@ -235,7 +239,7 @@ describe('conditional breakpoints (integration)', () => {
       `(${TEST_CLASS} new limit: 99) sumOf: (1 to: 200) asArray`,
     );
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('sumOf:', 'total := total + each', 'total > 5000'),
     ]);
 
@@ -256,7 +260,7 @@ describe('conditional breakpoints (integration)', () => {
     const returnStepPoint = stepPointAt('sumOf:', '^ total');
     queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'sumOf:', returnStepPoint, 0);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('sumOf:', 'total := total + each', 'each >= 9999'),
     ]);
 
@@ -285,7 +289,7 @@ describe('conditional breakpoints (integration)', () => {
 
     // The loop's condition never holds; the one on `^ total` always does. The
     // run must skip all twenty loop hits and stop at the second breakpoint.
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       { methodExpr, stepPoint: loopStep, condition: 'i >= 9999' },
       { methodExpr, stepPoint: returnStep, condition: 'total > 0' },
     ]);
@@ -309,7 +313,7 @@ describe('conditional breakpoints (integration)', () => {
     );
     const process = BigInt(err.context);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       { methodExpr, stepPoint: loopStep, condition: 'i >= 150' },
       { methodExpr, stepPoint: returnStep, condition: 'total > 999999' },
     ]);
@@ -319,13 +323,148 @@ describe('conditional breakpoints (integration)', () => {
     release(process);
   });
 
+  it('logs a line per hit and runs to completion, without ever stopping', async () => {
+    // A logpoint instruments a method without editing it: no Transcript write,
+    // no recompile, nothing left behind when the breakpoint goes.
+    fixture();
+    const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 20`);
+    const lines: string[] = [];
+
+    const outcome = await applyBreakpointRules(
+      session(),
+      process,
+      [
+        {
+          methodExpr: compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0),
+          stepPoint: stepPointAt('countTo:', 'total := total + i'),
+          logMessage: logMessageExpression('i={i} total={total}'),
+        },
+      ],
+      (text) => lines.push(text),
+    );
+
+    expect(outcome.kind).toBe('completed');
+    expect(lines).toHaveLength(20);
+    expect(lines[0]).toBe('i=1 total=0');
+    expect(lines[19]).toBe('i=20 total=190');
+  });
+
+  it('logs only where the condition holds, then still does not stop', async () => {
+    fixture();
+    const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 20`);
+    const lines: string[] = [];
+
+    const outcome = await applyBreakpointRules(
+      session(),
+      process,
+      [
+        {
+          methodExpr: compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0),
+          stepPoint: stepPointAt('countTo:', 'total := total + i'),
+          condition: 'i > 17',
+          logMessage: logMessageExpression('late: {i}'),
+        },
+      ],
+      (text) => lines.push(text),
+    );
+
+    expect(outcome.kind).toBe('completed');
+    expect(lines).toEqual(['late: 18', 'late: 19', 'late: 20']);
+  });
+
+  it('resolves self and instance variables in a logpoint message', async () => {
+    // The message is evaluated in the suspended frame, with the same names in
+    // scope a condition gets — including through the home-frame walk in a block.
+    fixture();
+    const process = haltAt(
+      'sumOf:',
+      'total := total + each',
+      `(${TEST_CLASS} new limit: 99) sumOf: (1 to: 3) asArray`,
+    );
+    const lines: string[] = [];
+
+    await applyBreakpointRules(
+      session(),
+      process,
+      [
+        {
+          methodExpr: compiledMethodExpr(TEST_CLASS, false, 'sumOf:', 0),
+          stepPoint: stepPointAt('sumOf:', 'total := total + each'),
+          logMessage: logMessageExpression('{self class} limit={limit} each={each}'),
+        },
+      ],
+      (text) => lines.push(text),
+    );
+
+    expect(lines[0]).toBe(`${TEST_CLASS} limit=99 each=1`);
+  });
+
+  it('reports a log message that cannot be evaluated, and carries on anyway', async () => {
+    // A logpoint never stops — not even a broken one. Naming a variable the
+    // method does not have is an easy mistake (`{i}` in a method whose loop
+    // variable is `each`), and answering it with a debugger the developer did
+    // not ask for would be worse than the mistake.
+    fixture();
+    const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 20`);
+    const lines: string[] = [];
+    const failures: string[] = [];
+
+    const outcome = await applyBreakpointRules(
+      session(),
+      process,
+      [
+        {
+          methodExpr: compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0),
+          stepPoint: stepPointAt('countTo:', 'total := total + i'),
+          logMessage: logMessageExpression('{noSuchVariable}'),
+        },
+      ],
+      (text) => lines.push(text),
+      (message) => failures.push(message),
+    );
+
+    expect(outcome.kind).toBe('completed');
+    expect(lines).toEqual([]);
+    // Said once, however many hits it was wrong for.
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('noSuchVariable');
+  });
+
+  it('names which logpoint wrote each line when several are armed', async () => {
+    fixture();
+    const loopStep = stepPointAt('countTo:', 'total := total + i');
+    const returnStep = stepPointAt('countTo:', '^ total');
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', loopStep, 0);
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', returnStep, 0);
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+    const rules: BreakpointRule[] = [
+      { methodExpr, stepPoint: loopStep, logMessage: logMessageExpression('loop {i}') },
+      { methodExpr, stepPoint: returnStep, logMessage: logMessageExpression('done {total}') },
+    ];
+
+    const { err } = exec(
+      `${TEST_CLASS} new countTo: 3`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    const process = BigInt(err.context);
+    const seen: { text: string; step: number | undefined }[] = [];
+
+    await applyBreakpointRules(session(), process, rules, (text, rule) =>
+      seen.push({ text, step: rule?.stepPoint }),
+    );
+
+    expect(seen.map((l) => l.text)).toEqual(['loop 1', 'loop 2', 'loop 3', 'done 6']);
+    expect(seen[0].step).toBe(loopStep);
+    expect(seen[3].step).toBe(returnStep);
+  });
+
   it('reports an error the code raises while being skipped', async () => {
     // The resume answers an error rather than a result here, which is what
     // separates a run that raised from one that finished.
     fixture();
     const process = haltAt('failAt:', 'total := total + i', `${TEST_CLASS} new failAt: 10`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('failAt:', 'total := total + i', 'i >= 9999'),
     ]);
 
@@ -341,7 +480,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('countTo:', 'total := total + i', 'noSuchVariable > 1'),
     ]);
 
@@ -358,7 +497,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('countTo:', 'total := total + i', 'i'),
     ]);
 
@@ -375,7 +514,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       specFor('sumOf:', 'total := total + each', 'each > 1'),
     ]);
 
@@ -387,7 +526,7 @@ describe('conditional breakpoints (integration)', () => {
     fixture();
     const process = haltAt('countTo:', 'total := total + i', `${TEST_CLASS} new countTo: 200`);
 
-    const outcome = await skipUntilConditionMet(session(), process, [
+    const outcome = await applyBreakpointRules(session(), process, [
       {
         methodExpr: compiledMethodExpr(TEST_CLASS, false, 'noSuchSelector', 0),
         stepPoint: 1,
@@ -404,8 +543,8 @@ describe('conditional breakpoints (integration)', () => {
  * The seam the unit tests could not cover: the breakpoint manager building the
  * specs, and the gem answering them, over one live session.
  *
- * Both halves were tested apart — `conditionSpecsFor` against a mocked VS Code,
- * `skipUntilConditionMet` against hand-written specs — and a condition that is
+ * Both halves were tested apart — `breakpointRulesFor` against a mocked VS Code,
+ * `applyBreakpointRules` against hand-written specs — and a condition that is
  * recorded but never reaches the gem, or reaches it under a step point the frame
  * does not report, looks exactly like a breakpoint with no condition at all: it
  * stops at the first hit and says nothing. Only running the two together catches
@@ -421,7 +560,7 @@ describe('the manager and the gem, together (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const TEST_CLASS = 'VsCodeConditionSpecTest';
+  const TEST_CLASS = 'VsCodeBreakpointRuleTest';
   const SELECTOR = 'countTo:';
 
   /** A manager wired to the live session, over VS Code's real breakpoint list. */
@@ -484,12 +623,15 @@ describe('the manager and the gem, together (integration)', () => {
     expect(applied[0].condition).toBe('i >= 150');
 
     // …and comes back out as a spec naming the method the gem will report.
-    const specs = manager.conditionSpecsFor(live);
+    const specs = manager.breakpointRulesFor(live);
     expect(specs).toEqual([
       {
         methodExpr: `(${TEST_CLASS} compiledMethodAt: #'${SELECTOR}' environmentId: 0)`,
         stepPoint: applied[0].stepPoint,
         condition: 'i >= 150',
+        logMessage: undefined,
+        // What a logpoint's output would be prefixed with.
+        label: `${TEST_CLASS}>>${SELECTOR}`,
       },
     ]);
 
@@ -508,7 +650,7 @@ describe('the manager and the gem, together (integration)', () => {
     const process = BigInt(err.context);
     expect(debugQueries.getStepPoint(session(), process, 1)).toBe(specs[0].stepPoint);
 
-    await expect(skipUntilConditionMet(session(), process, specs)).resolves.toEqual({
+    await expect(applyBreakpointRules(session(), process, specs)).resolves.toEqual({
       kind: 'stopped',
       skipped: 149,
     });

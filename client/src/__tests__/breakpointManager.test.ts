@@ -836,20 +836,22 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
     });
 
-    it('warns for a log message (a logpoint)', () => {
-      fire({ added: [withFields({ logMessage: 'here' })] });
-      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
+    it('says nothing about a log message — logpoints are honoured', () => {
+      debug.breakpoints = [withFields({ logMessage: 'here' })];
+      fire({ added: debug.breakpoints });
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
-    it('names only what is really ignored', () => {
+    it('names only what is really ignored, and where log output goes', () => {
       fire({ added: [withFields({ hitCondition: '5' })] });
       const said = vi.mocked(window.showWarningMessage).mock.calls[0][0] as string;
-      expect(said).toContain('hit counts and log messages');
-      expect(said).not.toContain('ignore conditions');
+      expect(said).toContain('ignore hit counts');
+      expect(said).not.toContain('log messages —');
+      expect(said).toContain('GemStone Logpoints');
     });
 
     it('warns once for several unsupported breakpoints, not once each', () => {
-      fire({ added: [withFields({ hitCondition: '1' }), withFields({ logMessage: 'b' })] });
+      fire({ added: [withFields({ hitCondition: '1' }), withFields({ hitCondition: '2' })] });
       expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledTimes(1);
     });
 
@@ -1095,6 +1097,25 @@ describe('BreakpointManager', () => {
         expect(drawFor(undefined)).toHaveLength(0);
       });
 
+      it('the label’s own hover names the channel and links to it', () => {
+        // The label is one of the two things a developer actually hovers, and
+        // "Logs: …" alone does not say where the output went.
+        mockGetMethodSource.mockReturnValue(SOURCE);
+        mockGetSourceOffsets.mockReturnValue([3]);
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, logMessage: 'x={x}' },
+        ]);
+        const { editor, drawn } = editorOver(SOURCE);
+        manager.refreshDecorations(editor);
+
+        const labels = drawn[drawn.length - 1].value as { hoverMessage: { value: string } }[];
+        expect(labels[0].hoverMessage.value).toContain('GemStone Logpoints');
+        expect(labels[0].hoverMessage.value).toContain(
+          'command:gemstone.breakpoints.showLogpointOutput',
+        );
+      });
+
       it('draws nothing when the setting is off', () => {
         vscode.workspace
           .getConfiguration('gemstone')
@@ -1103,23 +1124,43 @@ describe('BreakpointManager', () => {
       });
     });
 
-    describe('conditionSpecsFor', () => {
+    describe('breakpointRulesFor', () => {
       it('answers nothing when no breakpoint is conditional', () => {
         debug.breakpoints = [conditional(undefined)];
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
-        expect(manager.conditionSpecsFor(session())).toEqual([]);
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
+      it('labels the method for a log line, without an environment when it is 0', () => {
+        debug.breakpoints = [
+          new SourceBreakpoint(
+            new Location(Uri.parse(METHOD_URI), new Position(1, 0)),
+            true,
+            undefined,
+            undefined,
+            'x={x}',
+          ),
+        ];
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI));
+
+        const [rule] = manager.breakpointRulesFor(session());
+        expect(rule.label).toBe('Array>>at:');
+        expect(rule.logMessage).toBe("'x=', (x) printString");
       });
 
       it('names the method, step point and condition', () => {
         debug.breakpoints = [conditional('index > 3')];
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
-        expect(manager.conditionSpecsFor(session())).toEqual([
+        expect(manager.breakpointRulesFor(session())).toEqual([
           {
             methodExpr: "(Array compiledMethodAt: #'at:' environmentId: 0)",
             stepPoint: 2,
             condition: 'index > 3',
+            logMessage: undefined,
+            label: 'Array>>at:',
           },
         ]);
       });
@@ -1130,7 +1171,7 @@ describe('BreakpointManager', () => {
         debug.breakpoints = [conditional('index > 3', false)];
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
-        expect(manager.conditionSpecsFor(session())).toEqual([]);
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
       });
 
       it('leaves out another session\u2019s methods', () => {
@@ -1138,9 +1179,9 @@ describe('BreakpointManager', () => {
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
         const other = { ...TEST_SESSION, id: 2 } as unknown as Parameters<
-          typeof manager.conditionSpecsFor
+          typeof manager.breakpointRulesFor
         >[0];
-        expect(manager.conditionSpecsFor(other)).toEqual([]);
+        expect(manager.breakpointRulesFor(other)).toEqual([]);
       });
     });
 
@@ -1183,7 +1224,7 @@ describe('BreakpointManager', () => {
           { line: 2, enabled: true, condition: 'index > 1001' },
         ]);
 
-        const specs = manager.conditionSpecsFor(session());
+        const specs = manager.breakpointRulesFor(session());
         expect(specs).toHaveLength(1);
         expect(specs[0].condition).toBe('index > 1001');
       });
@@ -1201,11 +1242,11 @@ describe('BreakpointManager', () => {
         ]);
 
         expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(1);
-        expect(manager.conditionSpecsFor(session())).toHaveLength(2);
+        expect(manager.breakpointRulesFor(session())).toHaveLength(2);
       });
     });
 
-    describe('conditionForStoneBreakpoint', () => {
+    describe('ruleForStoneBreakpoint', () => {
       const stoneBp = (over: Record<string, unknown> = {}) => ({
         breakNumber: 1,
         className: 'Array',
@@ -1225,18 +1266,18 @@ describe('BreakpointManager', () => {
         debug.breakpoints = [conditional('index > 3')];
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
-        expect(manager.conditionForStoneBreakpoint(stoneBp())).toBe('index > 3');
+        expect(manager.ruleForStoneBreakpoint(stoneBp())?.condition).toBe('index > 3');
       });
 
       it('answers nothing for a breakpoint at another step point', () => {
         debug.breakpoints = [conditional('index > 3')];
         const manager = makeManager();
         manager.applyToUri(session(), Uri.parse(METHOD_URI));
-        expect(manager.conditionForStoneBreakpoint(stoneBp({ stepPoint: 1 }))).toBeUndefined();
+        expect(manager.ruleForStoneBreakpoint(stoneBp({ stepPoint: 1 }))).toBeUndefined();
       });
 
       it('answers nothing for a breakpoint Jasper did not set', () => {
-        expect(makeManager().conditionForStoneBreakpoint(stoneBp())).toBeUndefined();
+        expect(makeManager().ruleForStoneBreakpoint(stoneBp())).toBeUndefined();
       });
     });
 

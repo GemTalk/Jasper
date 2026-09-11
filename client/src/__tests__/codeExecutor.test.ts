@@ -235,7 +235,7 @@ function lastDiagCollection() {
  * entirely, which is what every test here that is not about conditions wants —
  * see `codeExecutorConditions.test.ts` for the ones that are.
  */
-const NO_CONDITIONS = { conditionSpecsFor: () => [] };
+const NO_CONDITIONS = { breakpointRulesFor: () => [] };
 
 // ── Tests ────────────────────────────────────────────────────
 
@@ -1706,7 +1706,7 @@ describe('CodeExecutor', () => {
 
     /** One conditional breakpoint, on a method the loop will be told about. */
     const oneCondition = {
-      conditionSpecsFor: () => [
+      breakpointRulesFor: () => [
         {
           methodExpr: "(Account compiledMethodAt: #'deposit:' environmentId: 0)",
           stepPoint: 4,

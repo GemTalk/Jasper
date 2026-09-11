@@ -130,7 +130,7 @@ describe('BreakpointTreeProvider', () => {
     onDidApply: vi.fn(() => ({ dispose: () => {} })),
     // The gem records no condition, so a row's condition can only come from
     // what Jasper applied. Undefined by default: most rows have none.
-    conditionForStoneBreakpoint: vi.fn(() => undefined),
+    ruleForStoneBreakpoint: vi.fn(() => undefined),
   } as unknown as BreakpointManager;
 
   beforeEach(() => {
@@ -271,7 +271,13 @@ describe('BreakpointTreeProvider', () => {
       // The gem stores no condition, so this row is the only place in this view
       // that can tell the developer their breakpoint is not going to stop every
       // time — and the condition is the thing they actually want to re-read.
-      vi.mocked(manager.conditionForStoneBreakpoint).mockReturnValueOnce('amount > 100');
+      vi.mocked(manager.ruleForStoneBreakpoint).mockReturnValueOnce({
+        stepPoint: 3,
+        offset: 0,
+        line: 1,
+        enabled: true,
+        condition: 'amount > 100',
+      });
       const item = provider.getTreeItem({ kind: 'breakpoint', bp: bp() });
       expect(item.description).toBe('@ 3 · if amount > 100');
       expect(item.iconPath).toMatchObject({ id: 'debug-breakpoint-conditional' });
@@ -285,11 +291,17 @@ describe('BreakpointTreeProvider', () => {
 
     it('elides a long condition on the row but keeps it whole in the tooltip', () => {
       const long = 'anOrder customer name = ' + "'".repeat(2) + ' and this goes on for a while yet';
-      vi.mocked(manager.conditionForStoneBreakpoint).mockReturnValue(long);
+      vi.mocked(manager.ruleForStoneBreakpoint).mockReturnValue({
+        stepPoint: 3,
+        offset: 0,
+        line: 1,
+        enabled: true,
+        condition: long,
+      });
       const item = provider.getTreeItem({ kind: 'breakpoint', bp: bp() });
       expect(String(item.description)).toContain('…');
       expect(String((item.tooltip as { value: string }).value)).toContain(long);
-      vi.mocked(manager.conditionForStoneBreakpoint).mockReturnValue(undefined);
+      vi.mocked(manager.ruleForStoneBreakpoint).mockReturnValue(undefined);
     });
 
     it('gives executed code no reveal command — there is no source to open', () => {

@@ -26,6 +26,29 @@ export function describeMethodResult(result: {
   return `${result.className}${result.isMeta ? ' class' : ''} >> #${result.selector}`;
 }
 
+/**
+ * A method named the way Smalltalk writes it, compact enough for a log line.
+ *
+ * Distinct from `describeMethodResult` above, which spaces itself out for prose
+ * in a message box. This one is a prefix repeated on every line of a logpoint's
+ * output, so `Account>>deposit:` rather than `Account >> #deposit:`.
+ *
+ * The environment id appears **only when it is not 0**. Everything anyone
+ * ordinarily writes lives in environment 0, so printing `[env 0]` on every line
+ * would be noise on every line; a method that is somewhere else is unusual
+ * enough that saying so is worth the space.
+ */
+export function methodLabel(method: {
+  className: string;
+  isMeta: boolean;
+  selector: string;
+  environmentId: number;
+}): string {
+  const receiver = `${method.className}${method.isMeta ? ' class' : ''}`;
+  const environment = method.environmentId === 0 ? '' : ` [env ${method.environmentId}]`;
+  return `${receiver}>>${method.selector}${environment}`;
+}
+
 /** Show the results as a picker and open whichever the user chooses. An empty list says
  *  so and opens nothing.
  *

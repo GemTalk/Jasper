@@ -22,9 +22,13 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Changed
 
+- **Logpoints: print from a method without editing it.** Right-click the gutter → *Add Logpoint…*, type a message, and every time that step point is reached the message is written to a new **GemStone Logpoints** panel in Output while execution carries straight on. It is the `Transcript show:` you would otherwise add to the method — except there is nothing to compile, nothing to commit, nothing to remember to remove afterwards, and it works on code you cannot or should not edit. `{…}` in the message is an expression evaluated in the suspended frame with exactly the scope a condition gets, so `each={each} running={running}` and `{self orders size} for {self label}` both work, in a block as well as a method; each placeholder is printed for you, and however many a message has it costs one evaluation and one fetch rather than one apiece. Give the same breakpoint a **condition** too and it logs only where the condition holds, and still never stops.
+
+  Every line names the method and step point that wrote it — `Account>>deposit: @4`, with `[env 1]` appended only when the method is not in environment 0 — and carries a timestamp, because what a logpoint on a loop usually tells you is when and how often. A message that cannot be evaluated (naming a variable the method does not have, an easy mistake) is reported once in the log and once as a warning, and **the run carries on**: a logpoint that stopped would be answering a typo in a message with a debugger the developer did not ask for, which is what a logpoint exists not to do. The panel is created at activation rather than on the first line written, so it is in the Output dropdown to be found, and the hover on a logpoint's label carries a link straight to it (also **GemStone: Show Logpoint Output**). ([#536](https://github.com/GemTalk/Jasper/issues/536))
+
 - **The Breakpoints view says which session its breakpoints are in.** A GemStone breakpoint is per-gem state, and that view reads one gem — the selected session's — so a row was a breakpoint in a stone the view never named, and switching the selected session silently swapped the whole list for another one. The rows now sit under a heading naming the session the way **Logins & Sessions** does, with the count beside it. It still reads only the selected session: showing every logged-in gem at once would be a different view, and a slower one.
 
-- **The breakpoint warning no longer claims conditions are ignored.** It named conditions, hit counts and log messages together; conditions are now honoured, so it names only the two that are not.
+- **The breakpoint warning names only what is really ignored.** It began by naming conditions, hit counts and log messages together; conditions and log messages are both honoured now, so it names the one that is not, and says where a logpoint's output goes.
 
 ### Fixed
 

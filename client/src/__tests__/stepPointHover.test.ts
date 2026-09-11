@@ -172,6 +172,38 @@ describe('StepPointHoverProvider', () => {
     expect(text).toContain('Edit condition');
   });
 
+  it('says where a logpoint writes, and offers a way there', () => {
+    // The two places a developer actually points — the label and the gutter —
+    // name a channel they then have to go and find. This hover is where the way
+    // in lives.
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([
+        {
+          stepPoint: 2,
+          offset: 14,
+          line: 2,
+          enabled: true,
+          logMessage: 'total={total}',
+        },
+      ]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).toContain('Logpoint set');
+    expect(text).toContain('GemStone Logpoints');
+    expect(text).toContain('total={total}');
+    expect(text).toContain('command:gemstone.breakpoints.showLogpointOutput');
+  });
+
+  it('offers no logpoint output link on a breakpoint that only stops', () => {
+    const provider = new StepPointHoverProvider(
+      new StepPointModel(makeSessionManager()),
+      makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true, condition: 'x > 1' }]),
+    );
+    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    expect(text).not.toContain('showLogpointOutput');
+  });
+
   it('says a disabled conditional breakpoint is both', () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),

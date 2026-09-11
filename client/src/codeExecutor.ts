@@ -14,7 +14,8 @@ import { clearStack, getObjectPrintString } from './debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import { setTranscriptLive, drainTranscript, settleNbResult } from './transcriptSink';
 import { pollNbToCompletion, NbCancelledError } from './nbRunner';
-import { ConditionOutcome, ConditionSpec, skipUntilConditionMet } from './conditionalBreakpoints';
+import { applyBreakpointRules, BreakpointRule, ConditionOutcome } from './conditionalBreakpoints';
+import { appendLogpoint, showLogpointChannel } from './logpointChannel';
 
 const MAX_RESULT_SIZE = 64 * 1024;
 
@@ -84,7 +85,7 @@ const RAISED_WHILE_SKIPPING = 0;
  * whole breakpoint manager — and so a test can answer it with a literal.
  */
 export interface ConditionalBreakpointSource {
-  conditionSpecsFor(session: ActiveSession): ConditionSpec[];
+  breakpointRulesFor(session: ActiveSession): BreakpointRule[];
 }
 
 class DebuggableError extends Error {
@@ -95,6 +96,17 @@ class DebuggableError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * Where a logpoint line came from, for the log's own prefix.
+ *
+ * `Account>>deposit: @4`. Falls back to the method expression the gem was handed
+ * if a rule reached here without a label — not a shape the manager produces, but
+ * a line naming its source awkwardly beats one naming nothing.
+ */
+function describeRule(rule: BreakpointRule): string {
+  return `${rule.label ?? rule.methodExpr} @${rule.stepPoint}`;
 }
 
 // koffi returns uint64 as Number when the value fits in MAX_SAFE_INTEGER.
@@ -800,20 +812,58 @@ export class CodeExecutor {
       context,
       errorNumber: BREAKPOINT_ERROR_NUMBER,
     };
-    const specs = this.conditions.conditionSpecsFor(session);
+    const specs = this.conditions.breakpointRulesFor(session);
     // Logged even when there are none. "Stopped at a breakpoint" looks identical
     // whether a condition was consulted and held, or was never seen at all — so
     // the one place that knows says which, rather than leaving it to be guessed
     // from the outside.
     logInfo(
-      `[Session ${session.id}] breakpoint at a stop: ${specs.length} conditional breakpoint(s) armed` +
-        specs.map((s) => `\n  ${s.methodExpr} @${s.stepPoint} if ${s.condition}`).join(''),
+      `[Session ${session.id}] breakpoint at a stop: ${specs.length} breakpoint rule(s) armed` +
+        specs
+          .map(
+            (s) =>
+              `\n  ${s.methodExpr} @${s.stepPoint}` +
+              (s.condition === undefined ? '' : ` if ${s.condition}`) +
+              (s.logMessage === undefined ? '' : ' (logpoint)'),
+          )
+          .join(''),
     );
     if (specs.length === 0) return stopHere;
 
     let outcome: ConditionOutcome;
     try {
-      outcome = await skipUntilConditionMet(session, context, specs);
+      // Revealed once per run, on the first line. A logpoint writing to a
+      // channel nobody has opened is barely better than no logpoint at all —
+      // but reopening it on every line would fight the developer for focus.
+      let revealed = false;
+      const reveal = (): void => {
+        if (revealed) return;
+        revealed = true;
+        showLogpointChannel();
+      };
+      outcome = await applyBreakpointRules(
+        session,
+        context,
+        specs,
+        (text, rule) => {
+          appendLogpoint(rule === undefined ? `session ${session.id}` : describeRule(rule), text);
+          reveal();
+        },
+        (failure, rule) => {
+          // Into the log the lines would have gone to, where the developer is
+          // already looking, and said once out loud — a logpoint that silently
+          // writes nothing is the failure this whole feature exists to avoid.
+          appendLogpoint(
+            rule === undefined ? `session ${session.id}` : describeRule(rule),
+            `!! the log message could not be evaluated: ${failure}`,
+          );
+          reveal();
+          vscode.window.showWarningMessage(
+            `A logpoint's message could not be evaluated: ${failure}. Execution carried on; ` +
+              'see the GemStone Logpoints panel in Output.',
+          );
+        },
+      );
     } catch (e: unknown) {
       // A cancel is the developer's answer, not a failure: let it unwind the
       // execution the same way cancelling any other run does.
@@ -850,8 +900,9 @@ export class CodeExecutor {
         // Said out loud, because the alternative is a breakpoint that stops for
         // no visible reason and a condition that was never really applied.
         vscode.window.showWarningMessage(
-          `Breakpoint condition could not be evaluated: ${outcome.message} — ` +
-            'stopping at the breakpoint.',
+          `Breakpoint rule could not be evaluated: ${outcome.message} — ` +
+            'stopping at the breakpoint. A logpoint writes to the GemStone Logpoints ' +
+            'panel in Output.',
         );
         return { ...stopHere, message: `${message} (condition: ${outcome.message})` };
       default:
