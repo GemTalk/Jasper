@@ -207,6 +207,18 @@ onSupportedPosixDescribe('publish-to-registry.sh', () => {
     expect(stderr).toContain('Publishing to Azure DevOps Gallery...');
   });
 
+  // A `tee` that cannot open its destination takes the whole pipeline down with it, and
+  // because the script classifies on the CLI's status, that surfaces as a wrong verdict
+  // rather than as an obvious error. It is also platform-dependent: `tee /dev/stderr` works
+  // on macOS, where /dev/stderr is a dup of fd 2, and fails with ENXIO on Linux whenever
+  // fd 2 is a socket — which is what a parent capturing output hands it. Asserting on the
+  // error directly means a regression says so instead of showing up as four odd diffs.
+  it('does not lose the pipeline to a tee that cannot write', () => {
+    const { stderr } = run({ stdout: 'Published gemtalksystems.gemstone-ide v1.9.0' });
+
+    expect(stderr).not.toMatch(/^tee:/m);
+  });
+
   it('refuses a .vsix that is not there rather than invoking the CLI', () => {
     const { status, stderr, argv } = run({ vsix: '/nonexistent/gemstone-ide-1.9.0.vsix' });
 

@@ -64,19 +64,31 @@ echo "Publishing $(basename "$vsix") to $registry..." >&2
 # The message has to be captured to be classified, but capturing it alone
 # would lose it exactly when it matters most: the publish steps run under
 # `timeout-minutes: 5`, and a hung CLI is killed by the runner, so a plain
-# `$(...)` would leave the log with the line above and nothing else — no CLI
-# output at all — in the one case where the CLI's own words are the only
-# evidence of whether the upload went out. `tee` to stderr keeps the log live
-# and still yields the text to classify.
+# `output=$("$@" 2>&1)` would leave the log with the line above and nothing
+# else — no CLI output at all — in the one case where the CLI's own words are
+# the only evidence of whether the upload went out. So tee it: the log stays
+# live and the text is still there to classify afterwards.
 #
-# `$?` is the CLI's status, not tee's, because of the `pipefail` above.
-# ${PIPESTATUS[0]} would NOT work here: the pipeline runs inside the command
-# substitution's subshell, so the parent's PIPESTATUS is that of the
-# assignment itself and always reads 0.
+# Teeing to a file rather than to `/dev/stderr`, and running the pipeline here
+# rather than inside a `$(...)`, are both deliberate:
+#
+#   - `tee /dev/stderr` OPENS /dev/stderr, which fails with ENXIO ("No such
+#     device or address") whenever fd 2 is a socket rather than a pipe — which
+#     is what a Linux parent process gets when it captures output. `>&2` dups
+#     fd 2 instead of opening it, and works whatever fd 2 happens to be.
+#   - Keeping the pipeline in this shell is what makes ${PIPESTATUS[0]} the
+#     CLI's own status. Inside a `$(...)` the pipeline runs in the
+#     substitution's subshell, and the PIPESTATUS this shell sees is that of
+#     the assignment — always a single 0.
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+
 set +e
-output=$("$@" 2>&1 | tee /dev/stderr)
-status=$?
+"$@" 2>&1 | tee "$log" >&2
+status=${PIPESTATUS[0]}
 set -e
+
+output=$(cat "$log")
 
 if [ "$status" -eq 0 ]; then
     echo "result: published"
