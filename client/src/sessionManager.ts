@@ -6,6 +6,11 @@ import { logInfo } from './gciLog';
 import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
+import {
+  TransactionMode,
+  getTransactionState,
+  setGemAutoServiceSigAbort,
+} from './queries/transactionMode';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough
 // that connect latency is imperceptible, large enough not to busy-spin while the
@@ -27,6 +32,15 @@ export interface ActiveSession {
   /** `System myUserProfile symbolList`, memoized on first use — see
    *  `sessionSymbolListOop` in debugQueries.ts, which owns this field. */
   symbolListOop?: bigint;
+  /** The session's GemStone transaction mode, as last read from the stone, or
+   *  `undefined` when it has not been read (or could not be). Never assumed:
+   *  `STN_GEM_INITIAL_TRANSACTION_MODE` lets a stone hand out any of the three
+   *  at login. Owned by `SessionManager.refreshTransactionState`. */
+  transactionMode?: TransactionMode;
+  /** Whether the session was inside a transaction when the state was last read.
+   *  This — not the mode — decides whether a commit can land. Owned by
+   *  `SessionManager.refreshTransactionState`. */
+  inTransaction?: boolean;
 }
 
 /**
@@ -85,6 +99,13 @@ export class SessionManager {
   // showing "Log in" for a login that was already connected.
   private _onDidAddSession = new vscode.EventEmitter<number>();
   readonly onDidAddSession = this._onDidAddSession.event;
+
+  // Fires with a session id whenever that session's transaction mode or
+  // in-transaction state changes, so the surfaces that draw it — the session
+  // row, the status bar, the Databases panel — redraw together rather than each
+  // polling the stone on its own schedule and disagreeing in between.
+  private _onDidChangeTransactionState = new vscode.EventEmitter<number>();
+  readonly onDidChangeTransactionState = this._onDidChangeTransactionState.event;
 
   get selectedId(): number | null {
     return this._selectedId;
@@ -341,6 +362,12 @@ export class SessionManager {
     // value, so aborting only drops the noise. Safe here because a just-logged-in
     // session has no user-authored work to lose. (A kernel-side fix — not bumping
     // the counter during a session-local rebuild — remains the proper fix.)
+    //
+    // Safe in every transaction mode, not just the autoBegin default: a stone
+    // whose STN_GEM_INITIAL_TRANSACTION_MODE hands out manualBegin or
+    // transactionless leaves the session outside a transaction at login, where an
+    // abort only refreshes the view. Nothing the user began can be lost here,
+    // because nothing has happened yet.
     try {
       const { success, err } = session.gci.GciTsAbort(session.handle);
       if (!success) {
@@ -353,6 +380,12 @@ export class SessionManager {
         `[Session ${session.id}] Post-login abort threw: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+
+    // Read the transaction mode the stone actually handed out rather than assuming
+    // the autoBegin default: STN_GEM_INITIAL_TRANSACTION_MODE is per-stone and
+    // accepts all three values. Read *after* the abort above, so the answer
+    // describes the state the session is left in.
+    this.refreshTransactionState(session.id);
 
     // Auto-select when this is the only session
     if (this.sessions.size === 1) {
@@ -449,16 +482,104 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Re-read the session's transaction mode and in-transaction state from the
+   * stone, and announce the result when either changed.
+   *
+   * Called wherever the state can have moved: at login, and after every commit,
+   * abort, begin and mode switch. It is not polled — a session's mode only
+   * changes because something asked it to, and a background poll of every open
+   * session would spend a GCI round trip a second to learn nothing.
+   *
+   * Best effort by design. A busy or unreachable session leaves the cached state
+   * alone rather than blanking it: the last known mode is a better answer for the
+   * UI than "unknown", and everything downstream already treats an unknown
+   * transaction state as "let the stone say no" rather than as a refusal.
+   *
+   * Runs the query straight against the GCI rather than through browserQueries,
+   * which would make this module depend on the one that depends on it.
+   */
+  refreshTransactionState(id: number): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    try {
+      const { result: inProgress } = s.gci.GciTsCallInProgress(s.handle);
+      if (inProgress !== 0) return;
+      const { mode, inTransaction } = getTransactionState((code) =>
+        s.gci.executeAndFetchString(s.handle, code),
+      );
+      if (mode === undefined && inTransaction === undefined) return;
+      const changed = s.transactionMode !== mode || s.inTransaction !== inTransaction;
+      s.transactionMode = mode;
+      s.inTransaction = inTransaction;
+      if (changed) this._onDidChangeTransactionState.fire(id);
+    } catch (e: unknown) {
+      logInfo(
+        `[Session ${id}] Could not read the transaction mode: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * Put the session into `mode`, then re-read the state so the cache reflects
+   * what the stone actually did rather than what was asked for.
+   *
+   * **The switch aborts the current transaction** — callers own telling the user
+   * that and getting their agreement first, and own the post-abort refresh of
+   * everything showing the old view.
+   *
+   * Arms `GemAutoServiceSigAbort` on the way into `manualBegin`: a session left
+   * outside a transaction pins a commit record the stone will come asking for,
+   * and a gem that does not answer within STN_GEM_ABORT_TIMEOUT is forcibly
+   * aborted with every cache reinitialized. Letting the gem service the signal
+   * itself is what keeps that from happening, and costs no client-side thread.
+   * Failing to arm it is not fatal — the mode switch itself succeeded, and the
+   * session merely goes back to needing the user to abort promptly — so it is
+   * logged rather than raised.
+   */
+  setTransactionMode(id: number, mode: TransactionMode): void {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error('Session not found');
+    const execute = (code: string) => s.gci.executeAndFetchString(s.handle, code);
+    execute(`System transactionMode: #${mode}. 'transaction mode set'`);
+    if (mode === 'manualBegin') {
+      try {
+        setGemAutoServiceSigAbort(execute, true);
+      } catch (e: unknown) {
+        logInfo(
+          `[Session ${id}] Could not arm GemAutoServiceSigAbort: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    this.refreshTransactionState(id);
+  }
+
+  begin(id: number): { success: boolean; err: GciError } {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error('Session not found');
+    const result = s.gci.GciTsBegin(s.handle);
+    this.refreshTransactionState(id);
+    return result;
+  }
+
   commit(id: number): { success: boolean; err: GciError } {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
-    return s.gci.GciTsCommit(s.handle);
+    const result = s.gci.GciTsCommit(s.handle);
+    // Under manualBegin a commit leaves the session outside a transaction, so the
+    // state has moved whether or not the commit itself succeeded.
+    this.refreshTransactionState(id);
+    return result;
   }
 
   abort(id: number): { success: boolean; err: GciError } {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
-    return s.gci.GciTsAbort(s.handle);
+    const result = s.gci.GciTsAbort(s.handle);
+    // Same as commit: under manualBegin this drops the session out of its
+    // transaction, and nothing starts another one.
+    this.refreshTransactionState(id);
+    return result;
   }
 
   /**
@@ -496,5 +617,7 @@ export class SessionManager {
     this.gciInstances.clear();
     this._onDidChangeSelection.dispose();
     this._onDidRemoveSession.dispose();
+    this._onDidAddSession.dispose();
+    this._onDidChangeTransactionState.dispose();
   }
 }
