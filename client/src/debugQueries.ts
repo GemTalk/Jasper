@@ -354,6 +354,12 @@ export function getMethodBlockInfo(session: ActiveSession, methodOop: bigint): M
 /**
  * Returns everything needed to construct a gemstone:// URI for a method.
  * Uses a single Smalltalk execution to minimise GCI round-trips.
+ *
+ * `dictName` is the defining class's home dictionary through the shared
+ * `homeDictionaryNameExpr`, so it is the slot binding THAT class rather than the
+ * last one holding its name — a shadowed name otherwise built a URI onto a
+ * same-named class in another dictionary, which the source pane then opened and
+ * offered to edit. '' when no slot binds it under its own name.
  */
 export function getMethodUriInfo(
   session: ActiveSession,
@@ -364,9 +370,7 @@ export function getMethodUriInfo(
 method := Object _objectForOop: ${methodOop}.
 class := method inClass.
 baseClass := class theNonMetaClass.
-dictName := ''.
-System myUserProfile symbolList do: [:d |
-  (d includesKey: baseClass name asSymbol) ifTrue: [dictName := d name]].
+dictName := ${homeDictionaryNameExpr('baseClass')}.
 category := (class categoryOfSelector: method selector environmentId: 0) ifNil: ['as yet unclassified'].
 dictName, (String with: Character tab),
   baseClass name, (String with: Character tab),
@@ -415,10 +419,13 @@ export interface ClassHomeInfo {
 }
 
 /**
- * The receiver's full class chain — its class and every superclass up to Object
- * — as candidate places to implement (override) `selector`. Ordered
- * most-specific first (the receiver's class), so callers can pre-select it. A
- * class receiver walks its class-side chain (isMeta true throughout). For each
+ * The receiver's full class chain — its class and every superclass along the
+ * lookup chain — as candidate places to implement (override) `selector`. Ordered
+ * most-specific first (the receiver's class), so callers can pre-select it. The
+ * walk starts at `rcvr class`, so a class receiver gets its metaclass chain and
+ * each row reports its own side (`cls isMeta`) — a class-side method lives on
+ * the metaclass, and the chain crosses into `Class` and its superclasses, which
+ * are instance-side. For each
  * class: its home dictionary (the symbol-list dictionary that binds the class
  * object under its own name, through the shared `homeDictionaryNameExpr`; ''
  * when nothing in the symbol list binds it, so not an editable target) and
@@ -435,11 +442,9 @@ export function getReceiverClassChain(
   try {
     // selector is a method selector (no quotes), but guard the quote anyway.
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel rows base nm dn impl |
+    const code = `| rcvr cls sel rows base nm dn impl |
 rcvr := Object _objectForOop: ${receiverOop}.
-(rcvr isKindOf: Class)
-  ifTrue: [ cls := rcvr. meta := true ]
-  ifFalse: [ cls := rcvr class. meta := false ].
+cls := rcvr class.
 sel := '${sel}' asSymbol.
 rows := OrderedCollection new.
 [ cls notNil ] whileTrue: [
@@ -448,7 +453,7 @@ rows := OrderedCollection new.
   dn := ${homeDictionaryNameExpr('base')}.
   impl := cls includesSelector: sel.
   rows add: nm, (String with: Character tab),
-    (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+    (cls isMeta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
     dn, (String with: Character tab), (impl ifTrue: ['1'] ifFalse: ['0']).
   cls := cls superclass ].
 rows inject: '' into: [:acc :r | acc isEmpty ifTrue: [r] ifFalse: [acc, (String with: Character lf), r]]`;
@@ -494,10 +499,13 @@ export interface BrowseTarget {
  * `includesSelector:` (the lookup result), then reports that class's home
  * dictionary (the shared `homeDictionaryNameExpr`: the symbol-list dictionary
  * that binds the class object under its own name) and the selector's method
- * category. A class receiver walks its class-side chain (isMeta true). Returns
- * undefined when the selector can't be found anywhere in the chain or on any
- * failure, so the caller degrades to a clear message rather than opening a
- * misleading browser.
+ * category. The walk starts at `rcvr class`, so a class receiver walks its
+ * METACLASS chain — a class-side method is not in its class's own method
+ * dictionary, and starting at the class itself found no class-side frame
+ * browsable at all — and `isMeta` comes from the definer, since that chain runs
+ * on into `Class` and its instance-side superclasses. Returns undefined when the
+ * selector can't be found anywhere in the chain or on any failure, so the caller
+ * degrades to a clear message rather than opening a misleading browser.
  */
 export function getBrowseTarget(
   session: ActiveSession,
@@ -506,11 +514,9 @@ export function getBrowseTarget(
 ): BrowseTarget | undefined {
   try {
     const sel = selector.replace(/'/g, "''");
-    const code = `| rcvr meta cls sel def base dn |
+    const code = `| rcvr cls sel def base dn |
 rcvr := Object _objectForOop: ${receiverOop}.
-(rcvr isKindOf: Class)
-  ifTrue: [ cls := rcvr. meta := true ]
-  ifFalse: [ cls := rcvr class. meta := false ].
+cls := rcvr class.
 sel := '${sel}' asSymbol.
 def := nil.
 [ cls notNil and: [ def isNil ] ] whileTrue: [
@@ -520,7 +526,7 @@ def isNil ifTrue: [ '' ] ifFalse: [
   base := def theNonMetaClass.
   dn := ${homeDictionaryNameExpr('base')}.
   base name asString, (String with: Character tab),
-    (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+    (def isMeta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
     dn, (String with: Character tab),
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
 
@@ -544,9 +550,11 @@ def isNil ifTrue: [ '' ] ifFalse: [
  * The pieces needed to create the method a `doesNotUnderstand:` is asking for.
  * `className` is the (non-meta) name of the class the method should be added to;
  * `isMeta` is true when the unknown message was sent to a *class* (so a
- * class-side method is wanted). `dictName` is the dictionary that class lives in
- * (for the gemstone:// new-method URI); '' when the class isn't in the user's
- * symbol list. `selector` / `argCount` come straight from the failed send.
+ * class-side method is wanted). `dictName` is that class's home dictionary via
+ * the shared `homeDictionaryNameExpr` — resolved by identity, since this URI is
+ * where a new method gets WRITTEN and a shadowed name must not send it to the
+ * wrong class; '' when nothing in the symbol list binds it under its own name.
+ * `selector` / `argCount` come straight from the failed send.
  */
 export interface DnuInfo {
   className: string;
@@ -598,9 +606,7 @@ dnuTop isNil
     (rcvr isKindOf: Class)
       ifTrue: [ base := rcvr. meta := true ]
       ifFalse: [ base := rcvr class. meta := false ].
-    dn := ''.
-    System myUserProfile symbolList do: [:d |
-      (d includesKey: base name asSymbol) ifTrue: [ dn := d name ] ].
+    dn := ${homeDictionaryNameExpr('base')}.
     base name asString, (String with: Character tab),
       (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
       dn, (String with: Character tab),

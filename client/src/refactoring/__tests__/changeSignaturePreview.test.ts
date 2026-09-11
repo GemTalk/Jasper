@@ -176,7 +176,7 @@ describe('selector shape helpers', () => {
     expect(isBinarySelector('\\')).toBe(true);
     expect(isBinarySelector('\\\\')).toBe(true);
     expect(selectorArgCount('\\')).toBe(1);
-    expect(validateSignatureParts(['\\'], 'size')).toBeUndefined();
+    expect(validateSignatureParts(['\\'], 'size', 1)).toBeUndefined();
   });
 
   it('splits a keyword selector into its parts and a non-keyword into one', () => {
@@ -294,27 +294,27 @@ describe('permutation and no-op detection', () => {
 
 describe('signature validation', () => {
   it('accepts a well-formed keyword rename', () => {
-    expect(validateSignatureParts(['copyTo:', 'from:'], 'copyFrom:to:')).toBeUndefined();
+    expect(validateSignatureParts(['copyTo:', 'from:'], 'copyFrom:to:', 2)).toBeUndefined();
   });
 
   it('rejects an empty part', () => {
-    expect(validateSignatureParts(['at:', ''], 'at:put:')).toMatch(/empty/);
+    expect(validateSignatureParts(['at:', ''], 'at:put:', 2)).toMatch(/empty/);
   });
 
   it('rejects a keyword part missing its colon', () => {
-    expect(validateSignatureParts(['at', 'put:'], 'at:put:')).toMatch(/colon/);
+    expect(validateSignatureParts(['at', 'put:'], 'at:put:', 2)).toMatch(/colon/);
   });
 
   it('rejects a multi-part non-keyword selector', () => {
-    expect(validateSignatureParts(['foo', 'bar'], 'foo')).toMatch(/keyword parts/);
+    expect(validateSignatureParts(['foo', 'bar'], 'foo', 2)).toMatch(/keyword parts/);
   });
 
   it('accepts adding a parameter to a unary selector', () => {
-    expect(validateSignatureParts(['foo:'], 'foo')).toBeUndefined();
+    expect(validateSignatureParts(['foo:'], 'foo', 1)).toBeUndefined();
   });
 
   it('rejects an unchanged single-part selector as no change', () => {
-    expect(validateSignatureParts(['foo'], 'foo')).toMatch(/Change the selector/);
+    expect(validateSignatureParts(['foo'], 'foo', 0)).toMatch(/Change the selector/);
   });
 
   it('finds a duplicate argument name', () => {
@@ -324,5 +324,44 @@ describe('signature validation', () => {
 
   it('ignores blank argument names when checking for duplicates', () => {
     expect(duplicateArgName(['', ''])).toBeUndefined();
+  });
+});
+
+// ── The arity guard ─────────────────────────────────────────
+//
+// Shape alone does not make a legal method pattern: `fullAddress:` with no argument
+// passes every part-by-part check and still cannot be compiled. Nothing between the
+// editor and the engine counted keywords against arguments, so this is the backstop
+// whatever route the edit arrived by.
+
+describe('validateSignatureParts arity guard', () => {
+  it('rejects a one-keyword selector carrying no argument', () => {
+    expect(validateSignatureParts(['fullAddress:'], 'fullAddress', 0)).toMatch(
+      /takes 1 argument, but 0 were given/,
+    );
+  });
+
+  it('accepts a one-keyword selector carrying one argument', () => {
+    expect(validateSignatureParts(['fullAddress:'], 'fullAddress', 1)).toBeUndefined();
+  });
+
+  it('rejects a two-keyword selector carrying one argument', () => {
+    expect(validateSignatureParts(['at:', 'put:'], 'at:', 1)).toMatch(
+      /takes 2 arguments, but 1 was given/,
+    );
+  });
+
+  it('accepts a two-keyword selector carrying two arguments', () => {
+    expect(validateSignatureParts(['at:', 'put:'], 'at:', 2)).toBeUndefined();
+  });
+
+  it('expects no argument for a unary selector', () => {
+    expect(validateSignatureParts(['width'], 'height', 0)).toBeUndefined();
+    expect(validateSignatureParts(['width'], 'height', 1)).toMatch(/takes 0 arguments, but 1/);
+  });
+
+  it('expects exactly one argument for a binary selector', () => {
+    expect(validateSignatureParts(['<'], '>', 1)).toBeUndefined();
+    expect(validateSignatureParts(['<'], '>', 0)).toMatch(/takes 1 argument, but 0/);
   });
 });

@@ -200,11 +200,14 @@ export class SystemBrowser {
   /**
    * ALWAYS open a NEW browser in `viewColumn` and navigate it to `result` once it
    * signals ready (via `pendingNavigation`). Unlike `navigateBeside`, this never
-   * reuses an existing browser — the caller (the Enhanced Debugger's "Browse"
-   * frame action) wants a fresh browser to the right of the debugger each time.
-   * The deferred navigation runs with `skipClassBrowser`, so the layout-disruptive
-   * side effects (setEditorLayout / ClassBrowser / GlobalsBrowser) that would
-   * displace open inspector panels are suppressed.
+   * reuses an existing browser: its caller wanted a fresh browser to the right of
+   * the debugger each time. NO CALLER REMAINS — the debugger's frame "Browse"
+   * routed to the GemStone Explorer (`gemstone.explorer.findClass`) when class
+   * browsing moved there. Kept, not deleted, because this file is frozen; nothing
+   * in the extension reaches it any more. The deferred navigation runs with
+   * `skipClassBrowser`, so the layout-disruptive side effects (setEditorLayout /
+   * ClassBrowser / GlobalsBrowser) that would displace open inspector panels are
+   * suppressed.
    */
   static openAndNavigate(
     session: ActiveSession,

@@ -112,6 +112,7 @@ import {
   isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
+import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -676,6 +677,9 @@ export function activate(context: vscode.ExtensionContext) {
       { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
       { scheme: 'gemstone', language: METHOD_LANGUAGE },
     ],
+    // Class definitions are the one document in this selector the formatter declines,
+    // and an LSP server cannot say so per URI. See formattingMiddleware.ts.
+    middleware: { provideDocumentFormattingEdits },
     synchronize: {
       configurationSection: 'gemstoneSmalltalk',
     },

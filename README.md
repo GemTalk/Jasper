@@ -252,14 +252,24 @@ Installing the support does not by itself change what **Inspect It** opens. The 
 
 ### Debugging
 
-When code execution hits an error, a **Debug** button opens the VS Code debugger with:
+When code execution hits an error, a **Debug** button opens the GemStone
+Debugger — a Smalltalk-style panel in its own editor column, with the frame's
+source in the pane directly below it:
 
 - Full stack trace with `ClassName >> #selector` frame names
-- Click any frame to view its method source
-- **Arguments & Temps** and **Receiver** variable scopes with drill-down
-- Step Over, Step Into, Step Out, and Continue
-- Restart Frame support
-- Evaluate expressions in the Debug Console in any frame context
+- The top frame's source opens with the debugger; selecting another frame swaps it
+- **Receiver**, **Instance variables** and **Arguments & Temps** panes, with
+  drill-down into any value and single-level revert of an edited slot
+- Step Over, Step Into, Step Through, Restart Frame, Run to Cursor and Resume
+- Evaluate an expression in any frame's context, and see values inline in the source
+- Save the source pane to recompile and re-enter the method (edit-and-continue)
+- Right-click a frame to **Browse** it — the GemStone Explorer cascades to the
+  class the running method is defined in and opens that method
+
+The older VS Code (DAP) debugger has not been removed — the `gemstone` debug
+type is still registered — but nothing offers it any more, and it is not a route
+you can take from the Run and Debug view: attaching needs the GCI session id and
+the suspended process's OOP, which only a halt knows. Treat it as dormant.
 
 ### Breakpoints
 

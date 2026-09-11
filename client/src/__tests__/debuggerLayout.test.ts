@@ -248,6 +248,25 @@ describe('setSourceRatioInLayout / columnPaneSizes', () => {
     expect(layout.groups.map((g) => g.size)).toEqual([200, 200, 200, 400]); // others untouched
   });
 
+  it('declines when the two panes sit side by side instead of stacked', () => {
+    // Where the carve declined, the source editor still opens at the panel's
+    // column plus one and VS Code creates that group on demand — so the two are
+    // adjacent, but they are COLUMNS, not a stacked pair. Resizing them would
+    // apply a panel-over-source height ratio to two widths, and the divider
+    // sampler would then remember that as the user's position.
+    const sideBySide = (): EditorGroupLayout => ({
+      orientation: HORIZONTAL,
+      groups: [{ size: 400 }, { size: 500 }, { size: 300 }],
+    });
+
+    expect(columnPaneSizes(sideBySide(), 3)).toBeUndefined();
+    expect(sourceRatioFromLayout(sideBySide(), 3)).toBeUndefined();
+
+    const layout = sideBySide();
+    expect(setSourceRatioInLayout(layout, 3, 0.25)).toBe(false);
+    expect(layout.groups.map((g) => g.size)).toEqual([400, 500, 300]); // untouched
+  });
+
   it('declines when there is nothing above the source to pair it with', () => {
     // First leaf in its branch, or first in the grid — not a shape we made.
     const layout: EditorGroupLayout = {

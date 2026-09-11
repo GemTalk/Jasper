@@ -34,7 +34,6 @@ import {
   parseUri,
   parseMethodUri,
   listOpenGemstoneTabs,
-  tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
 import { gemstoneDocumentLanguage } from './languageIds';
@@ -183,12 +182,16 @@ const ivarHighlightDecoration = vscode.window.createTextEditorDecorationType({
 //   - 'keep': a double-click open — the same doc re-shown as a permanent (non-
 //     preview) tab, promoting the preview in place so a later single click won't
 //     replace it.
-//   - 'pin': the 📌 action — a pinned tab added to the group WITHOUT stealing the
-//     view (the tab you were reading stays showing).
+//   - 'pin': the 📌 action — a pinned tab added to the group AND raised, so the
+//     thing you explicitly asked to keep is the one you are looking at. Explicit
+//     beats implicit: a later single-click navigation opens in the preview tab and
+//     leaves the pin alone, so the pin outlives the browsing it interrupts. Focus
+//     follows the view into the editor (unlike 'preview'/'keep', which keep it in
+//     the tree) because a pin is a request to read the thing, not to navigate past it.
 export type OpenSourceMode = 'preview' | 'keep' | 'pin';
 
 // Open a gemstone:// source document in the editor area. All of this Explorer's
-// source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
+// source editors live as tabs in ONE group (see sourceEditorPlacement.ts), so the
 // preview tab and every pinned tab sit next to each other in one row. `placement`
 // scopes this to editors this Explorer opened, so it never invades the System
 // Browser's group (see sourceEditorPlacement.ts).
@@ -218,16 +221,19 @@ export async function openGemstoneDocument(
     return;
   }
 
-  // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
-  // what's showing, add + pin the tab, then restore what was showing so a new pin
-  // just parks a background tab beside the one you're reading. Pinning the method
-  // that's currently the preview simply promotes it to a pinned tab.
-  const uriStr = doc.uri.toString();
-  const showingTab =
-    sourceColumn !== undefined
-      ? vscode.window.tabGroups.all.find((g) => g.viewColumn === sourceColumn)?.activeTab
-      : undefined;
-  const showing = showingTab ? tabInputUri(showingTab)?.toString() : undefined;
+  // PIN. Bring the document into our group, make it the active tab, and pin it. The
+  // active-tab step is not just presentation: `workbench.action.pinEditor` acts on
+  // whatever is active, so the target has to be raised before it can be pinned at
+  // all — hence `preserveFocus: false`. We then leave it raised. Pinning the
+  // document that is already the preview simply promotes it to a pinned tab.
+  //
+  // We deliberately do NOT restore whichever tab was showing before. Doing so used
+  // to park the pin as a background tab, which made 📌 read as a flicker that did
+  // nothing — you had to hunt the tab row for what you had just asked to keep. The
+  // concern that motivated the restore was that a pin must not silently promote the
+  // preview tab you were browsing; that still holds, and it still does not happen —
+  // the previous preview keeps its own preview state and is simply no longer active,
+  // so the next single-click navigation reuses it exactly as before.
   await vscode.window.showTextDocument(doc, {
     viewColumn: targetColumn,
     preview: false,
@@ -235,15 +241,6 @@ export async function openGemstoneDocument(
   });
   await vscode.commands.executeCommand('workbench.action.pinEditor');
   placement.remember(doc.uri);
-  if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
-    // Restore whatever was showing in its ORIGINAL preview/permanent state — a pin
-    // action must not silently promote the preview method you were just browsing.
-    await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
-      viewColumn: sourceColumn,
-      preview: showingTab?.isPreview ?? false,
-      preserveFocus: true,
-    });
-  }
 }
 
 // ── GemStone Explorer ───────────────────────────────────────────────────────
@@ -4901,11 +4898,28 @@ export class ExplorerController {
   //
   // `dictName` narrows a named lookup to one dictionary, for a caller that has
   // already resolved which dictionary owns the class it means — the Inspector's
-  // Browse Class does. Without it a class name shadowed across dictionaries
-  // resolves to whichever entry comes first, which can be the wrong class of the
-  // same name. Ignored when no entry matches it, so a stale hint still lands on
-  // the class rather than on nothing.
-  async findClass(name?: string, sessionId?: number, dictName?: string): Promise<void> {
+  // Browse Class and the debugger's Browse both do. Without it a class name
+  // shadowed across dictionaries resolves to whichever entry comes first, which
+  // can be the wrong class of the same name.
+  //
+  // A dictionary holding no class of that name is still fallen back on rather
+  // than refused — landing on the class beats landing on nothing, and the
+  // dictionary may simply be stale — but the fallback SAYS SO, naming the
+  // dictionary it landed in instead. Both callers resolve the dictionary from
+  // the live stone a call earlier, so a miss is as likely a disagreement as
+  // staleness, and the fallback lands on precisely the wrong-class-of-the-same-
+  // name this parameter exists to prevent: silently, on the class the user is
+  // least equipped to notice is wrong. Only a name in NO dictionary is refused.
+  //
+  // `method` lands on one of the class's methods rather than on the class: its
+  // row is selected and its source opened. That's what Browse from a debugger
+  // frame wants — the method that is actually running.
+  async findClass(
+    name?: string,
+    sessionId?: number,
+    dictName?: string,
+    method?: { selector: string; isMeta: boolean },
+  ): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
     // An explicit sessionId (GemStone Search) pins the reveal to the result's own session.
@@ -4932,11 +4946,25 @@ export class ExplorerController {
     if (name && name.trim()) {
       const trimmed = name.trim();
       const lower = trimmed.toLowerCase();
-      const inDict = dictName ? entries.filter((e) => e.dictName === dictName) : [];
-      const pool = inDict.length > 0 ? inDict : entries;
-      chosen =
+      const matchIn = (pool: queries.ClassNameEntry[]) =>
         pool.find((e) => e.className === trimmed) ??
         pool.find((e) => e.className.toLowerCase() === lower);
+      // The named dictionary first, and ONLY it: a pool that falls back to every
+      // class whenever the dictionary contributes none conflates "no such
+      // dictionary" with "not in that dictionary", and the second is the case
+      // that happens — a dictionary full of classes that doesn't hold this one.
+      chosen = dictName
+        ? matchIn(entries.filter((e) => e.dictName === dictName))
+        : matchIn(entries);
+      if (!chosen && dictName) {
+        chosen = matchIn(entries);
+        if (chosen) {
+          void vscode.window.showWarningMessage(
+            `No class "${trimmed}" in ${dictName}; showing the one in ${chosen.dictName} instead — ` +
+              'it may not be the one you meant.',
+          );
+        }
+      }
       if (!chosen) {
         void vscode.window.showWarningMessage(`No class matching "${trimmed}".`);
         return;
@@ -4950,7 +4978,18 @@ export class ExplorerController {
       if (!picked) return;
       chosen = picked.entry;
     }
-    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
+    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
+      revealMethod: method,
+    });
+    if (!method) return;
+    // revealClass leaves state untouched when its queries fail (it warns itself);
+    // reading the method list then would read the PREVIOUS class's selectors.
+    if (this.state.className !== chosen.className) return;
+    if (!(await this.openRevealedMethodSource(method.isMeta, method.selector))) {
+      void vscode.window.showWarningMessage(
+        `${chosen.className} does not implement ${method.isMeta ? 'class method ' : ''}#${method.selector}.`,
+      );
+    }
   }
 
   /** Reveal+select a method row by class + selector, resolving the class across the whole symbol
@@ -5301,10 +5340,9 @@ export class ExplorerController {
     if (this.state.className !== landing.className) return false;
     if (!revealMethod) return true;
 
-    const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
-      (i) => i.selector === revealMethod.selector,
-    );
-    if (!info) {
+    // revealClass has already selected the row; reopen the source too, since a
+    // method landing is a method the user was reading.
+    if (!(await this.openRevealedMethodSource(revealMethod.isMeta, revealMethod.selector))) {
       void vscode.window.showWarningMessage(
         `${landing.className} no longer implements ${revealMethod.isMeta ? 'class method ' : ''}${revealMethod.selector}.`,
       );
@@ -5314,14 +5352,23 @@ export class ExplorerController {
       const { selector: _selector, isMeta: _isMeta, ...reached } = landing;
       return reached;
     }
-    // revealClass has already selected the row; reopen the source too, since a
-    // method landing is a method the user was reading.
+    return true;
+  }
+
+  // Open the source of the method row `revealClass` has just selected. Answers
+  // false when the loaded class doesn't implement that selector on that side, so
+  // each caller can word its own "no longer there" message.
+  private async openRevealedMethodSource(isMeta: boolean, selector: string): Promise<boolean> {
+    const info = this.selectorsFor(isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => i.selector === selector,
+    );
+    if (!info) return false;
     await this.openMethod(
       new MethodItem(
-        revealMethod.isMeta,
+        isMeta,
         info,
         this.groupMethodsByCategory() ? info.category : undefined,
-        this.methodSourceUri(revealMethod.isMeta, info),
+        this.methodSourceUri(isMeta, info),
       ),
     );
     return true;
@@ -8156,13 +8203,16 @@ export function registerGemStoneExplorer(
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
     // the session its result came from rather than whatever session is selected now.
+    // `dictName` pins a shadowed class name to one dictionary, and `method`
+    // lands on one of its methods (both used by the debugger's Browse).
     vscode.commands.registerCommand(
       'gemstone.explorer.findClass',
-      (name?: string, sessionId?: number, dictName?: string) =>
+      (name?: string, sessionId?: number, dictName?: string, method?: MethodCommandArg) =>
         ctl.findClass(
           typeof name === 'string' ? name : undefined,
           typeof sessionId === 'number' ? sessionId : undefined,
           typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
+          methodArg(method),
         ),
     ),
     // Reveal+select a method row by class + selector (used by Undo, #434).

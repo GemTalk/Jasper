@@ -155,9 +155,10 @@ export function symbolListIndexOfClassExpr(classVar: string): string {
  *  or when that dictionary is unnamed. `classVar` must already be the non-meta class.
  *
  *  The single home for "which dictionary owns THIS class, by name": a class rename's
- *  scope, the debugger's Browse, and both inspectors' Browse Class all ask it, and each
- *  needs the same answer — a `gemstone://` URI or a browser navigation built on a
- *  dictionary that merely references the class lands somewhere the user didn't ask for.
+ *  scope, the debugger's Browse and its frame source URIs, the new-method URI behind a
+ *  doesNotUnderstand:, and both inspectors' Browse Class all ask it, and each needs the
+ *  same answer — a `gemstone://` URI or a browser navigation built on a dictionary that
+ *  merely references the class lands somewhere the user didn't ask for.
  *  Resolves through {@link symbolListIndexOfClassExpr}, so the identity idiom itself
  *  stays in one place too.
  *
