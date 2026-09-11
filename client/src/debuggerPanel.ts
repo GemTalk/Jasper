@@ -11,15 +11,16 @@ import { SMALLTALK_LANGUAGE } from './languageIds';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
 import { routeInspect, InspectorHandle } from './inspectRouter';
-import { SystemBrowser } from './systemBrowser';
-import { logError, logInfo } from './gciLog';
+import { logError, logInfo, logWarning } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
 import { extensionPathFrom } from './extensionPath';
 import {
+  CARVE_RETRY_DELAYS_MS,
   DEFAULT_SOURCE_RATIO,
   EditorGroupLayout,
   columnPaneSizes,
   fitSourceRatio,
+  flattenLayoutLeaves,
   planDebuggerGrid,
   setSourceRatioInLayout,
   sourceRatioFromLayout,
@@ -77,10 +78,12 @@ const TOOLBAR_ICONS: Record<string, string> = {
 
 /**
  * GemStone Debugger — a roomy, Smalltalk-style debugger rendered as a VS Code
- * webview, offered *alongside* the existing DAP debugger. Whichever entry point
- * the user picks (DAP "Debug" vs. this "Enhanced Debug") owns the suspended
- * `gsProcess` for that error, so the two never coexist on the same process.
- * Closing the panel releases (terminates) that suspended process.
+ * webview. It is what the error notifier's "Debug" opens, and it owns the
+ * suspended `gsProcess` for that error; closing the panel releases (terminates)
+ * that process. The DAP debugger is still REGISTERED but is now dormant: its
+ * attach configuration requires `sessionId` and `gsProcess`, and nothing
+ * surfaces a live process OOP for a user to put in a launch configuration, so
+ * the two cannot coexist on one process.
  *
  * This panel is a SECOND consumer of the DAP-free data layer in
  * `debugQueries.ts` (the DAP `GemStoneDebugSession` is the first). It mirrors
@@ -229,6 +232,48 @@ export function formatFrameLabel(p: FrameLabelParts): string {
     classPart = `${p.receiverClass} (${p.definingClass})`;
   }
   return `${prefix}${classPart}>>#${p.selector}`;
+}
+
+/** The dictionary that holds the GemStone kernel classes: a class bound there is
+ *  part of the base image rather than the user's own code. */
+const BASE_CLASS_DICT = 'Globals';
+
+/**
+ * One row of the "implement #<selector> in which class?" QuickPick — the label
+ * and its description.
+ *
+ * The label carries the SIDE (`Foo class`, the way `formatFrameLabel` writes a
+ * defining class). The chain crosses from a metaclass into `Class` and its
+ * instance-side superclasses, so a class receiver's chain holds BOTH
+ * `Object class` and `Object`; the picked row is what supplies `isMeta` for the
+ * `gemstone://` URI the method is written to. Bare class names would put two
+ * rows spelled `Object` in front of the user and then silently write to
+ * whichever one they didn't mean.
+ *
+ * A class whose home dictionary is `Globals` is a GemStone base class. Those
+ * rows are still offered — `Class`, `ClassDescription` and `Behavior` are real
+ * places to implement, and a genuine (if heavy) answer — but the row says what
+ * it is, because adding to or reimplementing a method there changes behaviour
+ * for every object in the stone, not just this receiver.
+ */
+export function implementTargetRow(
+  c: debug.ClassHomeInfo,
+  selector: string,
+): { label: string; description: string } {
+  const label = `${c.className}${c.isMeta ? ' class' : ''}`;
+  // No home dictionary → no editable gemstone:// URI; pickAndOpenImplementTemplate
+  // refuses such a pick, so the row says why rather than promising an editor.
+  if (!c.dictName) return { label, description: '(not in your symbol list)' };
+  const home =
+    c.dictName === BASE_CLASS_DICT
+      ? `in ${c.dictName} — a GemStone base class, take care`
+      : `in ${c.dictName}`;
+  return {
+    label,
+    description: c.implementsSelector
+      ? `already implements #${selector} — opens it to edit (${home})`
+      : `implement here (${home})`,
+  };
 }
 
 /**
@@ -1309,14 +1354,23 @@ export class DebuggerPanel {
     // Through the getter, never `this.panel` directly: this is read during
     // teardown, when the panel throws rather than answering.
     const panel = this.panelGroupColumn;
+    // The pair's second leaf is the column after the panel's. Where the carve
+    // declined there is no such group yet, so `showTextDocument` has VS Code
+    // create it on demand and the source arrives in a column of its own beside
+    // the debugger rather than below it. That costs a column, but both halves
+    // stay on screen — which the panel's OWN column cannot do: a group shows one
+    // tab at a time, so the source would cover the debugger and leave frames to
+    // be clicked in a panel that is no longer visible.
     if (panel !== undefined) return panel + 1;
     return this.sourceColumn;
   }
   /**
-   * Resolves once the panel/source column pair exists in the editor grid. Every
-   * source open awaits it, so the source editor always opens into a group that
-   * is already there at the right size — instead of splitting one on the fly and
-   * landing wherever the split happened to go.
+   * Resolves once the carve has settled — with the panel/source column pair in
+   * the editor grid, or with the decline that leaves VS Code to create the
+   * source group on demand (see `sourceGroupColumn`). Every source open awaits
+   * it, so the source editor opens into a group that is already there at the
+   * right size wherever it can, instead of splitting one on the fly and landing
+   * wherever the split happened to go.
    */
   private gridReady: Promise<void> = Promise.resolve();
   /**
@@ -1957,6 +2011,10 @@ export class DebuggerPanel {
       // source in the source column and steals focus from the new-method editor we
       // just opened. The banner update clears the Create button and keeps focus on
       // the new-method tab so the user can type immediately.
+      //
+      // A banner does NOT end the webview's busy span (the Cancel path posts one
+      // mid-op), which is why `createDnuMethod` is not in its SERVER_BOUND set:
+      // otherwise this reply strands a spinner until the user saves.
       this.errorMessage =
         `Editing new method #${dnu.selector} below — fill in the body, then save it ` +
         '(Ctrl+S / Cmd+S) to create the method. Then press Resume (▶) to run it.';
@@ -1972,11 +2030,16 @@ export class DebuggerPanel {
    * "Implement <selector> in <ReceiverClass>" (T2/T3 override): the selected
    * frame is running a method the receiver INHERITED; open an editor to implement
    * that selector somewhere along the receiver's inheritance chain. The candidate
-   * classes (getReceiverClassChain — the receiver's class up through Object) and
-   * the selector/arg-count come from the frame. With more than one candidate, a
-   * QuickPick lets the user choose where in the hierarchy to implement (the
-   * receiver's class is pre-selected); each entry notes its home dictionary and
-   * whether it ALREADY implements the selector.
+   * classes (getReceiverClassChain — the receiver's class and every superclass
+   * along the lookup chain) and the selector/arg-count come from the frame. For a
+   * CLASS receiver that chain is the metaclass one, which runs up through
+   * `Object class` and then crosses into `Class`, `ClassDescription`, `Behavior`
+   * and `Object` — instance-side entries, and real (if heavy) places to
+   * implement, so they are offered rather than withheld. With more than one
+   * candidate, a QuickPick lets the user choose where in the hierarchy to
+   * implement (the receiver's class is pre-selected); each entry names its side,
+   * its home dictionary, whether that dictionary makes it a GemStone base class,
+   * and whether it ALREADY implements the selector (see implementTargetRow).
    *
    * For a class that does NOT yet implement it → a pre-filled stub (reuses the
    * create-method-from-DNU template machinery). For one that ALREADY does → its
@@ -2008,8 +2071,9 @@ export class DebuggerPanel {
     }
     // The class of the frame's `self` — the HOME receiver in a block frame, so a
     // block frame resolves the same chain its method frame would — and every
-    // superclass up to Object: each a place the selector could be implemented,
-    // flagged with whether it already is.
+    // superclass along the lookup chain (the metaclass chain for a class
+    // receiver, which crosses into instance-side `Class` and above): each a place
+    // the selector could be implemented, flagged with whether it already is.
     const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
@@ -2024,21 +2088,30 @@ export class DebuggerPanel {
   }
 
   /**
-   * "Browse" a stack frame (right-click menu): open a NEW System Browser to the
-   * right of the debugger pane, navigated to the class+method actually running in
-   * this frame. The target is resolved by method lookup on the receiver
-   * (`getBrowseTarget`), so an inherited method opens on its DEFINING class — the
-   * source that's really executing — rather than the receiver's concrete class.
-   * Degrades to an in-panel message for a doit frame, a receiver we can't resolve,
-   * a selector not found in the chain, or a class outside the user's symbol list.
+   * "Browse" a stack frame (right-click menu): cascade the GemStone Explorer's
+   * panes to the class+method actually running in this frame, and open that
+   * method's source. Class browsing lives in the Explorer, so this goes through
+   * its own `findClass` command rather than opening a System Browser.
+   *
+   * The target is resolved by method lookup on the receiver (`getBrowseTarget`),
+   * so an inherited method opens on its DEFINING class — the source that's really
+   * executing — rather than the receiver's concrete class. Degrades through
+   * `browseDeclined` — a panel banner AND a toast — for a receiver we can't
+   * resolve, a selector not found in the chain, a class outside the user's
+   * symbol list, or a cascade the Explorer rejects.
+   *
+   * A doit frame normally never gets here at all: it carries `browsable: false`,
+   * and the webview hides the Browse item for such a frame (see buildFrame and
+   * debuggerView's context-menu handler) — there is no class>>selector to land
+   * on, so withholding the action beats offering one that only apologises. The
+   * check below is the backstop for the two ever disagreeing.
    */
   private async browseFrame(displayLevel: number): Promise<void> {
     const frame = this.frames.find((f) => f.level === displayLevel);
     if (!frame) return;
     const raw = this.rawFrames.find((r) => r.serverLevel === frame.serverLevel);
     if (!raw || raw.isExecutedCode || !raw.selector) {
-      this.errorMessage = 'Cannot browse this frame — it has no class or method.';
-      this.postInit();
+      this.browseDeclined('Cannot browse this frame — it has no class or method.');
       return;
     }
 
@@ -2047,39 +2120,60 @@ export class DebuggerPanel {
       selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
-      this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
-      this.postInit();
+      this.browseDeclined(`Could not resolve the receiver of ${frame.label}.`);
       return;
     }
 
     const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
-      this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
-      this.postInit();
+      this.browseDeclined(`Could not locate #${raw.selector} to browse it.`);
       return;
     }
     if (!target.dictName) {
-      this.errorMessage = `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`;
-      this.postInit();
+      this.browseDeclined(
+        `Can't browse #${raw.selector}: ${target.className} isn't in your symbol list.`,
+      );
       return;
     }
 
-    // Open the browser to the RIGHT of the debugger pane: focus the debugger's
-    // group so ViewColumn.Beside resolves relative to it, then open a fresh
-    // browser there and navigate it to the running method's defining class.
-    this.panel.reveal(this.panel.viewColumn, false);
-    SystemBrowser.openAndNavigate(
-      this.session,
-      {
-        dictName: target.dictName,
-        className: target.className,
-        isMeta: target.isMeta,
-        selector: raw.selector,
-        category: target.category,
-        environmentId: 0,
-      },
-      vscode.ViewColumn.Beside,
-    );
+    // The dictionary goes along with the class name: a name shadowed across two
+    // dictionaries would otherwise resolve to whichever entry comes first, which
+    // can be a different class of the same name. The session id pins the reveal
+    // to the stone this halt is on rather than whichever session is selected now.
+    // Promise.resolve, not `.catch` straight off the call: `executeCommand`
+    // answers a `Thenable`, which is not promised to be a real Promise.
+    void Promise.resolve(
+      vscode.commands.executeCommand(
+        'gemstone.explorer.findClass',
+        target.className,
+        this.sessionId,
+        target.dictName,
+        { selector: raw.selector, isMeta: target.isMeta },
+      ),
+    ).catch((e: unknown) => {
+      // Every other way this method can fail says so in the panel. A rejected
+      // command must not be the one exception that reports nothing to the user
+      // and surfaces only as an unhandled rejection in the extension host — the
+      // Explorer's cascade can reject (it opens documents and resolves a
+      // session), and this call is fire-and-forget.
+      logError(this.sessionId, e instanceof Error ? e.message : String(e));
+      if (this.disposed) return;
+      this.browseDeclined(`Could not browse ${target.className} >> #${raw.selector}.`);
+    });
+  }
+
+  /**
+   * Report a Browse that could not go anywhere, in BOTH places: the panel's
+   * banner, and a toast.
+   *
+   * The banner alone was missed — Browse moves attention to the Explorer, so a
+   * line changing in the pane just looked away from reads as nothing happening.
+   * The Inspector's Browse Class already warns with a toast for the same refusal.
+   */
+  private browseDeclined(message: string): void {
+    this.errorMessage = message;
+    this.postInit();
+    void vscode.window.showWarningMessage(message);
   }
 
   /**
@@ -2144,22 +2238,21 @@ export class DebuggerPanel {
     // chain to implement (receiver's class first; each marked override vs edit).
     logInfo(
       `[GemStone Debugger] implement #${selector}: chain = ` +
-        chain.map((c) => `${c.className}${c.implementsSelector ? '(impl)' : ''}`).join(' → '),
+        chain
+          .map(
+            (c) =>
+              `${implementTargetRow(c, selector).label}${c.implementsSelector ? '(impl)' : ''}`,
+          )
+          .join(' → '),
     );
     let targetIndex = 0;
     if (chain.length > 1) {
       const pick = await vscode.window.showQuickPick(
-        chain.map((c, i) => ({
-          label: c.className,
-          description: !c.dictName
-            ? '(not in your symbol list)'
-            : c.implementsSelector
-              ? `already implements #${selector} — opens it to edit (in ${c.dictName})`
-              : `implement here (in ${c.dictName})`,
-          index: i,
-        })),
+        chain.map((c, i) => ({ ...implementTargetRow(c, selector), index: i })),
         {
-          placeHolder: `Implement #${selector} in which class? (receiver is ${chain[0].className})`,
+          placeHolder:
+            `Implement #${selector} in which class? ` +
+            `(receiver is ${implementTargetRow(chain[0], selector).label})`,
           // The pick is triggered from the webview, which keeps/regains focus —
           // without this the QuickPick loses focus and auto-dismisses before the
           // user can see it (it just flashes). Keep it open until an explicit pick.
@@ -3840,10 +3933,13 @@ export class DebuggerPanel {
 
   /**
    * Open `uri` in the companion source editor and return it. The editor lives in
-   * the group directly below the panel — `sourceColumn`, carved with the panel's
-   * column before either existed (see `carveDebuggerColumn`), so this only has
-   * to open into it. Focus stays in the panel so clicking through frames stays
-   * fluid, and the doc opens as a reused preview tab (no pile-up).
+   * the group directly below the panel — carved with the panel's column before
+   * either existed (see `carveDebuggerColumn`), so this only has to open into it;
+   * where the carve declined there is no such group and VS Code creates one on
+   * demand, beside the panel rather than below it (see `sourceGroupColumn`).
+   * Focus stays in the panel so clicking
+   * through frames stays fluid, and the doc opens as a reused preview tab (no
+   * pile-up).
    */
   private async showSourceEditor(uri: vscode.Uri): Promise<vscode.TextEditor> {
     await this.gridReady;
@@ -3895,10 +3991,12 @@ export class DebuggerPanel {
    *
    * Everything that RESIZES goes through this. The pair is identified by column
    * arithmetic (see locatePair), which is sound as long as the two panes are the
-   * ones the carve made adjacent. If the carve declined an unfamiliar grid, or
-   * the source ended up somewhere else entirely, that arithmetic would name some
-   * pre-existing group of the user's as "the panel" and resize it. Requiring
-   * adjacency to our own column is what makes that impossible.
+   * ones the carve made adjacent. If the source ended up somewhere else entirely,
+   * that arithmetic would name some pre-existing group of the user's as "the
+   * panel" and resize it; requiring adjacency to our own column is what makes
+   * that impossible. Adjacency is not sufficient, though — a declined carve
+   * leaves the source adjacent but SIDE BY SIDE — so `locatePair` also requires
+   * the two to stack, and every resize path declines on a grid we didn't carve.
    */
   private get ourPairColumns(): { panelColumn: number; sourceColumn: number } | undefined {
     const panelColumn = this.panelGroupColumn;
@@ -3916,9 +4014,17 @@ export class DebuggerPanel {
    * an inspector) comes through unchanged.
    *
    * Best-effort: if the grid can't be read, or doesn't have the shape we just
-   * made, it's left exactly as it is. The panel is still in a column of its own,
-   * and the source editor opens into the column after it — VS Code creates that
-   * group on demand, just without our sizing.
+   * made, it's left exactly as it is and the decline is LOGGED — a silent
+   * decline is how this went wrong before, since its only visible symptom is a
+   * source pane beside the debugger rather than below it. That is where the
+   * source lands on a decline (see `sourceGroupColumn`): a column of its own, so
+   * a declined carve costs a column, never a half you cannot see.
+   *
+   * The two declines are logged at different levels. A grid that cannot be read
+   * at all is an older VS Code without `vscode.getEditorLayout`: designed for,
+   * nothing wrong, and warning about it would put a line in the GCI log on every
+   * single halt. The warning is kept for the decline the re-read below exists to
+   * prevent — a grid we CAN read that never grew to hold the panel's group.
    *
    * Nothing undoes this on close: the panel and the source tab are the only
    * editors in the pair, so closing them leaves both groups empty and VS Code
@@ -3928,15 +4034,80 @@ export class DebuggerPanel {
    */
   private async carveDebuggerColumn(): Promise<void> {
     try {
-      const current =
-        await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      const plan = planDebuggerGrid(current, this.panelGroupColumn);
-      if (!plan) return;
+      const { layout, unreadable, reason } = await this.layoutContainingPanelGroup();
+      // The wait can span the whole back-off, and a panel closed inside it has
+      // already run its own empty-group sweep — splitting the column now would
+      // reshape whatever moved into it and leave a stray pane behind.
+      if (this.disposed) return;
+      const panelColumn = this.panelGroupColumn;
+      const plan = layout ? planDebuggerGrid(layout, panelColumn) : undefined;
+      if (!plan) {
+        const decline =
+          `Debugger could not carve a source pane below its panel in column ${panelColumn}` +
+          `${reason ? ` (${reason})` : ''}; the source will open in a column beside it.`;
+        if (unreadable) logInfo(decline);
+        else logWarning(decline);
+        return;
+      }
       await vscode.commands.executeCommand('vscode.setEditorLayout', plan.layout);
       this.sourceColumn = plan.sourceColumn;
-    } catch {
-      /* best-effort layout — see the note above */
+    } catch (e: unknown) {
+      logWarning(
+        `Debugger layout carve failed: ${e instanceof Error ? e.message : String(e)}; ` +
+          'the source will open in a column beside the panel.',
+      );
     }
+  }
+
+  /**
+   * The editor grid, read back once the panel's own group is IN it.
+   *
+   * `createWebviewPanel` returns before VS Code has registered the group it
+   * opened into, so the grid read immediately afterwards can still be the one
+   * from before the panel existed. `planDebuggerGrid` locates the panel by
+   * counting leaves, so against that grid it finds nothing, declines, and the
+   * pair is never carved — the whole failure, and it leaves no trace.
+   *
+   * So: re-read until the grid has at least as many leaves as the panel's column
+   * number, backing off a little each time. Only a grid that came back at all is
+   * retried; `getEditorLayout` answering nothing — or rejecting, which is how VS
+   * Code reports a command it doesn't have — means the command isn't there (an
+   * older VS Code), and no amount of waiting changes that.
+   *
+   * `unreadable` separates that from the anomaly this re-read was written for: a
+   * grid that answers, but never grows to hold the panel's group. Both leave
+   * `layout` undefined and both decline; only the second is worth a warning.
+   *
+   * The panel's column is re-read on every pass rather than passed in: until VS
+   * Code registers the group, `panelGroupColumn` answers the number we ASKED for
+   * (seeded in `create`), and the whole reason to wait is that the panel cannot
+   * yet say where it is. A column captured before the loop would also miss any
+   * renumbering inside it, and `planDebuggerGrid` would then split a group that
+   * isn't ours.
+   */
+  private async layoutContainingPanelGroup(): Promise<{
+    layout?: EditorGroupLayout;
+    unreadable: boolean;
+    reason?: string;
+  }> {
+    for (const delayMs of CARVE_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const panelColumn = this.panelGroupColumn;
+      let layout: EditorGroupLayout | undefined;
+      try {
+        layout = await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
+      } catch (e: unknown) {
+        // Carry the reason: this is nearly always "command not found" on an
+        // older VS Code, and the caller logs it at info — but an internal
+        // failure arrives the same way, and dropping its message would leave
+        // the one line we log saying nothing about why.
+        return { unreadable: true, reason: e instanceof Error ? e.message : String(e) };
+      }
+      if (!layout?.groups?.length) return { unreadable: true };
+      if (panelColumn === undefined) return { layout, unreadable: false };
+      if (flattenLayoutLeaves(layout).length >= panelColumn) return { layout, unreadable: false };
+    }
+    return { unreadable: false };
   }
 
   /**
@@ -3986,10 +4157,12 @@ export class DebuggerPanel {
    * second halt shares it instead of carving another one (`panels` holds every
    * live panel; two halts in one session can be open at once).
    */
-  private static liveDebuggerColumns(
-    sessionId: number,
-  ):
-    | { panelColumn: vscode.ViewColumn; sourceColumn: vscode.ViewColumn; gridReady: Promise<void> }
+  private static liveDebuggerColumns(sessionId: number):
+    | {
+        panelColumn: vscode.ViewColumn;
+        sourceColumn: vscode.ViewColumn;
+        gridReady: Promise<void>;
+      }
     | undefined {
     // This session's panels only. Two sessions are two stones' worth of work,
     // and sharing a column across them would also let one debugger's teardown
@@ -4007,7 +4180,11 @@ export class DebuggerPanel {
         // Its carve, too: the column pair exists only once that has finished,
         // and a second halt arriving mid-carve must wait for the same thing the
         // first one is waiting for rather than assume the split is already there.
-        return { panelColumn, sourceColumn, gridReady: dbg.gridReady };
+        return {
+          panelColumn,
+          sourceColumn,
+          gridReady: dbg.gridReady,
+        };
       }
     }
     return undefined;
@@ -4154,7 +4331,7 @@ export class DebuggerPanel {
   /**
    * Walk the suspended process's stack and build a label per frame. The naming
    * logic deliberately mirrors the DAP `stackTraceRequest`
-   * (gemstoneDebugSession.ts) so the Enhanced Debugger's stack matches the Run
+   * (gemstoneDebugSession.ts) so the GemStone Debugger's stack matches the Run
    * and Debug Call Stack frame-for-frame. Proves the `debugQueries` pipe works
    * from this second consumer before Stage 1 builds the real layout on top.
    */
@@ -4322,9 +4499,11 @@ export class DebuggerPanel {
    * "is this executed code?", shared by buildFrame (labelling/classification)
    * and revealFrameSource (source-pane routing) so the two can never disagree.
    *
-   *  - in the session's symbol list → `uriInfo` set (editable via gemstone://);
-   *  - resolvable class but not in the symbol list → `uriInfo` undefined, but
-   *    definingClassName/selector are still set — a real method, NOT executed code;
+   *  - bound under its own name in the session's symbol list → `uriInfo` set
+   *    (editable via gemstone://), on the dictionary holding THAT class;
+   *  - resolvable class that no symbol-list slot binds under its own name →
+   *    `uriInfo` undefined, but definingClassName/selector are still set — a
+   *    real method, NOT executed code;
    *  - no resolvable class at all (a doit) → isExecutedCode true.
    */
   private resolveHomeMethod(homeMethodOop: bigint): {
