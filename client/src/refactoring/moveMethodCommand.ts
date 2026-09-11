@@ -19,6 +19,7 @@ import { parseAnalysis, parseStartPreview, parsePage, parseApplyResult } from '.
 import { showMoveMethodPanel } from './moveMethodPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface MoveMethodRequest {
   session: ActiveSession;
@@ -144,7 +145,16 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
     loadPage: async (off) =>
       parsePage(await queries.pageMoveMethodPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async (deselected) =>
-      parseApplyResult(await queries.applyMoveMethod(session, token, deselected)),
+      parseApplyResult(
+        await queries.applyMoveMethod(
+          session,
+          token,
+          deselected,
+          selectors.length === 1
+            ? `Move #${selectors[0]} to ${targetLabel}`
+            : `Move ${selectors.length} methods to ${targetLabel}`,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) return undefined;
@@ -165,8 +175,10 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
 
   const moved = analysis.selectors.filter((s) => !s.decline).map((s) => s.selector);
   const n = moved.length;
-  void vscode.window.showInformationMessage(
+  notifyRefactoringApplied(
+    session,
     n === 1 ? `Moved #${moved[0]} to ${targetLabel}.` : `Moved ${n} methods to ${targetLabel}.`,
+    'toast',
   );
   // The methods were relocated server-side (no commit). The CALLER reveals them in the
   // target class (which reloads the Explorer), so a plain refresh here is unnecessary.

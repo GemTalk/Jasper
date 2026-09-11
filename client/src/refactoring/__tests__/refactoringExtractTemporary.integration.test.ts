@@ -143,7 +143,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
     );
     expect(start.total).toBe(1);
 
-    const result = parseApplyResult(await applyExtractTemporary(asyncExec, token));
+    const result = parseApplyResult(await applyExtractTemporary(asyncExec, token, 'test undo'));
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 

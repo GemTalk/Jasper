@@ -94,6 +94,11 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
+import { refreshUndoUi } from './undo/undoUi';
+import { undoLastCommand } from './undo/undoLastCommand';
+import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
+import { registerStashRelease } from './undo/releaseStash';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -107,6 +112,7 @@ import {
   isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
+import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -671,6 +677,9 @@ export function activate(context: vscode.ExtensionContext) {
       { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
       { scheme: 'gemstone', language: METHOD_LANGUAGE },
     ],
+    // Class definitions are the one document in this selector the formatter declines,
+    // and an LSP server cannot say so per URI. See formattingMiddleware.ts.
+    middleware: { provideDocumentFormattingEdits },
     synchronize: {
       configurationSection: 'gemstoneSmalltalk',
     },
@@ -1217,6 +1226,32 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
+  // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
+  // switching sessions switches which undo (if any) is on offer.
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() => refreshUndoUi(sessionManager.getSelectedSession())),
+  );
+  // A session's stack goes with the session: its entries name source in a transaction that
+  // no longer exists, and a later session reusing the id must not inherit them.
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession((id: number) => {
+      clearUndoStack(id);
+      refreshUndoUi(sessionManager.getSelectedSession());
+    }),
+  );
+  // Every recording site pushes onto the stack and nothing else; this is what turns a
+  // push into a live button, so no site has to remember to update the UI.
+  context.subscriptions.push(
+    new vscode.Disposable(
+      onUndoStackChanged(() => refreshUndoUi(sessionManager.getSelectedSession())),
+    ),
+  );
+  // The other half of the same idea for the stone's side: an entry leaving the stack releases
+  // whatever it had pinned in SessionTemps, so a class version or a removed dictionary is not
+  // held live for the rest of the session by an entry nothing can reach any more.
+  context.subscriptions.push(registerStashRelease(sessionManager));
+  refreshUndoUi(sessionManager.getSelectedSession());
+
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
     'GemStone Enhanced Inspector Perf',
@@ -1448,6 +1483,11 @@ export function activate(context: vscode.ExtensionContext) {
         clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
+        // An abort rewinds the stone underneath every recorded undo, so each entry now
+        // describes a "before" state that never existed in the transaction the session is
+        // now in. Offering them would put back source the abort already discarded.
+        clearUndoStack(session.id);
+        refreshUndoUi(sessionManager.getSelectedSession());
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
@@ -1582,6 +1622,39 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.explorer.extractMethod', async () => {
       await extractMethodCommand(sessionManager);
+    }),
+
+    // Undo the last thing done in this session -- a method edit or an applied refactoring
+    // (#434). Reached four ways: the Undo button on the notice that follows the action, the
+    // Actions & Navigation pane's button, the palette entry and the Ctrl+K U chord -- all of
+    // which land in the one dispatcher.
+    vscode.commands.registerCommand('gemstone.undoLast', async () => {
+      await undoLastCommand(sessionManager);
+    }),
+
+    // The same dispatcher under a second name, so the palette entry and the keybinding can
+    // say "Revert" for a class edit (#434). A contributed entry's title is fixed text, so the
+    // only way for those two to name the VERB is one command per verb, gated on the pair of
+    // context keys `refreshUndoUi` keeps mutually exclusive. The pane's own button needs no
+    // such trick -- it writes its tooltip per state -- so it runs `undoLast` whatever the
+    // verb. Nothing else differs: whichever is invoked reverses whatever is on top.
+    vscode.commands.registerCommand('gemstone.revertLast', async () => {
+      await undoLastCommand(sessionManager);
+    }),
+
+    // An undo binds and unbinds classes behind GemStone Search's cached corpora, so without
+    // this a class the undo removed goes on being offered as a hit and opening it lands on
+    // "Class not found" (#434). Internal -- not contributed in package.json -- and called by
+    // every reverser through `refreshSearch`.
+    vscode.commands.registerCommand(SEARCH_RESYNC_COMMAND, (sessionId: number) => {
+      omniSearch?.notifySessionSynced(sessionId);
+    }),
+
+    // An undo recompiles over GCI rather than through the file system provider, so VS Code is
+    // never told the resource changed and a clean editor keeps showing the discarded source
+    // (#434). Internal -- not contributed in package.json.
+    vscode.commands.registerCommand(FS_CHANGED_COMMAND, (uris: vscode.Uri[]) => {
+      gemstoneFs.notifyChanged(uris);
     }),
 
     vscode.commands.registerCommand(
@@ -1902,6 +1975,7 @@ export function activate(context: vscode.ExtensionContext) {
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
         updateRefactoringSupportContext();
+        refreshUndoUi(session);
         treeProvider.refresh();
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,

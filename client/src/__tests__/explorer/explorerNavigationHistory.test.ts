@@ -648,3 +648,71 @@ describe('the chain lists a place once, at its most recent visit', () => {
     expect(history.isEmpty()).toBe(true);
   });
 });
+
+describe('a class the stone no longer has', () => {
+  let history: ExplorerNavigationHistory;
+  let changes: number;
+
+  beforeEach(() => {
+    changes = 0;
+    history = new ExplorerNavigationHistory({
+      go: () => Promise.resolve(true),
+      onChange: () => {
+        changes++;
+      },
+    });
+  });
+
+  it('forgets every landing on a class that has gone from the stone', () => {
+    history.record(klass('Other'));
+    history.record(method('Array', 'at:'));
+    history.record(method('Array', 'at:put:'));
+
+    history.forgetClass(1, 'Array');
+
+    // Not just the current one: the methods of a removed class are gone with it, and a Back
+    // onto any of them would only find that out the hard way.
+    expect(history.entries()).toEqual([klass('Other')]);
+    expect(history.current()).toEqual(klass('Other'));
+  });
+
+  it('leaves landings on classes that are still there', () => {
+    history.record(method('Array', 'at:'));
+    history.record(method('Set', 'add:'));
+
+    history.forgetClass(1, 'Array');
+
+    expect(history.current()).toEqual(method('Set', 'add:'));
+    expect(history.entries()).toEqual([method('Set', 'add:')]);
+  });
+
+  it('says nothing changed when the class was never landed on', () => {
+    history.record(method('Array', 'at:'));
+    const before = changes;
+
+    history.forgetClass(1, 'Bag');
+
+    expect(changes).toBe(before);
+    expect(history.entries()).toEqual([method('Array', 'at:')]);
+  });
+
+  it("leaves another session's chain alone", () => {
+    history.record(method('Array', 'at:'));
+    history.record(inSession(method('Array', 'at:'), 2));
+    history.setActiveSession(1);
+
+    history.forgetClass(2, 'Array');
+
+    expect(history.entries()).toEqual([method('Array', 'at:')]);
+  });
+
+  it('empties the chain when the removed class is all it held', () => {
+    history.record(method('Array', 'at:'));
+
+    history.forgetClass(1, 'Array');
+
+    expect(history.entries()).toEqual([]);
+    expect(history.currentIndex()).toBe(-1);
+    expect(history.isEmpty()).toBe(true);
+  });
+});

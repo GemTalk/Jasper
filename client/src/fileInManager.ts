@@ -6,6 +6,8 @@ import { ExportManager } from './exportManager';
 import { fileInClass } from './topazFileIn';
 import { SystemBrowser } from './systemBrowser';
 import * as queries from './browserQueries';
+import { beginDictionaryRemoval } from './undo/recordDictionaryEdit';
+import { notifyUndoable } from './undo/undoableToast';
 
 /**
  * Generate a Topaz file-out template for a new class.
@@ -167,11 +169,17 @@ export class FileInManager {
       // Deleting a dictionary directory → remove dictionary from symbol list
       const dictIndex = this.parseDictIndex(parts[0], session);
       if (!dictIndex) return;
+      const dictName = parts[0].replace(/^\d+-/, '');
+      // Stash the dictionary and its POSITION before unlisting it, so Undo can put it back
+      // with every class it holds (#434). Deleting the mirror directory is the same
+      // destructive act as the Explorer's Remove Dictionary, and gets the same way back.
+      const recording = beginDictionaryRemoval(session, dictName);
       try {
         queries.removeDictionary(session, dictIndex);
         // Reconcile the mirror (the dir is gone; drop its classes from state).
         this.exportManager.scheduleRefresh(session);
         SystemBrowser.refresh(session.id);
+        notifyUndoable(`Removed dictionary ${dictName}`, recording?.commit());
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Failed to remove dictionary from GemStone: ${msg}`);

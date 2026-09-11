@@ -150,7 +150,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
       PREVIEW_PAGE_BYTES,
       userIndex(),
     );
-    const result = parseApplyResult(await applyRenameTemporary(asyncExec, token));
+    const result = parseApplyResult(await applyRenameTemporary(asyncExec, token, 'test undo'));
 
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);

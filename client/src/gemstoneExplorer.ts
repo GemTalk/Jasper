@@ -1,4 +1,25 @@
 import * as vscode from 'vscode';
+import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
+import { slotLabel } from './undo/undoTypes';
+import { notifyUndoable } from './undo/undoableToast';
+import {
+  CLASS_CATEGORIES_CHANGED_COMMAND,
+  OverlayRenameOutcome,
+  REMOVE_OVERLAY_CATEGORY_COMMAND,
+  RENAME_OVERLAY_CATEGORY_COMMAND,
+  SYMBOL_LIST_CHANGED_COMMAND,
+} from './undo/afterUndo';
+import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
+import { beginClassVarAdd } from './undo/recordClassVarEdit';
+import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
+import { beginMethodCategoryAdd, beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
+import { peekUndoEntry } from './undo/undoStack';
+import { undoStateChangedCommand, undoVerb } from './undo/undoUi';
+import {
+  beginDictionaryRemoval,
+  beginDictionaryRename,
+  recordDictionaryAdd,
+} from './undo/recordDictionaryEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -13,7 +34,6 @@ import {
   parseUri,
   parseMethodUri,
   listOpenGemstoneTabs,
-  tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
 import { gemstoneDocumentLanguage } from './languageIds';
@@ -55,10 +75,15 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
-import { decideSafeDelete, announceSilentDelete, SafeDeleteTarget } from './refactoring/safeDelete';
+import {
+  decideSafeDelete,
+  announceSilentDelete,
+  silentDeleteMessage,
+  SafeDeleteTarget,
+} from './refactoring/safeDelete';
 import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
-import { getGciLog, logWarning } from './gciLog';
+import { getGciLog, logInfo, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
@@ -128,6 +153,8 @@ import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
+import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
+import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -155,12 +182,16 @@ const ivarHighlightDecoration = vscode.window.createTextEditorDecorationType({
 //   - 'keep': a double-click open — the same doc re-shown as a permanent (non-
 //     preview) tab, promoting the preview in place so a later single click won't
 //     replace it.
-//   - 'pin': the 📌 action — a pinned tab added to the group WITHOUT stealing the
-//     view (the tab you were reading stays showing).
+//   - 'pin': the 📌 action — a pinned tab added to the group AND raised, so the
+//     thing you explicitly asked to keep is the one you are looking at. Explicit
+//     beats implicit: a later single-click navigation opens in the preview tab and
+//     leaves the pin alone, so the pin outlives the browsing it interrupts. Focus
+//     follows the view into the editor (unlike 'preview'/'keep', which keep it in
+//     the tree) because a pin is a request to read the thing, not to navigate past it.
 export type OpenSourceMode = 'preview' | 'keep' | 'pin';
 
 // Open a gemstone:// source document in the editor area. All of this Explorer's
-// source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
+// source editors live as tabs in ONE group (see sourceEditorPlacement.ts), so the
 // preview tab and every pinned tab sit next to each other in one row. `placement`
 // scopes this to editors this Explorer opened, so it never invades the System
 // Browser's group (see sourceEditorPlacement.ts).
@@ -190,16 +221,19 @@ export async function openGemstoneDocument(
     return;
   }
 
-  // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
-  // what's showing, add + pin the tab, then restore what was showing so a new pin
-  // just parks a background tab beside the one you're reading. Pinning the method
-  // that's currently the preview simply promotes it to a pinned tab.
-  const uriStr = doc.uri.toString();
-  const showingTab =
-    sourceColumn !== undefined
-      ? vscode.window.tabGroups.all.find((g) => g.viewColumn === sourceColumn)?.activeTab
-      : undefined;
-  const showing = showingTab ? tabInputUri(showingTab)?.toString() : undefined;
+  // PIN. Bring the document into our group, make it the active tab, and pin it. The
+  // active-tab step is not just presentation: `workbench.action.pinEditor` acts on
+  // whatever is active, so the target has to be raised before it can be pinned at
+  // all — hence `preserveFocus: false`. We then leave it raised. Pinning the
+  // document that is already the preview simply promotes it to a pinned tab.
+  //
+  // We deliberately do NOT restore whichever tab was showing before. Doing so used
+  // to park the pin as a background tab, which made 📌 read as a flicker that did
+  // nothing — you had to hunt the tab row for what you had just asked to keep. The
+  // concern that motivated the restore was that a pin must not silently promote the
+  // preview tab you were browsing; that still holds, and it still does not happen —
+  // the previous preview keeps its own preview state and is simply no longer active,
+  // so the next single-click navigation reuses it exactly as before.
   await vscode.window.showTextDocument(doc, {
     viewColumn: targetColumn,
     preview: false,
@@ -207,15 +241,6 @@ export async function openGemstoneDocument(
   });
   await vscode.commands.executeCommand('workbench.action.pinEditor');
   placement.remember(doc.uri);
-  if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
-    // Restore whatever was showing in its ORIGINAL preview/permanent state — a pin
-    // action must not silently promote the preview method you were just browsing.
-    await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
-      viewColumn: sourceColumn,
-      preview: showingTab?.isPreview ?? false,
-      preserveFocus: true,
-    });
-  }
 }
 
 // ── GemStone Explorer ───────────────────────────────────────────────────────
@@ -1450,6 +1475,10 @@ export class ExplorerController {
   // reloads in place (new/removed classes, recompiled methods) while the user
   // stays where they were. Unlike reset(), state and filters are preserved.
   //
+  // The one thing NOT preserved is a selection the stone has stopped holding: a class the
+  // re-read listing does not have is dropped, along with the category that only it was
+  // filed under (see dropVanishedSelection).
+  //
   // `reveal` re-highlights (and scrolls to) the retained rows, which also forces
   // the Explorer view visible/forward. That's wanted for the in-Explorer Refresh
   // button, but NOT for an abort fired from another view (e.g. the Sessions
@@ -1460,7 +1489,7 @@ export class ExplorerController {
     // Before anything is re-read, not after: a refresh means what is held is suspect.
     this.onImageReread?.();
     const session = this.session();
-    const { dictName, dictIndex, className } = this.state;
+    const { dictName, dictIndex } = this.state;
     // Remember the method row currently selected so it can be re-revealed.
     const selectedMethod = this.views?.method.selection.find((n) => n instanceof MethodItem);
     const revealMethod = selectedMethod
@@ -1496,18 +1525,23 @@ export class ExplorerController {
     // Reload the dictionary's class listing (+ ivar counts) and, when a class is
     // selected, its method environment and hierarchy. Keep stale data on a failed
     // fetch rather than blanking the tree out from under the user.
+    let listingRead = true;
     try {
       this.classCategoryEntries = queries.getClassesWithCategory(session, currentDictIndex);
     } catch {
-      /* keep stale on failure */
+      listingRead = false; /* keep stale on failure */
     }
     this.loadClassRowMetadata();
-    if (className !== undefined) {
+    // Only against a listing that was actually re-read: a failed fetch leaves the stale one,
+    // which says nothing about what is bound now.
+    if (listingRead) this.dropVanishedSelection();
+    const stillSelected = this.state.className;
+    if (stillSelected !== undefined) {
       try {
         this.envLines = queries.getClassEnvironments(
           session,
           currentDictIndex,
-          className,
+          stillSelected,
           this.maxEnv(),
         );
       } catch {
@@ -1524,6 +1558,49 @@ export class ExplorerController {
 
     if (reveal) await this.revealRetainedSelection(revealMethod);
     this.syncTitles();
+  }
+
+  // Drop a retained selection the stone no longer holds, once the class listing has been
+  // re-read. A refresh is the only thing that tells the Explorer a class went away behind its
+  // back — an undo of "create class", a session abort, a delete from another view — and a
+  // vanished class left selected is not cosmetic: New Method, New Method Category and the rest
+  // all build their doits from `state.className`, so they compile into a class that is not
+  // there and fail with an error about the class rather than about the selection (#434).
+  //
+  // The class CATEGORY goes the same way and for the same reason: the Classes pane filters on
+  // it, so a category whose last class has just been undone away leaves the pane showing
+  // nothing at all while the dictionary is still full of classes. A category made by the "+"
+  // button survives — `allCategoryPaths` includes the overlay, and an empty one there is
+  // exactly what the user asked for.
+  //
+  // So does the NAVIGATION CHAIN, which is the third place the class's name is on screen: the
+  // Actions & Navigation pane pins the current landing as "In UserGlobals · NewCat · Foo", and
+  // clearing the panes while that line still named Foo just moved the confusion one pane over.
+  private dropVanishedSelection(): void {
+    const { className, classCategory } = this.state;
+    if (
+      className !== undefined &&
+      !this.classCategoryEntries.some((e) => e.className === className)
+    ) {
+      this.state.className = undefined;
+      this.state.selectedSelector = undefined;
+      this.state.selectedIsMeta = undefined;
+      this.state.selectedMethodCategory = undefined;
+      this.newMethodCategories.instance.clear();
+      this.newMethodCategories.meta.clear();
+      this.pendingNewMethod = undefined;
+      this.envLines = [];
+      this.hierChain = [];
+      this.hierSubs = [];
+      const sessionId = this.session()?.id;
+      if (sessionId !== undefined) this.history.forgetClass(sessionId, className);
+    }
+    if (
+      classCategory !== undefined &&
+      !this.allCategoryPaths().some((path) => categoryMatches(path, classCategory))
+    ) {
+      this.state.classCategory = undefined;
+    }
   }
 
   // Re-highlight the retained dict/category/class/method rows after a refresh.
@@ -1647,9 +1724,15 @@ export class ExplorerController {
   // when the controller's className has been cleared (e.g. by a category click)
   // but a class row is still visually selected — actions should act on what the
   // user sees selected. Returns undefined if the selection isn't a class row.
+  //
+  // A row can outlive its class: the highlight is VS Code's, held on an element the rebuilt
+  // tree no longer produces, so a class an undo has just removed can still be sitting in
+  // `selection`. Adopting that would put it straight back into `state.className` — undoing
+  // what `dropVanishedSelection` just did — so the listing has the final say.
   private selectedClassInTree(): ClassItem | undefined {
     const node = this.views?.klass.selection?.[0];
-    return node instanceof ClassItem ? node : undefined;
+    if (!(node instanceof ClassItem)) return undefined;
+    return this.classCategoryEntries.some((e) => e.className === node.className) ? node : undefined;
   }
 
   // Record which side / method-category the user last touched in the Methods
@@ -2563,6 +2646,24 @@ export class ExplorerController {
     const wantAccessors = await this.askAddAccessors(name);
     if (wantAccessors === undefined) return;
 
+    // Snapshot BEFORE adding anything, and include the accessor slots the add is about to
+    // compile into: the user did one thing, so one Undo takes the variable AND its accessors
+    // away again (#434). Slots are captured even for accessors that turn out to be skipped —
+    // the planner reads their unchanged state and leaves them alone.
+    const accessorSpecs = wantAccessors ? accessorSpecsFor(name, 'classvar') : undefined;
+    const accessorSlots = (accessorSpecs?.accessors ?? []).map((a) => ({
+      dict: this.state.dictIndex,
+      className,
+      isMeta: accessorSpecs?.isMeta ?? true,
+      selector: a.selector,
+      environmentId: 0,
+    }));
+    const recording = beginClassVarAdd(
+      session,
+      { dict: this.state.dictIndex, className, varName: name },
+      accessorSlots,
+    );
+
     let addResult: string;
     try {
       addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
@@ -2602,20 +2703,42 @@ export class ExplorerController {
         /* best-effort — leave the class selected if neither row can be revealed */
       }
     }
-    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar');
+    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar', false);
+
+    // Announced last, so the notice carrying Undo is the one left on screen when accessors
+    // were generated too.
+    notifyUndoable(
+      `Added class variable ${name} to ${className}`,
+      recording?.commit(`Add class variable ${name} to ${className}`),
+    );
   }
 
   // Generate accessors for an existing variable (the "Add Accessors" row action, and
   // the follow-up when adding a variable). Skips any accessor already implemented, so
   // it never clobbers a hand-written one, and reports what it did.
+  //
+  // `undoable` is false when this runs as the follow-up to Add Class Variable: that flow
+  // records ONE entry covering the variable and its accessors, and a second entry for the
+  // accessors alone would make the user press Undo twice for one action (#434).
   async generateAccessorsFor(
     className: string,
     varName: string,
     kind: 'ivar' | 'classvar',
+    undoable = true,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const { isMeta, accessors } = accessorSpecsFor(varName, kind);
+    // Snapshot the accessor slots BEFORE compiling: an accessor that already exists is
+    // skipped by the add, and its unchanged state is what tells the undo to leave it alone.
+    const slots = accessors.map((a) => ({
+      dict: this.state.dictIndex,
+      className,
+      isMeta,
+      selector: a.selector,
+      environmentId: 0,
+    }));
+    const recording = undoable ? beginMethodEdit(session, slots) : undefined;
     let result;
     try {
       result = queries.addAccessors(session, className, isMeta, accessors, this.state.dictIndex);
@@ -2648,12 +2771,21 @@ export class ExplorerController {
     const where = isMeta ? 'class-side ' : '';
     if (result.created === 0) {
       void vscode.window.showInformationMessage(`${varName}: ${where}accessors already existed.`);
-    } else {
-      const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
-      void vscode.window.showInformationMessage(
-        `Added ${result.created} ${where}accessor${result.created === 1 ? '' : 's'} for ${varName}${skipNote}.`,
-      );
+      return;
     }
+    const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
+    const message =
+      `Added ${result.created} ${where}accessor${result.created === 1 ? '' : 's'} ` +
+      `for ${varName}${skipNote}.`;
+    // Re-read what the add actually left rather than assume it compiled all of them: it
+    // skips any selector the class already implements, and only the stone knows which.
+    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    notifyUndoable(
+      message,
+      after && recording
+        ? recording.commit(`Add ${where}accessors for ${varName} in ${className}`, after)
+        : undefined,
+    );
   }
 
   // Ask, up front, whether to also generate accessors. Answers true/false, or
@@ -3001,6 +3133,50 @@ export class ExplorerController {
     return applied;
   }
 
+  /**
+   * Record a rename that has just landed, so it can be reversed by renaming back (#434).
+   *
+   * Best-effort on purpose: the rename has ALREADY happened by the time we get here, so a
+   * failure to write the bookkeeping must never be reported as a failed rename. The user
+   * simply gets no Undo offer, which is the same place they were before this existed.
+   *
+   * `from` is the name in force now and `to` the one to go back to; `className` is the class
+   * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
+   */
+  private recordReverseRename(
+    session: ActiveSession,
+    kind: ReverseRenameKind,
+    className: string,
+    from: string,
+    to: string,
+    label: string,
+    engine: string,
+    scope?: { kind: string; dictName?: string },
+  ): void {
+    try {
+      const answer = queries.recordReverseRename(
+        session,
+        kind,
+        className,
+        from,
+        to,
+        label,
+        engine,
+        scope,
+      );
+      // Logged on the way THROUGH, not only on failure: "no Undo was offered" is a silent
+      // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
+      // told apart from a status probe that came back empty.
+      logInfo(`[undoRefactoring] recorded ${kind} reversal for ${className}: ${answer.trim()}`);
+    } catch (e: unknown) {
+      logInfo(
+        `[undoRefactoring] could not record the reverse rename: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // Report a rename that left methods behind: the FULL list to the persistent "GemStone
   // GCI" channel, and a notification that names the first and offers a button onto the
   // rest. Both are built from the same `action` + result, so they cannot disagree about
@@ -3080,10 +3256,21 @@ export class ExplorerController {
       );
       return true;
     }
-    void vscode.window.showInformationMessage(
+    this.recordReverseRename(
+      session,
+      'instVarRename',
+      className,
+      newName,
+      oldName,
+      `Rename instance variable ${oldName} to ${newName} in ${className}`,
+      'GsRenameInstanceVariableRefactoring',
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
         `${result.applied === 1 ? '' : 'es'} re-versioned). ` +
         'Compiled but NOT committed — commit when ready.',
+      'toast',
     );
     return true;
   }
@@ -3206,7 +3393,14 @@ export class ExplorerController {
           await queries.pageRenameMethodPreview(session, token, offset, PREVIEW_PAGE_BYTES),
         ),
       apply: async (deselected) =>
-        parseApplyResult(await queries.applyRenameMethod(session, token, deselected)),
+        parseApplyResult(
+          await queries.applyRenameMethod(
+            session,
+            token,
+            deselected,
+            `Rename #${oldSelector} to #${newSelector}`,
+          ),
+        ),
       cleanup: safeClear,
     });
     if (!result) return false; // cancelled/closed
@@ -3228,9 +3422,11 @@ export class ExplorerController {
       this.reportRenameFailures(`Rename method '${oldSelector}' → '${newSelector}'`, result);
       return true;
     }
-    void vscode.window.showInformationMessage(
+    notifyRefactoringApplied(
+      session,
       `Renamed '${oldSelector}' → '${newSelector}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      'toast',
     );
     return true;
   }
@@ -3518,9 +3714,23 @@ export class ExplorerController {
     const commitNote = result.committed
       ? `Migrated and COMMITTED${migrateNote}.`
       : 'Compiled but NOT committed — commit when ready.';
-    void vscode.window.showInformationMessage(
+    // The class is bound under `newName` now, so that is what the reversal looks up; it
+    // renames it back to `oldName`, reusing the scope the forward rename ran in.
+    this.recordReverseRename(
+      session,
+      'classRename',
+      newName,
+      newName,
+      oldName,
+      `Rename class ${oldName} to ${newName}`,
+      'GsRenameClassRefactoring',
+      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). ${commitNote}`,
+      'toast',
     );
   }
 
@@ -3706,9 +3916,20 @@ export class ExplorerController {
       );
       return true;
     }
-    void vscode.window.showInformationMessage(
+    this.recordReverseRename(
+      session,
+      'classVarRename',
+      className,
+      newName,
+      oldName,
+      `Rename class variable ${oldName} to ${newName} in ${className}`,
+      'GsRenameClassVariableRefactoring',
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      'toast',
     );
     return true;
   }
@@ -3742,7 +3963,27 @@ export class ExplorerController {
     let currentName = className;
     showClassHistoryPanel(className, versions, {
       restore: async (index) => {
+        // A restore binds a NEW version under the class name, so it is an ordinary class
+        // edit and reverts the same way -- by binding back the version that is bound now
+        // (#434). Restoring across a rename also renames the class, which unbinds one name
+        // and binds another, so BOTH names are recorded: the reversal rebinds the first and
+        // unbinds the second. The target version's own name is what history reports for it.
+        const dictRef = this.state.dictIndex ?? this.state.dictName;
+        const restoredName = versions.find((v) => v.index === index)?.name;
+        const names = [
+          currentName,
+          ...(restoredName && restoredName !== currentName ? [restoredName] : []),
+        ];
+        const recording =
+          dictRef !== undefined
+            ? beginClassEdit(
+                session,
+                names.map((className) => ({ dict: dictRef, className })),
+              )
+            : undefined;
+
         const result = parseRevertResult(queries.revertClassToVersion(session, currentName, index));
+        const previousName = currentName;
         if (result.reverted && result.name) currentName = result.name;
         const refreshed = result.reverted
           ? parseClassHistory(queries.getClassHistory(session, currentName))
@@ -3750,6 +3991,12 @@ export class ExplorerController {
         // The class was reshaped/renamed (a new version) — re-cascade so the
         // Explorer's Classes + Hierarchy panes show the restored name and version.
         if (result.reverted) await this.refreshAfterClassReshape(currentName);
+        if (result.reverted) {
+          notifyUndoable(
+            `Restored ${previousName} to version ${index}`,
+            recording?.commit(`Restore ${previousName} to version ${index}`),
+          );
+        }
         return { result, versions: refreshed };
       },
       remove: async (index) => {
@@ -3961,6 +4208,15 @@ export class ExplorerController {
 
   // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
+  //
+  // A category with NO methods under it is not a stale row and not a pseudo-category:
+  // GemStone keeps a category in the class after its last method leaves — `removeSelector:`
+  // unfiles the method and nothing else — so an empty one is still in `_unifiedCategorys:`,
+  // still files out with the class, and comes back from every re-read. It shows here for the
+  // same reason: the row is where you remove it (the 🗑 runs `removeCategory`). That includes
+  // 'as yet unclassified', which is a REAL category name GemStone files uncategorized methods
+  // under, not a label this pane invents. The only computed rows are SESSION and the
+  // ALL_METHODS lookup key below.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
     const real = [...new Set(lines.map((l) => l.category).filter((c) => c && c.length))];
@@ -4598,6 +4854,16 @@ export class ExplorerController {
     // (class/selector not found) or a raised error (e.g. removeSelector: on an
     // unwritable class). Surface either — otherwise the pane just redraws with
     // the method still present and the user thinks the click didn't register.
+    // Snapshot before removing: the source only exists until the removal lands, so undo
+    // has to capture it here (#434). A capture that fails just means no undo.
+    const recording = beginMethodDeletion(session, {
+      dict: this.state.dictIndex,
+      className,
+      isMeta: node.isMeta,
+      selector,
+      environmentId: 0,
+    });
+
     let result: string;
     try {
       result = queries.deleteMethod(
@@ -4617,7 +4883,12 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
       return;
     }
-    if (decision === 'silent') announceSilentDelete(target);
+    // Record either way; ANNOUNCE only where safe-delete already did. A removal the user just
+    // confirmed through a modal is deliberately quiet -- they were told what would happen and do
+    // not need telling again -- so the notice that does appear is the silent one, and it carries
+    // Undo rather than stacking a second message on top of it (#434).
+    const undoEntry = recording?.commit();
+    if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
     this.reloadCurrentClassMethods();
   }
 
@@ -4749,6 +5020,46 @@ export class ExplorerController {
     await this.revealClass(resolved.dictName, resolved.dictIndex, className);
   }
 
+  /** Reveal+select a method row by class + selector, resolving the class across the whole symbol
+   *  list. Used after an UNDO that restored a method (#434): putting a method back and leaving the
+   *  Explorer pointed elsewhere makes the user hunt for what just happened. Best-effort — an
+   *  unresolvable class or selector simply leaves the panes as they are.
+   *
+   *  `dict` is the recorded slot's dictionary — a 1-based symbol-list index when the recording site
+   *  knew one, the dictionary's NAME when it did not — and it matters because a class name is not
+   *  unique in a session. Undo a save on `Account>>#balance` in dictionary 4 and, with `Account`
+   *  also bound in dictionary 1, first-match would cascade the panes to the class where nothing
+   *  happened while the method that came back sits elsewhere. The same hazard
+   *  `closeEditorsForRemovedMethods` guards with `sameDictionary`. First match is the fallback,
+   *  for a caller that has no dictionary or one that resolves to nothing on the live list. */
+  async revealMethodByName(
+    className: string,
+    selector: string,
+    isMeta: boolean,
+    dict?: number | string,
+  ): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    let entries: queries.ClassNameEntry[];
+    try {
+      entries = queries.getAllClassNames(session);
+    } catch {
+      return;
+    }
+    const named = entries.filter((e) => e.className === className);
+    if (named.length === 0) return;
+    const inDict =
+      dict === undefined
+        ? undefined
+        : named.find((e) =>
+            typeof dict === 'number' ? e.dictIndex === dict : e.dictName === dict,
+          );
+    const chosen = inDict ?? named[0];
+    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
+      revealMethod: { selector, isMeta },
+    });
+  }
+
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
@@ -4840,10 +5151,19 @@ export class ExplorerController {
     const mode = this.trailLabelMode();
     const here = this.history.current();
     const hereKey = here && landingKey(here);
+    // The Undo button names the change it would reverse, which is why the pane took over
+    // from the status-bar item: a contributed menu entry's title is fixed text, but this
+    // tooltip is written per state. The chord is spelled out because the button is no longer
+    // beside a label that could carry it.
+    const undoEntry = peekUndoEntry(this.session()?.id);
     this.navigation?.setState({
       back: this.history.canGoBack(),
       forward: this.history.canGoForward(),
       clear: !this.history.isEmpty(),
+      undo: undoEntry !== undefined,
+      undoLabel: undoEntry
+        ? `${undoVerb(undoEntry)}: ${undoEntry.label} (Ctrl+K U)`
+        : 'Nothing to undo yet (Ctrl+K U)',
       mode,
       location: here && landingPath(here),
       // The trail lists methods only. A dictionary, class category or class you
@@ -5109,14 +5429,29 @@ export class ExplorerController {
       return;
     }
 
+    // Captured BEFORE the dictionary is switched below: whether to keep the user's category
+    // depends on where they were, not where they are going.
+    const previousDictIndex = this.state.dictIndex;
+    const previousCategory = this.state.classCategory;
+
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
     this.loadClassRowMetadata();
     const catEntry = this.classCategoryEntries.find((e) => e.className === className);
-    // Only pin the category pane when the class has a non-empty one; otherwise
-    // leave it on "all classes" so the target row is guaranteed visible.
-    this.state.classCategory = catEntry && catEntry.category ? catEntry.category : undefined;
+    // Do NOT pin the pane to the revealed class's OWN category. That filters the Classes pane down
+    // to that category -- often a single class -- so the rest of the dictionary looks like it
+    // vanished. Reported after a class rename: the renamed class was revealed correctly and every
+    // other class in the dictionary disappeared behind its category.
+    //
+    // Keep the category the user had ALREADY chosen when the class really is in it, so a deliberate
+    // filter is not yanked away underneath them; otherwise clear it, so the class is revealed in the
+    // dictionary's full class list. A different dictionary means the old selection does not apply.
+    const keepCategory =
+      previousDictIndex === dictIndex &&
+      previousCategory !== undefined &&
+      catEntry?.category === previousCategory;
+    this.state.classCategory = keepCategory ? previousCategory : undefined;
     this.state.className = className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -5281,6 +5616,9 @@ export class ExplorerController {
     queries.addDictionary(session, name);
     this.dictProvider.refresh();
     this.onSymbolListChanged?.(session.id);
+    // Recorded after the fact: there is nothing to capture before a dictionary exists, and
+    // the position it landed at is only knowable afterwards (#434).
+    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(session, name));
     // Select the new dictionary so its (empty) categories/classes cascade, and
     // highlight its row.
     const names = queries.getDictionaryNames(session);
@@ -5310,6 +5648,10 @@ export class ExplorerController {
       'Remove',
     );
     if (confirmed !== 'Remove') return;
+    // Stash the dictionary and its POSITION before unlisting it: `symbolList remove:` does
+    // not destroy it, so the same object can go back with every class it holds -- but only
+    // while something still references it, and only at its old index (#434).
+    const recording = beginDictionaryRemoval(session, node.dictName);
     try {
       queries.removeDictionary(session, node.dictIndex);
     } catch (e: unknown) {
@@ -5322,7 +5664,7 @@ export class ExplorerController {
     // auto-select a default dictionary.
     this.reset();
     this.onSymbolListChanged?.(session.id);
-    void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
+    notifyUndoable(`Removed dictionary ${node.dictName}`, recording?.commit());
   }
 
   // Rename a dictionary on the symbol list. A SymbolDictionary's name is a
@@ -5365,6 +5707,8 @@ export class ExplorerController {
     );
     if (confirmed !== 'Rename') return;
 
+    const recording = beginDictionaryRename(session, oldName);
+
     let result: string;
     try {
       result = queries.renameDictionary(session, node.dictIndex, newName);
@@ -5398,7 +5742,7 @@ export class ExplorerController {
       /* ignore */
     }
     this.onSymbolListChanged?.(session.id);
-    void vscode.window.setStatusBarMessage(`Renamed dictionary ${oldName} → ${newName}`, 4000);
+    notifyUndoable(`Renamed dictionary ${oldName} → ${newName}`, recording?.commit(newName));
   }
 
   // Rename a class category within the selected dictionary. Every class filed
@@ -5469,6 +5813,12 @@ export class ExplorerController {
     // nothing matches (MED-3). Remember what the client *believed* was there so a
     // zero count can be flagged as a likely stale view instead of silent success.
     const clientExpectedClasses = this.classCategoryEntries.some((e) => inSubtree(e.category));
+    // Snapshot what every class in this dictionary is filed under, and diff after (#434). Per
+    // CLASS rather than per category name: this rename moves a whole dash-segmented subtree,
+    // MERGES into a category that already exists, and skips any class it cannot write -- so
+    // only the diff knows which classes actually moved, and only their own former labels put
+    // them back without dragging along the ones that were already there.
+    const recording = beginClassCategoryEdit(session, dictIndex);
     let result: string;
     try {
       result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
@@ -5531,12 +5881,227 @@ export class ExplorerController {
     } catch {
       /* ignore */
     }
+    // Recorded either way; the notice carries Undo only where there was one to show. A warned
+    // rename already has the user's attention on a warning, so it is not given a second notice.
+    const undoEntry = recording?.commit(`Rename class category ${oldPath} to ${newPath}`);
     if (!warned) {
-      void vscode.window.setStatusBarMessage(
-        `Renamed class category ${oldPath} → ${newPath}`,
-        4000,
-      );
+      notifyUndoable(`Renamed class category ${oldPath} → ${newPath}`, undoEntry);
     }
+  }
+
+  /** The class a class-level command should act on: an explicit row, else the selection.
+   *  Answers undefined (having said so) when there is nothing to act on. */
+  private targetClass(
+    item?: ClassItem | HierarchyItem,
+  ): { className: string; dictName: string; dictIndex: number } | undefined {
+    let className: string | undefined;
+    let dictName: string | undefined;
+    let dictIndex: number | undefined;
+    if (item instanceof ClassItem) {
+      className = item.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    } else if (item instanceof HierarchyItem) {
+      className = item.className;
+      const resolved = this.resolveClassDict(item.className, item.dictName);
+      dictName = resolved?.dictName;
+      dictIndex = resolved?.dictIndex;
+    } else if (this.state.className !== undefined) {
+      className = this.state.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    }
+    if (className === undefined || dictName === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return undefined;
+    }
+    return { className, dictName, dictIndex };
+  }
+
+  /**
+   * Put the Class Categories pane back in step after something refiled classes — an undo, in
+   * practice. The undo path calls this through an internal command (#434).
+   *
+   * Refetching alone is not enough: moving a class to a category SELECTS that category, so after
+   * undoing the move the pane is still filtered to one the class has just left, and the class
+   * comes back invisible. With a class named, follow it to whatever it is filed under now; with
+   * none — a rename that refiled many, where following one would be arbitrary — just drop a
+   * filter that no longer holds the selected class.
+   */
+  async classCategoriesChanged(className?: string): Promise<void> {
+    const session = this.session();
+    const dictIndex = this.state.dictIndex;
+    if (!session || dictIndex === undefined) return;
+    try {
+      this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+    } catch {
+      // Keep stale entries rather than blanking the pane out from under the user.
+      return;
+    }
+
+    const follow = className ?? this.state.className;
+    const category = follow === undefined ? undefined : this.categoryOfClass(follow);
+    if (className !== undefined && category !== undefined) {
+      const segment = category.split('-').pop() ?? category;
+      const catItem = new ClassCategoryItem(segment, category, false);
+      this.selectClassCategory(catItem);
+      try {
+        await this.views?.category.reveal(catItem, { select: true, expand: true });
+      } catch {
+        /* a row that is not in the rebuilt tree just leaves the pane as it is */
+      }
+    } else if (
+      this.state.classCategory !== undefined &&
+      !(category !== undefined && categoryContains(this.state.classCategory, category))
+    ) {
+      // The selected filter no longer holds the selected class, so it would hide it.
+      this.state.classCategory = undefined;
+    }
+    this.categoryProvider.refresh();
+    this.classProvider.refresh();
+    this.syncTitles();
+  }
+
+  /**
+   * Move a class to another dictionary. Rebinds the same class object -- `removeKey:` from one
+   * dictionary, `at:put:` into the other -- so nothing is re-versioned and no method moves; only
+   * which dictionary resolves the name changes. Recorded as an ordinary class edit over both
+   * names, so Undo puts it back (#434). Nothing is committed.
+   */
+  async moveClassToDictionary(item?: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const target = this.targetClass(item);
+    if (!target) return;
+    const { className, dictIndex } = target;
+
+    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+      void vscode.window.showWarningMessage(
+        `${className} is not writable in this repository — it cannot be moved.`,
+      );
+      return;
+    }
+
+    const choices = queries
+      .getDictionaryNames(session)
+      .map((name, i) => ({ label: name, index: i + 1 }))
+      .filter((c) => c.index !== dictIndex);
+    if (choices.length === 0) {
+      void vscode.window.showWarningMessage('There is no other dictionary on the symbol list.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: 'Move Class to Dictionary',
+      placeHolder: `Move ${className} to which dictionary?`,
+    });
+    if (!picked) return;
+
+    // Snapshot both names before the move: the one it leaves and the one it arrives under.
+    const recording = beginClassEdit(session, [
+      { dict: dictIndex, className },
+      { dict: picked.index, className },
+    ]);
+
+    let result: string;
+    try {
+      result = queries.moveClass(session, dictIndex, picked.index, className);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Move class failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // moveClass reports a class it cannot find by RETURNING a status string rather than raising.
+    if (!result.startsWith('Moved class:')) {
+      void vscode.window.showErrorMessage(`Move class failed: ${result}`);
+      return;
+    }
+
+    // Follow the class: it is no longer in the dictionary the panes are showing, so revealing it
+    // in its new one switches the Dictionaries pane, refetches that dictionary's class categories
+    // and class list, and re-cascades the Hierarchy and Methods panes. Leaving the panes where
+    // they were would show a dictionary that no longer holds the class the user is looking at.
+    await this.revealClass(picked.label, picked.index, className);
+    // Anything caching a class corpus keys it by dictionary, so its entry for the OLD dictionary
+    // now points somewhere the class will not resolve. Dropping it beats keeping a row that
+    // fails to open; the class comes back under its new dictionary on the next resync.
+    this.onClassRemoved?.(session.id, className);
+    notifyUndoable(
+      `Moved ${className} to ${picked.label}`,
+      recording?.commit(`Move class ${className} to ${picked.label}`),
+    );
+  }
+
+  /**
+   * File a class under a different class category. A category is a LABEL on the class
+   * (`Class>>category:`), so nothing is recompiled and no binding moves. Recorded per class,
+   * sharing the shape a class-category rename uses (#434). Nothing is committed.
+   */
+  async moveClassToCategory(item?: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const target = this.targetClass(item);
+    if (!target) return;
+    const { className, dictName, dictIndex } = target;
+
+    // The dictionary's real categories, plus any still-empty one the "+" button made — filing a
+    // class into one of those is exactly what makes it real.
+    const real = this.classCategoryEntries.map((e) => e.category).filter((c) => c.length > 0);
+    const choices = [...new Set([...real, ...this.newClassCategories])].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    if (choices.length === 0) {
+      void vscode.window.showWarningMessage('This dictionary has no class categories yet.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: 'Move Class to Category',
+      placeHolder: `File ${className} under which category?`,
+    });
+    if (!picked) return;
+
+    const recording = beginClassCategoryEdit(session, dictIndex);
+
+    let result: string;
+    try {
+      result = queries.recategorizeClass(session, className, picked, dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Move to category failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // recategorizeClass reports a class it cannot resolve or write by RETURNING a status string.
+    if (!result.startsWith('Recategorized:')) {
+      void vscode.window.showErrorMessage(`Move to category failed: ${result}`);
+      return;
+    }
+
+    // The class is still in this dictionary but under a different label, so the Class Categories
+    // pane has a new row (or has lost one) and the Classes pane may be filtered to the category
+    // the class just left. Revealing it refetches the categories and drops a filter that would
+    // now hide it.
+    await this.revealClass(dictName, dictIndex, className);
+
+    // Then select the category the user just named. `revealClass` deliberately does NOT pin the
+    // pane to a revealed class's own category -- doing that after a rename made the rest of the
+    // dictionary look like it had vanished -- but this is not an incidental reveal: the user
+    // chose this category by name, so highlighting it is the answer to what they asked for. The
+    // class stays selected, since it is inside the category being selected.
+    const segment = picked.split('-').pop() ?? picked;
+    const catItem = new ClassCategoryItem(segment, picked, false);
+    this.selectClassCategory(catItem);
+    this.categoryProvider.refresh();
+    try {
+      await this.views?.category.reveal(catItem, { select: true, expand: true });
+    } catch {
+      /* a category row that is not in the rebuilt tree just leaves the pane as it is */
+    }
+
+    notifyUndoable(
+      `Filed ${className} under '${picked}'`,
+      recording?.commit(`Move class ${className} to category ${picked}`),
+    );
   }
 
   // Remove a class from its dictionary. `item` comes from the inline trash on a
@@ -5658,6 +6223,15 @@ export class ExplorerController {
     const decision = await decideSafeDelete(session.id, target);
     if (decision === 'cancelled') return;
 
+    // Snapshot the whole subtree before removing any of it, and stash each class version in
+    // the stone -- `deleteClass` only unbinds the name, so the very same version can go back
+    // exactly as it was, but only while something still holds it (#434). One entry for the
+    // subtree: putting half of it back is not a reversal of what the user asked for.
+    const recording = beginClassDeletion(
+      session,
+      targets.map((t) => ({ dict: t.dictIndex, className: t.className })),
+    );
+
     const failures: string[] = [];
     const removed: string[] = [];
     for (const t of targets) {
@@ -5694,11 +6268,14 @@ export class ExplorerController {
     // failure doesn't drop a class that is still there.
     for (const name of removed) this.onClassRemoved?.(session.id, name);
 
+    const undoEntry = removed.length > 0 ? recording?.commit() : undefined;
+
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
     } else if (decision === 'silent') {
-      // Nothing was asked, so the status bar alone is too quiet for a whole class going away.
-      announceSilentDelete(target);
+      // Nothing was asked, so the status bar alone is too quiet for a whole class going away —
+      // and since this is the one notice for the deletion, it carries Undo (#434).
+      notifyUndoable(silentDeleteMessage(target), undoEntry);
     } else if (targets.length > 1) {
       const n = targets.length - 1;
       void vscode.window.setStatusBarMessage(
@@ -5759,7 +6336,8 @@ export class ExplorerController {
 
   // Add a (still-empty) method category to the given side. The instance and
   // class "+" buttons pass their side explicitly, so it never depends on the
-  // last-touched selection.
+  // last-touched selection. Recorded for Undo, which takes the row back out again --
+  // see removeOverlayMethodCategory (#434).
   async newMethodCategory(isMeta: boolean): Promise<void> {
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
@@ -5772,6 +6350,7 @@ export class ExplorerController {
       })
     )?.trim();
     if (!name) return;
+    const session = this.session();
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
     // With grouping off the pane renders selectors only, so there is no category
@@ -5807,15 +6386,31 @@ export class ExplorerController {
         expand: true,
       })
       .then(undefined, () => {});
+
+    // The row appears in the pane and stays there, so it has to be as undoable as anything
+    // else that appears and stays -- even though nothing has reached the stone yet (#434).
+    if (session === undefined) return;
+    notifyUndoable(
+      `Created category '${name}'`,
+      beginMethodCategoryAdd(session, {
+        dict: this.state.dictIndex,
+        className: this.state.className,
+        isMeta,
+      }).commit(name),
+    );
   }
 
-  // Rename a real (non-computed) method category via the row's pencil. A category
-  // exists on the server only once a method is filed into it; a still-empty one
-  // lives solely in the client-side "fresh" overlay (`_unifiedCategorys:`, which
-  // drives this pane, never lists an empty category). So a populated category is
-  // renamed server-side via the base `renameCategory:to:` protocol (mirroring the
-  // System Browser; not committed automatically), while an empty one is renamed
-  // purely in the overlay — calling the server would raise classErrMethCatNotFound.
+  // Rename a real (non-computed) method category via the row's pencil. Jasper puts a
+  // category on the server only once a method is filed into it -- by a compile or by a
+  // drop -- so a still-empty one lives solely in the client-side "fresh" overlay
+  // (`_unifiedCategorys:`, which drives this pane, never lists an empty category). So a
+  // populated category is renamed server-side via the base `renameCategory:to:` protocol
+  // (mirroring the System Browser; not committed automatically), while an empty one is
+  // renamed purely in the overlay -- calling the server would raise
+  // classErrMethCatNotFound.
+  //
+  // Both are recorded for Undo, and neither says which it was: to the user it is one action
+  // (#434). See renameOverlayMethodCategory for the reversal of the overlay half.
   async renameMethodCategory(item: MethodCategoryItem): Promise<void> {
     const session = this.session();
     if (!session || item.computed) return;
@@ -5840,6 +6435,15 @@ export class ExplorerController {
 
     const hasServerMethods = this.envLines.some(
       (l) => l.isMeta === item.isMeta && l.category === oldCategory,
+    );
+    // Recorded either way (#434). A still-empty category is renamed in the overlay rather
+    // than on the stone, but the user renamed something and it stayed renamed -- which side
+    // of the wire that happened on is Jasper's business, not theirs, so it gets the same
+    // Undo. `reverseMethodCategoryEdit` works out which rename to run from the live state.
+    const recording = beginMethodCategoryRename(
+      session,
+      { dict: dictIndex, className, isMeta: item.isMeta },
+      oldCategory,
     );
     if (hasServerMethods) {
       try {
@@ -5883,6 +6487,106 @@ export class ExplorerController {
         focus: true,
       })
       .then(undefined, () => {});
+
+    notifyUndoable(
+      `Renamed category '${oldCategory}' to '${newCategory}'`,
+      recording.commit(newCategory),
+    );
+  }
+
+  /**
+   * Rename a still-empty method category back, in the overlay that is the only place it
+   * exists. The undo path calls this through an internal command (#434).
+   *
+   * Answers what happened rather than a bare boolean, so the undo can tell "the pane has
+   * moved on" from "that name is taken" and say which. The overlay is discarded whenever the
+   * browsed class changes, so an entry can easily outlive the category it describes; that is
+   * `not-listed`, not a failure.
+   */
+  renameOverlayMethodCategory(
+    slot: { className: string; isMeta: boolean; dict?: number | string },
+    from: string,
+    to: string,
+  ): OverlayRenameOutcome {
+    // The overlay belongs to the class the pane is showing; anything else is a different
+    // (empty) set that happens to share names. A slot that names a dictionary has to agree
+    // on that too, but one recorded WITHOUT a dictIndex constrains only the class rather
+    // than matching nothing at all: the "+" button records whatever dictIndex the pane held,
+    // and unlike the pencil it does not require one, so a category created while no
+    // dictionary was selected would otherwise be impossible to undo.
+    if (
+      this.state.className !== slot.className ||
+      (slot.dict !== undefined && this.state.dictIndex !== slot.dict)
+    ) {
+      logInfo(
+        `[undo] overlay reversal skipped: the pane is on ` +
+          `${this.state.className ?? '(no class)'}@${this.state.dictIndex ?? '(no dict)'}, ` +
+          `the entry names ${slot.className}@${slot.dict ?? '(no dict)'}`,
+      );
+      return 'not-listed';
+    }
+    const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
+    if (!freshSet.has(from)) {
+      logInfo(`[undo] overlay rename: '${from}' is not in the pane's fresh set`);
+      return 'not-listed';
+    }
+    // A name taken by another fresh category, or by a real one, is a collision either way:
+    // the pane would show two rows with one name.
+    const real = this.envLines.filter((l) => l.isMeta === slot.isMeta).map((l) => l.category);
+    if (freshSet.has(to) || real.includes(to)) return 'collision';
+
+    freshSet.delete(from);
+    freshSet.add(to);
+    if (this.state.selectedIsMeta === slot.isMeta && this.state.selectedMethodCategory === from) {
+      this.state.selectedMethodCategory = to;
+    }
+    this.methodProvider.refresh();
+    this.syncTitles();
+    this.views?.method
+      .reveal(new MethodCategoryItem(slot.isMeta, to, false), { select: true, focus: false })
+      .then(undefined, () => {});
+    return 'ok';
+  }
+
+  /**
+   * Take a still-empty method category back out of the overlay — the reversal of creating
+   * one. The undo path calls this through an internal command (#434).
+   *
+   * Only ever reaches a category that is STILL empty: one the stone has by now is removed
+   * server-side instead, and only when it holds nothing, since GemStone's `removeCategory:`
+   * takes the methods in a category with it.
+   */
+  removeOverlayMethodCategory(
+    slot: { className: string; isMeta: boolean; dict?: number | string },
+    name: string,
+  ): OverlayRenameOutcome {
+    // Matched the same way as the rename above, and for the same reason.
+    if (
+      this.state.className !== slot.className ||
+      (slot.dict !== undefined && this.state.dictIndex !== slot.dict)
+    ) {
+      logInfo(
+        `[undo] overlay reversal skipped: the pane is on ` +
+          `${this.state.className ?? '(no class)'}@${this.state.dictIndex ?? '(no dict)'}, ` +
+          `the entry names ${slot.className}@${slot.dict ?? '(no dict)'}`,
+      );
+      return 'not-listed';
+    }
+    const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
+    if (!freshSet.has(name)) {
+      logInfo(`[undo] overlay remove: '${name}' is not in the pane's fresh set`);
+      return 'not-listed';
+    }
+
+    freshSet.delete(name);
+    // The pane is about to stop listing it, so a selection pointing at it would name a row
+    // that is not there.
+    if (this.state.selectedIsMeta === slot.isMeta && this.state.selectedMethodCategory === name) {
+      this.state.selectedMethodCategory = undefined;
+    }
+    this.methodProvider.refresh();
+    this.syncTitles();
+    return 'ok';
   }
 
   // Remove a real (non-computed) method category via the row's trash can, so a
@@ -6195,7 +6899,8 @@ export class ExplorerController {
 
   // New Method, invoked from a category row → files into THAT category (including
   // a still-empty one, which the compile then creates on the server, so overlay
-  // categories become real once they hold a method). With no argument (palette)
+  // categories become real once they hold a method — a drop does the same, see
+  // dragMoveToCategory). With no argument (palette)
   // it infers side/category from the current Methods-pane selection.
   async newMethod(target?: MethodCategoryItem): Promise<void> {
     if (target instanceof MethodCategoryItem) {
@@ -6457,11 +7162,29 @@ export class ExplorerController {
   }
 
   // Drop on a method category → recategorize each dragged method there.
+  //
+  // The target can be a still-empty category from the "+" button, which lives only in the
+  // client overlay: `recategorizeMethod` creates it on the stone when it is missing, so a
+  // drop makes an overlay category real exactly as compiling a method into it does. Without
+  // that, the move answered classErrMethCatNotFound over a row the pane was showing.
   async dragMoveToCategory(payloads: MethodDragPayload[], category: string): Promise<void> {
     const session = this.session();
     if (!session) return;
     const toMove = payloads.filter((p) => p.category !== category);
     if (toMove.length === 0) return;
+
+    // Snapshot the slots before moving: a method slot's captured state carries its CATEGORY
+    // as well as its source, so the ordinary method-edit reversal puts the category back
+    // (#434). One entry for the whole drop -- the user dragged once.
+    const slots = toMove.map((p) => ({
+      dict: p.dictIndex,
+      className: p.className,
+      isMeta: p.isMeta,
+      selector: p.selector,
+      environmentId: 0,
+    }));
+    const recording = beginMethodEdit(session, slots);
+
     try {
       for (const p of toMove) {
         queries.recategorizeMethod(
@@ -6480,11 +7203,17 @@ export class ExplorerController {
       return;
     }
     this.reloadIfCurrent(toMove[0].className, toMove[0].dictIndex);
-    void vscode.window.showInformationMessage(
+
+    const message =
       toMove.length === 1
         ? `Moved #${toMove[0].selector} to '${category}'.`
-        : `Moved ${toMove.length} methods to '${category}'.`,
-    );
+        : `Moved ${toMove.length} methods to '${category}'.`;
+    const label =
+      slots.length === 1
+        ? `Move ${slotLabel(slots[0])} to '${category}'`
+        : `Move ${slots.length} methods to '${category}'`;
+    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    notifyUndoable(message, after && recording ? recording.commit(label, after) : undefined);
   }
 
   /** Announce that `className`'s definition source changed in the stone. Best-effort: a
@@ -7348,6 +8077,39 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
+    // The undo stack moved, or the selected session changed under it. Internal, and
+    // deliberately not contributed in package.json: the Actions & Navigation pane's Undo
+    // button carries the verb and the change in its tooltip, so it has to be redrawn
+    // whenever either could have changed (#434).
+    vscode.commands.registerCommand(undoStateChangedCommand, () => ctl.syncNavigationState()),
+    // An undo put a dictionary back on the symbol list, or renamed one back. Internal, and
+    // deliberately not contributed in package.json: a pane refresh is not enough, because
+    // the Dictionaries pane IS the symbol list and every index below the change has moved,
+    // so this is the same full rebuild the forward commands do (#434).
+    vscode.commands.registerCommand(SYMBOL_LIST_CHANGED_COMMAND, (sessionId?: number) => {
+      ctl.reset();
+      if (typeof sessionId === 'number') onSymbolListChanged?.(sessionId);
+    }),
+    // An undo is renaming a still-empty method category back. Internal, and deliberately not
+    // contributed in package.json: the overlay is the only place such a category exists, so
+    // this is the one reversal that has to be asked of the view rather than the stone (#434).
+    vscode.commands.registerCommand(
+      RENAME_OVERLAY_CATEGORY_COMMAND,
+      (
+        slot: { className: string; isMeta: boolean; dict?: number | string },
+        from: string,
+        to: string,
+      ): OverlayRenameOutcome => ctl.renameOverlayMethodCategory(slot, from, to),
+    ),
+    // An undo is taking a still-empty method category back out of the overlay. Internal, for
+    // the same reason as the rename above (#434).
+    vscode.commands.registerCommand(
+      REMOVE_OVERLAY_CATEGORY_COMMAND,
+      (
+        slot: { className: string; isMeta: boolean; dict?: number | string },
+        name: string,
+      ): OverlayRenameOutcome => ctl.removeOverlayMethodCategory(slot, name),
+    ),
     // Go Back / Go Forward over the Explorer's landings — the Actions & Navigation pane's
     // arrows, the gemstone:// editor title bar's, the palette, and the keybinding
     // all walk this one chain.
@@ -7484,6 +8246,19 @@ export function registerGemStoneExplorer(
           typeof dictName === 'string' && dictName.length > 0 ? dictName : undefined,
           methodArg(method),
         ),
+    ),
+    // Reveal+select a method row by class + selector (used by Undo, #434).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealMethodByName',
+      (className?: string, selector?: string, isMeta?: unknown, dict?: unknown) =>
+        typeof className === 'string' && typeof selector === 'string'
+          ? ctl.revealMethodByName(
+              className,
+              selector,
+              isMeta === true,
+              typeof dict === 'number' || typeof dict === 'string' ? dict : undefined,
+            )
+          : undefined,
     ),
     // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId
     // as above — the result carries the session it was found in.
@@ -7875,6 +8650,35 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Move a class to another dictionary, or file it under another class category. Offered on
+    // both the Classes and Hierarchy panes, since either is a reasonable place to be looking at
+    // the class you want to move.
+    // An undo refiled classes; the pane needs more than a refresh (see classCategoriesChanged).
+    vscode.commands.registerCommand(CLASS_CATEGORIES_CHANGED_COMMAND, (className?: unknown) =>
+      ctl.classCategoriesChanged(typeof className === 'string' ? className : undefined),
+    ),
+    vscode.commands.registerCommand('gemstone.explorer.moveClassToDictionary', (item?: unknown) => {
+      void ctl
+        .moveClassToDictionary(
+          item instanceof ClassItem || item instanceof HierarchyItem ? item : undefined,
+        )
+        .catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Move class failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.moveClassToCategory', (item?: unknown) => {
+      void ctl
+        .moveClassToCategory(
+          item instanceof ClassItem || item instanceof HierarchyItem ? item : undefined,
+        )
+        .catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Move to category failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    }),
     // ── File out (Topaz .gs) ──────────────────────────────────────────────────
     // One per Explorer level. Each takes the row it was invoked on; the method one
     // also honours the Methods pane's multi-selection, so a right-click with several

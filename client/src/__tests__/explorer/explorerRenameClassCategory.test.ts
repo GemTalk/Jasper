@@ -9,6 +9,7 @@ vi.mock('../../browserQueries', () => ({
 
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
+import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../../undo/undoStack';
 import { ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
@@ -87,9 +88,10 @@ describe('ExplorerController.renameClassCategory', () => {
     // Refetch the dictionary's class/category data afterward.
     expect(queries.getClassesWithCategory).toHaveBeenCalledWith(expect.anything(), 3);
     expect(refresh).toHaveBeenCalled();
-    expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+    // Success is reported on a notice now, not the status bar — that is what can carry Undo
+    // (#434). No class moved in this fixture, so there is no entry and no button.
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('Events'),
-      expect.any(Number),
     );
   });
 
@@ -103,7 +105,9 @@ describe('ExplorerController.renameClassCategory', () => {
     });
     await ctl.renameClassCategory(NODE);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
-    expect(queries.getClassesWithCategory).not.toHaveBeenCalled();
+    // The one call is the undo recorder's snapshot, taken before the rename ran (#434); the
+    // refetch afterwards is what must not have happened.
+    expect(queries.getClassesWithCategory).toHaveBeenCalledTimes(1);
   });
 
   it('seeds the prompt with the single node segment, not the full path', async () => {
@@ -202,9 +206,10 @@ describe('ExplorerController.renameClassCategory', () => {
     );
     expect(queries.getClassesWithCategory).toHaveBeenCalled();
     // The client didn't expect classes here, so renamed: 0 is fine — success shown.
-    expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+    // Success is reported on a notice now, not the status bar — that is what can carry Undo
+    // (#434). No class moved in this fixture, so there is no entry and no button.
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('Events'),
-      expect.any(Number),
     );
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   });
@@ -221,7 +226,7 @@ describe('ExplorerController.renameClassCategory', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining('out of date'),
     );
-    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it('warns about classes skipped because their category could not be read (LOW-2)', async () => {
@@ -236,7 +241,7 @@ describe('ExplorerController.renameClassCategory', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining('could not be read'),
     );
-    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it('treats an unrecognised payload as an error, not success (MED-2)', async () => {
@@ -251,9 +256,10 @@ describe('ExplorerController.renameClassCategory', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('unexpected server reply'),
     );
-    // Bailed before refetch / success.
-    expect(queries.getClassesWithCategory).not.toHaveBeenCalled();
-    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+    // Bailed before refetch / success. The one call is the undo recorder's snapshot, taken
+    // before the rename ran (#434); the refetch afterwards is what must not have happened.
+    expect(queries.getClassesWithCategory).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it('carries newClassCategories overlay entries and remaps state.classCategory across the rename, preserving suffixes', async () => {
@@ -296,5 +302,74 @@ describe('ExplorerController.renameClassCategory', () => {
     // `Announcementss-Core` starts with `Announcements` but not `Announcements-`, so it
     // is not a subtree member and must be left unchanged (guards the `startsWith` edge).
     expect(ctl.state.classCategory).toBe('Announcementss-Core');
+  });
+});
+
+describe('ExplorerController.renameClassCategory — undo (#434)', () => {
+  const entries = (m: Record<string, string>) =>
+    Object.entries(m).map(([className, category]) => ({ className, category, hasComment: false }));
+
+  beforeEach(() => {
+    resetUndoStacks();
+    // mockReset, not clearAllMocks: clearing leaves the `...Once` queue in place, so a
+    // per-test queue would be answered in a later test instead.
+    vi.mocked(queries.getClassesWithCategory).mockReset();
+    vi.mocked(queries.renameClassCategory).mockReset();
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 2');
+  });
+
+  it('records each class under its OWN former label, so a merge is reversible', async () => {
+    // Renaming onto an existing category MERGES into it. Putting the NAME back would drag the
+    // classes that were already there along; putting each class's own label back does not.
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Existing');
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce(entries({ A: 'Announcements', B: 'Existing' }))
+      .mockReturnValue(entries({ A: 'Existing', B: 'Existing' }));
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'classCategoryEdit',
+      label: 'Rename class category Announcements to Existing',
+      changes: [{ className: 'A', before: 'Announcements', after: 'Existing' }],
+    });
+  });
+
+  it('records the whole dash-segmented subtree, each with its own label', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce(entries({ A: 'Announcements', B: 'Announcements-Core' }))
+      .mockReturnValue(entries({ A: 'Renamed', B: 'Renamed-Core' }));
+
+    await ctl.renameClassCategory(NODE);
+
+    const entry = peekUndoEntry(1);
+    expect(entry?.kind === 'classCategoryEdit' && entry.changes.map((c) => c.before)).toEqual([
+      'Announcements',
+      'Announcements-Core',
+    ]);
+  });
+
+  it('records nothing when the server refused the rename', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('Dictionary not found');
+    vi.mocked(queries.getClassesWithCategory).mockReturnValue(entries({ A: 'Announcements' }));
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(undoStackDepth(1)).toBe(0);
+  });
+
+  it('records nothing when no class actually moved', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
+    vi.mocked(queries.getClassesWithCategory).mockReturnValue(entries({ A: 'Announcements' }));
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(undoStackDepth(1)).toBe(0);
   });
 });

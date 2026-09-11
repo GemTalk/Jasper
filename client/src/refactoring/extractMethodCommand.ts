@@ -35,6 +35,7 @@ import {
   saveIfDirty,
   codePointsBefore,
 } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** Suggest a starting selector matching the required arity: unary for no args, else
  *  a keyword selector built from the argument names. The user edits it. */
@@ -179,7 +180,14 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
     loadPage: async (off) =>
       parsePage(await queries.pageExtractMethodPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async (deselected) =>
-      parseApplyResult(await queries.applyExtractMethod(session, token, deselected)),
+      parseApplyResult(
+        await queries.applyExtractMethod(
+          session,
+          token,
+          deselected,
+          `Extract method #${newSelector}`,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) {
@@ -234,5 +242,5 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
       `[extractMethod] could not open the new method editor: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
-  void vscode.window.setStatusBarMessage(`Extracted ${newSelector}`, 4000);
+  notifyRefactoringApplied(session, `Extracted ${newSelector}.`);
 }
