@@ -1,4 +1,5 @@
 import { McpOwnership } from './mcpServerTreeProvider';
+import { canRevealOwnerWindow } from './mcpWindowStatus';
 import {
   RELEASE_POLL_MS,
   RELEASE_WAIT_ATTEMPTS,
@@ -127,7 +128,8 @@ export class McpOwnershipController {
     // A bind only fails because someone else holds the socket, so offer the
     // thing that can actually resolve it rather than merely reporting.
     const owner = this.deps.ownership();
-    const where = owner.kind === 'other' ? ` (${owner.info.workspacePath})` : '';
+    const where =
+      owner.kind === 'other' ? ` ("${owner.info.workspaceName ?? owner.info.workspacePath}")` : '';
     const choice = await this.deps.notifier.warn(
       `Another VS Code window${where} is still serving MCP. A bound socket is only released ` +
         'by the window holding it.',
@@ -191,12 +193,16 @@ export class McpOwnershipController {
 
     if (!released) {
       clearReleaseRequest(this.deps.releaseRequestPath);
-      const choice = await this.deps.notifier.warn(
-        `The window at ${workspacePath} did not release the MCP server. It may be running a ` +
-          'Jasper old enough not to answer the request — open it and use Stop MCP there, or ' +
-          'close it.',
-        REVEAL,
-      );
+      const reveal = canRevealOwnerWindow(owner.info);
+      const where = owner.info.workspaceName ?? workspacePath;
+      const message =
+        `The window "${where}" did not release the MCP server. It may be running a Jasper old ` +
+        'enough not to answer the request — use Stop MCP there, or close it.';
+      // Only offer to open it where that would actually reach it; elsewhere the
+      // action would open a duplicate window and look like it had worked.
+      const choice = reveal.canReveal
+        ? await this.deps.notifier.warn(message, REVEAL)
+        : await this.deps.notifier.warn(message);
       if (choice === REVEAL) await this.deps.revealOwner(workspacePath);
       this.deps.onChanged();
       return;

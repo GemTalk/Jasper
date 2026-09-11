@@ -10,7 +10,8 @@
 // release at all, so the only way to hand the server over was to close or
 // disable Jasper in the owning window. The tab can: Claim takes the server,
 // Stop releases it, Ask It to Release has the *other* window let go so this one
-// can claim, Open Owning Window jumps there, and Refresh re-reads everything.
+// can claim, Open Owning Window jumps there when that is possible at all, and
+// Refresh re-reads everything.
 //
 // One panel per window — the subject is the window itself, so a second tab
 // would say the same thing twice.

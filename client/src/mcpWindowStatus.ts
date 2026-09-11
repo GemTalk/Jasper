@@ -1,4 +1,5 @@
 import { loginLabel } from './loginTypes';
+import { McpOwnerInfo, NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
 import { McpOwnership } from './mcpServerTreeProvider';
 
 /**
@@ -17,18 +18,74 @@ import { McpOwnership } from './mcpServerTreeProvider';
 export type McpState = 'disabled' | 'this' | 'other' | 'none';
 
 export interface McpOwnerReport {
+  /**
+   * What the owning window's title bar says. Absent from a sidecar written by
+   * an older Jasper, and from a window with no folder open — `workspacePath`
+   * is the fallback, not the identity.
+   */
+  workspaceName?: string;
   workspacePath: string;
+  /** The `.code-workspace` file, when the owner is a multi-root workspace. */
+  workspaceFile?: string;
   pid: number;
   claimedAt: string;
   /** The owning window's selected session, as it labelled it. */
   selectedSession?: string;
+  /** Whether opening `workspacePath` would actually reach that window. */
+  canReveal: boolean;
+  /** Why it would not, when `canReveal` is false — shown rather than guessed at. */
+  revealBlockedReason?: string;
+}
+
+/**
+ * Whether opening the owner's workspace path would reach the owner's *window*.
+ *
+ * VS Code gives an extension no way to focus another window; the only lever is
+ * `vscode.openFolder`, which identifies a window by the folder it has open. So
+ * this is only ever offered where that identification holds, and withheld —
+ * with a reason — where we can see that it does not. Opening a duplicate
+ * window is a worse outcome than no button: it looks like the switch worked.
+ *
+ * The case we cannot see is a folder reachable by two paths (a bind mount or
+ * symlink, e.g. `/uffda1/x` and `/export/uffda1/x`): both windows record the
+ * path they were opened with, and nothing here can tell they are the same
+ * directory. Ask It to Release needs no navigation and is unaffected.
+ */
+export function canRevealOwnerWindow(info: {
+  workspacePath: string;
+  workspaceFile?: string;
+}): { canReveal: true } | { canReveal: false; reason: string } {
+  if (!info.workspacePath || info.workspacePath === NO_WORKSPACE_RECORDED) {
+    return {
+      canReveal: false,
+      reason:
+        'That window has no folder open, so there is nothing to open to reach it. Find it by ' +
+        'its title bar, or use Ask It to Release, which needs no navigation.',
+    };
+  }
+  if (info.workspaceFile) {
+    return {
+      canReveal: false,
+      reason:
+        'That window has a multi-root workspace open, and the path above is only its first ' +
+        'folder — opening it would give you a new window with that one folder rather than ' +
+        'switching to the owner. Find it by its title bar, or use Ask It to Release, which ' +
+        'needs no navigation.',
+    };
+  }
+  return { canReveal: true };
 }
 
 export interface McpReport {
   state: McpState;
   /**
-   * Short text beside the Databases section title. Absent when disabled: a
-   * window that was never going to claim the server should not report on it.
+   * The whole of what the Databases section header says — a short state beside
+   * its title, and nothing more. Absent when disabled: a window that was never
+   * going to claim the server should not report on it.
+   *
+   * Deliberately not a sentence. An explanation there is a paragraph wedged
+   * above the database rows, in a section that is not about MCP; `detail` and
+   * everything else belong to the MCP Server tab, which is one click away.
    */
   headline?: string;
   /** One sentence saying what the state means, for the tab and the view body. */
@@ -81,18 +138,30 @@ export function mcpReport(ownership: McpOwnership | undefined): McpReport {
   }
 
   if (ownership.kind === 'other') {
-    const { workspacePath, pid, claimedAt, selectedSession, socketPath } = ownership.info;
+    const info: McpOwnerInfo = ownership.info;
+    const { workspaceName, workspacePath, workspaceFile, pid, claimedAt, selectedSession } = info;
+    const reveal = canRevealOwnerWindow(info);
     return {
       state: 'other',
       headline: 'MCP: other window',
       // The socket is held until that window releases it, so this is the one
       // state where the fix is somewhere else — say where.
       detail: selectedSession
-        ? `Another VS Code window serves MCP, on ${selectedSession}. Stop MCP there, then claim it here.`
+        ? `Another VS Code window serves MCP, on ${selectedSession}. Ask it to release the server, ` +
+          'or stop MCP there, to serve from this window instead.'
         : 'Another VS Code window serves MCP and has no session selected, so tool calls there ' +
-          'fail. Stop MCP there, then claim it here.',
-      socketPath,
-      owner: { workspacePath, pid, claimedAt, ...(selectedSession ? { selectedSession } : {}) },
+          'fail. Ask it to release the server, or stop MCP there, to serve from this window instead.',
+      socketPath: info.socketPath,
+      owner: {
+        ...(workspaceName ? { workspaceName } : {}),
+        workspacePath,
+        ...(workspaceFile ? { workspaceFile } : {}),
+        pid,
+        claimedAt,
+        ...(selectedSession ? { selectedSession } : {}),
+        canReveal: reveal.canReveal,
+        ...(reveal.canReveal ? {} : { revealBlockedReason: reveal.reason }),
+      },
     };
   }
 
@@ -102,14 +171,5 @@ export function mcpReport(ownership: McpOwnership | undefined): McpReport {
     detail:
       'No VS Code window is serving MCP, so Claude has no GemStone tools. Claim it to serve ' +
       'from this window.',
-  };
-}
-
-/** What the Databases section header shows: a headline, and a body line when the fix is elsewhere. */
-export function mcpHeader(report: McpReport): { description?: string; message?: string } {
-  return {
-    description: report.headline,
-    // Only the other-window case sends the user somewhere; the rest is in the tab.
-    message: report.state === 'other' ? report.detail : undefined,
   };
 }

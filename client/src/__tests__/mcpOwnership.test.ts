@@ -29,6 +29,16 @@ const theirs: McpOwnership = {
     claimedAt: '2026-01-01T00:00:00.000Z',
   },
 };
+
+/** An owner whose window cannot be reached by opening its recorded path. */
+const theirsMultiRoot: McpOwnership = {
+  kind: 'other',
+  info: {
+    ...theirs.info,
+    workspaceName: 'their-proj (Workspace)',
+    workspaceFile: '/their/proj.code-workspace',
+  },
+};
 const ours: McpOwnership = { kind: 'this', socketPath: '/tmp/jasper.sock' };
 
 let dir: string;
@@ -123,6 +133,14 @@ describe('claiming', () => {
     expect(h.warns).toHaveLength(1);
     expect(h.warns[0].message).toContain('/their/workspace');
     expect(h.warns[0].actions).toEqual(['Ask It to Release', 'Show MCP Server']);
+  });
+
+  it('names the holder by its window name when it has one', async () => {
+    const h = harness({ startSucceeds: false, ownership: () => theirsMultiRoot });
+
+    await h.controller.claim();
+
+    expect(h.warns[0].message).toContain('their-proj (Workspace)');
   });
 
   it('offers the action that can actually resolve a failed claim', async () => {
@@ -306,6 +324,27 @@ describe('asking another window to release', () => {
     await controller.requestRelease();
 
     expect(sleep).toHaveBeenCalledTimes(RELEASE_WAIT_ATTEMPTS);
+  });
+
+  it('names the window rather than only its path, when the owner recorded one', async () => {
+    // A path does not identify a window to a person; the title bar does.
+    const h = harness({ startSucceeds: false, ownership: () => theirsMultiRoot });
+
+    await h.controller.requestRelease();
+
+    expect(h.warns[0].message).toContain('their-proj (Workspace)');
+  });
+
+  it('does not offer to open an owner that opening cannot reach', async () => {
+    // A multi-root owner's recorded path is only its first folder, so the
+    // action would open a duplicate window and look like it had worked.
+    const h = harness({ startSucceeds: false, ownership: () => theirsMultiRoot });
+
+    await h.controller.requestRelease();
+
+    expect(h.warns).toHaveLength(1);
+    expect(h.warns[0].actions).toEqual([]);
+    expect(h.deps.revealOwner).not.toHaveBeenCalled();
   });
 
   it('offers to open the window that ignored it', async () => {

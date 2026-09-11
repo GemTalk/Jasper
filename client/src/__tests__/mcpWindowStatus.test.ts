@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { mcpHeader, mcpReport } from '../mcpWindowStatus';
+import { canRevealOwnerWindow, mcpReport } from '../mcpWindowStatus';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import type { McpOwnership } from '../mcpServerTreeProvider';
 import type { ActiveSession } from '../sessionManager';
@@ -18,7 +18,10 @@ const owned = (selected?: ActiveSession, httpsUrl?: string): McpOwnership => ({
   httpsUrl,
 });
 
-const ownedElsewhere = (selectedSession?: string): McpOwnership => ({
+const ownedElsewhere = (
+  selectedSession?: string,
+  extra: { workspaceName?: string; workspaceFile?: string; workspacePath?: string } = {},
+): McpOwnership => ({
   kind: 'other',
   info: {
     pid: 4242,
@@ -26,6 +29,7 @@ const ownedElsewhere = (selectedSession?: string): McpOwnership => ({
     socketPath: '/tmp/jasper.sock',
     claimedAt: '2026-01-01T00:00:00.000Z',
     ...(selectedSession ? { selectedSession } : {}),
+    ...extra,
   },
 });
 
@@ -63,9 +67,10 @@ describe('mcpReport', () => {
     expect(mcpReport({ kind: 'none' }).socketPath).toBeUndefined();
   });
 
-  it('carries the owning window so the user can be sent there', () => {
+  it('carries the owning window, so the tab can say which one it is', () => {
     // The one state whose fix is in another window — the socket is held until
     // its owner lets go, so the report has to say which window that is.
+    // Whether it can also be *opened* is a separate question; see below.
     const report = mcpReport(ownedElsewhere('bar (id 3)'));
     expect(report.state).toBe('other');
     expect(report.headline).toBe('MCP: other window');
@@ -74,8 +79,12 @@ describe('mcpReport', () => {
       pid: 4242,
       claimedAt: '2026-01-01T00:00:00.000Z',
       selectedSession: 'bar (id 3)',
+      canReveal: true,
     });
-    expect(report.detail).toContain('Stop MCP there');
+    // The handover leads, because it is the one route that works regardless of
+    // whether the owning window can be navigated to at all.
+    expect(report.detail).toContain('Ask it to release');
+    expect(report.detail).toContain('stop MCP there');
   });
 
   it('reports an owning window that has no session, since its tools fail', () => {
@@ -92,27 +101,86 @@ describe('mcpReport', () => {
   });
 });
 
-describe('mcpHeader', () => {
-  it('puts the state beside the Databases title in every running state', () => {
-    expect(mcpHeader(mcpReport(owned(makeSession(7)))).description).toBe('MCP: this window');
-    expect(mcpHeader(mcpReport(ownedElsewhere())).description).toBe('MCP: other window');
-    expect(mcpHeader(mcpReport({ kind: 'none' })).description).toBe('MCP: unclaimed');
+describe('what the Databases section header shows', () => {
+  it('is a short state in every running case, and nothing else', () => {
+    // The header is a line above the database rows in a section that is not
+    // about MCP. Anything longer wedges a paragraph in there; the explanation
+    // belongs to the tab, one click away.
+    expect(mcpReport(owned(makeSession(7))).headline).toBe('MCP: this window');
+    expect(mcpReport(ownedElsewhere()).headline).toBe('MCP: other window');
+    expect(mcpReport({ kind: 'none' }).headline).toBe('MCP: unclaimed');
   });
 
   it('says nothing at all when MCP is not running in this window', () => {
     // Not "unclaimed": the header would be reporting on a server this window
     // was never going to claim.
-    expect(mcpHeader(mcpReport(undefined))).toEqual({
-      description: undefined,
-      message: undefined,
-    });
+    expect(mcpReport(undefined).headline).toBeUndefined();
   });
 
-  it('spends a line in the view only when the fix is in another window', () => {
-    // Everything else the user needs is one click away in the tab; this is the
-    // case where they have to go somewhere else entirely.
-    expect(mcpHeader(mcpReport(ownedElsewhere())).message).toContain('Stop MCP there');
-    expect(mcpHeader(mcpReport(owned(makeSession(7)))).message).toBeUndefined();
-    expect(mcpHeader(mcpReport({ kind: 'none' })).message).toBeUndefined();
+  it('keeps every headline short enough to sit beside the title', () => {
+    for (const ownership of [owned(makeSession(7)), ownedElsewhere(), { kind: 'none' } as const]) {
+      const headline = mcpReport(ownership).headline ?? '';
+      expect(headline.length).toBeLessThanOrEqual(24);
+      expect(headline).not.toContain('.');
+    }
+  });
+});
+
+describe('naming the owning window', () => {
+  it('carries the window name the owner recorded, which is what its title bar says', () => {
+    // A folder path does not identify a window to a person; the title bar does.
+    const report = mcpReport(ownedElsewhere(undefined, { workspaceName: 'myproj (Workspace)' }));
+    expect(report.owner?.workspaceName).toBe('myproj (Workspace)');
+  });
+
+  it('falls back to the path when an older Jasper wrote the sidecar', () => {
+    // workspaceName is optional precisely so an old owner still reports.
+    const report = mcpReport(ownedElsewhere());
+    expect(report.owner?.workspaceName).toBeUndefined();
+    expect(report.owner?.workspacePath).toBe('/somewhere/else');
+  });
+});
+
+describe('whether the owning window can be opened', () => {
+  it('offers it for an ordinary single-folder owner', () => {
+    expect(canRevealOwnerWindow({ workspacePath: '/their/workspace' })).toEqual({
+      canReveal: true,
+    });
+    expect(mcpReport(ownedElsewhere()).owner?.canReveal).toBe(true);
+  });
+
+  it('withholds it for a multi-root owner, and says why', () => {
+    // The path is only the workspace's first folder, so opening it gives a new
+    // single-folder window rather than switching to the owner.
+    const result = canRevealOwnerWindow({
+      workspacePath: '/their/first-folder',
+      workspaceFile: '/their/proj.code-workspace',
+    });
+    expect(result.canReveal).toBe(false);
+    expect(result.canReveal === false && result.reason).toContain('multi-root');
+
+    const report = mcpReport(
+      ownedElsewhere(undefined, { workspaceFile: '/their/proj.code-workspace' }),
+    );
+    expect(report.owner?.canReveal).toBe(false);
+    expect(report.owner?.revealBlockedReason).toContain('first folder');
+  });
+
+  it('withholds it for an owner with no folder open, and says why', () => {
+    const result = canRevealOwnerWindow({ workspacePath: '(no workspace)' });
+    expect(result.canReveal).toBe(false);
+    expect(result.canReveal === false && result.reason).toContain('no folder open');
+  });
+
+  it('points at Ask It to Release whenever it withholds the jump', () => {
+    // The handover needs no navigation, so it is the way out of every case
+    // where the jump cannot be offered.
+    for (const info of [
+      { workspacePath: '(no workspace)' },
+      { workspacePath: '/x', workspaceFile: '/x/p.code-workspace' },
+    ]) {
+      const result = canRevealOwnerWindow(info);
+      expect(result.canReveal === false && result.reason).toContain('Ask It to Release');
+    }
   });
 });

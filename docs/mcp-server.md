@@ -83,6 +83,14 @@ The socket and HTTPS port are global resources, so only one Jasper window can se
   the window closing. A claim from another window cannot take a socket that is
   still bound, which is why the owning window has to be identified and told to
   stop rather than simply overruled.
+The sidecar also records the owner's `workspaceName` (`vscode.workspace.name` —
+what its title bar shows) and its `workspaceFile` when it has a multi-root
+workspace open. Both are optional: a sidecar written by an older Jasper carries
+neither, and a window with no folder open has no name. They exist because a
+folder path does not identify a window to a person, and because
+`workspaceFile`'s presence is the one detectable sign that the recorded path is
+not the window (see **Open Owning Window** below).
+
 - **A passive window can ask for it.** `mcp.release-request.json`, written
   beside the sidecar, names the pid being asked; the owner is already watching
   that directory, sees its own pid, releases and deletes the request. The
@@ -105,8 +113,10 @@ header, opens one tab that answers every MCP question in a single place:
 whether this window serves MCP, which session its tools act on, the socket path
 (in every state — there is one per machine, and it is what Claude's config
 points at) and the HTTPS endpoint, each copied by clicking it, and — when
-another window holds the server — that window's workspace, pid, claim time and
-selected session.
+another window holds the server — that window's name (what its title bar says,
+including the `(Workspace)` suffix), its workspace folder, its
+`.code-workspace` file when it has one, its pid, when it claimed the server and
+which session it is serving.
 
 Every value carries the sentence explaining it, which the removed pane could
 only fit on a row tooltip: what the socket is for, what the HTTPS endpoint is
@@ -125,11 +135,24 @@ It is also where the actions are, including the two that need each other:
 - **Ask It to Release** is the remote form of that: it has the *other* window
   let go, then claims here. This is the action offered when another window
   holds the server, because Claim alone cannot succeed against a bound socket.
-- **Open Owning Window** focuses the window currently serving MCP, by opening
-  its workspace folder — VS Code focuses an already-open folder rather than
-  opening it twice. Best effort: an owner with no folder open, or one whose
-  sidecar recorded only the first folder of a multi-root workspace, cannot be
-  reached this way and says so.
+- **Open Owning Window** switches to the window currently serving MCP, by
+  opening its workspace folder — VS Code focuses an already-open folder rather
+  than opening it twice.
+
+  **It is offered only where that actually works.** An extension has no API to
+  focus another window; `vscode.openFolder` is the only lever, and it
+  identifies a window by the folder it has open. Where the sidecar shows that
+  identification does not hold — an owner with no folder open, or a multi-root
+  workspace whose recorded `workspacePath` is merely its first folder — the
+  button and the link are withheld and the tab says why. Opening a duplicate
+  window is a worse outcome than no button, because it looks like the switch
+  worked.
+
+  One case cannot be detected: a folder reachable by two paths (a bind mount or
+  symlink, e.g. `/uffda1/x` and `/export/uffda1/x`). Each window records the
+  path it was opened with, and nothing can tell they are the same directory, so
+  the jump opens a second window. **Ask It to Release needs no navigation and
+  is unaffected** — it is the reliable route in every case.
 - **Refresh** re-reads ownership from the socket and sidecar.
 
 **Open MCP Inspector is deliberately not on the tab.** It shells out to `npx`,

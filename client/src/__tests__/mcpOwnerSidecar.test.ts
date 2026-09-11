@@ -94,6 +94,53 @@ describe('writeOwnerSidecar / readOwnerSidecar', () => {
     );
     expect(readOwnerSidecar(sidecarPath)?.selectedSession).toBeUndefined();
   });
+
+  it('round-trips the window name and the multi-root workspace file', () => {
+    // workspaceName is what the owner's title bar says — the only thing that
+    // identifies a window to a person. workspaceFile says the recorded path is
+    // merely the workspace's first folder, so opening it would not reach it.
+    const info = sampleInfo({
+      workspaceName: 'their-proj (Workspace)',
+      workspaceFile: '/their/proj.code-workspace',
+    });
+    writeOwnerSidecar(info, sidecarPath);
+
+    const read = readOwnerSidecar(sidecarPath);
+    expect(read?.workspaceName).toBe('their-proj (Workspace)');
+    expect(read?.workspaceFile).toBe('/their/proj.code-workspace');
+  });
+
+  it('omits both when the owner wrote neither', () => {
+    // A sidecar from an older Jasper has no such fields, and a window with no
+    // folder open has no name — both must read back as a plain absence rather
+    // than breaking the whole record.
+    writeOwnerSidecar(sampleInfo(), sidecarPath);
+
+    const read = readOwnerSidecar(sidecarPath);
+    expect(read?.workspaceName).toBeUndefined();
+    expect(read?.workspaceFile).toBeUndefined();
+    expect(read?.pid).toBe(sampleInfo().pid);
+  });
+
+  it('ignores non-string window fields in stored JSON (forward-compat)', () => {
+    fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
+    fs.writeFileSync(
+      sidecarPath,
+      JSON.stringify({
+        pid: 1,
+        workspacePath: 'x',
+        socketPath: 'y',
+        claimedAt: 'z',
+        workspaceName: 7, // unexpected type
+        workspaceFile: { path: 'nope' }, // unexpected type
+      }),
+    );
+    const read = readOwnerSidecar(sidecarPath);
+    expect(read?.workspaceName).toBeUndefined();
+    expect(read?.workspaceFile).toBeUndefined();
+    // The record itself still reads, rather than being discarded wholesale.
+    expect(read?.pid).toBe(1);
+  });
 });
 
 describe('deleteOwnerSidecar', () => {

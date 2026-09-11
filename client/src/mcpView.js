@@ -46,9 +46,18 @@
     noSessionThere:
       'That window holds the server with no session selected, so every tool call ' +
       'Claude makes fails — even though sessions are logged in here.',
+    ownerWindow:
+      'What that window’s title bar says — how to pick it out of a row of VS Code windows.',
     ownerWorkspace:
       'Click to open that window. A bound socket is only released by its owner, so ' +
       'Stop MCP has to be run there — or use Ask It to Release, which has it let go from here.',
+    ownerWorkspaceFile:
+      'That window has a multi-root workspace open; this is the .code-workspace file it was ' +
+      'opened from.',
+    ownerPid:
+      'The extension host process holding the socket. Nothing else can release it — which is ' +
+      'why Ask It to Release asks rather than takes.',
+    ownerClaimed: 'When that window took the server.',
     askRelease:
       'Asks that window to release the server, then claims it here. It answers only if it is ' +
       'running a Jasper that knows how; otherwise this reports a timeout rather than waiting, ' +
@@ -90,7 +99,10 @@
    * A link-styled value. Every one of these does what its appearance promises:
    * the socket path and HTTPS URL copy themselves, because pasting them
    * elsewhere is their whole purpose, and the owning window's workspace path
-   * opens that window, because that is what a path to another window reads as.
+   * opens that window, because that is what a path to another window reads as —
+   * and is only rendered as a link where opening it would in fact reach that
+   * window (see canRevealOwnerWindow); elsewhere it is plain text with the
+   * reason beneath it.
    */
   function linkValue(value, title, onClick) {
     return button(value, 'link mono', onClick, title);
@@ -148,7 +160,7 @@
     }
 
     if (report.state === 'other' && report.owner) {
-      var path = report.owner.workspacePath;
+      var owner = report.owner;
       // Claim alone cannot succeed here — the socket is bound — so the action
       // that actually resolves it sits right beside it.
       actions.appendChild(
@@ -161,16 +173,23 @@
           HINTS.askRelease,
         ),
       );
-      actions.appendChild(
-        button(
-          'Open Owning Window',
-          'secondary',
-          function () {
-            vscode.postMessage({ command: 'revealOwner', workspacePath: path });
-          },
-          HINTS.ownerWorkspace,
-        ),
-      );
+      // Withheld where opening the path would not reach that window; the
+      // Workspace row says why, and Ask It to Release works regardless.
+      if (owner.canReveal) {
+        actions.appendChild(
+          button(
+            'Open Owning Window',
+            'secondary',
+            function () {
+              vscode.postMessage({
+                command: 'revealOwner',
+                workspacePath: owner.workspacePath,
+              });
+            },
+            HINTS.ownerWorkspace,
+          ),
+        );
+      }
     }
 
     actions.appendChild(
@@ -204,19 +223,38 @@
     }
   }
 
+  /** ISO 8601 is what the sidecar stores; a person reads a local time. */
+  function readableTime(iso) {
+    var when = new Date(iso);
+    if (isNaN(when.getTime())) return iso;
+    return when.toLocaleString() + ' (' + iso + ')';
+  }
+
   function renderOwningWindow(root, report, vscode) {
     var owner = report.owner;
     var dl = section(root, 'Owning window');
-    row(
-      dl,
-      'Workspace',
-      linkValue(owner.workspacePath, 'Click to open this window', function () {
-        vscode.postMessage({ command: 'revealOwner', workspacePath: owner.workspacePath });
-      }),
-      HINTS.ownerWorkspace,
-    );
-    row(dl, 'Process', textValue('pid ' + owner.pid));
-    row(dl, 'Claimed', textValue(owner.claimedAt));
+    if (owner.workspaceName) {
+      row(dl, 'Window', textValue(owner.workspaceName), HINTS.ownerWindow);
+    }
+    if (owner.canReveal) {
+      row(
+        dl,
+        'Workspace',
+        linkValue(owner.workspacePath, 'Click to open this window', function () {
+          vscode.postMessage({ command: 'revealOwner', workspacePath: owner.workspacePath });
+        }),
+        HINTS.ownerWorkspace,
+      );
+    } else {
+      // Offering the jump where it would open a duplicate window is worse than
+      // not offering it: it looks like the switch worked.
+      row(dl, 'Workspace', textValue(owner.workspacePath), owner.revealBlockedReason);
+    }
+    if (owner.workspaceFile) {
+      row(dl, 'Workspace file', textValue(owner.workspaceFile), HINTS.ownerWorkspaceFile);
+    }
+    row(dl, 'Process', textValue('pid ' + owner.pid), HINTS.ownerPid);
+    row(dl, 'Claimed', textValue(readableTime(owner.claimedAt)), HINTS.ownerClaimed);
     if (owner.selectedSession) {
       row(dl, 'Session served', textValue(owner.selectedSession), HINTS.servedThere);
     } else {

@@ -17,7 +17,16 @@ interface McpReportLike {
   socketPath?: string;
   httpsUrl?: string;
   servedSession?: string;
-  owner?: { workspacePath: string; pid: number; claimedAt: string; selectedSession?: string };
+  owner?: {
+    workspaceName?: string;
+    workspacePath: string;
+    workspaceFile?: string;
+    pid: number;
+    claimedAt: string;
+    selectedSession?: string;
+    canReveal: boolean;
+    revealBlockedReason?: string;
+  };
 }
 
 interface McpViewApi {
@@ -72,10 +81,23 @@ const elsewhere: McpReportLike = {
   detail: 'served elsewhere',
   socketPath: '/tmp/jasper.sock',
   owner: {
+    workspaceName: 'their-project',
     workspacePath: '/somewhere/else',
     pid: 4242,
     claimedAt: '2026-01-01T00:00:00.000Z',
     selectedSession: 'bar (id 3)',
+    canReveal: true,
+  },
+};
+
+const elsewhereMultiRoot: McpReportLike = {
+  ...elsewhere,
+  owner: {
+    ...elsewhere.owner!,
+    workspaceFile: '/their/proj.code-workspace',
+    canReveal: false,
+    revealBlockedReason:
+      'That window has a multi-root workspace open, and the path above is only its first folder.',
   },
 };
 
@@ -159,6 +181,42 @@ describe('the MCP Server tab', () => {
     expect(root.textContent).toContain('bar (id 3)');
     click('Open Owning Window');
     expect(posted).toEqual([{ command: 'revealOwner', workspacePath: '/somewhere/else' }]);
+  });
+
+  it('names the owning window the way its title bar does', () => {
+    // A path does not identify a window to a person; the title bar does.
+    view().render(root, elsewhere, '10:00:00', vscode);
+    expect(root.textContent).toContain('their-project');
+  });
+
+  it('shows the claim time in local form, keeping the exact stamp beside it', () => {
+    view().render(root, elsewhere, '10:00:00', vscode);
+    expect(root.textContent).toContain('2026-01-01T00:00:00.000Z');
+    expect(root.textContent).toContain(new Date('2026-01-01T00:00:00.000Z').toLocaleString());
+  });
+
+  it('withholds the jump when it would open a duplicate window, and says why', () => {
+    // Opening a multi-root owner's first folder gives a new single-folder
+    // window — which looks like the switch worked. Worse than no button.
+    view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
+
+    expect(buttons()).not.toContain('Open Owning Window');
+    expect(root.textContent).toContain('multi-root workspace open');
+    expect(root.textContent).toContain('/their/proj.code-workspace');
+  });
+
+  it('leaves the path unclickable when the jump is withheld', () => {
+    view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
+
+    const dt = Array.from(root.querySelectorAll('dt')).find((d) => d.textContent === 'Workspace');
+    expect(dt?.nextElementSibling?.querySelector('button')).toBeNull();
+  });
+
+  it('still offers the handover when the jump is withheld', () => {
+    // Ask It to Release needs no navigation, so it is the way out of every
+    // case the jump cannot serve.
+    view().render(root, elsewhereMultiRoot, '10:00:00', vscode);
+    expect(buttons()).toContain('Ask It to Release');
   });
 
   it('opens the owning window from the workspace path itself', () => {

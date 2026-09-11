@@ -179,7 +179,7 @@ import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
 import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
 import { NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
-import { mcpHeader, mcpReport } from './mcpWindowStatus';
+import { mcpReport } from './mcpWindowStatus';
 import { defaultReleaseRequestPath } from './mcpReleaseRequest';
 import { McpOwnershipController } from './mcpOwnership';
 import { McpPanel } from './mcpPanel';
@@ -725,10 +725,8 @@ export function activate(context: vscode.ExtensionContext) {
   const databases: { view?: vscode.TreeView<DatabaseNode> } = {};
   const refreshMcpSurfaces = () => {
     treeProvider.refresh();
-    const header = mcpHeader(mcpReport(mcpOwnership()));
     if (databases.view) {
-      databases.view.description = header.description;
-      databases.view.message = header.message;
+      databases.view.description = mcpReport(mcpOwnership()).headline;
     }
     McpPanel.refreshIfOpen();
   };
@@ -3109,6 +3107,8 @@ export function activate(context: vscode.ExtensionContext) {
         return session ? `${loginLabel(session.login)} (id ${session.id})` : undefined;
       },
       workspacePath,
+      workspaceName: vscode.workspace.name,
+      workspaceFile: vscode.workspace.workspaceFile?.fsPath,
     });
     const registerDesktop = readMcpSetting<boolean>('registerWithClaudeDesktop', true);
 
