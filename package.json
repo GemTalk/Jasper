@@ -3195,7 +3195,7 @@
         {
           "command": "gemstone.autoCommit.toggle",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "gemstone@1"
+          "group": "1_transaction@1"
         },
         {
           "command": "gemstone.showSessionConfiguration",
