@@ -33,7 +33,9 @@ Five hooks, chosen to be the places an operation *finishes*:
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
 | `smalltalkNotebookController` / MCP `execute_code` | a doit by another route |
 | `notifyRefactoringApplied` | all fifteen refactorings |
-| `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo |
+| `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo, and the Explorer's
+multi-row actions — removing a class subtree, a drag that moves or copies several methods,
+a drag that refiles several classes |
 
 **Not** at the GCI round trip, which is what "commit every time you go to the server" would literally
 mean. Jasper reads the stone constantly — every tree expansion, every completion, every hover — and a
@@ -59,8 +61,11 @@ commits once. Three properties matter:
 - **It nests.** An inner region borrows the outer one's commit, so a file-in that reaches
   `fileInClass` through `fileInFile` still commits once.
 
-The rule for a new caller: **if the operation has an all-or-nothing contract, or recovers by
-aborting, it runs deferred.** If it is one change that either lands or does not, it does not need to.
+The rule for a new caller: **if the operation has an all-or-nothing contract, recovers by aborting,
+or is one user gesture that writes several times, it runs deferred.** The third case has a ready-made
+answer to "which writes belong together": the undo recording already groups them, and a drag that
+records one undo entry is a drag that should make one commit. If it is one change that either lands
+or does not, it does not need to.
 
 ## What a commit does to Undo (nothing) and to Abort (everything)
 
