@@ -121,6 +121,19 @@ describe('arming over a transaction that already has uncommitted work', () => {
     expect(getAutoCommitStatus(1)).toBe('on');
   });
 
+  it('asks the same question when the commit state could not be read at all', async () => {
+    // A probe that failed leaves the user no better placed to know what is staged than a
+    // positive one, so silence would be the one wrong answer.
+    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(undefined);
+    warn.mockResolvedValue(undefined);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toMatch(/could not be checked/);
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
   it('leaves auto-commit off when the pre-commit it was asked for fails', async () => {
     warn.mockResolvedValue('Commit Now, Then Turn On');
     const failing = vi.fn(() => ({

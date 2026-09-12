@@ -72,9 +72,9 @@ function reportFailure(session: ActiveSession, reason: string): void {
 }
 
 /**
- * Commit an armed session now, whatever the suspension state. The one caller that wants
- * this rather than {@link autoCommitAfterWrite} is the deferred wrapper closing its
- * outermost level.
+ * Commit the session's transaction and read the result. Every failure lands here, whether
+ * the stone refused the commit or the call itself threw — a dead session throws rather
+ * than answering, and both mean the same thing to the user: the work is not saved.
  */
 function commitNow(session: ActiveSession): AutoCommitOutcome {
   try {
@@ -117,6 +117,9 @@ export function autoCommitAfterWrite(session: ActiveSession): AutoCommitOutcome 
  * half-applied change.
  */
 function settleDeferred(session: ActiveSession, succeeded: boolean): void {
+  // False for an inner level, and also for a session that was FORGOTTEN mid-region — a
+  // logout clears its suspension along with everything else, and a commit on a session
+  // that has gone is the last thing this should attempt.
   if (!resumeAutoCommit(session.id)) return;
   const owed = hasAutoCommitPending(session.id);
   clearAutoCommitPending(session.id);

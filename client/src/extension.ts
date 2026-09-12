@@ -1283,7 +1283,9 @@ export function activate(context: vscode.ExtensionContext) {
   // the real Abort (the one that refreshes the panes and clears the undo stack) when they
   // choose it from the failure prompt.
   setAutoCommitFailureHandler(reportAutoCommitFailure);
-  setAutoCommitAbortHandler((session) => abortSession(session, { skipConfirmation: true }));
+  setAutoCommitAbortHandler((session) =>
+    abortSession(session, { uncommittedAlreadyConfirmed: true }),
+  );
   context.subscriptions.push(
     new vscode.Disposable(() => {
       setAutoCommitFailureHandler(undefined);
@@ -1489,19 +1491,20 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // `skipConfirmation` is for the ONE caller that has already asked: the auto-commit
-  // failure prompt, whose Abort button is itself the confirmation, and which has already
-  // said that the changes are not in the repository. Asking twice there reads as a bug.
+  // `uncommittedAlreadyConfirmed` is for the ONE caller that has already asked about that
+  // half: the auto-commit failure prompt, whose "Abort and Discard" button is itself the
+  // confirmation and which has already said the changes are not in the repository. Asking
+  // twice there reads as a bug. It suppresses only the uncommitted-changes half — the
+  // unsaved exported .gs files are a separate loss that prompt says nothing about, so that
+  // warning still stands.
   const abortSession = async (
     session: ActiveSession,
-    opts?: { skipConfirmation?: boolean },
+    opts?: { uncommittedAlreadyConfirmed?: boolean },
   ): Promise<void> => {
-    const message = opts?.skipConfirmation
-      ? undefined
-      : abortConfirmMessage(
-          queries.sessionNeedsCommit(session),
-          fileInManager.hasUnsavedChanges(session),
-        );
+    const message = abortConfirmMessage(
+      opts?.uncommittedAlreadyConfirmed ? false : queries.sessionNeedsCommit(session),
+      fileInManager.hasUnsavedChanges(session),
+    );
     if (message) {
       const choice = await vscode.window.showWarningMessage(
         message,

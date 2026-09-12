@@ -46,10 +46,18 @@ const MAKE_DEFAULT = 'Make This the Default';
  * uncommitted work. Answers whether it ended up armed.
  */
 async function armAutoCommit(session: ActiveSession): Promise<boolean> {
-  if (queries.sessionNeedsCommit(session) === true) {
+  // `undefined` means the probe itself failed, and it asks the same question: the point of
+  // the prompt is that the user cannot see what is staged, and a failed probe leaves them
+  // no better off than a positive one. Silence here would be the one wrong answer.
+  const needsCommit = queries.sessionNeedsCommit(session);
+  if (needsCommit !== false) {
+    const preamble =
+      needsCommit === true
+        ? `Session ${session.id} already has uncommitted changes.`
+        : `Session ${session.id} may have uncommitted changes (the commit state could not be checked).`;
     const choice = await vscode.window.showWarningMessage(
-      `Session ${session.id} already has uncommitted changes. With auto-commit on, the next ` +
-        'change you make commits those too — the whole transaction goes in together.',
+      `${preamble} With auto-commit on, the next change you make commits those too — the ` +
+        'whole transaction goes in together.',
       { modal: true },
       COMMIT_FIRST,
       ARM_ANYWAY,

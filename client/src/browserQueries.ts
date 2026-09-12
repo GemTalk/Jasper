@@ -2238,8 +2238,8 @@ export function methodsAccessingClassVar(
 // inside `writing` / `writingAsync`, which is where auto-commit hangs (issue #254): a
 // session with auto-commit armed commits as soon as the mutation lands, and every other
 // session pays one map lookup. The rest of the section — the undo-record bookkeeping and
-// the two breakpoint READS — is deliberately outside it: those write SessionTemps or
-// nothing at all, and there is nothing for a commit to persist.
+// the reads that sit among these for want of a better home — is deliberately outside it:
+// those write SessionTemps or nothing at all, and there is nothing for a commit to persist.
 
 /**
  * Run a repository mutation, then let auto-commit have it.
