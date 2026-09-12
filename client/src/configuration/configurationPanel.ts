@@ -13,6 +13,11 @@
 // was changed. A load failure (a busy or logged-out session) is a
 // `configurationError` shown at the top instead.
 //
+// A change that lands is also recorded on the panel's own Undo history, so a
+// mistyped value is one click away from the value it replaced. See
+// `undoHistory` for why that history lives here rather than on Jasper's
+// code-undo stack.
+//
 // Follows the webview conventions established in debuggerPanel.ts:
 // createWebviewPanel with a strict CSP, all styles inline
 // in the host HTML, all behavior in a companion configurationView.js read at
@@ -91,10 +96,68 @@ interface ConfigurationPayload {
   gemParams: ConfigParam[];
 }
 
+/**
+ * One configuration change that landed, and what it takes to reverse it.
+ *
+ * Both values are the ones the SESSION reported — `from` is what the panel last
+ * read before the change, `to` is what it read back after. Not what the user
+ * typed: a stone that accepts `True` and reports `true` has still made the same
+ * change, and an undo has to aim at a value the session will agree it is at.
+ */
+interface ConfigChange {
+  scope: ConfigScope;
+  key: string;
+  valueType: ConfigValueType;
+  /** The value the parameter held before the change — the target of an Undo. */
+  from: string;
+  /** The value the change settled at — the target of a Redo, and the value a
+   *  later Undo expects to still find, so a change made since can be spotted. */
+  to: string;
+}
+
+/** What Undo or Redo is currently offering, as the panel draws it. Null when
+ *  the corresponding history is empty. */
+interface ConfigHistoryEntry {
+  scope: ConfigScope;
+  key: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * What one attempted set did, as the history needs to hear it.
+ *
+ * `took` is the only thing that counts as success: the stone answering `'OK'`
+ * is not enough, because some parameters are accepted and then ignored (see
+ * {@link ConfigurationPanel.applySet}). `before`/`settled` are absent when the
+ * panel never got far enough to know them — no session, a refused set, a throw.
+ */
+interface SetOutcome {
+  took: boolean;
+  before?: string;
+  settled?: string;
+}
+
+/** The top of a history, as the panel draws it — the change Undo (or Redo) would
+ *  act on next, or null when there is none. */
+function historyEntry(history: ConfigChange[]): ConfigHistoryEntry | null {
+  const change = history[history.length - 1];
+  if (!change) return null;
+  const { scope, key, from, to } = change;
+  return { scope, key, from, to };
+}
+
+/** How many changes the panel keeps reversible. A cap rather than a single
+ *  level: undoing a run of edits one at a time is the case this exists for, and
+ *  a bound keeps a long-lived panel's history from growing without limit. */
+const HISTORY_LIMIT = 50;
+
 type Inbound =
   | { command: 'ready' }
   | { command: 'loadConfiguration' }
   | { command: 'copyText'; text: string }
+  | { command: 'undoConfiguration' }
+  | { command: 'redoConfiguration' }
   | {
       command: 'setConfiguration';
       scope: ConfigScope;
@@ -115,6 +178,35 @@ export class ConfigurationPanel {
   // kept (an unreadable file caches as an empty map, so a remote stone whose
   // product tree is not on this machine is not re-probed on every load).
   private configDescCache = new Map<string, Map<string, string>>();
+
+  /**
+   * The configuration as the panel last read it. Kept because a set has to know
+   * what the parameter held BEFORE it, and re-reading both reports to find out
+   * would double the cost of every change: the panel already re-reads after each
+   * set, so the previous read is exactly the "before" — and it is also the value
+   * the user was looking at when they decided to change it.
+   */
+  private lastPayload: ConfigurationPayload | undefined;
+
+  /**
+   * Changes made through this panel, oldest first, and the ones undone out of it.
+   *
+   * Panel-local on purpose, rather than an entry on Jasper's undo stack
+   * (`src/undo/`). That stack reverses GemStone CODE — methods, classes, class
+   * variables, dictionaries — and is reached from the status bar and Ctrl+K U,
+   * anywhere in the window. A configuration set is not code, and folding it in
+   * would mean a stray Ctrl+K U in an editor could reverse a stone setting the
+   * user has since forgotten about, with nothing on screen tying the two
+   * together. Keeping it here also gives Redo somewhere to live: the code stack
+   * deliberately has none (reversing a GemStone class edit is a new edit, not a
+   * step back), whereas setting a value back is exactly symmetric.
+   *
+   * The history is therefore scoped the way the panel is — one session, and gone
+   * when the session logs out, because the panel closes with it. Nothing here is
+   * persisted: it describes a live gem's state, which does not outlive the login.
+   */
+  private undoHistory: ConfigChange[] = [];
+  private redoHistory: ConfigChange[] = [];
 
   /**
    * Open the configuration panel for a session, revealing the session's existing
@@ -179,6 +271,12 @@ export class ConfigurationPanel {
       case 'setConfiguration':
         this.setConfiguration(msg.scope, msg.key, msg.valueType, msg.value);
         return;
+      case 'undoConfiguration':
+        this.stepHistory('undo');
+        return;
+      case 'redoConfiguration':
+        this.stepHistory('redo');
+        return;
       case 'copyText':
         void vscode.env.clipboard.writeText(msg.text);
         return;
@@ -197,13 +295,35 @@ export class ConfigurationPanel {
       return;
     }
     try {
-      void this.panel.webview.postMessage({
-        command: 'configuration',
-        config: this.readConfiguration(session),
-      });
+      this.postConfiguration(this.readConfiguration(session));
+      // A reopened-then-reloaded panel draws its own buttons from this, so the
+      // state travels with every load rather than only with a change.
+      this.postHistory();
     } catch (e: unknown) {
       this.configurationError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  /**
+   * Hand a freshly-read configuration to the panel, and keep it as the "before"
+   * for the next set.
+   *
+   * The history is NOT cleared here. A Refresh re-reads values; it does not undo
+   * a change, so what this panel did is still reversible afterwards. A value
+   * that moved underneath us between the two reads is caught at Undo time
+   * instead, where the entry can say so — see {@link stepHistory}.
+   */
+  private postConfiguration(config: ConfigurationPayload): void {
+    this.lastPayload = config;
+    void this.panel.webview.postMessage({ command: 'configuration', config });
+  }
+
+  /** The value the panel last read for a parameter, or undefined when it has not
+   *  read one (no load yet, or a key that is not in either report). */
+  private lastValueOf(scope: ConfigScope, key: string): string | undefined {
+    if (!this.lastPayload) return undefined;
+    const params = scope === 'stone' ? this.lastPayload.stoneParams : this.lastPayload.gemParams;
+    return params.find((p) => p.key === key)?.value;
   }
 
   /** Read both reports for a session and shape them for the panel. */
@@ -225,6 +345,89 @@ export class ConfigurationPanel {
   }
 
   /**
+   * A value the user changed from the panel: apply it, then record it as
+   * reversible if it actually moved.
+   *
+   * A change is only worth an Undo when the session's value genuinely changed —
+   * a set the stone ignored, one it refused, and one that asked for the value
+   * already there all leave nothing to put back, and offering Undo for any of
+   * them would promise a step the panel cannot take. A new change also drops the
+   * Redo history: from here on, the branch that was undone is no longer the one
+   * the session is on.
+   */
+  private setConfiguration(
+    scope: ConfigScope,
+    key: string,
+    valueType: ConfigValueType,
+    value: string,
+  ): void {
+    const outcome = this.applySet(scope, key, valueType, value);
+    const { before, settled } = outcome;
+    if (
+      outcome.took &&
+      before !== undefined &&
+      settled !== undefined &&
+      !configValuesMatch(valueType, before, settled)
+    ) {
+      this.undoHistory.push({ scope, key, valueType, from: before, to: settled });
+      if (this.undoHistory.length > HISTORY_LIMIT) this.undoHistory.shift();
+      this.redoHistory = [];
+    }
+    this.postHistory();
+  }
+
+  /**
+   * Reverse the newest change, or re-apply the newest reversal.
+   *
+   * The reversal is an ordinary set — the same path, the same session, the same
+   * checks — so it inherits every rule a hand-typed change obeys: a stone key
+   * still needs SystemUser, a refusal still comes back in the stone's words, and
+   * a value accepted-then-ignored still says so rather than being reported as an
+   * undo that worked. Which is why the entry only MOVES between the histories
+   * when the reversal actually landed: if it did not, the value is still where
+   * the change left it, and the change is still the thing to undo.
+   *
+   * A parameter someone has changed since is refused rather than overwritten.
+   * The entry describes a step from one value to another; if the session is no
+   * longer at the value the step ended on, putting `from` back would not be
+   * undoing this panel's change, it would be discarding somebody else's. The
+   * entry is dropped in that case — it no longer describes anything true.
+   */
+  private stepHistory(direction: 'undo' | 'redo'): void {
+    const history = direction === 'undo' ? this.undoHistory : this.redoHistory;
+    const change = history[history.length - 1];
+    if (!change) return;
+    // Undo aims at where the change came from; Redo aims at where it went. The
+    // value each expects to find is the other end of that same step.
+    const target = direction === 'undo' ? change.from : change.to;
+    const expected = direction === 'undo' ? change.to : change.from;
+
+    const live = this.lastValueOf(change.scope, change.key);
+    if (live !== undefined && !configValuesMatch(change.valueType, expected, live)) {
+      history.pop();
+      this.setResult(
+        change.scope,
+        change.key,
+        'warn',
+        `${change.key} now reports ${live}, not the ${expected} this panel left it at — it has been ` +
+          `changed since. ${direction === 'undo' ? 'Undo' : 'Redo'} would overwrite that change rather ` +
+          `than reverse this panel's, so it was not applied. Set the value you want directly.`,
+      );
+      this.postHistory();
+      return;
+    }
+
+    const outcome = this.applySet(change.scope, change.key, change.valueType, target, direction);
+    if (outcome.took) {
+      history.pop();
+      const other = direction === 'undo' ? this.redoHistory : this.undoHistory;
+      other.push(change);
+      if (other.length > HISTORY_LIMIT) other.shift();
+    }
+    this.postHistory();
+  }
+
+  /**
    * Set one runtime-settable value through the session, then re-read and report
    * the *settled* value. The stone is the authority: a refusal (a SystemUser-only
    * stone key, a gem key frozen after login) comes back as a `configurationError`
@@ -233,18 +436,24 @@ export class ConfigurationPanel {
    * "OK" would read as success while the value snapped back. Comparing what the
    * session now reports against what was asked turns that silent revert into a
    * plain statement of what actually happened.
+   *
+   * Shared by a hand-typed change and by Undo/Redo, so all three are held to the
+   * same standard of "it worked"; `origin` only changes how the change reads in
+   * the sysadmin log and in the banner beside the row.
    */
-  private setConfiguration(
+  private applySet(
     scope: ConfigScope,
     key: string,
     valueType: ConfigValueType,
     value: string,
-  ): void {
+    origin: 'set' | 'undo' | 'redo' = 'set',
+  ): SetOutcome {
     const session = this.deps.sessionManager.getSession(this.sessionId);
     if (!session) {
       this.configurationError('No GemStone session is selected. Log in and try again.');
-      return;
+      return { took: false };
     }
+    const before = this.lastValueOf(scope, key);
     try {
       const execute = defaultQueryExecutorUsing(session);
       const result = setSessionConfiguration(execute, scope, key, valueType, value);
@@ -252,31 +461,47 @@ export class ConfigurationPanel {
         // A refused set is not a panel-wide failure — it belongs beside the row
         // the user was editing, with the stone's own words.
         this.setResult(scope, key, 'warn', result.message ?? `Could not set ${key}.`);
-        return;
+        return { took: false, before };
       }
-      appendSysadmin(`Session Configuration: set ${scope} configuration ${key} = ${value}`);
+      appendSysadmin(
+        `Session Configuration: ${origin === 'set' ? 'set' : `${origin} of`} ` +
+          `${scope} configuration ${key} = ${value}`,
+      );
 
       const config = this.readConfiguration(session);
-      void this.panel.webview.postMessage({ command: 'configuration', config });
+      this.postConfiguration(config);
 
       const settled = (scope === 'stone' ? config.stoneParams : config.gemParams).find(
         (p) => p.key === key,
       );
       const now = settled ? settled.value : '(unknown)';
       const took = settled !== undefined && configValuesMatch(valueType, value, settled.value);
+      const verb = origin === 'set' ? 'Set' : origin === 'undo' ? 'Undid' : 'Redid';
       this.setResult(
         scope,
         key,
         took ? 'ok' : 'warn',
         took
-          ? `Set ${key} — the session now reports ${now}.`
+          ? `${verb} ${key} — the session now reports ${now}.`
           : `${key} was accepted without error, but the session still reports ${now}, not ${value.trim()}. ` +
               `This parameter is likely read-only at runtime — many settings can only change in the config ` +
               `file before startup, and stone-level settings need SystemUser.`,
       );
+      return { took, before, settled: settled?.value };
     } catch (e: unknown) {
       this.setResult(scope, key, 'warn', e instanceof Error ? e.message : String(e));
+      return { took: false, before };
     }
+  }
+
+  /** Tell the panel what Undo and Redo currently offer, so each button can be
+   *  enabled and can name the change it would make. */
+  private postHistory(): void {
+    void this.panel.webview.postMessage({
+      command: 'configHistory',
+      undo: historyEntry(this.undoHistory),
+      redo: historyEntry(this.redoHistory),
+    });
   }
 
   /** The outcome of a set, shown by the panel beside the row it belongs to. */
@@ -432,6 +657,11 @@ body {
   background: transparent; color: var(--vscode-icon-foreground, inherit); cursor: pointer;
 }
 .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
+/* A header action with nothing to do — Undo with an empty history, Redo with
+   nothing undone. Dimmed and inert, but still hoverable, because its tooltip is
+   what says why it is not on offer. */
+.icon-btn[disabled] { opacity: .4; cursor: default; }
+.icon-btn[disabled]:hover { background: transparent; }
 .btn:focus-visible, .icon-btn:focus-visible, summary:focus-visible {
   outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px;
 }

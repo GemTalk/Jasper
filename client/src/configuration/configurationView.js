@@ -37,6 +37,12 @@
   // Which config groups (scope -> open?) the user has collapsed, kept across the
   // panel's redraws so a collapsed Stone group does not spring back open.
   const configGroupsOpen = new Map();
+  // What the header's Undo and Redo would do next, as the host reports it after
+  // every load and every change: each is { scope, key, from, to } or null. The
+  // history itself lives in the host (see configurationPanel.ts) — the webview
+  // only draws its top, because reversing a change means going back to the
+  // session, which only the host can do.
+  let configHistory = { undo: null, redo: null };
 
   // The exact VS Code codicon SVG paths for the glyphs this panel draws, inlined
   // so no webfont is fetched. `fill="currentColor"` lets the surrounding text
@@ -50,6 +56,10 @@
       '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/></svg>',
     discard:
       '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M3.00098 2.5C3.00098 2.22386 3.22483 2 3.50098 2C3.77712 2 4.00098 2.22386 4.00098 2.5V6.34262L7.17202 3.17157C8.73412 1.60948 11.2668 1.60948 12.8289 3.17157C14.391 4.73367 14.391 7.26633 12.8289 8.82843L7.80375 13.8536C7.60849 14.0488 7.2919 14.0488 7.09664 13.8536C6.90138 13.6583 6.90138 13.3417 7.09664 13.1464L12.1218 8.12132C13.2933 6.94975 13.2933 5.05025 12.1218 3.87868C10.9502 2.70711 9.0507 2.70711 7.87913 3.87868L4.75781 7H8.50098C8.77712 7 9.00098 7.22386 9.00098 7.5C9.00098 7.77614 8.77712 8 8.50098 8H3.60098C3.26961 8 3.00098 7.73137 3.00098 7.4V2.5Z"/></svg>',
+    // The mirror of `discard` — codicon's own redo arrow. `discard` doubles as the
+    // Undo glyph in the header: it is the same counter-clockwise arrow VS Code
+    // uses for undo, and the pair only reads as a pair when they are mirrored.
+    redo: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.0004 2.5C13.0004 2.22386 12.7766 2 12.5004 2C12.2243 2 12.0004 2.22386 12.0004 2.5V6.34262L8.8294 3.17157C7.26731 1.60948 4.73465 1.60948 3.17255 3.17157C1.61045 4.73367 1.61045 7.26633 3.17255 8.82843L8.19768 13.8536C8.39294 14.0488 8.70952 14.0488 8.90478 13.8536C9.10004 13.6583 9.10004 13.3417 8.90478 13.1464L3.87966 8.12132C2.70808 6.94975 2.70808 5.05025 3.87966 3.87868C5.05123 2.70711 6.95072 2.70711 8.1223 3.87868L11.2436 7H7.50045C7.22431 7 7.00045 7.22386 7.00045 7.5C7.00045 7.77614 7.22431 8 7.50045 8H12.4004C12.7318 8 13.0004 7.73137 13.0004 7.4V2.5Z"/></svg>',
     close:
       '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8.70701 8.00001L12.353 4.35401C12.548 4.15901 12.548 3.84201 12.353 3.64701C12.158 3.45201 11.841 3.45201 11.646 3.64701L8.00001 7.29301L4.35401 3.64701C4.15901 3.45201 3.84201 3.45201 3.64701 3.64701C3.45201 3.84201 3.45201 4.15901 3.64701 4.35401L7.29301 8.00001L3.64701 11.646C3.45201 11.841 3.45201 12.158 3.64701 12.353C3.74501 12.451 3.87301 12.499 4.00101 12.499C4.12901 12.499 4.25701 12.45 4.35501 12.353L8.00101 8.70701L11.647 12.353C11.745 12.451 11.873 12.499 12.001 12.499C12.129 12.499 12.257 12.45 12.355 12.353C12.55 12.158 12.55 11.841 12.355 11.646L8.70901 8.00001H8.70701Z"/></svg>',
     refresh:
@@ -206,13 +216,51 @@
     </details>`;
   }
 
+  // How a value reads in a message. An empty string is shown as '' — the same
+  // stand-in the rows use, so "back to ''" is not a sentence that trails off.
+  function valueText(v) {
+    return v === '' ? "''" : v;
+  }
+
+  // Undo and Redo for configuration CHANGES — this panel's own history, not the
+  // editor's and not Jasper's code-undo stack. What these reverse is a value
+  // written into a live stone or gem, which no editor buffer holds and no
+  // Ctrl+Z knows about.
+  //
+  // Disabled rather than hidden when there is nothing to reverse: the pair keeps
+  // its place beside Refresh instead of shuffling the header on every change,
+  // and the tooltip still has somewhere to say why it is not on offer. When
+  // there IS something, the tooltip names the parameter and the value the click
+  // would land on — the press is a write to a live session, so it should not be
+  // a guess about which one.
+  function historyButton(dir) {
+    const entry = configHistory[dir];
+    const glyph = dir === 'undo' ? 'discard' : 'redo';
+    let tip;
+    if (!entry) {
+      tip =
+        dir === 'undo'
+          ? 'Undo — no setting has been changed from this panel yet'
+          : 'Redo — no change has been undone yet';
+    } else if (dir === 'undo') {
+      tip = `Undo — set ${entry.key} back to ${valueText(entry.from)} (it is ${valueText(entry.to)} now)`;
+    } else {
+      tip = `Redo — set ${entry.key} to ${valueText(entry.to)} again`;
+    }
+    return `<button type="button" class="icon-btn" data-action="${dir}Configuration" title="${esc(tip)}" aria-label="${esc(tip)}"${
+      entry ? '' : ' disabled'
+    }>${icon(glyph)}</button>`;
+  }
+
   // The panel body: the stone and gem configuration of the session. Values load
-  // on demand — the header carries Refresh, and opening the panel asks the host
-  // to read them (init posts `ready`).
+  // on demand — the header carries Undo, Redo and Refresh, and opening the panel
+  // asks the host to read them (init posts `ready`).
   function renderBody() {
     const label = (lastConfig && lastConfig.label) || meta.label || 'this session';
     const version = (lastConfig && lastConfig.version) || meta.version || '';
     const actions = `<span class="config-panel-actions">
+      ${historyButton('undo')}
+      ${historyButton('redo')}
       <button type="button" class="icon-btn" data-action="loadConfiguration" title="Reload settings from the session" aria-label="Refresh">${icon('refresh')}</button>
     </span>`;
     const head = `<header class="config-panel-head">
@@ -363,6 +411,13 @@
       case 'loadConfiguration':
         requestConfiguration(true);
         return true;
+      case 'undoConfiguration':
+      case 'redoConfiguration':
+        // The host owns the history and does the reversing; the webview only asks.
+        // It answers with a fresh `configuration`, a `setResult` and a
+        // `configHistory`, exactly as it does for a hand-typed change.
+        post({ command: el.dataset.action });
+        return true;
       case 'dismissSet':
         clearTimeout(setTimer);
         setNotice = null;
@@ -492,6 +547,27 @@
     }
     showInfoPopover(anchor, true);
   }
+  // Ctrl/Cmd+Z and its redo partners, for the panel's configuration history.
+  //
+  // On the document rather than the panel root: with nothing focused inside the
+  // panel the keystroke never reaches the root, and "click a value, press Escape,
+  // press Ctrl+Z" is exactly when someone reaches for it. Skipped while a text
+  // box or select has focus, so the inline editor keeps its own text undo — a
+  // half-typed value is the user's to take back before it is anyone's to send.
+  // A disabled button is not pressed by proxy: an empty history simply does
+  // nothing, the same as clicking it.
+  function onDocumentKeydown(e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const t = e.target;
+    if (t && t.closest && t.closest('input, select, textarea')) return;
+    const key = e.key.toLowerCase();
+    const dir =
+      key === 'z' ? (e.shiftKey ? 'redo' : 'undo') : key === 'y' && !e.shiftKey ? 'redo' : null;
+    if (!dir || !configHistory[dir]) return;
+    e.preventDefault();
+    post({ command: `${dir}Configuration` });
+  }
+
   // A click anywhere outside the ⓘ and its bubble dismisses a pinned bubble.
   function onAwayClick(e) {
     if (!infoPopover || !infoPinned) return;
@@ -533,6 +609,7 @@
     configFilter = '';
     clearNotices();
     configGroupsOpen.clear();
+    configHistory = { undo: null, redo: null };
     els.root.addEventListener('click', onClick);
     els.root.addEventListener('input', onInput);
     els.root.addEventListener('keydown', onKeydown);
@@ -541,6 +618,11 @@
     // A pinned ⓘ bubble lives on document.body, outside the panel root, so its
     // dismiss-on-click-away has to watch the document, not just the root.
     document.addEventListener('click', onAwayClick, true);
+    // Same reason as the click-away listener: this one has to see keystrokes
+    // that never reach the panel root. Module-scope reference, so an init that
+    // runs twice (once per test document) re-registers the same handler and the
+    // browser drops the duplicate.
+    document.addEventListener('keydown', onDocumentKeydown);
     window.addEventListener('message', onHostMessage);
     // The panel opens straight into a read, so show the working state until the
     // host answers (it reads the settings in reply to the bootstrap's `ready`).
@@ -572,6 +654,9 @@
         msg.scope,
         msg.key,
       );
+    } else if (msg.command === 'configHistory') {
+      configHistory = { undo: msg.undo || null, redo: msg.redo || null };
+      render();
     } else if (msg.command === 'configurationError') {
       configLoading = false;
       clearNotices();
