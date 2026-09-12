@@ -154,6 +154,7 @@ import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
 import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
+import { runWithAutoCommitDeferred } from './autoCommit/autoCommitRunner';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -6206,15 +6207,20 @@ export class ExplorerController {
 
     const failures: string[] = [];
     const removed: string[] = [];
-    for (const t of targets) {
-      try {
-        const result = queries.deleteClass(session, t.dictIndex, t.className);
-        if (result.startsWith('Deleted class:')) removed.push(t.className);
-        else failures.push(`${t.className}: ${result}`);
-      } catch (e: unknown) {
-        failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
+    // One user action, one commit on an auto-commit session (issue #254) -- the same grouping
+    // the undo recording above uses, because a subtree half in the repository is not what the
+    // user asked to remove.
+    await runWithAutoCommitDeferred(session, () => {
+      for (const t of targets) {
+        try {
+          const result = queries.deleteClass(session, t.dictIndex, t.className);
+          if (result.startsWith('Deleted class:')) removed.push(t.className);
+          else failures.push(`${t.className}: ${result}`);
+        } catch (e: unknown) {
+          failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
-    }
+    });
 
     // Drop the removed class from selection/hierarchy and reload the current dict's
     // class list so the pane reflects the deletion.
@@ -7071,17 +7077,21 @@ export class ExplorerController {
 
     const moved: string[] = [];
     const failures: string[] = [];
-    for (const p of toMove) {
-      try {
-        // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
-        // …', 'Not a class: …'), so the answer has to be read, not just awaited.
-        const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
-        if (result.startsWith('Recategorized:')) moved.push(p.className);
-        else failures.push(`${p.className}: ${result}`);
-      } catch (e: unknown) {
-        failures.push(`${p.className}: ${e instanceof Error ? e.message : String(e)}`);
+    // One drag, one commit on an auto-commit session (issue #254) -- matching the undo
+    // recording, which is one entry for the drop.
+    await runWithAutoCommitDeferred(session, () => {
+      for (const p of toMove) {
+        try {
+          // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
+          // …', 'Not a class: …'), so the answer has to be read, not just awaited.
+          const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
+          if (result.startsWith('Recategorized:')) moved.push(p.className);
+          else failures.push(`${p.className}: ${result}`);
+        } catch (e: unknown) {
+          failures.push(`${p.className}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
-    }
+    });
 
     if (moved.length > 0) {
       // The category now holds a class, so it exists on the server and no longer needs
@@ -7158,16 +7168,20 @@ export class ExplorerController {
     const recording = beginMethodEdit(session, slots);
 
     try {
-      for (const p of toMove) {
-        queries.recategorizeMethod(
-          session,
-          p.className,
-          p.isMeta,
-          p.selector,
-          category,
-          p.dictIndex,
-        );
-      }
+      // One drag, one commit on an auto-commit session (issue #254) -- the same grouping as
+      // the single undo entry recorded above.
+      await runWithAutoCommitDeferred(session, () => {
+        for (const p of toMove) {
+          queries.recategorizeMethod(
+            session,
+            p.className,
+            p.isMeta,
+            p.selector,
+            category,
+            p.dictIndex,
+          );
+        }
+      });
     } catch (e) {
       void vscode.window.showErrorMessage(
         `Move failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -7256,22 +7270,26 @@ export class ExplorerController {
   ): Promise<void> {
     if (payloads.length === 0) return;
     let reveal: { selector: string; isMeta: boolean } | undefined;
-    for (const isMeta of [false, true]) {
-      const group = payloads.filter((p) => p.isMeta === isMeta);
-      if (group.length === 0) continue;
-      const outcome = await moveMethod({
-        session,
-        sourceClass: group[0].className,
-        selectors: group.map((p) => p.selector),
-        isMeta,
-        targetName: flipSide ? group[0].className : targetClass,
-        toMeta: flipSide ? !isMeta : isMeta,
-        dict: group[0].dictIndex,
-      });
-      if (outcome && outcome.moved.length > 0 && !reveal) {
-        reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
+    // A mixed selection is two engine calls, and the user made one gesture, so on an
+    // auto-commit session the pair commits once (issue #254).
+    await runWithAutoCommitDeferred(session, async () => {
+      for (const isMeta of [false, true]) {
+        const group = payloads.filter((p) => p.isMeta === isMeta);
+        if (group.length === 0) continue;
+        const outcome = await moveMethod({
+          session,
+          sourceClass: group[0].className,
+          selectors: group.map((p) => p.selector),
+          isMeta,
+          targetName: flipSide ? group[0].className : targetClass,
+          toMeta: flipSide ? !isMeta : isMeta,
+          dict: group[0].dictIndex,
+        });
+        if (outcome && outcome.moved.length > 0 && !reveal) {
+          reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
+        }
       }
-    }
+    });
     if (reveal && targetDictName !== undefined && targetDictIndex !== undefined) {
       await this.revealClass(targetDictName, targetDictIndex, targetClass, {
         revealMethod: reveal,
@@ -7286,17 +7304,20 @@ export class ExplorerController {
     const toCopy = payloads.filter((p) => p.className !== targetClass);
     if (toCopy.length === 0) return;
     try {
-      for (const p of toCopy) {
-        queries.copyMethodToClass(
-          session,
-          p.className,
-          targetClass,
-          p.isMeta,
-          p.selector,
-          0,
-          p.dictIndex,
-        );
-      }
+      // One drag, one commit on an auto-commit session (issue #254).
+      await runWithAutoCommitDeferred(session, () => {
+        for (const p of toCopy) {
+          queries.copyMethodToClass(
+            session,
+            p.className,
+            targetClass,
+            p.isMeta,
+            p.selector,
+            0,
+            p.dictIndex,
+          );
+        }
+      });
     } catch (e) {
       void vscode.window.showErrorMessage(
         `Copy failed: ${e instanceof Error ? e.message : String(e)}`,

@@ -280,7 +280,7 @@ Run the cell below to see how an error is reported here.`,
 In most Smalltalks your objects live in an in-memory *image* that belongs to one process. In GemStone they live in a **persistent, shared, transactional object repository** on disk that many sessions connect to at once. A few consequences worth understanding:
 
 - **Persistence by reachability.** Anything reachable from a *persistent root* survives after your session ends — no save/load, no serialization. \`UserGlobals\` and \`Globals\` are such roots (symbol dictionaries).
-- **Transactions.** Your session sees a stable snapshot. \`System commitTransaction\` publishes your changes to everyone; \`System abortTransaction\` discards them and refreshes your view. Nothing you do is permanent until you commit.
+- **Transactions.** Your session sees a stable snapshot. \`System commitTransaction\` publishes your changes to everyone; \`System abortTransaction\` discards them and refreshes your view. Nothing you do is permanent until you commit — unless you have turned on **Auto-Commit** for the session (the indicator in the status bar says which), which commits every change as you make it.
 - **Shared and multi-user.** Classes, methods, and data are all in the repository, visible to every session (subject to security). Many users work in the same object space.
 - **Sessions.** You are logged in as a *UserProfile*; \`SessionTemps\` holds per-session scratch state that is never committed.
 

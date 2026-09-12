@@ -7,6 +7,12 @@ import { LoginStorage } from '../loginStorage';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from '../loginTreeProvider';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import type { ActiveSession, SessionManager } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  forgetSessionAutoCommit,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../autoCommit/autoCommitState';
 
 function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   return { ...DEFAULT_LOGIN, label: 'Test', ...overrides };
@@ -181,6 +187,8 @@ describe('GemStoneLoginItem', () => {
 });
 
 describe('GemStoneSessionItem', () => {
+  beforeEach(() => _resetAutoCommitStateForTests());
+
   it('describes the session and marks the selected one', () => {
     const session = makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3);
     const selected = new GemStoneSessionItem(session, true);
@@ -191,5 +199,29 @@ describe('GemStoneSessionItem', () => {
 
     const idle = new GemStoneSessionItem(session, false);
     expect((idle.iconPath as { id: string }).id).toBe('plug');
+  });
+
+  // The status bar can only speak for the selected session, so this row is where a second
+  // session's auto-commit state is readable (issue #254) — and it says nothing at all when
+  // auto-commit is off, which is the default and would otherwise be noise on every row.
+  it('carries the auto-commit state of its session, and only when there is one to carry', () => {
+    const session = makeSession(makeLogin(), 3);
+
+    expect(new GemStoneSessionItem(session, false).description).toBe('Session 3 (3.7.2)');
+
+    registerSessionAutoCommit(3, true);
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit',
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit FAILED',
+    );
+
+    // Another session's state must not leak onto this row.
+    registerSessionAutoCommit(4, true);
+    forgetSessionAutoCommit(3);
+    expect(new GemStoneSessionItem(session, false).description).toBe('Session 3 (3.7.2)');
   });
 });

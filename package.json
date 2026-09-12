@@ -462,6 +462,12 @@
             "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting.",
             "scope": "application"
           },
+          "gemstone.autoCommit.enableForNewSessions": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Start every NEW session with auto-commit on, so each change is committed to the repository as soon as it is made.\n\nAuto-commit itself is per session and is switched from the **Auto-Commit** indicator in the status bar (click it), the session's row in the Logins view, or the `GemStone: Toggle Auto-Commit for This Session` command. This setting only decides what a new session starts at; it never changes a session already logged in.\n\nWith auto-commit on, **Abort no longer takes a change back** \u2014 it is already in the repository. Undo still works: it reverses a change by making the opposite one.",
+            "description": "Start every new session with auto-commit on. Off by default. Auto-commit is per session; this only decides where a new one starts."
+          },
           "gemstone.displayItMode": {
             "type": "string",
             "enum": [
@@ -929,6 +935,17 @@
         "title": "Abort",
         "category": "GemStone",
         "icon": "$(discard)"
+      },
+      {
+        "command": "gemstone.autoCommit.toggle",
+        "title": "Toggle Auto-Commit for This Session",
+        "category": "GemStone",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "gemstone.autoCommit.statusBarClicked",
+        "title": "Auto-Commit Status",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.sessionPing",
@@ -2264,6 +2281,14 @@
           "when": "gemstone.hasActiveSession"
         },
         {
+          "command": "gemstone.autoCommit.toggle",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.autoCommit.statusBarClicked",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.abort",
           "when": "gemstone.hasActiveSession"
         },
@@ -3166,6 +3191,11 @@
           "command": "gemstone.sessionAbort",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@3"
+        },
+        {
+          "command": "gemstone.autoCommit.toggle",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "group": "1_transaction@1"
         },
         {
           "command": "gemstone.showSessionConfiguration",

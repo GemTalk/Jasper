@@ -29,7 +29,8 @@
  *    wholesale, unseen, is not a decision to take on the user's behalf.
  */
 import * as vscode from 'vscode';
-import { SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../sessionManager';
+import { runWithAutoCommitDeferred } from '../autoCommit/autoCommitRunner';
 import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
 import { refreshUndoUi, undoVerb } from './undoUi';
@@ -50,7 +51,14 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     void vscode.window.showWarningMessage('Select a GemStone session first.');
     return;
   }
+  // One undo can be several writes -- a class-category reversal refiles the classes one at a
+  // time -- and it is only correct as a whole. So on an auto-commit session it commits ONCE,
+  // when the reversal has finished, and a reversal that fails part-way commits nothing:
+  // the transaction is left as it stands, for the user to abort or finish by hand.
+  await runWithAutoCommitDeferred(session, () => reverseTopEntry(sessions, session));
+}
 
+async function reverseTopEntry(sessions: SessionManager, session: ActiveSession): Promise<void> {
   // Loop rather than take one shot: a refactoring entry can turn out to be stale (the
   // stone's record is per session and a reconnect clears it), and dropping it should fall
   // through to whatever is under it rather than answer "nothing to undo" over a stack
