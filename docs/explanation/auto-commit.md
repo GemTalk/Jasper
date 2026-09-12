@@ -33,9 +33,7 @@ Five hooks, chosen to be the places an operation *finishes*:
 | `codeExecutor` after a completed execution | Do It, Display It, Inspect It |
 | `smalltalkNotebookController` / MCP `execute_code` | a doit by another route |
 | `notifyRefactoringApplied` | all fifteen refactorings |
-| `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo, and the Explorer's
-multi-row actions — removing a class subtree, a drag that moves or copies several methods,
-a drag that refiles several classes |
+| `runWithAutoCommitDeferred` closing | a file-in, an editor save, an undo, and the Explorer's multi-row actions — removing a class subtree, a drag that moves or copies several methods, a drag that refiles several classes |
 
 **Not** at the GCI round trip, which is what "commit every time you go to the server" would literally
 mean. Jasper reads the stone constantly — every tree expansion, every completion, every hover — and a
