@@ -4,6 +4,7 @@ import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
 import { setTranscriptLive, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
+import { autoCommitAfterWrite } from './autoCommit/autoCommitRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 
@@ -81,6 +82,10 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
     if (fetchErr.number !== 0) {
       throw new Error(fetchErr.message || `GCI error ${fetchErr.number}`);
     }
+    // A cell is a doit like any other, so it commits on an auto-commit session (issue #254)
+    // -- the same reading as Do It in the editor. Only on success: a cell that raised has
+    // nothing finished to commit.
+    autoCommitAfterWrite(session);
     return data;
   } finally {
     appendTranscriptOutput(setTranscriptLive(session, false));

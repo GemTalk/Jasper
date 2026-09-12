@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { runWithAutoCommitDeferredSync } from '../autoCommit/autoCommitRunner';
+import { isAutoCommitArmed } from '../autoCommit/autoCommitState';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
@@ -294,7 +295,7 @@ export async function fileInUris(
 
   await rememberDirectory(store, path.dirname(uris[0].fsPath));
   writeLog(uris, total);
-  await report(total);
+  await report(session, total);
 
   // New classes and methods are only visible once the panes reload. Best-effort: the
   // file-in itself has already happened, so a refresh that can't run must not turn a
@@ -337,8 +338,9 @@ function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
   log.appendLine('');
 }
 
-/** Summarise to the user, with a way to the detail when there is any. */
-async function report(outcome: FileInOutcome): Promise<void> {
+/** Summarise to the user, with a way to the detail when there is any. Takes the session
+ *  because the "not committed" line is only true when the session is not auto-committing. */
+async function report(session: ActiveSession, outcome: FileInOutcome): Promise<void> {
   const counts =
     `${outcome.compiled} method(s), ${outcome.executed} chunk(s) from ` +
     `${outcome.files} file(s)`;
@@ -363,12 +365,17 @@ async function report(outcome: FileInOutcome): Promise<void> {
   if (outcome.ignored.length > 0) {
     notes.push(`${outcome.ignored.length} topaz command(s) not run.`);
   }
-  // Said every time: a file-in that isn't committed disappears at the next abort, and
-  // Jasper never commits on the user's behalf — least of all because a file said to.
+  // Said every time, because a file-in that isn't committed disappears at the next abort.
+  // A `commit` line in the file never commits: whether the file-in lands in the repository
+  // is the session's own auto-commit setting to decide (issue #254), not the file's — so on
+  // an auto-commit session the whole file-in has already gone in as one change, and the note
+  // says so rather than telling the user to do it again.
   notes.push(
-    outcome.askedToCommit
-      ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
-      : 'Not committed — commit the session to keep it.',
+    isAutoCommitArmed(session.id)
+      ? 'Committed — this session has auto-commit on.'
+      : outcome.askedToCommit
+        ? 'The file asked to commit; Jasper did not — commit the session to keep this.'
+        : 'Not committed — commit the session to keep it.',
   );
 
   const hasDetail = outcome.skipped.length > 0 || outcome.ignored.length > 0;

@@ -329,9 +329,10 @@ export type FileInStep =
   | { kind: 'input'; file: string; line: number }
   /** A Topaz command that drives the *topaz program* rather than the image — logging
    *  in, setting the output level, committing. Recognised and deliberately not run
-   *  (Jasper is already connected, and never commits on the user's behalf), but
-   *  reported, because a `commit` the file expected and did not get changes what the
-   *  file means. */
+   *  (Jasper is already connected, and a `commit` LINE never commits -- whether the
+   *  file-in is committed is the session's own auto-commit setting to decide, not the
+   *  file's), but reported, because a `commit` the file expected and did not get changes
+   *  what the file means. */
   | { kind: 'sessionCommand'; directive: string; line: number; transaction: boolean }
   /** `exit` / `quit` — Topaz stops reading here, so this does too. */
   | { kind: 'stop'; directive: string; line: number }

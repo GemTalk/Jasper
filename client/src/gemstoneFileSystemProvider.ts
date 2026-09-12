@@ -4,6 +4,7 @@ import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
+import { runWithAutoCommitDeferredSync } from './autoCommit/autoCommitRunner';
 import { receiver } from './queries/util';
 import {
   splitOutCategory,
@@ -819,23 +820,30 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     const source = new TextDecoder().decode(content);
 
     try {
-      switch (parsed.kind) {
-        case 'method':
-          this.compileMethod(uri, parsed, source, session);
-          break;
-        case 'definition':
-          this.compileClassDefinition(uri, parsed, source, session);
-          break;
-        case 'comment':
-          this.saveClassComment(parsed, source, session);
-          break;
-        case 'new-class':
-          this.compileClassDefinition(uri, parsed, source, session);
-          break;
-        case 'new-method':
-          this.compileMethod(uri, parsed, source, session);
-          break;
-      }
+      // ONE save is one change as far as auto-commit is concerned (issue #254). A class
+      // definition save is several writes -- the definition, then its category -- and a
+      // commit between them would put a class in the repository filed under the category
+      // it is being moved out of. Deferring also means a save that throws part-way commits
+      // nothing, so the compile error the user is about to see is the whole story.
+      runWithAutoCommitDeferredSync(session, () => {
+        switch (parsed.kind) {
+          case 'method':
+            this.compileMethod(uri, parsed, source, session);
+            break;
+          case 'definition':
+            this.compileClassDefinition(uri, parsed, source, session);
+            break;
+          case 'comment':
+            this.saveClassComment(parsed, source, session);
+            break;
+          case 'new-class':
+            this.compileClassDefinition(uri, parsed, source, session);
+            break;
+          case 'new-method':
+            this.compileMethod(uri, parsed, source, session);
+            break;
+        }
+      });
 
       this.diagnostics.delete(uri);
       this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
