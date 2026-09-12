@@ -182,10 +182,11 @@ export async function offerAutoCommitRecovery(
       void vscode.window.showErrorMessage('Abort is unavailable; use the Abort button.');
       return;
     }
+    // Whether that puts auto-commit back to armed is decided by the abort itself, through
+    // `autoCommitTransactionSettled` — it only settles the transaction if it actually ran.
+    // Setting it here would arm a session over an abort the user backed out of at its own
+    // "unsaved exported .gs files" question, or one the stone refused.
     await abort(session);
-    // The abort settled the transaction, so auto-commit has something to work with again
-    // and goes back to armed — the user never asked for it to stop.
-    setAutoCommitStatus(session.id, 'on');
     return;
   }
   if (choice === SHOW_CONFLICTS) {

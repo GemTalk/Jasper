@@ -148,15 +148,23 @@ describe('arming over a transaction that already has uncommitted work', () => {
 });
 
 describe('recovering from a failed commit', () => {
-  it('aborts, and picks auto-commit back up once the transaction is settled', async () => {
+  it('runs the abort, and leaves arming to the abort itself', async () => {
+    // The real abort settles the transaction through `autoCommitTransactionSettled`, and
+    // only when it actually ran: it can still be backed out of at its own "unsaved exported
+    // .gs files" question, and arming here would arm over an abort that never happened.
     const session = makeSession();
     registerSessionAutoCommit(1, true);
+    setAutoCommitStatus(1, 'failed');
     const abort = vi.fn(async () => {});
     warn.mockResolvedValue('Abort and Discard');
 
     await offerAutoCommitRecovery(session, 'conflicts', abort);
 
     expect(abort).toHaveBeenCalledWith(session);
+    expect(getAutoCommitStatus(1)).toBe('failed');
+
+    // ...and the abort that did run puts it back.
+    autoCommitTransactionSettled(1);
     expect(getAutoCommitStatus(1)).toBe('on');
   });
 
