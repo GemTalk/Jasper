@@ -448,6 +448,49 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
     expect(decision).toBe('proceed');
   });
+
+  // Under manualBegin and transactionless a session spends most of its life
+  // outside a transaction, and outside one nothing can have been written —
+  // GemStone raises 2030 from the attempt. Prompting there would offer a
+  // "Commit & Logout" that could only fail, over work that cannot exist.
+  it('does not prompt for a session that is not in a transaction', async () => {
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit, false);
+
+    expect(decision).toBe('proceed');
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('prompts as usual for a session that is in a transaction', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit, true);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(decision).toBe('proceed');
+  });
+
+  it('prompts when the transaction state could not be read, as it always did', async () => {
+    // A failed probe is not evidence that there is nothing to lose.
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      true,
+      vi.fn(),
+      undefined,
+    );
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(decision).toBe('proceed');
+  });
 });
 
 describe('abortConfirmMessage', () => {

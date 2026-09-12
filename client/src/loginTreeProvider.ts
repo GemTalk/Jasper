@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
+import {
+  canBegin,
+  canCommit,
+  modeDescription,
+  transactionStateLabel,
+} from './queries/transactionMode';
 
 /** A configured login (tree root). Its active sessions appear as children. */
 export class GemStoneLoginItem extends vscode.TreeItem {
@@ -38,6 +44,40 @@ export class GemStoneLoginItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * The row's `contextValue`, which is how `package.json` decides which inline
+ * buttons a session gets.
+ *
+ * A plain context key would not do: keys are global, so in multiple-session mode
+ * every row would show the buttons that suit whichever session happens to be
+ * selected. Encoding the two answers in the row's own contextValue keeps each
+ * row's buttons about that row. The `when` clauses match with `=~` rather than
+ * `==` for the same reason — see the session entries in package.json.
+ */
+export function sessionContextValue(session: ActiveSession): string {
+  const { transactionMode, inTransaction } = session;
+  return (
+    'gemstoneSession' +
+    (canCommit(inTransaction) ? '.canCommit' : '') +
+    (canBegin(transactionMode, inTransaction) ? '.canBegin' : '')
+  );
+}
+
+/**
+ * The dimmed text beside a session row: which session, which stone, and — once
+ * it has been read — which transaction mode.
+ *
+ * The mode segment is dropped rather than shown as "Unknown" when the state has
+ * not been read: a row that has always said `Session 3 (3.7.2)` should not start
+ * announcing an absence. The tooltip still says the mode could not be read, for
+ * anyone who goes looking.
+ */
+export function sessionDescription(session: ActiveSession): string {
+  const base = `Session ${session.id} (${session.stoneVersion})`;
+  if (session.transactionMode === undefined) return base;
+  return `${base} · ${transactionStateLabel(session.transactionMode, session.inTransaction)}`;
+}
+
 /** An active session (tree child of the login that started it). */
 export class GemStoneSessionItem extends vscode.TreeItem {
   constructor(
@@ -45,12 +85,22 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     isSelected: boolean,
   ) {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
-    const { id, stoneVersion } = activeSession;
-    this.id = `session-${id}`;
-    this.description = `Session ${id} (${stoneVersion})`;
-    this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})`;
+    const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
+    // The transaction state is in the id so a mode switch redraws the row: VS Code
+    // reuses a node whose id is unchanged, which would leave the old mode — and
+    // the old set of inline buttons — on screen.
+    this.id = `session-${id}-${sessionContextValue(activeSession)}`;
+    this.description = sessionDescription(activeSession);
+    const tooltip = new vscode.MarkdownString();
+    tooltip.appendMarkdown(
+      `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
+    );
+    tooltip.appendMarkdown(
+      `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
+    );
+    this.tooltip = tooltip;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
-    this.contextValue = 'gemstoneSession';
+    this.contextValue = sessionContextValue(activeSession);
   }
 }
 
@@ -71,6 +121,9 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     private sessionManager?: SessionManager,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
+    // A mode switch changes what a session row says and which buttons it carries,
+    // and nothing else would redraw it — the selection has not moved.
+    sessionManager?.onDidChangeTransactionState(() => this.refresh());
   }
 
   // Logins with a connect attempt in flight, by identity. Held here rather than

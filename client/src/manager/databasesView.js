@@ -570,6 +570,21 @@
           'target',
           'Make this session the active one — Display It, Inspect It and the Explorer all follow the active session',
         );
+    // Begin and Commit are offered only where the stone would accept them: a
+    // commit outside a transaction can only raise 2030, and a begin inside one
+    // has nothing to do. The Logins & Sessions tree hides the same two buttons on
+    // the same rule, so the two surfaces agree about what a session can do.
+    const begin = session.canBegin
+      ? act(
+          'gemstone.sessionBegin',
+          'Begin Transaction',
+          'play',
+          'Begin a transaction in this session',
+        )
+      : '';
+    const commit = session.canCommit
+      ? act('gemstone.sessionCommit', 'Commit', 'check', 'Commit this session')
+      : '';
     return (
       pingResultHtml(session.id) +
       makeActive +
@@ -578,8 +593,15 @@
         iconOnly: true,
         title: 'Check that this session is alive and responsive',
       }) +
-      act('gemstone.sessionCommit', 'Commit', 'check', 'Commit this session') +
+      begin +
+      commit +
       act('gemstone.sessionAbort', 'Abort', 'discard', 'Abort this session') +
+      act(
+        'gemstone.setTransactionMode',
+        'Transaction Mode',
+        'arrow-swap',
+        'Change this session’s transaction mode (this aborts the current transaction)',
+      ) +
       btn('showSessionConfiguration', 'Session Configuration', 'gear', null, {
         session: session.id,
         iconOnly: true,
@@ -615,8 +637,13 @@
     const tip = session.current
       ? 'The session Display It, Inspect It and the Explorer are working in'
       : `An open session on ${db.stoneName}`;
+    // The transaction mode rides in the same dim run as the session number: it is
+    // state the reader wants at a glance, and it costs no button and no row.
+    const state = session.transactionState
+      ? `<span class="dim session-tx-mode">${esc(session.transactionState)}</span>`
+      : '';
     return `<div class="db-line db-session${session.current ? ' db-session-current' : ''}"${tipAttr(tip)}>
-        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span></span>
+        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span>${state}</span>
         <span class="db-line-actions">${sessionActions(session)}</span>
       </div>`;
   }

@@ -12,6 +12,16 @@ import { LoginStorage } from './loginStorage';
 import { getLoginPassword, deleteLoginPassword } from './loginCredentials';
 import { runStopStone } from './stopStoneManager';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
+import { registerTransactionStatusBar } from './transactionStatusBar';
+import {
+  TRANSACTION_MODES,
+  canBegin,
+  canCommit,
+  modeDescription,
+  modeLabel,
+  shouldPromptOnLogout,
+  transactionStateLabel,
+} from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
 import {
   DEFAULT_GS_PW,
@@ -252,12 +262,22 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * `commit` is injected so the flow is unit-testable without a live session, and
  * `undefined` is treated like `true`: a failed probe is not evidence of a clean
  * transaction, so we prompt rather than silently discard.
+ *
+ * `inTransaction` is the session's transaction state, which decides whether the
+ * prompt is worth showing at all: outside a transaction nothing can have been
+ * written (GemStone raises 2030 from any attempt), so there is nothing to
+ * discard and the prompt's "Commit & Logout" could only fail. A session in
+ * manualBegin or transactionless that is sitting outside a transaction —
+ * exactly what those modes leave you in — therefore logs straight out. It too
+ * is tri-state, and `undefined` again means "prompt".
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
+  inTransaction?: boolean,
 ): Promise<'proceed' | 'cancel'> {
+  if (!shouldPromptOnLogout(inTransaction)) return 'proceed';
   if (needsCommit === false) return 'proceed';
 
   const title =
@@ -1226,6 +1246,33 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
+  // ── Transaction mode ───────────────────────────────────
+  // Drive `gemstone.canCommit` / `gemstone.canBegin` off the selected session's
+  // transaction state, for the command-palette entries that act on it. The
+  // Sessions tree does NOT use these: its rows each carry their own answer in
+  // their contextValue, because a context key is global and would describe the
+  // selected session on every row.
+  function updateTransactionContextKeys(): void {
+    const selected = sessionManager.getSelectedSession();
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canCommit',
+      !!selected && canCommit(selected.inTransaction),
+    );
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canBegin',
+      !!selected && canBegin(selected.transactionMode, selected.inTransaction),
+    );
+  }
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() => updateTransactionContextKeys()),
+    sessionManager.onDidAddSession(() => updateTransactionContextKeys()),
+    sessionManager.onDidChangeTransactionState(() => updateTransactionContextKeys()),
+  );
+  updateTransactionContextKeys();
+  registerTransactionStatusBar(context, sessionManager);
+
   // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
   // switching sessions switches which undo (if any) is on offer.
   context.subscriptions.push(
@@ -1447,6 +1494,119 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  /**
+   * Bring every view back in line with a session whose transaction view has just
+   * been replaced wholesale.
+   *
+   * Three things do that, and they all need the same cascade: an abort, a
+   * transaction-mode switch (which aborts as part of switching), and a begin from
+   * outside a transaction (which moves the session onto a newer view of the
+   * repository, so commits landed elsewhere become visible).
+   *
+   * Factored out of abortSession so the three cannot drift apart — a browser left
+   * showing a view that no longer exists is the same bug however it got there.
+   */
+  const refreshAfterViewReplaced = async (session: ActiveSession): Promise<void> => {
+    await exportManager.refreshSession(session);
+    SystemBrowser.refresh(session.id);
+    // The new view can hold classes/globals/dicts committed by other sessions —
+    // rebuild an open GemStone Search's cached corpora so they show up, and drop
+    // the cached ClassOrganizer whose class list they would be searched against.
+    clearClassOrganizer(session);
+    omniSearch?.notifySessionSynced(session.id);
+    explorer.onSessionAborted(session.id);
+    // The view moved underneath every recorded undo, so each entry now describes a
+    // "before" state that never existed in the transaction the session is now in.
+    // Offering them would put back source this view never had.
+    clearUndoStack(session.id);
+    refreshUndoUi(sessionManager.getSelectedSession());
+  };
+
+  /**
+   * Begin a transaction on a session that is outside one — the manualBegin mode's
+   * way back in. Nothing is at stake (no uncommitted work can exist outside a
+   * transaction), so there is nothing to confirm.
+   */
+  const beginSession = async (session: ActiveSession): Promise<void> => {
+    try {
+      const { success, err } = sessionManager.begin(session.id);
+      if (!success) {
+        vscode.window.showErrorMessage(
+          `Session ${session.id}: Begin Transaction failed — ${err.message || `error ${err.number}`}`,
+        );
+        return;
+      }
+      vscode.window.showInformationMessage(`Session ${session.id}: Transaction begun.`);
+      await refreshAfterViewReplaced(session);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(`Begin Transaction failed: ${msg}`);
+    }
+  };
+
+  /**
+   * Change a session's transaction mode, warning about the abort first.
+   *
+   * The mode is re-read from the stone before the list is drawn rather than
+   * trusted from the cache: another tool sharing the session could have changed
+   * it, and a picker that marks the wrong entry as current is worse than no
+   * marking at all.
+   *
+   * Switching aborts — GemStone does that as part of switching, and there is no
+   * way to ask it not to — so the confirmation says so, and says how much is at
+   * stake when the session holds uncommitted work. Cancelling changes nothing.
+   */
+  const setTransactionModeFor = async (session: ActiveSession): Promise<void> => {
+    sessionManager.refreshTransactionState(session.id);
+    const current = session.transactionMode;
+
+    const pick = await vscode.window.showQuickPick(
+      TRANSACTION_MODES.map((mode) => ({
+        label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
+        description: mode === current ? 'current' : undefined,
+        detail: modeDescription(mode),
+        mode,
+      })),
+      {
+        placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
+        matchOnDetail: true,
+      },
+    );
+    if (!pick || pick.mode === current) return;
+
+    const needsCommit = queries.sessionNeedsCommit(session);
+    const stake =
+      needsCommit === true
+        ? 'This session has uncommitted changes; switching discards them.'
+        : needsCommit === undefined
+          ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
+          : 'This session has no uncommitted changes, so nothing is lost.';
+    const choice = await vscode.window.showWarningMessage(
+      `Switch session ${session.id} to ${modeLabel(pick.mode)}?`,
+      {
+        modal: true,
+        detail: `Changing the transaction mode aborts the current transaction.\n\n${stake}`,
+      },
+      'Switch Mode',
+    );
+    if (choice !== 'Switch Mode') return;
+
+    try {
+      sessionManager.setTransactionMode(session.id, pick.mode);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(`Session ${session.id}: could not switch mode — ${msg}`);
+      // The switch may have got part-way; ask the stone rather than leave the
+      // cached mode describing a session that is no longer in it.
+      sessionManager.refreshTransactionState(session.id);
+      return;
+    }
+    await refreshAfterViewReplaced(session);
+    vscode.window.showInformationMessage(
+      `Session ${session.id}: ${transactionStateLabel(session.transactionMode, session.inTransaction)}.`,
+    );
+  };
+
   const abortSession = async (session: ActiveSession): Promise<void> => {
     const message = abortConfirmMessage(
       queries.sessionNeedsCommit(session),
@@ -1464,19 +1624,7 @@ export function activate(context: vscode.ExtensionContext) {
       const { success, err } = sessionManager.abort(session.id);
       if (success) {
         vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
-        await exportManager.refreshSession(session);
-        SystemBrowser.refresh(session.id);
-        // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
-        // Search's cached corpora so they show up, and drop the cached
-        // ClassOrganizer for the same reason the commit does.
-        clearClassOrganizer(session);
-        omniSearch?.notifySessionSynced(session.id);
-        explorer.onSessionAborted(session.id);
-        // An abort rewinds the stone underneath every recorded undo, so each entry now
-        // describes a "before" state that never existed in the transaction the session is
-        // now in. Offering them would put back source the abort already discarded.
-        clearUndoStack(session.id);
-        refreshUndoUi(sessionManager.getSelectedSession());
+        await refreshAfterViewReplaced(session);
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
@@ -2056,6 +2204,25 @@ export function activate(context: vscode.ExtensionContext) {
       abortSession(item.activeSession),
     ),
 
+    // Optional item, unlike its Commit/Abort neighbours: this command is also
+    // reachable from the palette, where no row names a session.
+    vscode.commands.registerCommand('gemstone.sessionBegin', async (item?: GemStoneSessionItem) => {
+      const session = item ? item.activeSession : await sessionManager.resolveSession();
+      if (!session) return;
+      return beginSession(session);
+    }),
+
+    // The mode is reachable from a session row, from the status bar (which names
+    // no row, so it falls back to the selected session) and from the palette.
+    vscode.commands.registerCommand(
+      'gemstone.setTransactionMode',
+      async (item?: GemStoneSessionItem) => {
+        const session = item ? item.activeSession : await sessionManager.resolveSession();
+        if (!session) return;
+        return setTransactionModeFor(session);
+      },
+    ),
+
     // Explorer toolbar variants: act on the currently selected session so Commit /
     // Abort are reachable without switching to the Sessions view.
     vscode.commands.registerCommand('gemstone.explorer.commit', () => {
@@ -2074,6 +2241,15 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       return abortSession(session);
+    }),
+
+    vscode.commands.registerCommand('gemstone.explorer.begin', () => {
+      const session = sessionManager.getSelectedSession();
+      if (!session) {
+        vscode.window.showErrorMessage('No active GemStone session to begin a transaction in.');
+        return;
+      }
+      return beginSession(session);
     }),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {
@@ -2286,6 +2462,7 @@ export function activate(context: vscode.ExtensionContext) {
           session.id,
           queries.sessionNeedsCommit(session),
           (id) => sessionManager.commit(id),
+          session.inTransaction,
         );
         if (decision === 'cancel') return;
         // Keep the class mirror on disk: it's keyed by connection target and is

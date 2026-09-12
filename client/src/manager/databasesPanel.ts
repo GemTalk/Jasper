@@ -39,7 +39,8 @@ import {
 import { wslStatFilesSync } from '../wslFs';
 import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTypes';
-import { SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../sessionManager';
+import { canBegin, canCommit, transactionStateLabel } from '../queries/transactionMode';
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin } from '../sysadminChannel';
 
@@ -115,6 +116,17 @@ interface SessionInfo {
   id: number;
   /** The one the rest of Jasper works in — where Display It and friends run. */
   current: boolean;
+  /**
+   * The session's transaction state in words — "Auto-Begin", "Manual · not in
+   * transaction" — or absent when it has not been read from the stone. The same
+   * string the Logins & Sessions tree puts on its rows, so the two surfaces
+   * cannot describe the same session differently.
+   */
+  transactionState?: string;
+  /** Whether a commit could land right now; drives whether the row offers one. */
+  canCommit: boolean;
+  /** Whether this session is outside a transaction it could begin. */
+  canBegin: boolean;
 }
 
 interface LoginInfo {
@@ -189,7 +201,7 @@ interface LoginTarget {
   sessionId?: number;
   /** Every session open from this login, so a login with no database row to sit
    *  under can still show them — the same list a per-database login row gets. */
-  sessions: { id: number; current: boolean }[];
+  sessions: SessionInfo[];
   /** ...and it is the selected one, the session Display It and friends act on. */
   current: boolean;
 }
@@ -438,6 +450,13 @@ export class DatabasesPanel {
     // so without this the row for a login that just connected kept offering
     // "Log in" until something else happened to redraw the panel.
     this.deps.sessionManager.onDidAddSession(() => this.markStale(), null, this.disposables);
+    // A mode switch changes what each session row says and which of its buttons
+    // apply, and no session arrived or left to say so.
+    this.deps.sessionManager.onDidChangeTransactionState(
+      () => this.markStale(),
+      null,
+      this.disposables,
+    );
     for (const onChange of this.deps.onAdminChange) {
       onChange(() => this.markStale(), null, this.disposables);
     }
@@ -1038,8 +1057,10 @@ export class DatabasesPanel {
    */
   private static readonly SESSION_COMMANDS = new Set([
     'gemstone.selectSession',
+    'gemstone.sessionBegin',
     'gemstone.sessionCommit',
     'gemstone.sessionAbort',
+    'gemstone.setTransactionMode',
     'gemstone.fullLogicalBackup',
     'gemstone.fullLogicalRestore',
   ]);
@@ -1437,7 +1458,7 @@ export class DatabasesPanel {
             host: l.gem_host,
             sessions: openSessions
               .filter((sess) => loginLabel(sess.login) === label)
-              .map((sess) => ({ id: sess.id, current: sess.id === selectedSessionId })),
+              .map((sess) => DatabasesPanel.sessionInfo(sess, selectedSessionId)),
           };
         });
       // A registered database's files are the installation's. Jasper lists its
@@ -1508,6 +1529,25 @@ export class DatabasesPanel {
   }
 
   /**
+   * How one live session is described to the panel: which session, whether it is
+   * the current one, and what its transaction mode lets it do. Shared by the
+   * per-database login rows and the Connect band's login targets so the two lists
+   * cannot drift.
+   */
+  private static sessionInfo(session: ActiveSession, selectedId: number | undefined): SessionInfo {
+    return {
+      id: session.id,
+      current: session.id === selectedId,
+      transactionState:
+        session.transactionMode === undefined
+          ? undefined
+          : transactionStateLabel(session.transactionMode, session.inTransaction),
+      canCommit: canCommit(session.inTransaction),
+      canBegin: canBegin(session.transactionMode, session.inTransaction),
+    };
+  }
+
+  /**
    * One row per stored login, each carrying the sessions opened from it.
    *
    * Only a localhost login is paired to a database this machine made: a remote
@@ -1546,7 +1586,7 @@ export class DatabasesPanel {
         sessionId: open.find((sess) => loginLabel(sess.login) === label)?.id,
         sessions: open
           .filter((sess) => loginLabel(sess.login) === label)
-          .map((sess) => ({ id: sess.id, current: sess.id === selected?.id })),
+          .map((sess) => DatabasesPanel.sessionInfo(sess, selected?.id)),
         current: label === selectedLabel,
       };
     });
@@ -1827,6 +1867,7 @@ th.v-num { text-align: right; }
 .db-session .session-name { font-size: 0.95em; }
 .db-session-current .session-name { font-weight: 700; }
 .session-id { margin-left: 8px; font-size: 0.85em; }
+.session-tx-mode { margin-left: 8px; font-size: 0.85em; }
 /* The Ping result sits to the left of the row's buttons — a compact banner that
    clears itself after a success and lingers (with Dismiss) after a warning.
    Same shape as the Session Configuration panel's notices, which is where Ping

@@ -554,8 +554,11 @@ describe('registerMcpTools', () => {
       });
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
 
     it('run_test_class auto-discovers the dictionary and formats results', async () => {
@@ -614,8 +617,11 @@ describe('registerMcpTools', () => {
       await server.getTool('run_test_class')!.handler({ className: 'ArrayTest' });
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
 
     it('list_failing_tests returns "All tests passed." when nothing failed', async () => {
@@ -677,8 +683,11 @@ describe('registerMcpTools', () => {
       await server.getTool('list_failing_tests')!.handler({});
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
 
     it('list_test_classes returns dictName\\tclassName rows', async () => {
@@ -792,13 +801,16 @@ describe('registerMcpTools', () => {
       expect(text).toContain('JasperProbeTest >> testFails');
     });
 
-    it('refresh runs needsCommit/abortTransaction and returns the result', async () => {
+    it('refresh aborts to refresh, and says when it did not, returning the result', async () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('refreshed');
       const result = await server.getTool('refresh')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('System needsCommit');
       expect(code).toContain('System abortTransaction');
+      expect(code).toContain('System transactionMode == #manualBegin');
+      expect(code).toContain('skipped: uncommitted changes present');
+      expect(code).toContain('skipped: session is inside a manual transaction');
       expect(result.content[0].text).toBe('refreshed');
     });
 
@@ -814,21 +826,33 @@ describe('registerMcpTools', () => {
       expect(result.content[0].text).toContain('DataCurator');
     });
 
-    // Stale-transaction guard: the snippet must auto-refresh-if-clean so the
-    // rest of the report (and any follow-up read tools in this session) sees
-    // committed state. Skipping when needsCommit is true is load-bearing —
-    // discarding uncommitted work silently would be far worse than reporting
+    // Stale-transaction guard: the snippet must auto-refresh when the abort would
+    // discard nothing, so the rest of the report (and any follow-up read tools in
+    // this session) sees committed state. Both stand-downs are load-bearing —
+    // silently discarding uncommitted work, or dropping the session out of a
+    // transaction it was told to begin, would each be far worse than reporting
     // slightly stale state.
-    it('status auto-refreshes the view inline (only when no uncommitted changes)', async () => {
+    it('status auto-refreshes the view inline, and stands down where an abort would cost something', async () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('');
       await server.getTool('status')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('System needsCommit');
       expect(code).toContain('System abortTransaction');
+      expect(code).toContain('System transactionMode == #manualBegin');
       expect(code).toContain('View: ');
-      expect(code).toContain('stale');
+      expect(code).toContain('skipped: uncommitted changes present');
+      expect(code).toContain('skipped: session is inside a manual transaction');
       expect(code).toContain('refreshed');
+    });
+
+    it('status names the transaction mode, which decides what commit and abort mean', async () => {
+      vi.mocked(queries.executeFetchString).mockReturnValue('');
+      await server.getTool('status')!.handler({});
+
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
+      expect(code).toContain('Transaction mode: ');
+      expect(code).toContain('System transactionMode asString');
     });
 
     // Regression: nextPutAll: sends do: to its argument. If any value passed

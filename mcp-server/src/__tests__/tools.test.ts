@@ -705,8 +705,11 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest', selector: 'testSize' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
   });
 
@@ -741,8 +744,11 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
   });
 
@@ -889,8 +895,11 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
 
     // The Smalltalk side has to use AbstractException (not Exception) —
@@ -966,8 +975,11 @@ describe('tools', () => {
       await tool.handler({});
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit ifFalse:');
+      expect(refreshCall).toContain('System needsCommit');
       expect(refreshCall).toContain('System abortTransaction');
+      // ...and stands down inside a hand-opened manualBegin transaction, which
+      // the abort would end with nothing to start another one.
+      expect(refreshCall).toContain('System transactionMode == #manualBegin');
     });
   });
 
@@ -1035,7 +1047,7 @@ describe('tools', () => {
     // session for follow-up read tools. Skipping when needsCommit is true is
     // load-bearing: discarding uncommitted work silently would be far worse
     // than reporting slightly stale state.
-    it('auto-refreshes the view inline (only when no uncommitted changes)', async () => {
+    it('auto-refreshes the view inline, and stands down where an abort would cost something', async () => {
       vi.mocked(session.executeFetchString).mockReturnValue('');
       const tool = server.getTool('status')!;
       await tool.handler({});
@@ -1043,9 +1055,20 @@ describe('tools', () => {
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
       expect(code).toContain('System needsCommit');
       expect(code).toContain('System abortTransaction');
+      expect(code).toContain('System transactionMode == #manualBegin');
       expect(code).toContain('View: ');
-      expect(code).toContain('stale');
+      expect(code).toContain('skipped: uncommitted changes present');
+      expect(code).toContain('skipped: session is inside a manual transaction');
       expect(code).toContain('refreshed');
+    });
+
+    it('names the transaction mode, which decides what commit and abort mean', async () => {
+      vi.mocked(session.executeFetchString).mockReturnValue('');
+      await server.getTool('status')!.handler({});
+
+      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
+      expect(code).toContain('Transaction mode: ');
+      expect(code).toContain('System transactionMode asString');
     });
 
     // Regression: nextPutAll: sends do: to its argument. If any value passed

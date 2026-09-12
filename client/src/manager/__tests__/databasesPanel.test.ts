@@ -135,6 +135,7 @@ function makeDeps() {
     refreshAdminViews: vi.fn(),
     sessionManager: {
       onDidAddSession: vi.fn(),
+      onDidChangeTransactionState: vi.fn(),
       onDidChangeSelection: vi.fn(),
       onDidRemoveSession: vi.fn(),
       getSessions: () => [],
@@ -212,6 +213,7 @@ describe('session commands', () => {
       ...(makeDeps() as unknown as Record<string, unknown>),
       sessionManager: {
         onDidAddSession: vi.fn(),
+        onDidChangeTransactionState: vi.fn(),
         onDidChangeSelection: vi.fn(),
         onDidRemoveSession: vi.fn(),
         getSessions: () => [],

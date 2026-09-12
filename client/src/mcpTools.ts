@@ -13,6 +13,7 @@ import type { TestFailureDetails } from './queries/describeTestFailure';
 import { withMcpErrorMap } from './mcpZodErrorMap';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
+import { VIEW_REFRESH_CODE } from './queries/transactionMode';
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
 // (MCP tools run on the FetchBytes path, which cannot host live forwarding —
@@ -24,14 +25,13 @@ function showBufferedTranscript(session: ActiveSession): void {
 // Refresh the session's view of committed state if it's safe to do so.
 // GemStone's GCI pins read-only operations to the session's transaction
 // view: a commit landed by another process is invisible until this session
-// aborts or commits. Auto-refresh closes the silent-stale gap; we skip
-// when the session has uncommitted work so we never discard.
+// aborts or commits. Auto-refresh closes the silent-stale gap; VIEW_REFRESH_CODE
+// skips the abort when the session has uncommitted work, and also when it is
+// inside a manualBegin transaction — there, the abort would end a transaction the
+// user opened by hand and nothing would start another one.
 function refreshIfClean(session: ActiveSession): void {
   try {
-    queries.executeFetchString(
-      session,
-      "System needsCommit ifFalse: [System abortTransaction]. 'ok'",
-    );
+    queries.executeFetchString(session, VIEW_REFRESH_CODE);
   } catch {
     // Best effort. If refresh fails (e.g. session disconnected) the primary
     // tool call below will report the real error.
@@ -637,18 +637,17 @@ export function registerMcpTools(
 
   server.tool(
     'refresh',
-    "Refresh this session's view of committed state by aborting if (and only if) " +
-      "there are no uncommitted changes. GemStone's GCI pins the session's read view " +
+    "Refresh this session's view of committed state by aborting, when the abort " +
+      "would discard nothing. GemStone's GCI pins the session's read view " +
       'until it aborts or commits, so a commit landed by another process (e.g. install.sh) ' +
-      'is invisible until refresh runs. If the session has uncommitted work, this is a ' +
-      'no-op and reports back so the caller can decide whether to abort or commit first.',
+      'is invisible until refresh runs. This is a no-op — and reports back, so the caller ' +
+      'can decide whether to abort or commit first — when the session has uncommitted work, ' +
+      'or when it is inside a transaction it began by hand under the manualBegin transaction ' +
+      'mode, which the abort would end.',
     {},
     async () =>
       wrap<Record<string, unknown>>((session) => {
-        return executeString(
-          session,
-          "System needsCommit ifTrue: ['skipped: uncommitted changes present'] ifFalse: [System abortTransaction. 'refreshed']",
-        );
+        return executeString(session, VIEW_REFRESH_CODE);
       })({}),
   );
 
@@ -771,18 +770,18 @@ export function registerMcpTools(
         // DNU do:). Coerce with asString / printString to keep it robust across
         // GemStone versions where these System methods return different types.
         //
-        // Auto-refresh: if no uncommitted work is pending we abort first so the
+        // Auto-refresh: abort first, when the abort would discard nothing, so the
         // rest of the report (and any follow-up read tool calls) sees committed
-        // state landed by other processes. Skip when uncommitted work is
-        // pending — silent discard would be far worse than slightly stale state.
+        // state landed by other processes. VIEW_REFRESH_CODE says when it is safe
+        // — uncommitted work, or a hand-opened manualBegin transaction, and it
+        // reports why it stood down rather than silently discarding either.
         const code = `| ws viewState |
-viewState := System needsCommit
-  ifTrue: ['stale (uncommitted changes - call abort or commit to refresh)']
-  ifFalse: [System abortTransaction. 'refreshed'].
+viewState := ${VIEW_REFRESH_CODE}.
 ws := WriteStream on: String new.
 ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.
 ws nextPutAll: 'Stone: '; nextPutAll: System stoneName asString; lf.
 ws nextPutAll: 'Session ID: '; nextPutAll: System session printString; lf.
+ws nextPutAll: 'Transaction mode: '; nextPutAll: System transactionMode asString; lf.
 ws nextPutAll: 'Transaction: '; nextPutAll: (System inTransaction ifTrue: ['active'] ifFalse: ['none']); lf.
 ws nextPutAll: 'Uncommitted changes: '; nextPutAll: (System needsCommit ifTrue: ['yes'] ifFalse: ['no']); lf.
 ws nextPutAll: 'View: '; nextPutAll: viewState; lf.

@@ -919,6 +919,18 @@
         "icon": "$(plug)"
       },
       {
+        "command": "gemstone.sessionBegin",
+        "title": "Begin Transaction",
+        "category": "GemStone",
+        "icon": "$(play)"
+      },
+      {
+        "command": "gemstone.setTransactionMode",
+        "title": "Set Transaction Mode",
+        "category": "GemStone",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "gemstone.sessionCommit",
         "title": "Commit",
         "category": "GemStone",
@@ -1384,6 +1396,12 @@
         "title": "Abort",
         "category": "GemStone",
         "icon": "$(discard)"
+      },
+      {
+        "command": "gemstone.explorer.begin",
+        "title": "Begin Transaction",
+        "category": "GemStone",
+        "icon": "$(play)"
       },
       {
         "command": "gemstone.explorer.closeAllOpenEditors",
@@ -2261,10 +2279,22 @@
         },
         {
           "command": "gemstone.explorer.commit",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.hasActiveSession && gemstone.canCommit"
         },
         {
           "command": "gemstone.explorer.abort",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.begin",
+          "when": "gemstone.hasActiveSession && gemstone.canBegin"
+        },
+        {
+          "command": "gemstone.sessionBegin",
+          "when": "gemstone.hasActiveSession && gemstone.canBegin"
+        },
+        {
+          "command": "gemstone.setTransactionMode",
           "when": "gemstone.hasActiveSession"
         },
         {
@@ -3149,51 +3179,61 @@
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "2_transfer@0"
         },
         {
-          "command": "gemstone.sessionCommit",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionBegin",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession.*canBegin/",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.sessionAbort",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionCommit",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession.*canCommit/",
           "group": "inline@3"
         },
         {
-          "command": "gemstone.showSessionConfiguration",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionAbort",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@4"
         },
         {
-          "command": "gemstone.sessionLogout",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.showSessionConfiguration",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@5"
         },
         {
+          "command": "gemstone.sessionLogout",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
+          "group": "inline@6"
+        },
+        {
+          "command": "gemstone.setTransactionMode",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
+          "group": "1_transaction@1"
+        },
+        {
           "command": "gemstone.fullLogicalBackup",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "3_backup@1"
         },
         {
           "command": "gemstone.fullLogicalRestore",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "3_backup@2"
         },
         {
           "command": "gemstone.exportClasses",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/"
         },
         {
           "command": "gemstone.selectSession",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/"
         },
         {
           "command": "gemstone.replaceExtent",

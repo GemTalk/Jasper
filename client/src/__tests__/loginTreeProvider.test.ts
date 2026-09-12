@@ -24,6 +24,7 @@ function stubSessionManager(
 ): SessionManager {
   return {
     onDidChangeSelection: vi.fn(),
+    onDidChangeTransactionState: vi.fn(),
     getSessions: () => sessions,
     selectedId,
   } as unknown as SessionManager;
@@ -181,15 +182,88 @@ describe('GemStoneLoginItem', () => {
 });
 
 describe('GemStoneSessionItem', () => {
+  function sessionInMode(
+    mode: ActiveSession['transactionMode'],
+    inTransaction: boolean | undefined,
+  ): ActiveSession {
+    return {
+      ...makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3),
+      transactionMode: mode,
+      inTransaction,
+    };
+  }
+
   it('describes the session and marks the selected one', () => {
     const session = makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3);
     const selected = new GemStoneSessionItem(session, true);
     expect(selected.label).toBe('Admin on prod (db)');
-    expect(selected.description).toBe('Session 3 (3.7.2)');
-    expect(selected.contextValue).toBe('gemstoneSession');
     expect((selected.iconPath as { id: string }).id).toBe('debug-start');
 
     const idle = new GemStoneSessionItem(session, false);
     expect((idle.iconPath as { id: string }).id).toBe('plug');
+  });
+
+  it('says which transaction mode the session is in, and whether it is in a transaction', () => {
+    expect(new GemStoneSessionItem(sessionInMode('autoBegin', true), true).description).toBe(
+      'Session 3 (3.7.2) · Auto-Begin',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', true), true).description).toBe(
+      'Session 3 (3.7.2) · Manual · in transaction',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
+      'Session 3 (3.7.2) · Manual · not in transaction',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('transactionless', false), true).description).toBe(
+      'Session 3 (3.7.2) · Transactionless',
+    );
+  });
+
+  it('leaves the row as it always read when the mode has not been read', () => {
+    // A row that has always said "Session 3 (3.7.2)" should not start announcing
+    // an absence; the tooltip is where "could not be read" belongs.
+    const item = new GemStoneSessionItem(sessionInMode(undefined, undefined), true);
+    expect(item.description).toBe('Session 3 (3.7.2)');
+    expect((item.tooltip as { value: string }).value).toContain('could not be read');
+  });
+
+  it('explains the mode in the tooltip, so the GemStone name is not the whole answer', () => {
+    const tooltip = new GemStoneSessionItem(sessionInMode('manualBegin', false), true).tooltip as {
+      value: string;
+    };
+    expect(tooltip.value).toContain('Manual · not in transaction');
+    expect(tooltip.value).toContain('Begin Transaction puts it back in');
+  });
+
+  // The contextValue is what package.json's `when` clauses read to decide which
+  // inline buttons this row gets — per row, because a context key would describe
+  // the selected session on every row instead.
+  it('carries this session’s own answer about Begin and Commit', () => {
+    expect(new GemStoneSessionItem(sessionInMode('autoBegin', true), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).contextValue).toBe(
+      'gemstoneSession.canBegin',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', true), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+    expect(
+      new GemStoneSessionItem(sessionInMode('transactionless', false), true).contextValue,
+    ).toBe('gemstoneSession');
+  });
+
+  it('keeps Commit on a row whose transaction state could not be read', () => {
+    // A failed probe is not evidence that a commit would fail; let the stone say no.
+    expect(new GemStoneSessionItem(sessionInMode(undefined, undefined), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+  });
+
+  it('gives a row a new id when its transaction state moves, so VS Code redraws it', () => {
+    // VS Code reuses a node whose id is unchanged, which would leave the old mode
+    // — and the old set of inline buttons — on screen after a switch.
+    const before = new GemStoneSessionItem(sessionInMode('manualBegin', false), true);
+    const after = new GemStoneSessionItem(sessionInMode('manualBegin', true), true);
+    expect(before.id).not.toBe(after.id);
   });
 });
