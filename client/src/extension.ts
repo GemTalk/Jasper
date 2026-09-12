@@ -98,6 +98,20 @@ import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
+import { forgetSessionAutoCommit, registerSessionAutoCommit } from './autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from './autoCommit/autoCommitRunner';
+import {
+  AUTO_COMMIT_STATUS_COMMAND,
+  registerAutoCommitStatusBar,
+} from './autoCommit/autoCommitStatusBar';
+import {
+  autoCommitDefaultForNewSessions,
+  autoCommitTransactionSettled,
+  reportAutoCommitFailure,
+  setAutoCommitAbortHandler,
+  toggleAutoCommit,
+  TOGGLE_AUTO_COMMIT_COMMAND,
+} from './autoCommit/autoCommitUi';
 import { registerStashRelease } from './undo/releaseStash';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
@@ -1252,6 +1266,31 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(registerStashRelease(sessionManager));
   refreshUndoUi(sessionManager.getSelectedSession());
 
+  // ── Auto-commit (issue #254) ───────────────────────────────────────────
+  // Per session, seeded from the window-wide default at login and dropped at logout, so a
+  // later session reusing the id never inherits an armed state nobody asked for. Seeded on
+  // `onDidAddSession`, which fires AFTER the post-login abort — arming before that would
+  // make committing the login's own spurious uncommitted state auto-commit's first act.
+  context.subscriptions.push(
+    sessionManager.onDidAddSession((id: number) =>
+      registerSessionAutoCommit(id, autoCommitDefaultForNewSessions()),
+    ),
+    sessionManager.onDidRemoveSession((id: number) => forgetSessionAutoCommit(id)),
+  );
+  registerAutoCommitStatusBar(context, sessionManager);
+  // The runner is deliberately free of `vscode` so the write path can call it; these two
+  // hand it the workbench it needs — how to tell the user a commit failed, and how to run
+  // the real Abort (the one that refreshes the panes and clears the undo stack) when they
+  // choose it from the failure prompt.
+  setAutoCommitFailureHandler(reportAutoCommitFailure);
+  setAutoCommitAbortHandler((session) => abortSession(session, { skipConfirmation: true }));
+  context.subscriptions.push(
+    new vscode.Disposable(() => {
+      setAutoCommitFailureHandler(undefined);
+      setAutoCommitAbortHandler(undefined);
+    }),
+  );
+
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
     'GemStone Enhanced Inspector Perf',
@@ -1427,6 +1466,9 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const { success, err } = sessionManager.commit(session.id);
       if (success) {
+        // A manual commit that lands has settled whatever conflict a failed auto-commit
+        // was stuck on, so auto-commit stops shouting and starts committing again.
+        autoCommitTransactionSettled(session.id);
         vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
@@ -1447,11 +1489,19 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  const abortSession = async (session: ActiveSession): Promise<void> => {
-    const message = abortConfirmMessage(
-      queries.sessionNeedsCommit(session),
-      fileInManager.hasUnsavedChanges(session),
-    );
+  // `skipConfirmation` is for the ONE caller that has already asked: the auto-commit
+  // failure prompt, whose Abort button is itself the confirmation, and which has already
+  // said that the changes are not in the repository. Asking twice there reads as a bug.
+  const abortSession = async (
+    session: ActiveSession,
+    opts?: { skipConfirmation?: boolean },
+  ): Promise<void> => {
+    const message = opts?.skipConfirmation
+      ? undefined
+      : abortConfirmMessage(
+          queries.sessionNeedsCommit(session),
+          fileInManager.hasUnsavedChanges(session),
+        );
     if (message) {
       const choice = await vscode.window.showWarningMessage(
         message,
@@ -1463,6 +1513,9 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const { success, err } = sessionManager.abort(session.id);
       if (success) {
+        // Same reasoning as the commit path: the transaction is settled, so a failed
+        // auto-commit has something to work with again.
+        autoCommitTransactionSettled(session.id);
         vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
@@ -2075,6 +2128,19 @@ export function activate(context: vscode.ExtensionContext) {
       }
       return abortSession(session);
     }),
+
+    // Auto-commit's switch (issue #254). One command behind three affordances — the
+    // status-bar indicator, the palette and a session row — because the state is per
+    // session and every one of them has to be able to say WHICH session it flipped.
+    vscode.commands.registerCommand(TOGGLE_AUTO_COMMIT_COMMAND, (item?: GemStoneSessionItem) =>
+      toggleAutoCommit(sessionManager, item?.activeSession),
+    ),
+
+    // The indicator is the switch: clicking it flips the selected session, except from the
+    // failed state, where it opens the ways out instead.
+    vscode.commands.registerCommand(AUTO_COMMIT_STATUS_COMMAND, () =>
+      toggleAutoCommit(sessionManager),
+    ),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {
       const session = item ? item.activeSession : await sessionManager.resolveSession();

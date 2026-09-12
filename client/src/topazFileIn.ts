@@ -16,6 +16,7 @@
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { BrowserQueryError } from './browserQueries';
+import { runWithAutoCommitDeferredSync } from './autoCommit/autoCommitRunner';
 
 // ── Topaz Parser (copied from server) ──────────────────────────
 
@@ -196,11 +197,26 @@ export interface FileInResult {
 /**
  * Parse a Topaz file-out and compile each piece (class definition + methods)
  * back into GemStone. Returns per-method error details for diagnostics.
+ *
+ * A file-in is ONE change as far as auto-commit is concerned (issue #254): a class
+ * definition and the methods that go with it are only coherent together, so an
+ * auto-commit session commits once at the end rather than after every method — and
+ * commits nothing at all if the file-in throws part-way through.
  */
 export function fileInClass(
   session: ActiveSession,
   fileContent: string,
   environmentId: number = 0,
+): FileInResult {
+  return runWithAutoCommitDeferredSync(session, () =>
+    fileInClassRegions(session, fileContent, environmentId),
+  );
+}
+
+function fileInClassRegions(
+  session: ActiveSession,
+  fileContent: string,
+  environmentId: number,
 ): FileInResult {
   const regions = parseTopazDocument(fileContent);
   const errors: FileInError[] = [];
@@ -571,6 +587,17 @@ export function fileInChangedRegions(
   oldContent: string | undefined,
   newContent: string,
   environmentId: number = 0,
+): FileInResult {
+  return runWithAutoCommitDeferredSync(session, () =>
+    fileInChangedRegionsOf(session, oldContent, newContent, environmentId),
+  );
+}
+
+function fileInChangedRegionsOf(
+  session: ActiveSession,
+  oldContent: string | undefined,
+  newContent: string,
+  environmentId: number,
 ): FileInResult {
   if (oldContent === undefined) {
     return fileInClass(session, newContent, environmentId);

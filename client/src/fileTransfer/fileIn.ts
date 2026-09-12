@@ -6,18 +6,21 @@
 // Takes a hand-written `.tpz` script as readily as a `.gs` file-out. A script's
 // preamble addresses the topaz program rather than the image — `login`, `output push`,
 // `commit` — and none of it is run here: Jasper files in over the session the user
-// picked, and never commits on their behalf. Those lines are reported rather than
+// picked, and a `commit` line in the script never commits. Those lines are reported rather than
 // dropped, and a file that asked to commit is called out by name, so a script whose
 // work would have been committed does not look as though it was.
 //
 // Running it here also means every chunk's outcome is known: a failure is reported
 // against the line it was on, and the rest of the file still files in, which is what
-// a developer fixing one bad method wants. Nothing is committed — a file-in leaves
-// the session dirty exactly as compiling a method from the Explorer does, so the user
-// decides whether to keep it.
+// a developer fixing one bad method wants. Nothing here commits on the user's behalf: a
+// file-in leaves the session dirty exactly as compiling a method from the Explorer does,
+// so the user decides whether to keep it. The one exception is a session the user has
+// armed for auto-commit (issue #254), where the whole file-in commits as ONE change once
+// it has finished — see `runWithAutoCommitDeferredSync` on `fileInFile`.
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { runWithAutoCommitDeferredSync } from '../autoCommit/autoCommitRunner';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
@@ -108,6 +111,10 @@ export function fileInFile(
   filePath: string,
   seen: Set<string> = new Set(),
 ): FileInOutcome {
+  return runWithAutoCommitDeferredSync(session, () => fileInOneFile(session, filePath, seen));
+}
+
+function fileInOneFile(session: ActiveSession, filePath: string, seen: Set<string>): FileInOutcome {
   const outcome = emptyOutcome();
   const absolute = path.resolve(filePath);
   if (seen.has(absolute)) return outcome;

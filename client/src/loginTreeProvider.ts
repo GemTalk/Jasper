@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
+import {
+  AutoCommitStatus,
+  getAutoCommitStatus,
+  onAutoCommitChanged,
+} from './autoCommit/autoCommitState';
 
 /** A configured login (tree root). Its active sessions appear as children. */
 export class GemStoneLoginItem extends vscode.TreeItem {
@@ -39,6 +44,13 @@ export class GemStoneLoginItem extends vscode.TreeItem {
 }
 
 /** An active session (tree child of the login that started it). */
+/** How a session row spells out its auto-commit state — nothing at all when it is off. */
+export function autoCommitRowSuffix(status: AutoCommitStatus): string {
+  if (status === 'on') return ' · auto-commit';
+  if (status === 'failed') return ' · auto-commit FAILED';
+  return '';
+}
+
 export class GemStoneSessionItem extends vscode.TreeItem {
   constructor(
     public readonly activeSession: ActiveSession,
@@ -47,8 +59,13 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
     const { id, stoneVersion } = activeSession;
     this.id = `session-${id}`;
-    this.description = `Session ${id} (${stoneVersion})`;
-    this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})`;
+    // Auto-commit is PER SESSION (issue #254), and the status bar can only show one — the
+    // selected one. This row is where a second session's answer is readable, which matters
+    // precisely when the two differ. Silent when it is off: off is the default and the
+    // ordinary state, and a row that says so about every session says nothing.
+    const autoCommit = autoCommitRowSuffix(getAutoCommitStatus(id));
+    this.description = `Session ${id} (${stoneVersion})${autoCommit}`;
+    this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})${autoCommit}`;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
     this.contextValue = 'gemstoneSession';
   }
@@ -71,6 +88,8 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     private sessionManager?: SessionManager,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
+    // A row carries its session's auto-commit state, so a toggle anywhere has to redraw it.
+    onAutoCommitChanged(() => this.refresh());
   }
 
   // Logins with a connect attempt in flight, by identity. Held here rather than

@@ -33,6 +33,7 @@ import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactorin
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
+import { autoCommitAfterWrite } from '../autoCommit/autoCommitRunner';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
  *  message (the quiet default the in-editor refactorings use) or a toast (what the
@@ -50,6 +51,13 @@ export function notifyRefactoringApplied(
   message: string,
   plainNotice: PlainNoticeStyle = 'statusBar',
 ): void {
+  // Where a refactoring meets auto-commit (issue #254). Not at the engine's apply, which is
+  // the whole point: a refactoring can stop at its first failure and strand a partial reshape,
+  // and the panels recover from that by ABORTING the transaction. A commit landing inside the
+  // apply would leave that button rewinding to a repository that already held the wreckage.
+  // Here the apply has landed and the panel has closed, so the abort window is shut and the
+  // work is safe to persist -- and it is the one place all fifteen refactorings pass through.
+  if (session) autoCommitAfterWrite(session);
   void (async () => {
     const status = checkRefactoringUndoAvailable(session);
     if (!status.available || !session) {
