@@ -24,3 +24,4 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 
 - [npm supply-chain controls](reference/supply-chain-controls.md) — this repo's `.npmrc` keys, `allowScripts` verdicts, CI-only checks, and sunset conditions.
 - [Integration test harness](reference/integration-test-harness.md) — the `useIntegrationTest` `GciTestContext`, hook order, and the commit invariant.
+- [Transaction modes](reference/transaction-modes.md) — what `autoBegin` / `manualBegin` / `transactionless` each cost, what actually decides whether Commit works, and how Jasper survives SigAbort without a polling thread.

@@ -13,6 +13,7 @@ import { getLoginPassword, deleteLoginPassword } from './loginCredentials';
 import { runStopStone } from './stopStoneManager';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
 import { registerTransactionStatusBar } from './transactionStatusBar';
+import { explainGciError } from './gciLibraryError';
 import {
   TRANSACTION_MODES,
   canBegin,
@@ -339,6 +340,28 @@ export function abortConfirmMessage(
     parts.push('Exported .gs files have unsaved edits that will be overwritten.');
   }
   return parts.length ? parts.join('\n') : null;
+}
+
+/**
+ * The detail line of the confirmation shown before a transaction-mode switch.
+ *
+ * Switching modes aborts — GemStone does that as part of switching, and there is
+ * no way to ask it not to — so the dialog always says that, and then says how
+ * much the abort would actually cost. `needsCommit` is the tri-state
+ * `sessionNeedsCommit` answer, where `undefined` (couldn't tell) is treated like
+ * `true`: a failed probe is not evidence that there is nothing to lose.
+ *
+ * Exported, like {@link abortConfirmMessage}, so the wording is testable without
+ * a live session behind a modal.
+ */
+export function transactionModeSwitchDetail(needsCommit: boolean | undefined): string {
+  const stake =
+    needsCommit === true
+      ? 'This session has uncommitted changes; switching discards them.'
+      : needsCommit === undefined
+        ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
+        : 'This session has no uncommitted changes, so nothing is lost.';
+  return `Changing the transaction mode aborts the current transaction.\n\n${stake}`;
 }
 
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
@@ -1485,7 +1508,7 @@ export function activate(context: vscode.ExtensionContext) {
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
-          `Session ${session.id}: Commit failed — ${err.message || `error ${err.number}`}`,
+          `Session ${session.id}: Commit failed — ${explainGciError(err) || `error ${err.number}`}`,
         );
       }
     } catch (e: unknown) {
@@ -1532,7 +1555,7 @@ export function activate(context: vscode.ExtensionContext) {
       const { success, err } = sessionManager.begin(session.id);
       if (!success) {
         vscode.window.showErrorMessage(
-          `Session ${session.id}: Begin Transaction failed — ${err.message || `error ${err.number}`}`,
+          `Session ${session.id}: Begin Transaction failed — ${explainGciError(err) || `error ${err.number}`}`,
         );
         return;
       }
@@ -1574,19 +1597,9 @@ export function activate(context: vscode.ExtensionContext) {
     );
     if (!pick || pick.mode === current) return;
 
-    const needsCommit = queries.sessionNeedsCommit(session);
-    const stake =
-      needsCommit === true
-        ? 'This session has uncommitted changes; switching discards them.'
-        : needsCommit === undefined
-          ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
-          : 'This session has no uncommitted changes, so nothing is lost.';
     const choice = await vscode.window.showWarningMessage(
       `Switch session ${session.id} to ${modeLabel(pick.mode)}?`,
-      {
-        modal: true,
-        detail: `Changing the transaction mode aborts the current transaction.\n\n${stake}`,
-      },
+      { modal: true, detail: transactionModeSwitchDetail(queries.sessionNeedsCommit(session)) },
       'Switch Mode',
     );
     if (choice !== 'Switch Mode') return;
@@ -1627,7 +1640,7 @@ export function activate(context: vscode.ExtensionContext) {
         await refreshAfterViewReplaced(session);
       } else {
         vscode.window.showErrorMessage(
-          `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
+          `Session ${session.id}: Abort failed — ${explainGciError(err) || `error ${err.number}`}`,
         );
       }
     } catch (e: unknown) {

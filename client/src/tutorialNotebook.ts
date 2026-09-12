@@ -281,6 +281,7 @@ In most Smalltalks your objects live in an in-memory *image* that belongs to one
 
 - **Persistence by reachability.** Anything reachable from a *persistent root* survives after your session ends — no save/load, no serialization. \`UserGlobals\` and \`Globals\` are such roots (symbol dictionaries).
 - **Transactions.** Your session sees a stable snapshot. \`System commitTransaction\` publishes your changes to everyone; \`System abortTransaction\` discards them and refreshes your view. Nothing you do is permanent until you commit.
+- **Transaction modes.** Whether you are *in* a transaction depends on the session's mode, which the status bar shows and one click changes. In **Auto-Begin** — GemStone's default, and what this lesson assumes — a new transaction starts the moment one ends, so you are always in one. In **Manual** you are left outside a transaction after each commit or abort and begin the next one yourself; in **Transactionless** you are never in one and cannot commit at all. Only Auto-Begin lets a commit land at any moment.
 - **Shared and multi-user.** Classes, methods, and data are all in the repository, visible to every session (subject to security). Many users work in the same object space.
 - **Sessions.** You are logged in as a *UserProfile*; \`SessionTemps\` holds per-session scratch state that is never committed.
 

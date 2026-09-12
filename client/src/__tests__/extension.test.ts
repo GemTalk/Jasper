@@ -493,6 +493,34 @@ describe('confirmLogoutWithUncommittedChanges', () => {
   });
 });
 
+describe('transactionModeSwitchDetail', () => {
+  // Switching modes aborts, every time — GemStone does it as part of switching
+  // and there is no asking it not to — so the dialog always says so, and then
+  // says what the abort would actually cost.
+  it('always names the abort, whatever the session is holding', () => {
+    for (const needsCommit of [true, false, undefined]) {
+      expect(extension.transactionModeSwitchDetail(needsCommit)).toContain(
+        'aborts the current transaction',
+      );
+    }
+  });
+
+  it('names the uncommitted changes it would discard', () => {
+    expect(extension.transactionModeSwitchDetail(true)).toContain('discards them');
+  });
+
+  it('says plainly when nothing is at stake, rather than warning about nothing', () => {
+    expect(extension.transactionModeSwitchDetail(false)).toContain('nothing is lost');
+  });
+
+  it('warns anyway when the commit state could not be checked', () => {
+    // A failed probe is not evidence that there is nothing to lose.
+    const detail = extension.transactionModeSwitchDetail(undefined);
+    expect(detail).toContain('could not be checked');
+    expect(detail).toContain('would discard them');
+  });
+});
+
 describe('abortConfirmMessage', () => {
   it('needs no confirmation when the transaction is clean and no editors are dirty', () => {
     expect(extension.abortConfirmMessage(false, false)).toBeNull();

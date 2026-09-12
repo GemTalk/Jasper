@@ -149,14 +149,28 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
-- **Commit** / **Abort** — transaction control
+- **Begin Transaction** / **Commit** / **Abort** — transaction control. Begin and Commit appear only when this session can use them: Commit needs the session to be in a transaction, and Begin only applies in **manual** mode when it is not. Abort is always offered.
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
-- **Export** and **Make Active Session** (context menu)
+- **Set Transaction Mode**, **Export** and **Make Active Session** (context menu)
+
+Each session row also says which **transaction mode** it is in, beside its session number — `Session 3 (3.7.5) · Manual · not in transaction`. Hovering explains what the mode means.
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
 The active session (used for code execution) is highlighted, and the status bar shows which session is active.
+
+#### Transaction modes
+
+GemStone gives a session one of three transaction modes, and the mode decides what Commit, Abort and Begin do:
+
+- **Auto-Begin** — a new transaction starts automatically after every commit or abort, so the session is always inside one. This is GemStone's default. It is convenient, but an idle session holds a commit record open and holds back the repository's reclaim.
+- **Manual** — commit and abort leave the session *outside* a transaction; **Begin Transaction** puts it back in. Nothing can be committed while it is outside one.
+- **Transactionless** — the session is never in a transaction and cannot commit. The cheapest mode for the repository, and the right one for read-only browsing.
+
+The **status bar** carries the selected session's mode on the left: a filled circle when a commit can land right now, a hollow one when it cannot, an eye for transactionless. Hovering it says what the mode means and what the session can do; **clicking it changes the mode**. It is also **GemStone: Set Transaction Mode** in the Command Palette, and on a session row's context menu.
+
+Changing the mode **aborts the current transaction** — GemStone does that as part of switching — so Jasper asks first and tells you how much is at stake. Entering Manual mode also asks the gem to service the stone's SigAbort on your behalf, so a session left sitting outside a transaction is not forcibly aborted. More detail: [Transaction modes](docs/reference/transaction-modes.md).
 
 #### Single vs. multiple sessions
 

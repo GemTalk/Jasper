@@ -112,6 +112,15 @@ export class CodeExecutor {
       this.executing.add(sessionId);
     } else {
       this.executing.delete(sessionId);
+      // User code is the one thing that can move a session's transaction state
+      // without going through a Jasper command: a workspace is free to send
+      // `System commitTransaction`, `System beginTransaction`, or change the mode
+      // outright. Re-read it here, at the single point every Display It / Execute
+      // It / Inspect It passes through on its way out, so the status bar and the
+      // session rows are not left describing the session as it was before the
+      // expression ran. One small doit per execution, against a session that has
+      // just paid for a round trip of its own.
+      this.sessionManager.refreshTransactionState(sessionId);
     }
     const isExecuting = this.executing.size > 0;
     vscode.commands.executeCommand('setContext', 'gemstone.executing', isExecuting);

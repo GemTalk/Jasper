@@ -128,6 +128,15 @@ describe('transaction modes on a live stone', () => {
     expect(errorNumberFrom('System commitTransaction')).not.toBe(ERR_NOT_IN_TRANSACTION);
   });
 
+  // What is deliberately NOT covered here: an end-to-end SigAbort, where the stone
+  // actually asks for its commit record back and the gem answers. That needs a
+  // commit-record backlog past StnSignalAbortCrBacklog — hundreds of commits from
+  // a second, unguarded session, against a stone config this suite does not
+  // control. DelayAutoServiceSigAbort exists to make the 3007 delivery testable,
+  // but it only delays a signal the stone must still send, so it does not make
+  // the expensive half cheap. Covered instead: that the option arms, that the
+  // session is the remote client the option requires, and (as a unit test, in
+  // gciLibraryError.test.ts) that 3007 and 3008 read as a refreshed view.
   it('is a remote client, which is what makes GemAutoServiceSigAbort apply', () => {
     // The whole SigAbort answer rests on this: the option is documented to apply
     // only where System clientIsRemote is true. Jasper logs in through a netldi

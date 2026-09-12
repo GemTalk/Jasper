@@ -103,6 +103,9 @@ function makeSessionManager(session?: ActiveSession): SessionManager {
     resolveSession: vi.fn(async () => s),
     getSessions: vi.fn(() => [s]),
     getSession: vi.fn(() => s),
+    // The executor re-reads the session's transaction state once an execution
+    // finishes, since user code is free to commit, begin, or change the mode.
+    refreshTransactionState: vi.fn(),
   } as unknown as SessionManager;
 }
 
