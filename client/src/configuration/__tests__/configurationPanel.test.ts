@@ -1,7 +1,8 @@
 // Host-side tests for the Session Configuration panel: which session a panel is
-// bound to, what it reads and posts, and — the two decisions this feature turns
-// on — whether a value the stone quietly ignored is reported as such, and
-// whether a session is offered an editor the stone would refuse.
+// bound to, what it reads and posts, and — the three decisions this feature
+// turns on — whether a value the stone quietly ignored is reported as such,
+// whether a session is offered an editor the stone would refuse, and what the
+// panel's own Undo history will and will not offer to put back.
 //
 // The webview half is covered in configurationView.test.ts; nothing here draws
 // anything. `showConfigurationCommand` is exercised here too, because the
@@ -547,6 +548,244 @@ describe('setting a value', () => {
     // The panel is gone with the session; a set arriving from a webview that
     // had not yet closed must not throw.
     expect(() => setHaltOnError(panel, '2')).not.toThrow();
+  });
+});
+
+// ── Undo / redo ─────────────────────────────────────────────────────────────
+
+describe('undoing a configuration change', () => {
+  type HistoryPost = {
+    command: string;
+    undo: { scope: string; key: string; from: string; to: string } | null;
+    redo: { scope: string; key: string; from: string; to: string } | null;
+  };
+
+  /**
+   * A harness whose gem report tracks what was actually set — so an Undo reads
+   * back the value it put there, exactly as the session would report it.
+   */
+  function trackingHarness(applies = true) {
+    const h = harness([makeSession(1)], {
+      1: {
+        onSet: (code) => {
+          if (applies) {
+            const match = code.match(/put: (\S+?)\./);
+            h.gciFor(1).state.gemReport = line(
+              'GemHaltOnError',
+              'SmallInteger',
+              match ? match[1] : '0',
+            );
+          }
+          return 'OK';
+        },
+      },
+    });
+    return h;
+  }
+
+  const setHaltOnError = (panel: MockPanel, value: string) =>
+    sendMessage(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemHaltOnError',
+      valueType: 'integer',
+      value,
+    });
+
+  const history = (panel: MockPanel) => lastPosted<HistoryPost>(panel, 'configHistory');
+  const gemValue = (panel: MockPanel) =>
+    paramNamed(config(panel).gemParams, 'GemHaltOnError').value;
+
+  it('offers nothing to undo until something has been changed', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+
+    expect(history(panel)).toMatchObject({ undo: null, redo: null });
+  });
+
+  it('offers the change just made, naming what it would put back', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+
+    setHaltOnError(panel, '2');
+
+    expect(history(panel)!.undo).toEqual({
+      scope: 'gem',
+      key: 'GemHaltOnError',
+      from: '0',
+      to: '2',
+    });
+    expect(history(panel)!.redo).toBeNull();
+  });
+
+  it('puts the value back, and then offers to re-apply it', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(gemValue(panel)).toBe('0');
+    expect(history(panel)!.undo).toBeNull();
+    expect(history(panel)!.redo).toMatchObject({ key: 'GemHaltOnError', from: '0', to: '2' });
+
+    sendMessage(panel, { command: 'redoConfiguration' });
+
+    expect(gemValue(panel)).toBe('2');
+    expect(history(panel)!.undo).toMatchObject({ key: 'GemHaltOnError', from: '0', to: '2' });
+    expect(history(panel)!.redo).toBeNull();
+  });
+
+  it('unwinds a run of changes one at a time, newest first', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '1');
+    setHaltOnError(panel, '2');
+    setHaltOnError(panel, '3');
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+    expect(gemValue(panel)).toBe('2');
+    sendMessage(panel, { command: 'undoConfiguration' });
+    expect(gemValue(panel)).toBe('1');
+    sendMessage(panel, { command: 'undoConfiguration' });
+    expect(gemValue(panel)).toBe('0');
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  it('drops the redo history once a new change is made', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+    sendMessage(panel, { command: 'undoConfiguration' });
+    expect(history(panel)!.redo).not.toBeNull();
+
+    setHaltOnError(panel, '5');
+
+    // The branch that was undone is no longer the one the session is on.
+    expect(history(panel)!.redo).toBeNull();
+    expect(history(panel)!.undo).toMatchObject({ from: '0', to: '5' });
+  });
+
+  it('records nothing for a change the stone accepted and then ignored', () => {
+    // The headline safety claim for the history: 'OK' came back and the value
+    // did not move, so there is nothing to put back — and Undo must not pretend
+    // otherwise.
+    const h = trackingHarness(false);
+    const panel = open(h, 1);
+
+    setHaltOnError(panel, '2');
+
+    expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  it('records nothing for a change the stone refused', () => {
+    const h = harness([makeSession(1)], {
+      1: { onSet: () => 'GS-ERROR: not while the stone is running' },
+    });
+    const panel = open(h, 1);
+
+    setHaltOnError(panel, '2');
+
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  it('records nothing for a set of the value already there', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+
+    setHaltOnError(panel, '0');
+
+    expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('ok');
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  it('keeps the entry when the undo itself does not take', () => {
+    // An undo is a set like any other, so it can be refused — and a refused
+    // undo has changed nothing, which leaves the original change still the
+    // thing to undo.
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+    h.gciFor(1).execute.mockImplementation((code: string) => {
+      if (code.includes('ConfigurationAt:')) return 'GS-ERROR: refused';
+      if (code.includes('AllUsers userWithId')) return 'false';
+      if (code.includes('stoneConfigurationReport')) return STONE_REPORT;
+      return line('GemHaltOnError', 'SmallInteger', '2');
+    });
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
+    expect(history(panel)!.undo).toMatchObject({ from: '0', to: '2' });
+    expect(history(panel)!.redo).toBeNull();
+  });
+
+  it('refuses to overwrite a value that has been changed since', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+    // Somebody else moved it, and a Refresh picked that up. Undoing now would
+    // discard their change rather than reverse this panel's.
+    h.gciFor(1).state.gemReport = line('GemHaltOnError', 'SmallInteger', '9');
+    sendMessage(panel, { command: 'loadConfiguration' });
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    const result = lastPosted<{ tone: string; message: string }>(panel, 'setResult');
+    expect(result!.tone).toBe('warn');
+    expect(result!.message).toContain('changed since');
+    expect(gemValue(panel)).toBe('9');
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  it('survives a Refresh — re-reading values undoes nothing', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+
+    sendMessage(panel, { command: 'loadConfiguration' });
+
+    expect(history(panel)!.undo).toMatchObject({ from: '0', to: '2' });
+  });
+
+  it('does nothing when asked to undo with an empty history', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+
+    expect(() => sendMessage(panel, { command: 'undoConfiguration' })).not.toThrow();
+    expect(posted(panel, 'setResult')).toHaveLength(0);
+  });
+
+  it('starts a fresh history when the session logs out and a new panel opens', () => {
+    // The history describes a live gem's state, so it has no meaning past the
+    // login — and the panel closing with the session is what enforces that.
+    const h = trackingHarness();
+    const first = open(h, 1);
+    setHaltOnError(first, '2');
+    expect(history(first)!.undo).not.toBeNull();
+
+    h.removeSession(1);
+    const h2 = trackingHarness();
+    const second = open(h2, 1);
+
+    expect(history(second)).toMatchObject({ undo: null, redo: null });
+  });
+
+  it('names an undo as an undo in the sysadmin log and in the banner', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(lastPosted<{ message: string }>(panel, 'setResult')!.message).toContain('Undid');
+    expect(
+      vi
+        .mocked(appendSysadmin)
+        .mock.calls.map((c) => c[0])
+        .join('\n'),
+    ).toContain('undo of gem configuration GemHaltOnError = 0');
   });
 });
 

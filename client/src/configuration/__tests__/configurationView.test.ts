@@ -368,6 +368,136 @@ describe('set results', () => {
   });
 });
 
+describe('undo and redo buttons', () => {
+  const btn = (root: HTMLElement, dir: 'undo' | 'redo') =>
+    root.querySelector<HTMLButtonElement>(`[data-action="${dir}Configuration"]`)!;
+
+  const historyMessage = (undo: unknown, redo: unknown) => ({
+    command: 'configHistory',
+    undo,
+    redo,
+  });
+
+  const A_CHANGE = { scope: 'gem', key: 'GemHaltOnError', from: '0', to: '2' };
+
+  it('offers both, disabled, before anything has been changed', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    expect(btn(root, 'undo').disabled).toBe(true);
+    expect(btn(root, 'redo').disabled).toBe(true);
+    expect(btn(root, 'undo').title).toContain('no setting has been changed');
+  });
+
+  it('names the parameter and the value the click would land on', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage(historyMessage(A_CHANGE, null));
+
+    const undo = btn(root, 'undo');
+    expect(undo.disabled).toBe(false);
+    expect(undo.title).toBe('Undo — set GemHaltOnError back to 0 (it is 2 now)');
+    // The press is a write to a live session, so the label is on the button
+    // itself for a screen reader too, not only in the hover.
+    expect(undo.getAttribute('aria-label')).toBe(undo.title);
+    expect(btn(root, 'redo').disabled).toBe(true);
+  });
+
+  it('names a redo by the value it would put back', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage(historyMessage(null, A_CHANGE));
+
+    expect(btn(root, 'redo').disabled).toBe(false);
+    expect(btn(root, 'redo').title).toBe('Redo — set GemHaltOnError to 2 again');
+  });
+
+  it("shows an empty string as '' rather than trailing off", () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage(historyMessage({ scope: 'gem', key: 'GemPathName', from: '', to: '/tmp' }, null));
+
+    expect(btn(root, 'undo').title).toBe("Undo — set GemPathName back to '' (it is /tmp now)");
+  });
+
+  it('asks the host to reverse the change — the history lives there', () => {
+    const { root, host } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage(historyMessage(A_CHANGE, A_CHANGE));
+
+    btn(root, 'undo').click();
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'undoConfiguration' });
+
+    btn(root, 'redo').click();
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'redoConfiguration' });
+  });
+
+  it('keeps the buttons through a reload, which does not undo anything', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage(historyMessage(A_CHANGE, null));
+
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    expect(btn(root, 'undo').disabled).toBe(false);
+  });
+});
+
+describe('undo and redo from the keyboard', () => {
+  const press = (key: string, init: KeyboardEventInit = {}) =>
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, ...init }),
+    );
+
+  const armed = () =>
+    sendMessage({
+      command: 'configHistory',
+      undo: { scope: 'gem', key: 'GemHaltOnError', from: '0', to: '2' },
+      redo: { scope: 'gem', key: 'GemHaltOnError', from: '0', to: '2' },
+    });
+
+  it('reverses on Ctrl+Z and re-applies on Ctrl+Shift+Z and Ctrl+Y', () => {
+    const { host } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    armed();
+
+    press('z');
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'undoConfiguration' });
+
+    press('Z', { shiftKey: true });
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'redoConfiguration' });
+
+    host.postMessage.mockClear();
+    press('y');
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'redoConfiguration' });
+  });
+
+  it('leaves the inline editor its own text undo', () => {
+    // A half-typed value is the user's to take back before it is anyone's to
+    // send, so Ctrl+Z in the box must not reach past it to the stone.
+    const { root, host } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    armed();
+    root.querySelector<HTMLButtonElement>('[data-action="editConfig"]')!.click();
+    const input = root.querySelector<HTMLInputElement>('[data-config-input]')!;
+    host.postMessage.mockClear();
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+
+    expect(host.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when there is nothing to reverse', () => {
+    const { host } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    host.postMessage.mockClear();
+
+    press('z');
+
+    expect(host.postMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('filtering', () => {
   const visibleKeys = (root: HTMLElement) =>
     [...root.querySelectorAll('tr.config-item')]
