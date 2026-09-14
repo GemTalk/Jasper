@@ -122,17 +122,33 @@ const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name,
     .filter(Boolean)
     .join('; ');
   const message = `${name} may be absent from the loaded library (${hazard}). Put the cross-version conditional inside client/src/gciLibrary/ and call a helper from there, so this call site doesn't have to know about optionality.`;
-  // Matched by `.name` and `.value` both, as the password selectors below are:
-  // in `gci['GciTsNbPoll'](...)` the property is a `Literal`, which carries
-  // `.value` and no `.name`. Shaped as a call, not a bare member access -- a
-  // call is the thing that reaches the native library. The bare-identifier
-  // form is gated alongside them, as the test-session `login` selectors below
-  // are: `const { GciTsNbPoll } = gci` pulls the binding out of the library
-  // into a local, and calling *that* reaches the native library just the same.
+  // Gated on the *mention*, not the call shape. The `RAW_LOGIN_NAMES`
+  // selectors below are call-shaped because a test legitimately names a mocked
+  // binding (`expect(gci.GciTsLogin).not.toHaveBeenCalled()`); this block's
+  // `files`/`ignores` already exclude tests and mocks, so in the files it
+  // covers there is no innocent reason to name one of these at all. A bare
+  // member access is the hazard whatever wraps it -- a cast, `.call`, `.bind`
+  // or a renaming destructure all reach the native library just the same.
+  //
+  // One selector per syntax the name can wear: `.name` for `gci.GciTsNbPoll`,
+  // `.value` for the `Literal` in `gci['GciTsNbPoll']` (as the password
+  // selectors below are matched both ways), `callee.name` for a destructured
+  // local, the `ObjectPattern` clause for the destructure that binds it, and
+  // `quasis` for a template-literal key. The `ObjectPattern >` prefix is
+  // load-bearing: a bare `Property[key.name]` would flag the registry's own
+  // object literal in `gciLibrary/optionalFunctions.ts`, which this block
+  // covers -- only `gciLibrary.ts` is exempt.
+  //
+  // Where the fence ends: genuinely dynamic dispatch still slips through --
+  // `gci[k](...)` for a computed `k`, `Reflect.get(gci, name)`, a name
+  // assembled at runtime. No syntactic selector can see those, and the deleted
+  // test documented the same blind spot; this is that sentence.
   return [
-    { selector: `CallExpression[callee.property.name='${name}']`, message },
-    { selector: `CallExpression[callee.property.value='${name}']`, message },
+    { selector: `MemberExpression[property.name='${name}']`, message },
+    { selector: `MemberExpression[property.value='${name}']`, message },
     { selector: `CallExpression[callee.name='${name}']`, message },
+    { selector: `ObjectPattern > Property[key.name='${name}']`, message },
+    { selector: `MemberExpression[property.quasis.0.value.raw='${name}']`, message },
   ];
 });
 
