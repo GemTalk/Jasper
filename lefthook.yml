@@ -7,10 +7,12 @@ pre-commit:
     - name: eslint
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
       # NODE_OPTIONS matches the `lint` script -- see its `//lint` note.
-      run: npx cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint {staged_files}
+      # `--no` keeps npx from installing mid-commit: with stale node_modules it
+      # fails naming the missing package instead of reaching the registry.
+      run: npx --no cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint {staged_files}
     - name: prettier
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx prettier --check {staged_files}
+      run: npx --no prettier --check {staged_files}
 
 post-checkout:
   jobs:
