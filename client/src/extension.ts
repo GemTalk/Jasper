@@ -2237,7 +2237,10 @@ export function activate(context: vscode.ExtensionContext) {
     ),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
-    // Abort are reachable without switching to the Sessions view.
+    // Abort are reachable without switching to the Sessions view. Begin has no
+    // variant of its own: gemstone.sessionBegin already falls back to the selected
+    // session when no row named one, so a second command would only put a second,
+    // identically titled entry in the Command Palette.
     vscode.commands.registerCommand('gemstone.explorer.commit', () => {
       const session = sessionManager.getSelectedSession();
       if (!session) {
@@ -2254,15 +2257,6 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       return abortSession(session);
-    }),
-
-    vscode.commands.registerCommand('gemstone.explorer.begin', () => {
-      const session = sessionManager.getSelectedSession();
-      if (!session) {
-        vscode.window.showErrorMessage('No active GemStone session to begin a transaction in.');
-        return;
-      }
-      return beginSession(session);
     }),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {

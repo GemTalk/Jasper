@@ -135,6 +135,12 @@
     folderOpen: 'folder-opened',
     trash: 'trash',
     play: 'play',
+    // Begin Transaction. Deliberately NOT `play`: that is the glyph marking the
+    // current session on the very same row, and two identical triangles side by
+    // side read as one control repeated. A filled circle is also what the status
+    // bar shows for a session that is in a transaction, so the button wears the
+    // state it produces.
+    record: 'record',
     stop: 'debug-stop',
     terminal: 'terminal',
     reveal: 'eye',
@@ -578,7 +584,7 @@
       ? act(
           'gemstone.sessionBegin',
           'Begin Transaction',
-          'play',
+          'record',
           'Begin a transaction in this session',
         )
       : '';

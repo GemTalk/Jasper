@@ -922,7 +922,7 @@
         "command": "gemstone.sessionBegin",
         "title": "Begin Transaction",
         "category": "GemStone",
-        "icon": "$(play)"
+        "icon": "$(record)"
       },
       {
         "command": "gemstone.setTransactionMode",
@@ -1396,12 +1396,6 @@
         "title": "Abort",
         "category": "GemStone",
         "icon": "$(discard)"
-      },
-      {
-        "command": "gemstone.explorer.begin",
-        "title": "Begin Transaction",
-        "category": "GemStone",
-        "icon": "$(play)"
       },
       {
         "command": "gemstone.explorer.closeAllOpenEditors",
@@ -2284,10 +2278,6 @@
         {
           "command": "gemstone.explorer.abort",
           "when": "gemstone.hasActiveSession"
-        },
-        {
-          "command": "gemstone.explorer.begin",
-          "when": "gemstone.hasActiveSession && gemstone.canBegin"
         },
         {
           "command": "gemstone.sessionBegin",
