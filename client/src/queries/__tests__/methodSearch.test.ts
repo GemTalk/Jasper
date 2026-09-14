@@ -18,6 +18,97 @@ import { getClassDescendantNames } from '../../refactoring/queries/getClassDesce
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
 
+/**
+ * GemStone Search's Prefix chip, over method source. "The target starts with the
+ * query" has no useful meaning for a whole method body, so Prefix narrows to
+ * matches that START A TOKEN — the fix for `foo` returning `barfoo` and
+ * `doFooling`. The narrowing is Smalltalk because the rows carry no source text
+ * to test on the client, and because the result cap is server-side.
+ */
+describe('searchMethodSource word-boundary narrowing', () => {
+  const codeFor = (term: string, ignoreCase: boolean, narrowed: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, ignoreCase, narrowed ? 'wordStart' : 'substring');
+    return execute.mock.calls[0][0];
+  };
+
+  it('adds no filter by default, so Substring and Fuzzy scan as before', () => {
+    const code = codeFor('foo', true, false);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).not.toContain('indexOfSubCollection');
+    expect(code).not.toContain('select:');
+  });
+
+  it('filters on the character before the match when asked', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).toContain('methods := methods select:');
+    // A word character before the match disqualifies it; anything else starts a token.
+    expect(code).toContain('prev isAlphaNumeric');
+    expect(code).toContain('prev = $_');
+  });
+
+  // The camelCase hump that `omniMatch.isWordStart` counts as a word start is
+  // deliberately NOT honoured here: it would keep `doFooling` as a hit for `foo`.
+  it('tests only the preceding character, not a camelCase hump', () => {
+    expect(codeFor('foo', true, true)).not.toContain('isUppercase');
+  });
+
+  /**
+   * Both sides of the comparison are folded by the STONE. Folding the needle with
+   * JavaScript's `toLowerCase` and the source with `asLowercase` would put two
+   * different Unicode case-folding implementations either side of the same test,
+   * and where they disagree the filter drops methods the scan legitimately matched.
+   */
+  it('folds the needle in Smalltalk, not in JavaScript, when case is ignored', () => {
+    const code = codeFor('Foo', true, true);
+
+    // The term reaches the stone as typed, and is folded there.
+    expect(code).toContain("needle := 'Foo' asLowercase");
+    expect(code).toContain('m sourceString asLowercase');
+    // A JS-folded needle would have been embedded already lowercased.
+    expect(code).not.toContain("needle := 'foo'");
+  });
+
+  it('compares as typed when case is significant', () => {
+    const code = codeFor('Foo', false, true);
+    expect(code).toContain("needle := 'Foo'");
+    expect(code).not.toContain('asLowercase');
+  });
+
+  // Bound once rather than inlined at both search sites, so the two can never drift.
+  it('binds the needle once and reuses it', () => {
+    const code = codeFor('Foo', true, true);
+    expect(code.match(/indexOfSubCollection: needle/g)).toHaveLength(2);
+    expect(code.match(/needle :=/g)).toHaveLength(1);
+    expect(code).toContain('classDict sl needle |');
+  });
+
+  // The temp is only declared when the filter is actually emitted.
+  it('does not declare the needle when not narrowing', () => {
+    expect(codeFor('Foo', true, false)).not.toContain('needle');
+  });
+
+  // The filter runs before methodSerialization, so METHOD_SEARCH_RESULT_LIMIT caps
+  // boundary hits rather than truncating substring hits before they are reached.
+  it('narrows before the result cap is applied', () => {
+    const code = codeFor('foo', true, true);
+    expect(code.indexOf('methods := methods select:')).toBeLessThan(code.indexOf('limit :='));
+  });
+
+  it('escapes a term carrying a quote', () => {
+    expect(codeFor("it's", true, true)).toContain("needle := 'it''s'");
+  });
+
+  // 3.6.2 does not implement includesSubstring:, and non-ASCII in generated source
+  // trips ComStrmSetCursor.
+  it('stays on 3.6.2-safe, ASCII-only primitives', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).not.toContain('includesSubstring:');
+    expect([...code].every((ch) => ch.charCodeAt(0) < 128)).toBe(true);
+  });
+});
+
 describe('environment on a result row', () => {
   it('reads the environment column when the scan reports one', () => {
     const results = searchMethodSource(

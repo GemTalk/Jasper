@@ -20,10 +20,13 @@ import type { EnvCategoryLine } from '../../browserQueries';
 
 // A minimal five-pane views mock; only the Methods view's reveal/selection are
 // exercised, but setViews() → syncTitles() writes a description to each pane.
+// Every pane reports itself visible: a cascade reveal is skipped while its pane
+// is closed, so a collapsed stub would silently swallow the reveals asserted here.
 function makeViews() {
   const pane = () => ({
     description: '',
     reveal: vi.fn((_node?: unknown) => Promise.resolve()),
+    visible: true,
     selection: [] as unknown[],
   });
   const method = pane();

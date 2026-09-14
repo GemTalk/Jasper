@@ -5,6 +5,7 @@ import { BrowserQueryError } from './browserQueries';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
 import { receiver } from './queries/util';
+import { isRealClassComment } from './queries/classCommentPresence';
 import {
   splitOutCategory,
   withCategoryLine,
@@ -311,6 +312,22 @@ export function isMethodEditorUri(uri: vscode.Uri | undefined): boolean {
   return !!uri && uri.scheme === 'gemstone' && parseMethodUri(uri) !== null;
 }
 
+/**
+ * True when `uri` is a class-COMMENT document. False for a method, a class
+ * definition, a new-* template, and any non-gemstone document.
+ *
+ * Extracted as a pure predicate, like {@link isMethodEditorUri}, because the
+ * caller that needs it is inside `activate()` and so cannot be reached by a test.
+ * It also keeps the URI's shape in the module that owns it: a comment URI has two
+ * forms — the legacy 4-segment `/dict/Class/comment` and the 5-segment
+ * `/dict/Class/comment/Class comment` that `buildClassCommentUri` actually emits
+ * so the editor tab reads "Account comment" — and a hand-rolled path split in
+ * another file is one rename away from silently recognising only one of them.
+ */
+export function isClassCommentUri(uri: vscode.Uri): boolean {
+  return uri.scheme === 'gemstone' && parseUri(uri).kind === 'comment';
+}
+
 export function buildNewMethodUri(
   sessionId: number,
   dictName: string,
@@ -548,6 +565,23 @@ export interface ClassDefinitionCompiledEvent {
   previousUriIsTemplate: boolean;
 }
 
+/**
+ * A class comment was written to the stone.
+ *
+ * Fired for its own sake because a comment save changes one thing no other event
+ * reports: whether the class's row in the Explorer's Classes pane offers the 📖
+ * button. `hasComment` is the saved text measured by the shared rule
+ * ({@link isRealClassComment}), so the listener never has to ask the stone again
+ * — and it is a boolean rather than the text because that is the only thing the
+ * row depends on.
+ */
+export interface ClassCommentSavedEvent {
+  sessionId: number;
+  dictName: string;
+  className: string;
+  hasComment: boolean;
+}
+
 // ── Undo recording for a save ─────────────────────────────────
 
 /**
@@ -639,6 +673,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
   private _onClassDefinitionCompiled = new vscode.EventEmitter<ClassDefinitionCompiledEvent>();
   readonly onClassDefinitionCompiled = this._onClassDefinitionCompiled.event;
+
+  private _onClassCommentSaved = new vscode.EventEmitter<ClassCommentSavedEvent>();
+  readonly onClassCommentSaved = this._onClassCommentSaved.event;
 
   private diagnostics = vscode.languages.createDiagnosticCollection('gemstone-method');
 
@@ -797,7 +834,12 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         break;
       }
       case 'comment':
-        text = queries.getClassComment(
+        // The STORED comment, not `cls comment` — an uncommented class must open
+        // an empty document, or Ctrl+Z lands on GemStone's synthesised placeholder
+        // and saving writes the boilerplate in as a real comment. See
+        // getStoredClassComment for why the hover and the System Browser's Comment
+        // panel deliberately still show the synthesised text.
+        text = queries.getStoredClassComment(
           session,
           parsed.className,
           parsed.dictIndex ?? parsed.dictName,
@@ -882,6 +924,15 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     notifyUndoable(`Comment updated for ${parsed.className}`, recording?.commit(source));
     void this.exportManager?.syncClass(session, parsed.dictName, parsed.className);
+    // Tell the Explorer the row's 📖 button may have come or gone. Nothing else
+    // does: a comment save fires no compile event, and the generic change event
+    // says only that some gemstone:// document changed.
+    this._onClassCommentSaved.fire({
+      sessionId: session.id,
+      dictName: parsed.dictName,
+      className: parsed.className,
+      hasComment: isRealClassComment(source),
+    });
   }
 
   private compileMethod(
@@ -1142,6 +1193,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     this._onDidChangeFile.dispose();
     this._onMethodCompiled.dispose();
     this._onClassDefinitionCompiled.dispose();
+    this._onClassCommentSaved.dispose();
   }
 
   createDirectory(): void {

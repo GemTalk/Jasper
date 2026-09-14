@@ -780,6 +780,9 @@ interface ExplorerViews {
   method: vscode.TreeView<MethodNode>;
 }
 
+// The five selection-bearing Explorer panes, named as `ExplorerViews` names them.
+type ExplorerPane = keyof ExplorerViews;
+
 // Whether to fire the one-time "how to keep methods open" hint. It fires the first
 // time a single-click preview REPLACES a different previously previewed method —
 // the moment the reused preview tab makes a first method appear to be lost. Not on
@@ -912,7 +915,9 @@ export class ExplorerController {
   // className → category for the current dictionary; fetched once per dict.
   // Assign through the accessor pair, never to the backing field: the setter derives
   // `commentedClasses` from the entries, so every reassignment (dict switch, refresh,
-  // class create/rename, comment edit) keeps that set in step with no site to forget.
+  // class create/rename, comment edit — see onClassCommentSaved, which reassigns a
+  // locally-flipped copy rather than mutating an entry) keeps that set in step with
+  // no site to forget.
   private classCategoryEntriesStore: queries.ClassCategoryEntry[] = [];
   // The commented subset of the above, as a set. `classHasComment` is asked once per
   // class ROW, so scanning the entries there made the Classes pane quadratic in class
@@ -1181,6 +1186,113 @@ export class ExplorerController {
   setViews(views: ExplorerViews): void {
     this.views = views;
     this.syncTitles();
+  }
+
+  // ── Reveals: cascade highlights vs. the user's own request ──────────────────
+  //
+  // Two kinds of `reveal` live in this file and they are NOT interchangeable.
+  //
+  //   * A CASCADE highlight follows from something selected somewhere else: a
+  //     Hierarchy click, Go Back/Forward, an Actions & Navigation row, a
+  //     GemStone Search hit, Go to Definition, a jump from the Inspector or the
+  //     debugger, or a passive resync after a refresh or an abort. The panes are
+  //     already correct from state by the time it runs, so the reveal only
+  //     scrolls a row into sight. But `TreeView.reveal` makes VS Code *show* the
+  //     view the row belongs to, so an unguarded cascade re-opens a pane the
+  //     user deliberately collapsed -- and with six panes in this container one
+  //     unwanted pane costs the others their height (once a sixth is expanded VS
+  //     Code stops drawing the sashes, so nothing can be resized back). Cascades
+  //     go through `revealCascade`, which skips while the pane is closed;
+  //     `reapplyPaneHighlight` catches that pane up the moment the user opens
+  //     it, so a skipped highlight is deferred, not lost.
+  //
+  //   * A reveal that IS the user's request -- a GemStone Search jump to a
+  //     dictionary or a class category, or the row the user's own action in that
+  //     pane just created, renamed or moved. Being shown the thing is the point,
+  //     so these call `view.reveal` directly and are expected to open their pane.
+  //
+  // A reveal added later belongs to one group or the other; decide which before
+  // writing it, rather than defaulting to whichever line is nearer.
+  private async revealCascade<T>(
+    view: vscode.TreeView<T> | undefined,
+    item: T,
+    opts: { select?: boolean; focus?: boolean; expand?: boolean } = { select: true },
+    warnAs?: string,
+  ): Promise<void> {
+    if (!view?.visible) return;
+    try {
+      await view.reveal(item, opts);
+    } catch (e) {
+      // reveal() rejects when the row isn't (yet) in the rebuilt tree. Silent by
+      // default -- the state behind the pane is already right -- but the paths
+      // that used to log keep logging, so a failure there stays diagnosable from
+      // the GCI log.
+      if (warnAs !== undefined) {
+        logWarning(`${warnAs}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  // Re-apply the cascade highlight one pane skipped while it was closed, reading
+  // the same state the pane's rows are already built from. Called when a pane
+  // becomes visible and by the post-refresh resync, so both spell "highlight the
+  // current selection in this pane" the one way.
+  private async reapplyPaneHighlight(pane: ExplorerPane): Promise<void> {
+    const { dictName, dictIndex, classCategory, className, selectedSelector } = this.state;
+    switch (pane) {
+      case 'dict':
+        if (dictName !== undefined && dictIndex !== undefined) {
+          await this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
+        }
+        return;
+      case 'category': {
+        if (!classCategory) return;
+        const segment = classCategory.split('-').pop() ?? classCategory;
+        await this.revealCascade(
+          this.views?.category,
+          new ClassCategoryItem(segment, classCategory, false),
+          { select: true, expand: true },
+        );
+        return;
+      }
+      case 'klass':
+        // ClassItem's optional constructor arguments never affect its id, so the
+        // plain name is enough for reveal to match the rendered row.
+        if (className !== undefined) {
+          await this.revealCascade(this.views?.klass, new ClassItem(className));
+        }
+        return;
+      case 'hierarchy':
+        await this.revealHierarchySelf();
+        return;
+      case 'method': {
+        if (selectedSelector === undefined) return;
+        const isMeta = this.state.selectedIsMeta === true;
+        const info = this.selectorsFor(isMeta, ALL_METHODS_CATEGORY).find(
+          (i) => i.selector === selectedSelector,
+        );
+        if (!info) return;
+        // Deliberately does NOT switch the pane's side toggle the way revealMethodRow
+        // does: opening a pane must not change what it is showing. A recorded
+        // selection on the side the pane is not displaying simply finds no row, and
+        // the reveal is skipped.
+        await this.revealCascade(this.views?.method, this.methodRowNode(isMeta, info), {
+          select: true,
+          expand: true,
+        });
+        return;
+      }
+    }
+  }
+
+  // Re-highlight the current selection when a pane reappears. Cascade reveals are
+  // skipped while a pane is hidden -- either collapsed, or the whole Explorer
+  // container is off-screen, which `TreeView.visible` reports as the same thing --
+  // so a class navigated to while it was hidden would otherwise leave the pane on
+  // a stale row until the next navigation. Only acts on becoming visible, so it
+  // never forces a deliberately-collapsed pane open.
+  onPaneVisibilityChanged(pane: ExplorerPane, visible: boolean): void {
+    if (visible) void this.reapplyPaneHighlight(pane);
   }
 
   private maxEnv(): number {
@@ -1459,15 +1571,11 @@ export class ExplorerController {
     if (i < 0) return;
     const item = new DictItem(names[i], i + 1);
     this.selectDict(item);
-    const views = this.views;
-    // Reveal only when the pane is already on screen. `TreeView.reveal` makes
-    // VS Code *show* the view it belongs to, which drags the whole GemStone
-    // Explorer container to the front — so logging in from the Databases section
-    // (or anywhere else) yanked the sidebar away from what the user was doing.
-    // Selecting the dictionary above is what populates the panes; the reveal only
-    // scrolls the row into sight, which is worth nothing to someone not looking
-    // at it.
-    if (views?.dict.visible) views.dict.reveal(item, { select: true }).then(undefined, () => {});
+    // A cascade: selecting the dictionary above is what populates the panes, and
+    // the reveal only scrolls the row into sight -- worth nothing to someone not
+    // looking at it, and worth less than the sidebar being yanked away from what
+    // they were doing when they logged in from the Databases section.
+    void this.revealCascade(this.views?.dict, item);
   }
 
   // Re-fetch everything for the CURRENT selection WITHOUT clearing it — the
@@ -1604,42 +1712,18 @@ export class ExplorerController {
   }
 
   // Re-highlight the retained dict/category/class/method rows after a refresh.
-  // reveal() rejects when a row isn't in the (rebuilt) tree; treat each as a
-  // best-effort highlight, exactly like revealClass does.
+  // Pure cascade: the panes are already correct from state, nobody asked to be
+  // shown anything, so a closed pane stays closed and catches up when it opens.
   private async revealRetainedSelection(revealMethod?: {
     selector: string;
     isMeta: boolean;
   }): Promise<void> {
-    const { dictName, dictIndex, classCategory, className } = this.state;
-    if (dictName !== undefined && dictIndex !== undefined) {
-      try {
-        await this.views?.dict.reveal(new DictItem(dictName, dictIndex), { select: true });
-      } catch {
-        /* ignore */
-      }
-    }
-    if (classCategory) {
-      const segment = classCategory.split('-').pop() ?? classCategory;
-      try {
-        await this.views?.category.reveal(new ClassCategoryItem(segment, classCategory, false), {
-          select: true,
-          expand: true,
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-    if (className !== undefined) {
-      try {
-        await this.views?.klass.reveal(
-          new ClassItem(className, this.classHasDefinedVars(className)),
-          { select: true },
-        );
-      } catch {
-        /* ignore */
-      }
-    }
+    await this.reapplyPaneHighlight('dict');
+    await this.reapplyPaneHighlight('category');
+    await this.reapplyPaneHighlight('klass');
     void this.revealHierarchySelf();
+    // The method is passed in rather than read off state: a refresh re-reveals the
+    // row it was told to keep, which isn't always the last selector recorded.
     if (revealMethod) {
       const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
         (i) => i.selector === revealMethod.selector,
@@ -2214,12 +2298,10 @@ export class ExplorerController {
 
   // Select the current class's node in the Hierarchy pane so its selection stays
   // in sync with the Classes pane.
+  // A cascade highlight: it follows the Classes pane's selection, so it must not
+  // open a collapsed Hierarchy pane. See revealCascade.
   async revealHierarchySelf(): Promise<void> {
     if (this.hierChain.length === 0) return;
-    // Don't reveal when the Hierarchy pane is collapsed — reveal() would force
-    // VS Code to expand the section, defeating the collapsed-by-default layout
-    // and re-opening the pane every time the user selects a class.
-    if (!this.views?.hierarchy.visible) return;
     const lastIdx = this.hierChain.length - 1;
     const e = this.hierChain[lastIdx];
     const self = new HierarchyItem(
@@ -2229,21 +2311,7 @@ export class ExplorerController {
       lastIdx,
       this.hierSubs.length > 0,
     );
-    try {
-      await this.views?.hierarchy.reveal(self, { select: true, focus: false });
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Re-reveal the current class when the Hierarchy pane reappears. reveals are
-  // skipped while the pane is hidden — either collapsed, or the whole Explorer
-  // container is off-screen (revealHierarchySelf's visible guard) — so a class
-  // navigated to while it was hidden would otherwise leave the pane on a stale
-  // selection until the next navigation. Only acts on becoming visible, so it
-  // never forces a deliberately-collapsed pane open.
-  onHierarchyVisibilityChanged(visible: boolean): void {
-    if (visible) void this.revealHierarchySelf();
+    await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
   }
 
   hierarchyParent(element: HierarchyItem): HierarchyItem | undefined {
@@ -2377,10 +2445,11 @@ export class ExplorerController {
   // comment button at all (#387), so the button never promises a document
   // that turns out to be GemStone's synthesised "No class-specific documentation
   // for …" placeholder. Answered from the set derived from the class list already
-  // fetched for this dictionary, so asking costs no extra query and no scan. A class
-  // we have no entry for (a stale row, or one from another dictionary) is treated as
-  // uncommented: the Classes-pane toolbar button still reaches it, so nothing becomes
-  // unreachable.
+  // fetched for this dictionary, so asking costs no extra query and no scan. Saving
+  // a comment in this session keeps the set in step without a refetch, through
+  // onClassCommentSaved. A class we have no entry for (a stale row, or one from
+  // another dictionary) is treated as uncommented: the Classes-pane toolbar button
+  // still reaches it, so nothing becomes unreachable.
   classHasComment(className: string): boolean {
     return this.commentedClasses.has(className);
   }
@@ -4463,16 +4532,15 @@ export class ExplorerController {
   }
 
   // Reveal + select a method row, honoring the pane's current view state: switch
-  // to the method's side (the pane shows one side at a time) and drop the category
-  // parent when grouping is off, so the built node's id matches the rendered row.
+  // to the method's side, since the pane shows one side at a time. The node itself
+  // is shaped by methodRowNode, which matches it to the row as rendered.
   private async revealMethodRow(
     isMeta: boolean,
     info: SelectorInfo,
     opts: { focusEditorAfter?: boolean } = {},
   ): Promise<void> {
     this.setMethodSide(isMeta);
-    const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
-    const item = new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info));
+    const item = this.methodRowNode(isMeta, info);
     // In this VS Code build focus:false selects the row but never scrolls it into view; only
     // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
     // focus straight back to the editor so the tree doesn't keep it. A passive background resync
@@ -4480,18 +4548,20 @@ export class ExplorerController {
     const takesFocus = opts.focusEditorAfter === true;
     const side = isMeta ? 'class' : 'instance';
     this.recordLanding({ selector: info.selector, isMeta });
-    try {
-      await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
-    } catch (e) {
-      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
-      // (mirrors the dictionary/category reveal paths above).
-      logWarning(
-        `Explorer method reveal failed for ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    // Cascade: the Methods pane is filled from state either way, so a row
+    // highlight must not re-open the pane -- least of all the passive background
+    // resync, which the user did not ask for at all. Failures still log.
+    await this.revealCascade(
+      this.views?.method,
+      item,
+      { select: true, focus: takesFocus, expand: true },
+      `Explorer method reveal failed for ${side} method ${info.selector}`,
+    );
     // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
-    // leaving the user's cursor stranded in the tree is the worse outcome.
-    if (takesFocus) {
+    // leaving the user's cursor stranded in the tree is the worse outcome. But not when the pane is
+    // closed — the reveal was skipped entirely then, so nothing took focus and there is nothing to
+    // hand back.
+    if (takesFocus && this.views?.method.visible) {
       try {
         await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
       } catch (e) {
@@ -4527,6 +4597,24 @@ export class ExplorerController {
   }
 
   // Selectors under a category (real or computed) with per-method metadata.
+  /**
+   * The Methods pane's row node for one selector, built the way the pane is
+   * currently rendering: the category parent is dropped when grouping is off, so
+   * the node's id matches the row actually on screen and `reveal` can find it.
+   *
+   * One shape, three callers — the reveal after a navigation, the catch-up when
+   * the pane reopens, and the open-the-source path — because a node built even
+   * slightly differently silently fails to match its row rather than erroring.
+   */
+  private methodRowNode(isMeta: boolean, info: SelectorInfo): MethodItem {
+    return new MethodItem(
+      isMeta,
+      info,
+      this.groupMethodsByCategory() ? info.category : undefined,
+      this.methodSourceUri(isMeta, info),
+    );
+  }
+
   selectorsFor(isMeta: boolean, category: string): SelectorInfo[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
     const realCategory: Record<string, string> = {};
@@ -5046,6 +5134,9 @@ export class ExplorerController {
     }
     const item = new DictItem(name, idx + 1);
     this.selectDict(item);
+    // Deliberately NOT a cascade (revealCascade): asking GemStone Search to take
+    // you to a dictionary is asking to see it, so this one opens its pane, exactly
+    // as the category jump below does.
     try {
       await this.views?.dict.reveal(item, { select: true, focus: true });
     } catch (e) {
@@ -5099,6 +5190,9 @@ export class ExplorerController {
     // TreeView.reveal() can no-op — which is exactly how a GemStone Search category jump looked like it landed
     // nowhere (a flat dictionary reveal is less sensitive, so dictionary jumps still worked). Focusing
     // the view makes the subsequent nested reveal land on the real node.
+    // This is the deliberate exception to the cascade rule (revealCascade), not the
+    // house pattern: asking Search to take you to a category is asking to see it,
+    // so opening the pane is the whole point rather than a side effect.
     try {
       await vscode.commands.executeCommand('gemstoneExplorerCategories.focus');
     } catch {
@@ -5312,21 +5406,16 @@ export class ExplorerController {
 
     if (landing.className === undefined) {
       this.selectDict(new DictItem(landing.dictName, dictIndex));
-      try {
-        await this.views?.dict.reveal(new DictItem(landing.dictName, dictIndex), { select: true });
-      } catch {
-        /* highlight only — the panes are already correct from state */
-      }
+      // Highlight only -- the panes are already correct from state, and Go
+      // Back/Forward is not a request to be shown a pane. Cascade, so a closed
+      // pane stays closed; see revealCascade.
+      await this.revealCascade(this.views?.dict, new DictItem(landing.dictName, dictIndex));
       if (landing.classCategory !== undefined) {
         const path = landing.classCategory;
         const segment = path.split('-').pop() ?? path;
         const item = new ClassCategoryItem(segment, path, false);
         this.selectClassCategory(item);
-        try {
-          await this.views?.category.reveal(item, { select: true, expand: true });
-        } catch {
-          /* highlight only */
-        }
+        await this.revealCascade(this.views?.category, item, { select: true, expand: true });
       }
       return true;
     }
@@ -5363,14 +5452,7 @@ export class ExplorerController {
       (i) => i.selector === selector,
     );
     if (!info) return false;
-    await this.openMethod(
-      new MethodItem(
-        isMeta,
-        info,
-        this.groupMethodsByCategory() ? info.category : undefined,
-        this.methodSourceUri(isMeta, info),
-      ),
-    );
+    await this.openMethod(this.methodRowNode(isMeta, info));
     return true;
   }
 
@@ -5444,31 +5526,26 @@ export class ExplorerController {
     // record (in revealMethodRow) refines this entry rather than adding a second.
     this.recordLanding();
 
-    // reveal() rejects if the element isn't (yet) in the tree; the panes are
-    // already correct from state, so treat reveal purely as a highlight nicety.
-    try {
-      await this.views?.dict.reveal(new DictItem(dictName, dictIndex), { select: true });
-    } catch {
-      /* ignore */
-    }
+    // The panes are already correct from state, so these three are pure highlight
+    // niceties -- and a nicety is exactly what must not cost the user their layout.
+    // Cascade reveals: skipped while their pane is closed, caught up when it opens.
+    await this.revealCascade(this.views?.dict, new DictItem(dictName, dictIndex));
     if (this.state.classCategory) {
       const path = this.state.classCategory;
       const segment = path.split('-').pop() ?? path;
-      try {
-        await this.views?.category.reveal(new ClassCategoryItem(segment, path, false), {
-          select: true,
-          expand: true,
-        });
-      } catch {
-        /* ignore */
-      }
+      await this.revealCascade(this.views?.category, new ClassCategoryItem(segment, path, false), {
+        select: true,
+        expand: true,
+      });
     }
+    // Taking focus is part of the same nicety: a hierarchy click that pulled the
+    // keyboard into the Classes tree stopped the arrow keys walking the hierarchy
+    // the user was reading. Only the class landing (no method to reveal) asks for it.
     const focusClass = opts.revealMethod === undefined;
-    try {
-      await this.views?.klass.reveal(new ClassItem(className), { select: true, focus: focusClass });
-    } catch {
-      /* ignore */
-    }
+    await this.revealCascade(this.views?.klass, new ClassItem(className), {
+      select: true,
+      focus: focusClass,
+    });
 
     if (opts.revealMethod) {
       // Select the method under its own category node (expanding as needed), not
@@ -5916,12 +5993,13 @@ export class ExplorerController {
     if (className !== undefined && category !== undefined) {
       const segment = category.split('-').pop() ?? category;
       const catItem = new ClassCategoryItem(segment, category, false);
+      // The selection is what fixes the problem — the pane was filtered to a
+      // category the class has just left, which hid it. The reveal on top is only
+      // the row highlight, so it is a cascade: an undo pressed from somewhere else
+      // must not spring this pane open. reapplyPaneHighlight catches it up from
+      // state when the user does open it.
       this.selectClassCategory(catItem);
-      try {
-        await this.views?.category.reveal(catItem, { select: true, expand: true });
-      } catch {
-        /* a row that is not in the rebuilt tree just leaves the pane as it is */
-      }
+      await this.revealCascade(this.views?.category, catItem, { select: true, expand: true });
     } else if (
       this.state.classCategory !== undefined &&
       !(category !== undefined && categoryContains(this.state.classCategory, category))
@@ -7480,6 +7558,40 @@ export class ExplorerController {
     this.maybeRevealNewMethod();
   }
 
+  /**
+   * A class comment was saved, so that class's row may have gained or lost its
+   * 📖 button. Flip the one entry and redraw; `ClassProvider.getChildren`
+   * rebuilds every `ClassItem` from scratch, so the redraw is enough once the
+   * commented set says the right thing.
+   *
+   * Reassigns through the `classCategoryEntries` accessor rather than mutating
+   * the entry in place, because the setter is what derives `commentedClasses` —
+   * an in-place mutation would redraw a row whose set still said "uncommented",
+   * which is exactly the failure the accessor exists to prevent. A local flip
+   * also avoids re-running `getClassesWithCategory` over the whole dictionary
+   * (769 classes in Globals) on every comment save.
+   *
+   * No-ops unless the save was in the session and dictionary the panes are
+   * showing, the way onExternalClassCompiled guards itself: a class the current
+   * entries don't list has no row to flip.
+   */
+  onClassCommentSaved(
+    sessionId: number,
+    dictName: string,
+    className: string,
+    hasComment: boolean,
+  ): void {
+    const session = this.session();
+    if (!session || session.id !== sessionId || this.state.dictName !== dictName) return;
+    const entries = this.classCategoryEntries;
+    const entry = entries.find((e) => e.className === className);
+    if (!entry || entry.hasComment === hasComment) return;
+    this.classCategoryEntries = entries.map((e) =>
+      e.className === className ? { ...e, hasComment } : e,
+    );
+    this.classProvider.refresh();
+  }
+
   onExternalClassCompiled(sessionId: number, className: string, dictName?: string): void {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
@@ -7862,6 +7974,14 @@ export function commitFilterOnRowSelection(
 export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string, selector?: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
+  /** A class comment was saved: put the 📖 button on that class's row, or take it
+   *  off, without refetching the dictionary's class list. */
+  onClassCommentSaved(
+    sessionId: number,
+    dictName: string,
+    className: string,
+    hasComment: boolean,
+  ): void;
   onSessionAborted(sessionId: number): void;
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
@@ -8011,7 +8131,15 @@ export function registerGemStoneExplorer(
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
   });
-  hierarchyView.onDidChangeVisibility((e) => ctl.onHierarchyVisibilityChanged(e.visible));
+  // Catch each pane up on the cascade highlight it skipped while it was closed
+  // (see ExplorerController.revealCascade). Without these, guarding the reveals
+  // would leave a pane opened later sitting on a stale row until the next
+  // navigation.
+  dictView.onDidChangeVisibility((e) => ctl.onPaneVisibilityChanged('dict', e.visible));
+  categoryView.onDidChangeVisibility((e) => ctl.onPaneVisibilityChanged('category', e.visible));
+  classView.onDidChangeVisibility((e) => ctl.onPaneVisibilityChanged('klass', e.visible));
+  hierarchyView.onDidChangeVisibility((e) => ctl.onPaneVisibilityChanged('hierarchy', e.visible));
+  methodView.onDidChangeVisibility((e) => ctl.onPaneVisibilityChanged('method', e.visible));
   methodView.onDidChangeSelection((e) => {
     const node = e.selection[0];
     // Record the category context so New Method(-Category) defaults there. The
@@ -8757,6 +8885,8 @@ export function registerGemStoneExplorer(
       ctl.onExternalMethodCompiled(sessionId, className, selector),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
+    onClassCommentSaved: (sessionId, dictName, className, hasComment) =>
+      ctl.onClassCommentSaved(sessionId, dictName, className, hasComment),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
