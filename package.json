@@ -3522,6 +3522,8 @@
     "docs:fetch": "node scripts/fetch-gs-docs.mjs",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
     "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
+    "//lint:toolchain": "Asserts `tsc` on PATH is TypeScript 7. @typescript/native and the hoisted @typescript/old both claim the `tsc` bin and npm picks one silently; without this, a reshuffle would type-check everything on TS 6 unnoticed.",
+    "lint:toolchain": "node scripts/lint-toolchain.mjs",
     "//lint:gci-headers": "Asserts vendor/gci-headers/versions.md matches the committed header files (hashes, folder links, and no unreferenced folders). Run after adding a row.",
     "lint:gci-headers": "node scripts/lint-gci-header-versions.mjs",
     "//lint:lockfile": "The three --allowed-package-name-aliases entries are the TypeScript 7 side-by-side install: devDependencies alias `typescript` to the TS 6 API package (for typescript-eslint) and `@typescript/native` to TypeScript 7 itself (for the `tsc` bin), and `@typescript/typescript6` in turn aliases TS 6 as `@typescript/old`. --validate-package-names rejects every npm alias by default, so each has to be named. Retire them when typescript-eslint supports TS >=7.1 and `typescript` can go back to a plain ^7 range.",
