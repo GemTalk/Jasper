@@ -193,7 +193,7 @@ describe('GemStoneSessionItem', () => {
     const session = makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3);
     const selected = new GemStoneSessionItem(session, true);
     expect(selected.label).toBe('Admin on prod (db)');
-    expect(selected.description).toBe('Session 3 (3.7.2)');
+    expect(selected.description).toBe('Session 3 (3.7.2) · auto-commit off');
     expect(selected.contextValue).toBe('gemstoneSession');
     expect((selected.iconPath as { id: string }).id).toBe('debug-start');
 
@@ -201,27 +201,75 @@ describe('GemStoneSessionItem', () => {
     expect((idle.iconPath as { id: string }).id).toBe('plug');
   });
 
-  // The status bar can only speak for the selected session, so this row is where a second
-  // session's auto-commit state is readable (issue #254) — and it says nothing at all when
-  // auto-commit is off, which is the default and would otherwise be noise on every row.
-  it('carries the auto-commit state of its session, and only when there is one to carry', () => {
+  // This row is the ONLY display of auto-commit (issue #254), so it speaks in both
+  // directions: as one display among several, silence for "off" was fine; as the only one,
+  // a row that says nothing does not read as off, it reads as a row that has not been told.
+  it('says what auto-commit is doing, off included', () => {
     const session = makeSession(makeLogin(), 3);
 
-    expect(new GemStoneSessionItem(session, false).description).toBe('Session 3 (3.7.2)');
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
 
     registerSessionAutoCommit(3, true);
     expect(new GemStoneSessionItem(session, false).description).toBe(
-      'Session 3 (3.7.2) · auto-commit',
+      'Session 3 (3.7.2) · auto-commit ON',
     );
 
     setAutoCommitStatus(3, 'failed');
     expect(new GemStoneSessionItem(session, false).description).toBe(
       'Session 3 (3.7.2) · auto-commit FAILED',
     );
+  });
 
-    // Another session's state must not leak onto this row.
+  it('reads its own session, never another one', () => {
+    const session = makeSession(makeLogin(), 3);
     registerSessionAutoCommit(4, true);
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
+
+    registerSessionAutoCommit(3, true);
     forgetSessionAutoCommit(3);
-    expect(new GemStoneSessionItem(session, false).description).toBe('Session 3 (3.7.2)');
+    expect(new GemStoneSessionItem(session, false).description).toBe(
+      'Session 3 (3.7.2) · auto-commit off',
+    );
+  });
+
+  it('tints the icon for the two states worth catching, and leaves off plain', () => {
+    const session = makeSession(makeLogin(), 3);
+    const colorOf = (item: GemStoneSessionItem) =>
+      (item.iconPath as { color?: { id: string } }).color?.id;
+
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBeUndefined();
+
+    registerSessionAutoCommit(3, true);
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBe('problemsWarningIcon.foreground');
+
+    setAutoCommitStatus(3, 'failed');
+    expect(colorOf(new GemStoneSessionItem(session, false))).toBe('problemsErrorIcon.foreground');
+  });
+
+  it('keeps the icon SHAPE for the selection, so colour and shape say different things', () => {
+    const session = makeSession(makeLogin(), 3);
+    registerSessionAutoCommit(3, true);
+
+    const selected = new GemStoneSessionItem(session, true).iconPath as { id: string };
+    const idle = new GemStoneSessionItem(session, false).iconPath as { id: string };
+    expect(selected.id).toBe('debug-start');
+    expect(idle.id).toBe('plug');
+  });
+
+  it('spells out in the tooltip what the armed state costs — Abort stops being a way back', () => {
+    const session = makeSession(makeLogin(), 3);
+    registerSessionAutoCommit(3, true);
+    expect(String(new GemStoneSessionItem(session, false).tooltip)).toMatch(
+      /Abort will not take one back/,
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect(String(new GemStoneSessionItem(session, false).tooltip)).toMatch(
+      /NOT in the repository/,
+    );
   });
 });

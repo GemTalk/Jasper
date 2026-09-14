@@ -55,7 +55,7 @@ describe('change notification', () => {
 
   it('survives a listener that throws', () => {
     onAutoCommitChanged(() => {
-      throw new Error('a status bar mid-teardown');
+      throw new Error('a tree provider mid-teardown');
     });
     const other = vi.fn();
     onAutoCommitChanged(other);

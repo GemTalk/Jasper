@@ -3,8 +3,9 @@
  *
  * The switch is deliberately not only a setting. #254 asks for exactly that: "it would be
  * nice if that on/off switch was not buried in a settings tool as the only means of
- * changing it". So the status-bar indicator IS the switch — one click — and the palette
- * entry and the session row's context menu reach the same command. The setting
+ * changing it". So it sits on the session row's own context menu, in the Logins view —
+ * the same row that DISPLAYS the state, so reading it and changing it are one gesture
+ * apart — and on the Command Palette, which acts on the selected session. The setting
  * (`gemstone.autoCommit.enableForNewSessions`) only decides where a NEW session starts.
  *
  * Two moments here are worth more than a toggle:
@@ -102,7 +103,7 @@ function disarmAutoCommit(session: ActiveSession): void {
 }
 
 /**
- * The one command behind the status-bar click, the palette entry and the session row.
+ * The one command behind the session row's context menu and the palette entry.
  * From the `failed` state it opens the recovery choices instead of flipping, because
  * "off" is only one of three things the user might want there and the other two are the
  * ones that save their work.

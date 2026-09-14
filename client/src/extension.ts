@@ -101,10 +101,6 @@ import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { forgetSessionAutoCommit, registerSessionAutoCommit } from './autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from './autoCommit/autoCommitRunner';
 import {
-  AUTO_COMMIT_STATUS_COMMAND,
-  registerAutoCommitStatusBar,
-} from './autoCommit/autoCommitStatusBar';
-import {
   autoCommitDefaultForNewSessions,
   autoCommitTransactionSettled,
   reportAutoCommitFailure,
@@ -1277,7 +1273,6 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     sessionManager.onDidRemoveSession((id: number) => forgetSessionAutoCommit(id)),
   );
-  registerAutoCommitStatusBar(context, sessionManager);
   // The runner is deliberately free of `vscode` so the write path can call it; these two
   // hand it the workbench it needs — how to tell the user a commit failed, and how to run
   // the real Abort (the one that refreshes the panes and clears the undo stack) when they
@@ -2132,17 +2127,12 @@ export function activate(context: vscode.ExtensionContext) {
       return abortSession(session);
     }),
 
-    // Auto-commit's switch (issue #254). One command behind three affordances — the
-    // status-bar indicator, the palette and a session row — because the state is per
-    // session and every one of them has to be able to say WHICH session it flipped.
+    // Auto-commit's switch (issue #254). Reached from the session row's context menu, which
+    // is the row that DISPLAYS the state, and from the palette, which acts on the selected
+    // session. Takes the row's session when it has one: the state is per session, so the
+    // switch has to be able to say which one it flipped.
     vscode.commands.registerCommand(TOGGLE_AUTO_COMMIT_COMMAND, (item?: GemStoneSessionItem) =>
       toggleAutoCommit(sessionManager, item?.activeSession),
-    ),
-
-    // The indicator is the switch: clicking it flips the selected session, except from the
-    // failed state, where it opens the ways out instead.
-    vscode.commands.registerCommand(AUTO_COMMIT_STATUS_COMMAND, () =>
-      toggleAutoCommit(sessionManager),
     ),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {

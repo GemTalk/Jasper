@@ -74,17 +74,27 @@ back. Nothing in the undo stack depends on the change being uncommitted, so a co
 exactly as undoable as one that is not. `undoLastCommand` runs deferred so that a reversal touching
 several methods commits once; that is the only thing auto-commit changes about it.
 
-**Abort is a different story, and it is the whole reason this feature needs a visible indicator.**
+**Abort is a different story, and it is the whole reason this feature needs a visible state.**
 With auto-commit on, Abort no longer takes a change back — the change is in the repository. That is
 not a defect to be fixed, it is what the user asked for; but a user who does not know the state is on
 will reach for Abort and find nothing to abort. Hence:
 
-- the status-bar indicator, coloured, always visible with a session, saying the state in words;
-- the same answer on the session's row in the Logins view, which is where a *second* session's state
-  can be read;
-- a tooltip and a turn-on notice that both say Abort will not take a change back;
+- **the session's own row in the Logins view**, which says the state in words — `· auto-commit ON`,
+  `· auto-commit off`, `· auto-commit FAILED` — and tints the row's icon for the two states worth
+  catching out of the corner of an eye;
+- a tooltip on that row, and a turn-on notice, that both say Abort will not take a change back;
 - a prompt before arming over a transaction that already holds uncommitted work, because the next
   change would commit all of it.
+
+**The row, and not the status bar.** A status-bar item can only ever speak for one session, and this
+is a per-session feature: the state belongs to a transaction, two sessions can hold different
+answers, and the display has to be able to show both at once. Putting it on the row also puts it next
+to the switch — the toggle is on that row's context menu — so reading the state and changing it are
+one gesture apart.
+
+That is also why the row speaks in **both** directions rather than only when armed. As one display
+among several, silence for "off" was fine; as the only one, it is not — a row that says nothing does
+not read as "off", it reads as a row that has not been told.
 
 Note the one place Abort is still exactly what it was: inside a deferred region. A refactoring panel
 offering Abort has had nothing committed under it.

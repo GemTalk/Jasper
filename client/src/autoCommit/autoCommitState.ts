@@ -14,11 +14,11 @@
  * session, with nowhere to hang an injected service, and threading a controller through
  * every mutation signature would be a far larger change than the feature.
  *
- * Deliberately free of `vscode` and of GCI. The status bar, the toggle command and the
- * failure prompt are built on top (`autoCommitStatusBar.ts`, `autoCommitUi.ts`); the
- * committing itself is `autoCommitRunner.ts`. Keeping this layer plain means the write
- * path can consult it without pulling the workbench into `browserQueries`, whose tests
- * mock barely any of it.
+ * Deliberately free of `vscode` and of GCI. The display (each session's row in the Logins
+ * view -- see `loginTreeProvider.ts`), the toggle command and the failure prompt
+ * (`autoCommitUi.ts`) are built on top; the committing itself is `autoCommitRunner.ts`.
+ * Keeping this layer plain means the write path can consult it without pulling the
+ * workbench into `browserQueries`, whose tests mock barely any of it.
  */
 
 /**

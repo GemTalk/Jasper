@@ -43,14 +43,57 @@ export class GemStoneLoginItem extends vscode.TreeItem {
   }
 }
 
-/** An active session (tree child of the login that started it). */
-/** How a session row spells out its auto-commit state — nothing at all when it is off. */
+/**
+ * How a session row says what auto-commit is doing (issue #254).
+ *
+ * This is the ONLY display of it, which is why it speaks in both directions rather than
+ * only when armed. Auto-commit changes what Abort means, so a user who cannot see the state
+ * loses work either way round: armed and not knowing it, they reach for Abort and find
+ * nothing to abort; off and believing otherwise, they log out over uncommitted work. A row
+ * that is silent for "off" cannot be read as saying off — it reads as a row that has not
+ * been told, which is exactly the ambiguity worth spending a few characters to remove.
+ *
+ * On the row rather than the status bar because the state is PER SESSION: a status-bar item
+ * can only ever speak for one of them, and this way two sessions with different answers
+ * each say their own, side by side.
+ */
 export function autoCommitRowSuffix(status: AutoCommitStatus): string {
-  if (status === 'on') return ' · auto-commit';
+  if (status === 'on') return ' · auto-commit ON';
   if (status === 'failed') return ' · auto-commit FAILED';
-  return '';
+  return ' · auto-commit off';
 }
 
+/** What the row's tooltip adds under the state — the consequence, not the restatement. */
+export function autoCommitRowTooltip(status: AutoCommitStatus): string {
+  if (status === 'on') {
+    return (
+      'Auto-commit is ON: every change is committed as soon as it is made, and Abort will ' +
+      'not take one back. Undo still works — it reverses a change by making the opposite one.'
+    );
+  }
+  if (status === 'failed') {
+    return (
+      'Auto-commit tried to commit and could not — almost always a conflict with another ' +
+      'session. Your changes are NOT in the repository, and it has stopped trying. ' +
+      'Right-click for the ways out: abort, see the conflicts, or turn it off.'
+    );
+  }
+  return 'Auto-commit is off: changes stay in this session’s transaction until you commit.';
+}
+
+/**
+ * The row's icon colour. Uncoloured when off, because that is the ordinary state and a tree
+ * where every row is painted says nothing; the two states worth catching out of the corner
+ * of an eye get the workbench's own warning and error colours. The icon SHAPE goes on saying
+ * which session is selected — colour and shape carry different things.
+ */
+function autoCommitIconColor(status: AutoCommitStatus): vscode.ThemeColor | undefined {
+  if (status === 'on') return new vscode.ThemeColor('problemsWarningIcon.foreground');
+  if (status === 'failed') return new vscode.ThemeColor('problemsErrorIcon.foreground');
+  return undefined;
+}
+
+/** An active session (tree child of the login that started it). */
 export class GemStoneSessionItem extends vscode.TreeItem {
   constructor(
     public readonly activeSession: ActiveSession,
@@ -59,14 +102,15 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
     const { id, stoneVersion } = activeSession;
     this.id = `session-${id}`;
-    // Auto-commit is PER SESSION (issue #254), and the status bar can only show one — the
-    // selected one. This row is where a second session's answer is readable, which matters
-    // precisely when the two differ. Silent when it is off: off is the default and the
-    // ordinary state, and a row that says so about every session says nothing.
-    const autoCommit = autoCommitRowSuffix(getAutoCommitStatus(id));
-    this.description = `Session ${id} (${stoneVersion})${autoCommit}`;
-    this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})${autoCommit}`;
-    this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
+    const autoCommit = getAutoCommitStatus(id);
+    this.description = `Session ${id} (${stoneVersion})${autoCommitRowSuffix(autoCommit)}`;
+    this.tooltip =
+      `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})\n\n` +
+      autoCommitRowTooltip(autoCommit);
+    this.iconPath = new vscode.ThemeIcon(
+      isSelected ? 'debug-start' : 'plug',
+      autoCommitIconColor(autoCommit),
+    );
     this.contextValue = 'gemstoneSession';
   }
 }
