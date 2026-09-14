@@ -25,11 +25,18 @@ function inlineRank(group: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-function inlineOrderFor(viewItemClause: string): string[] {
+function inlineItemsFor(viewItemClause: string): MenuItem[] {
   return itemContext
     .filter((m) => m.group?.startsWith('inline') && (m.when ?? '').includes(viewItemClause))
-    .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!))
-    .map((m) => m.command);
+    .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!));
+}
+
+function inlineOrderFor(viewItemClause: string): string[] {
+  return inlineItemsFor(viewItemClause).map((m) => m.command);
+}
+
+function inlineRanksFor(viewItemClause: string): number[] {
+  return inlineItemsFor(viewItemClause).map((m) => inlineRank(m.group!));
 }
 
 describe('session row inline button order', () => {
@@ -63,6 +70,14 @@ describe('session row inline button order', () => {
     ]);
   });
 
+  // A vacated number is invisible in the rendered row — VS Code just sorts —
+  // but it reads as a missing button to whoever adds the next one, which is how
+  // a button ends up in the wrong place. Removing a button means renumbering
+  // the ones after it.
+  it('numbers the row 1..n with no vacated slot', () => {
+    expect(inlineRanksFor('viewItem == gemstoneSession')).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {
     const sessionItems = itemContext.filter((m) =>
       (m.when ?? '').includes('viewItem == gemstoneSession'),
@@ -81,5 +96,9 @@ describe('login row inline button order', () => {
     const order = inlineOrderFor('viewItem == gemstoneLogin');
 
     expect(order).toEqual(['gemstone.login', 'gemstone.editLogin', 'gemstone.deleteLogin']);
+  });
+
+  it('numbers the row 1..n with no vacated slot', () => {
+    expect(inlineRanksFor('viewItem == gemstoneLogin')).toEqual([1, 2, 3]);
   });
 });

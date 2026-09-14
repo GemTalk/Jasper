@@ -3114,7 +3114,7 @@
         {
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@6"
+          "group": "inline@5"
         },
         {
           "command": "gemstone.fullLogicalBackup",
