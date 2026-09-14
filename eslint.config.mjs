@@ -404,7 +404,24 @@ export default tseslint.config(
     // cross-version helper lives under `client/src/gciLibrary/`, this exemption
     // widens to that directory -- and belongs to the commit that puts one there.
     files: ['client/src/**/*.ts', 'server/src/**/*.ts', 'mcp-server/src/**/*.ts'],
-    ignores: ['**/__tests__/**', '**/__mocks__/**', '**/gciLibrary.ts'],
+    ignores: [
+      '**/__tests__/**',
+      '**/__mocks__/**',
+      // A test file outside `__tests__/` is exempt too, and has to be listed
+      // here to say so: the test-session block below configures
+      // `no-restricted-syntax` for these globs, and flat config *replaces* a
+      // rule's options rather than merging them -- so these selectors are
+      // dropped for such a file whether or not this line exists. Stated
+      // explicitly rather than left to fall out of block ordering, which is
+      // invisible at the call site. Not `**/*.test.tsx`: the `files` above are
+      // all `*.ts`, so it could never match.
+      '**/*.test.ts',
+      '**/*.spec.ts',
+      // Path-anchored rather than a `**/` basename glob: the bindings are this
+      // one module's subject, and a future `server/src/gciLibrary.ts` should be
+      // gated like any other production source.
+      'client/src/gciLibrary.ts',
+    ],
     rules: { 'no-restricted-syntax': ['error', ...OPTIONAL_GCI_CALL] },
   },
   {
