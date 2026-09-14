@@ -58,12 +58,12 @@ All three speak the same MCP wire protocol; the difference is just whether the t
 
 ## Ownership model
 
-The socket and HTTPS port are global resources, so only one Jasper window can serve MCP at a time. Ownership is decided lazily:
+The socket and HTTPS port are global resources, so only one Jasper window can serve MCP at a time. Ownership is a race, settled at activation:
 
 - **On activation**, every Jasper window with `jasper.mcp.enabled` set writes
   the well-known `mcpServers.jasper` entry into `~/.claude.json` and into
   Claude Desktop's global config. Both entries point at the **fixed** socket
-  path, so they're correct no matter which window ends up owning it. No
+  path, so they're correct no matter which window ends up owning it. Every
   window then attempts to bind the socket and HTTPS port straight away, before
   it has a session: Claude Code fails the proxy on a short timeout, so the
   socket has to be live by the time it spawns the proxy on the same window
@@ -227,7 +227,8 @@ Three clients are wired up out of the box. Each gets the same `jasper` entry poi
   stops at npx's own `Ok to proceed? (y)` prompt and waits for an answer in
   that terminal. That is deliberate: Jasper does not approve a package
   installation on the user's behalf. It does mean the Inspector appears to hang
-  until the prompt is answered, so the button that launches it says so.
+  until the prompt is answered, so the command reveals its `MCP Inspector`
+  terminal as it starts — the prompt is waiting there.
 
 ### Other clients
 
