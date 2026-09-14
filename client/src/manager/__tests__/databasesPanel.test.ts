@@ -237,6 +237,25 @@ describe('session commands', () => {
     });
   });
 
+  // Auto-commit (issue #254) is per session, so the panel's session row offers it like any
+  // other session action — which means it has to be on the allow-list, or the button the
+  // row draws would silently do nothing.
+  it('lets the row toggle auto-commit for the session it names', async () => {
+    DatabasesPanel.show(withSession());
+    await sendMessage({ command: 'ready' });
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await sendMessage({
+      command: 'sessionAction',
+      sessionId: 3,
+      action: 'gemstone.autoCommit.toggle',
+    });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.autoCommit.toggle', {
+      activeSession: SESSION,
+    });
+  });
+
   // The message arrives from a webview. Passing its string straight to
   // executeCommand would let anything reachable by name be run with a session
   // handed to it.

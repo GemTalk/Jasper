@@ -40,6 +40,11 @@ import { wslStatFilesSync } from '../wslFs';
 import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTypes';
 import { SessionManager } from '../sessionManager';
+import {
+  AutoCommitStatus,
+  getAutoCommitStatus,
+  onAutoCommitChanged,
+} from '../autoCommit/autoCommitState';
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin } from '../sysadminChannel';
 
@@ -115,6 +120,12 @@ interface SessionInfo {
   id: number;
   /** The one the rest of Jasper works in — where Display It and friends run. */
   current: boolean;
+  /**
+   * Whether this session commits as it goes (issue #254). On the wire because the row draws
+   * both the state and the button that flips it, and the button's icon IS the state — a row
+   * that had to ask afterwards would flash the wrong glyph on every repaint.
+   */
+  autoCommit: AutoCommitStatus;
 }
 
 interface LoginInfo {
@@ -438,6 +449,9 @@ export class DatabasesPanel {
     // so without this the row for a login that just connected kept offering
     // "Log in" until something else happened to redraw the panel.
     this.deps.sessionManager.onDidAddSession(() => this.markStale(), null, this.disposables);
+    // Toggling auto-commit changes no session and no process, so none of the events above
+    // fire for it — but this panel draws the state and the button, so it has to redraw.
+    this.disposables.push(onAutoCommitChanged(() => this.markStale()));
     for (const onChange of this.deps.onAdminChange) {
       onChange(() => this.markStale(), null, this.disposables);
     }
@@ -1040,6 +1054,10 @@ export class DatabasesPanel {
     'gemstone.selectSession',
     'gemstone.sessionCommit',
     'gemstone.sessionAbort',
+    // One id, not the manifest's turnOn/turnOff/recover trio: those three exist only because
+    // a contributed menu entry's icon is fixed text. This panel picks the glyph itself when
+    // it draws the row, so it can use the single state-reading command.
+    'gemstone.autoCommit.toggle',
     'gemstone.fullLogicalBackup',
     'gemstone.fullLogicalRestore',
   ]);
@@ -1437,7 +1455,11 @@ export class DatabasesPanel {
             host: l.gem_host,
             sessions: openSessions
               .filter((sess) => loginLabel(sess.login) === label)
-              .map((sess) => ({ id: sess.id, current: sess.id === selectedSessionId })),
+              .map((sess) => ({
+                id: sess.id,
+                current: sess.id === selectedSessionId,
+                autoCommit: getAutoCommitStatus(sess.id),
+              })),
           };
         });
       // A registered database's files are the installation's. Jasper lists its
@@ -1827,6 +1849,11 @@ th.v-num { text-align: right; }
 .db-session .session-name { font-size: 0.95em; }
 .db-session-current .session-name { font-weight: 700; }
 .session-id { margin-left: 8px; font-size: 0.85em; }
+/* Auto-commit's state, beside the session id (issue #254). Tinted only for the two states
+   worth catching without reading — a row where every session is painted says nothing. */
+.session-autocommit { margin-left: 8px; font-size: 0.85em; }
+.session-autocommit.ac-warn { color: var(--gm-warn); }
+.session-autocommit.ac-err { color: var(--vscode-errorForeground, #f14c4c); }
 /* The Ping result sits to the left of the row's buttons — a compact banner that
    clears itself after a success and lingers (with Dismiss) after a warning.
    Same shape as the Session Configuration panel's notices, which is where Ping

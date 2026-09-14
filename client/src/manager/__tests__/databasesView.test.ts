@@ -825,7 +825,7 @@ describe('backing up a stopped database', () => {
 });
 
 describe('session actions', () => {
-  function mountSession(current = false) {
+  function mountSession(current = false, autoCommit: 'off' | 'on' | 'failed' = 'off') {
     mount(
       state({
         databases: [
@@ -836,7 +836,7 @@ describe('session actions', () => {
                 user: 'DataCurator',
                 stone: 'gs64stone',
                 host: 'localhost',
-                sessions: [{ id: 3, current }],
+                sessions: [{ id: 3, current, autoCommit }],
               },
             ],
           }),
@@ -859,11 +859,48 @@ describe('session actions', () => {
       'gemstone.selectSession',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
+      'gemstone.autoCommit.toggle',
       'gemstone.fullLogicalBackup',
       'gemstone.fullLogicalRestore',
     ]);
     expect(row.querySelector('[data-action="showSessionConfiguration"]')).not.toBeNull();
     expect(row.querySelector('[data-action="logoutSession"]')).not.toBeNull();
+  });
+
+  // Auto-commit (issue #254) is per session, so the row that names a session is where it
+  // belongs — and it must read the same here as in the Logins & Sessions tree, or the two
+  // places describe the same state differently. One command with a state-picked glyph, not
+  // the tree's three: a webview chooses its own icon at render time.
+  it.each([
+    ['off', 'auto-commit off', 'codicon-sync-ignored', null],
+    ['on', 'auto-commit ON', 'codicon-sync', 'ac-warn'],
+    ['failed', 'auto-commit FAILED', 'codicon-error', 'ac-err'],
+  ] as const)('says the auto-commit state and wears its glyph: %s', (status, word, glyph, tone) => {
+    mountSession(false, status);
+    const row = root.querySelector('.db-session')!;
+
+    const label = row.querySelector('.session-autocommit')!;
+    expect(label.textContent).toBe(word);
+    // Tinted only for the two states worth catching without reading — so "off" carries no
+    // tone class at all, and the other two carry exactly one.
+    expect(Array.from(label.classList).filter((c) => c.startsWith('ac-'))).toEqual(
+      tone ? [tone] : [],
+    );
+
+    const button = row.querySelector('[data-cmd="gemstone.autoCommit.toggle"]')!;
+    expect(button.querySelector(`.${glyph}`)).not.toBeNull();
+  });
+
+  it('flips auto-commit for the session the row names', () => {
+    mountSession(false, 'on');
+    root.querySelector<HTMLElement>('[data-cmd="gemstone.autoCommit.toggle"]')!.click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'sessionAction',
+        action: 'gemstone.autoCommit.toggle',
+        sessionId: 3,
+      }),
+    );
   });
 
   it('sends the command name and the session together', () => {

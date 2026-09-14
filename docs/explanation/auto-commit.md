@@ -86,6 +86,9 @@ will reach for Abort and find nothing to abort. Hence:
   `DataCurator on gs64stone_375 (localhost)` fills the row on its own at any ordinary width;
 - **a button on the row** whose icon is the state — `$(sync-ignored)` off, `$(sync)` on, `$(error)`
   failed — and whose click is the switch;
+- **the same words, tint and button on the session row in the Databases panel**, which mirrors the
+  tree's session actions on purpose: a session is a session, and someone who found this in one place
+  should not have to wonder whether the other place can do it;
 - a tooltip on that row, and a turn-on notice, that both say Abort will not take a change back;
 - a prompt before arming over a transaction that already holds uncommitted work, because the next
   change would commit all of it.
@@ -104,6 +107,14 @@ row and they all land in the same handler. It is the bargain the `undoLast`/`rev
 already strikes. Note the consequence for every OTHER entry on that row: they match the family with
 `=~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/` rather than one value, and a new entry that
 forgets to will silently vanish whenever auto-commit is on.
+
+The Databases panel needs **one** id for the same button, because it is a webview and picks its own
+glyph when it draws the row — so it uses the state-reading `gemstone.autoCommit.toggle`. Two things
+that panel does need: the status on the wire in `SessionInfo` (the button's icon IS the state, and a
+row that had to ask afterwards would flash the wrong glyph on every repaint), and
+`gemstone.autoCommit.toggle` on its `SESSION_COMMANDS` allow-list, without which the button would
+draw and silently do nothing. It also redraws on `onAutoCommitChanged`, since toggling auto-commit
+changes no session and no process and fires none of the events the panel already watches.
 
 That is also why the row speaks in **both** directions rather than only when armed. As one display
 among several, silence for "off" was fine; as the only one, it is not — a row that says nothing does
