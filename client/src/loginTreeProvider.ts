@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
+import { McpOwnership } from './mcpServerTreeProvider';
 
 /** A configured login (tree root). Its active sessions appear as children. */
 export class GemStoneLoginItem extends vscode.TreeItem {
@@ -38,18 +39,66 @@ export class GemStoneLoginItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * What a session row says about MCP. Only one thing, deliberately: whether
+ * Claude's tools are acting on *this* session. Everything else about the
+ * server — who owns it, where its socket is, how to take it — belongs to the
+ * window rather than to any session, and lives on the Databases section header
+ * and in the MCP Server tab (see mcpWindowStatus).
+ *
+ * The server answers tool calls against whichever session is selected in the
+ * window that owns it, so exactly one row across all windows can be `serving`,
+ * and only ever a selected one.
+ *
+ * - `off`      MCP is disabled, or no folder is open: say nothing.
+ * - `idle`     running somewhere, but this row is not the one being served.
+ * - `serving`  this window owns the server and this is its selected session.
+ */
+export type SessionMcpState = 'off' | 'idle' | 'serving';
+
+/**
+ * Reduce MCP ownership to what one session row should show. `ownership` is
+ * undefined when the MCP surface isn't running in this window at all.
+ */
+export function sessionMcpState(
+  ownership: McpOwnership | undefined,
+  session: ActiveSession,
+  isSelected: boolean,
+): SessionMcpState {
+  if (!ownership) return 'off';
+  // Ownership alone isn't enough: the tools follow the selected session, so an
+  // unselected row is not the one being served even in the owning window.
+  if (ownership.kind === 'this' && isSelected && ownership.selectedSession?.id === session.id) {
+    return 'serving';
+  }
+  return 'idle';
+}
+
 /** An active session (tree child of the login that started it). */
 export class GemStoneSessionItem extends vscode.TreeItem {
   constructor(
     public readonly activeSession: ActiveSession,
     isSelected: boolean,
+    mcp: SessionMcpState = 'off',
   ) {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
     const { id, stoneVersion } = activeSession;
     this.id = `session-${id}`;
-    this.description = `Session ${id} (${stoneVersion})`;
+    this.description =
+      mcp === 'serving'
+        ? `Session ${id} (${stoneVersion}) · MCP`
+        : `Session ${id} (${stoneVersion})`;
     this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})`;
+    if (mcp === 'serving') {
+      this.tooltip +=
+        '\n\nClaude Code and Claude Desktop run their GemStone tools against this session.';
+    }
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
+    // Every session row keeps this one contextValue, MCP state included: each of
+    // the row's actions — File In, Commit, Abort, Session Configuration, Logout,
+    // and the backup pair in the context menu — is contributed for
+    // `viewItem == gemstoneSession`, so a row given a different value to mark it
+    // as the served one loses all of them. `· MCP` above is the marker instead.
     this.contextValue = 'gemstoneSession';
   }
 }
@@ -69,6 +118,9 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
   constructor(
     private storage: LoginStorage,
     private sessionManager?: SessionManager,
+    // Read fresh on every render rather than cached: ownership can change in
+    // another window, and the sidecar watcher answers that with a refresh.
+    private mcpOwnership: () => McpOwnership | undefined = () => undefined,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
   }
@@ -122,9 +174,11 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
 
     if (element instanceof GemStoneLoginItem) {
       const selectedId = this.sessionManager?.selectedId;
-      return sessionsForLogin(element.index, logins, sessions).map(
-        (s) => new GemStoneSessionItem(s, s.id === selectedId),
-      );
+      const ownership = this.mcpOwnership();
+      return sessionsForLogin(element.index, logins, sessions).map((s) => {
+        const isSelected = s.id === selectedId;
+        return new GemStoneSessionItem(s, isSelected, sessionMcpState(ownership, s, isSelected));
+      });
     }
 
     return [];

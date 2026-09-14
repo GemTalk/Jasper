@@ -5,7 +5,7 @@ Feature: Creating a project
   put a new project under version control like any other tree of files.
 
   Scenario: Turn an empty folder into a project
-    Given an empty folder is open in the Rowan view
+    Given an empty folder is open
     When I create a Rowan project
     Then the folder becomes a Rowan project
 
@@ -16,7 +16,7 @@ Feature: Creating a project
     Then it lists the DemoLibrary-Core package
 
   Scenario: Put a new project under version control
-    Given an empty folder is open in the Rowan view
+    Given an empty folder is open
     When I create a Rowan project
     And I put the folder under version control
     Then the project's files are waiting to be committed
