@@ -29,6 +29,7 @@ import {
 import { showExtractSuperclassPanel } from './extractSuperclassPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface ExtractSuperContext {
   session: ActiveSession;
@@ -228,6 +229,22 @@ async function runExtractSuperclass(
     return undefined;
   }
 
+  // #434: snapshot the subtree BEFORE the reshape so it can be put back. The capture is held
+  // PENDING and only becomes an undo entry once the apply is known to have landed, so every path
+  // that does not get there drops it -- a partial reshape leaves the stone in a state the capture
+  // does not describe, and must never have an undo offered against it.
+  const discardCapture = (): void => {
+    try {
+      queries.discardPendingCapture(session);
+    } catch {
+      /* best-effort */
+    }
+  };
+  try {
+    queries.captureClassHistory(session, className);
+  } catch {
+    /* best-effort: a reshape must not fail because its undo bookkeeping did */
+  }
   const result = await showExtractSuperclassPanel(heading, start, {
     loadPage: async (off) =>
       parsePage(
@@ -236,14 +253,19 @@ async function runExtractSuperclass(
     apply: async () => parseApplyResult(await queries.applyExtractSuperclass(session, token)),
     cleanup: safeClear,
   });
-  if (!result) return undefined;
+  if (!result) {
+    discardCapture();
+    return undefined;
+  }
 
   if (result.error) {
+    discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return undefined;
   }
   if (result.failed.length > 0) {
     const first = result.failed[0];
+    discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -253,12 +275,26 @@ async function runExtractSuperclass(
   // zero changes applied without an error/failure is an impossible-in-practice state — but do not
   // claim success for it (the "no false success" rule).
   if (result.applied === 0) {
+    discardCapture();
     void vscode.window.showErrorMessage(`${heading} applied no changes.`);
     return undefined;
   }
 
-  void vscode.window.showInformationMessage(
+  // The reversal also has to UNBIND the class this created: it is brand new, so there is no
+  // earlier version to revert it to.
+  // The reversal also has to UNBIND the class this created: it is brand new, so there is no
+  // earlier version to revert it to.
+  try {
+    queries.commitHistoryRevert(session, heading, 'GsExtractSuperclassRefactoring', [newName]);
+  } catch {
+    /* best-effort: the reshape landed either way */
+  }
+  // Through the shared notice: it is what puts the reversal on the undo stack and the Undo
+  // button on the toast. A bare toast left the reshape recorded in the stone but unreachable.
+  notifyRefactoringApplied(
+    session,
     `${heading} — applied ${result.applied} change(s). Existing instances keep their prior version; commit to persist.`,
+    'toast',
   );
   return { newClass: newName, applied: result.applied };
 }

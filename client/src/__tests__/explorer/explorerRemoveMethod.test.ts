@@ -8,8 +8,15 @@ vi.mock('../../browserQueries', () => ({
   canClassBeWritten: vi.fn(() => true),
   deleteMethod: vi.fn(() => 'Deleted: Array >> at:'),
   getClassEnvironments: vi.fn(() => []),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
   sendersOf: vi.fn(() => []),
   hierarchyImplementorsOf: vi.fn(() => []),
+}));
+// The undo recorder's one round trip, stubbed so the snapshot is data this test controls
+// rather than a live doit (#434).
+vi.mock('../../undo/queries/methodSlotQueries', () => ({
+  captureMethodSlots: vi.fn(),
+  applyMethodSlotOps: vi.fn(),
 }));
 // The reference picker navigates a System Browser; the decision is covered in
 // safeDelete.test.ts, so here it only has to not reach live wiring.
@@ -22,6 +29,8 @@ vi.mock('../../methodResultsPicker', () => ({
 import { ExplorerController, MethodItem } from '../../gemstoneExplorer';
 import * as queries from '../../browserQueries';
 import { window, __resetConfig, __setConfig } from '../../__mocks__/vscode';
+import { captureMethodSlots } from '../../undo/queries/methodSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 
@@ -95,6 +104,9 @@ beforeEach(() => {
   sendersOf.mockReturnValue([]);
   hierarchyImplementorsOf.mockReturnValue([]);
   getClassEnvironments.mockReturnValue([]);
+  // clearAllMocks keeps implementations, so an undo capture stubbed by one describe would
+  // otherwise leak into another and put a button on a notice that test asserts is plain.
+  vi.mocked(captureMethodSlots).mockReset();
 });
 
 describe('ExplorerController.removeMethod — nothing sends the selector', () => {
@@ -296,6 +308,112 @@ describe('ExplorerController.removeMethod — guards and failures', () => {
 
     expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('a SecurityError'));
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeMethod records an undo (#434)', () => {
+  /**
+   * The source only exists until the removal lands, so the capture has to straddle it. What
+   * is pinned here is that ordering, that the entry is only recorded once GemStone has
+   * actually confirmed the removal, and that a failed capture still leaves a working delete.
+   */
+  const present = (source: string, category: string) => ({ exists: true, source, category });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    vi.mocked(captureMethodSlots).mockReset();
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockReturnValue('Deleted: Array >> at:');
+    (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue('Remove');
+  });
+
+  it('captures the source before the method is removed', () => {
+    const order: string[] = [];
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      order.push('capture');
+      return [present('at: i\n  ^1', 'accessing')];
+    });
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      order.push('delete');
+      return 'Deleted: Array >> at:';
+    });
+
+    return makeController()
+      .removeMethod(methodItem())
+      .then(() => expect(order).toEqual(['capture', 'delete']));
+  });
+
+  it('records an entry naming the method', async () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodEdit',
+      label: 'Delete Array>>#at:',
+    });
+  });
+
+  it('records nothing when GemStone refused the removal', async () => {
+    // The method is still there; offering to restore it would be a lie.
+    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockReturnValue('Selector not found');
+
+    await makeController().removeMethod(methodItem());
+
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+
+  it('records nothing when the removal was refused at the prompt', async () => {
+    // Safe delete only PROMPTS when something references the method; with nothing referencing
+    // it the removal goes through silently and there is no prompt to refuse.
+    sendersOf.mockReturnValue([sender({ className: 'Other', selector: 'usesIt' })]);
+    (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(queries.deleteMethod).not.toHaveBeenCalled();
+    expect(captureMethodSlots).not.toHaveBeenCalled();
+  });
+
+  it('puts Undo on the silent-delete notice, rather than a second notice beside it', async () => {
+    // Safe delete's own sentence is the ONE notice for a deletion nothing referenced, so it is
+    // the one that has to carry the button — two messages for one deletion would be noise.
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n\t^1', category: 'accessing' },
+    ]);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('nothing referenced it'),
+      'Undo',
+    );
+  });
+
+  it('stays quiet about a removal the user just confirmed, but still records it', async () => {
+    // main's rule: do not tell the user what they just approved through a modal. The entry is
+    // still on the stack, reachable from the status bar and Ctrl+K U.
+    sendersOf.mockReturnValue([sender({ className: 'Other', selector: 'usesIt' })]);
+    (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue('Remove Anyway');
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n\t^1', category: 'accessing' },
+    ]);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(window.showInformationMessage).not.toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toMatchObject({ kind: 'methodEdit' });
+  });
+
+  it('removes the method normally when the capture fails', async () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    await expect(makeController().removeMethod(methodItem())).resolves.toBeUndefined();
+    expect(queries.deleteMethod).toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
   });
 });
 

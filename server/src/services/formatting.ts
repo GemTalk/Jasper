@@ -25,6 +25,30 @@ import {
 } from '../parser/ast';
 import { FormatterSettings, DEFAULT_SETTINGS } from './formatterSettings';
 
+/**
+ * Whether Format Document should do anything to this document.
+ *
+ * Gated on what the document's REGIONS are, not on `doc.format`. Topaz documents and
+ * `gemstone://` METHOD editors both reduce to `smalltalk-method` regions the formatter
+ * handles, so both format. Tonel is not supported at all.
+ *
+ * The case this exists for is the other `gemstone://` shape: a definition or comment
+ * URI (4- or 5-segment) parses to a single `smalltalk-code` region, and formatting a
+ * class COMMENT destroys it — the prose goes through the Smalltalk parser, so
+ * sentence-ending periods read as statement separators, every sentence lands on its
+ * own line and the paragraph breaks are gone. A class DEFINITION survives but gets
+ * reflowed and gains a trailing `.`, which is a change to text the client parses back
+ * with `classNameFromDefinition`; that round trip wants checking before definitions
+ * are let in, so they are excluded too.
+ */
+export function isFormattableDocument(doc: ParsedDocument): boolean {
+  if (doc.format === 'tonel') return false;
+  if (doc.format !== 'smalltalk') return true;
+  return (
+    doc.topazRegions.length > 0 && doc.topazRegions.every((r) => r.kind === 'smalltalk-method')
+  );
+}
+
 export function formatDocument(
   doc: ParsedDocument,
   settings: FormatterSettings = DEFAULT_SETTINGS,

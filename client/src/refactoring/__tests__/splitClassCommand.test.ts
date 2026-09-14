@@ -7,6 +7,10 @@ vi.mock('../../browserQueries', () => ({
   pageSplitClassPreview: vi.fn(),
   applySplitClass: vi.fn(),
   clearSplitClassPreview: vi.fn(),
+  captureClassHistory: vi.fn(),
+  commitHistoryRevert: vi.fn(),
+  discardPendingCapture: vi.fn(),
+  refactoringUndoStatus: vi.fn(() => '{"available":false}'),
 }));
 vi.mock('../splitClassPanel', () => ({
   showSplitClassPanel: vi.fn(),
@@ -16,6 +20,7 @@ import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { showSplitClassPanel } from '../splitClassPanel';
 import { splitClassCommand, SplitClassContext } from '../splitClassCommand';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
@@ -173,6 +178,35 @@ describe('split class command', () => {
     );
     expect(queries.startSplitClassPreview).not.toHaveBeenCalled();
     expect(showSplitClassPanel).not.toHaveBeenCalled();
+  });
+
+  it('offers to undo the split, on the toast and on the undo stack', async () => {
+    // The split records its reversal in the stone; a bare toast left that record with no way to
+    // reach it — no button, and nothing on the status bar or Ctrl+K U.
+    resetUndoStacks();
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({ applied: 2, failed: [] });
+    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+      JSON.stringify({
+        available: true,
+        label: 'Split Person into Address',
+        engine: 'GsSplitClassRefactoring',
+        sequence: 1,
+        total: 2,
+      }),
+    );
+
+    await splitClassCommand(ctx());
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('applied 2 change(s)'),
+      'Undo',
+    );
+    expect(peekUndoEntry(1)).toMatchObject({ kind: 'refactoring', sequence: 1 });
   });
 
   it('reports a failed apply and does not claim success', async () => {

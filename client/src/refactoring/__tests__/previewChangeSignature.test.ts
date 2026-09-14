@@ -89,7 +89,7 @@ describe('change-signature query builders', () => {
   it('applies a preview passing the deselected ids', async () => {
     const exec = asyncExec();
 
-    const code = await applyChangeSignature(exec, 'tok', ['2', '5']);
+    const code = await applyChangeSignature(exec, 'tok', ['2', '5'], 'test undo');
 
     expect(code).toContain("applyForToken: 'tok'");
     expect(code).toContain("deselected: #('2' '5')");

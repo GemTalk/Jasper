@@ -66,7 +66,9 @@ describe('CommentBrowser', () => {
     });
 
     vi.mocked(queries.getClassComment).mockReturnValue('the class comment');
-    vi.mocked(queries.setClassComment).mockReturnValue('ok');
+    // What the real query answers on success — the panel now checks it, because
+    // setClassComment reports an unresolvable class by RETURNING a status string.
+    vi.mocked(queries.setClassComment).mockReturnValue('Comment set: Account');
     vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
     vi.mocked(window.showWarningMessage).mockResolvedValue(undefined);
   });
@@ -342,6 +344,19 @@ describe('CommentBrowser', () => {
 
       expect(exportManager.syncClass).toHaveBeenCalledWith(session, 'UserGlobals', 'Account');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({ command: 'saved' });
+    });
+
+    it('reports a save the stone refused, instead of confirming it', () => {
+      vi.mocked(queries.setClassComment).mockReturnValue('Class not found: Account');
+
+      hostMessageHandler({ command: 'save', text: 'edited comment' });
+
+      expect(window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('was not saved: Class not found: Account'),
+      );
+      expect(window.showInformationMessage).not.toHaveBeenCalled();
+      expect(exportManager.syncClass).not.toHaveBeenCalled();
+      expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({ command: 'saveError' });
     });
 
     it('saves against the class currently shown after the panel is refilled', async () => {

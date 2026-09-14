@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -1835,6 +1835,16 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.undoLast",
+        "title": "Undo Last Change…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.revertLast",
+        "title": "Revert Last Class Change…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.inlineMethod",
         "title": "Inline Method…",
         "category": "GemStone",
@@ -1887,6 +1897,16 @@
         "title": "Class History…",
         "category": "GemStone",
         "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.explorer.moveClassToDictionary",
+        "title": "Move to Dictionary…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.moveClassToCategory",
+        "title": "Move to Category…",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.methodHistory",
@@ -2158,6 +2178,14 @@
         {
           "command": "gemstone.explorer.classClicked",
           "when": "false"
+        },
+        {
+          "command": "gemstone.undoLast",
+          "when": "gemstone.undoAvailable"
+        },
+        {
+          "command": "gemstone.revertLast",
+          "when": "gemstone.revertAvailable"
         },
         {
           "command": "gemstone.explorer.removeMethodCategory",
@@ -2583,7 +2611,7 @@
         {
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@6"
+          "group": "navigation@7"
         },
         {
           "command": "gemstone.explorer.fileIn",
@@ -3204,6 +3232,26 @@
           "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
         },
         {
+          "command": "gemstone.explorer.moveClassToCategory",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@1"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToCategory",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@1"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToDictionary",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@2"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToDictionary",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@2"
+        },
+        {
           "command": "gemstone.unregisterDatabase",
           "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)Registered$/"
         }
@@ -3434,6 +3482,18 @@
         "key": "ctrl+shift+-",
         "mac": "ctrl+shift+-",
         "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/ || (activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus))"
+      },
+      {
+        "command": "gemstone.undoLast",
+        "key": "ctrl+k u",
+        "mac": "cmd+k u",
+        "when": "gemstone.hasActiveSession && !gemstone.revertAvailable"
+      },
+      {
+        "command": "gemstone.revertLast",
+        "key": "ctrl+k u",
+        "mac": "cmd+k u",
+        "when": "gemstone.hasActiveSession && gemstone.revertAvailable"
       }
     ]
   },
@@ -3484,6 +3544,8 @@
     "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",
+    "//test:coverage": "Coverage for the client's default project. Pass a path prefix to scope the report: `npm run test:coverage -- 'src/undo/**'`.",
+    "test:coverage": "npm run test:coverage --workspace client --",
     "test:mcp": "npm test --workspace mcp-server",
     "//test:gci": "Runs only the on-demand 'gci' vitest project (client/vitest.config.ts); needs a live test stone (npm run test:server:start). `npm test` runs the 'default' project and excludes these.",
     "test:gci": "cd client && npx vitest run --project gci",
@@ -3509,6 +3571,7 @@
     "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
+    "jsdom": "^30.0.1",
     "lefthook": "^2.1.12",
     "lockfile-lint": "^5.0.1",
     "ovsx": "^1.1.1",

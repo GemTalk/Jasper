@@ -139,7 +139,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
     expect(start.total).toBe(1);
     expect(start.lastSender).toBe(false);
 
-    const result = parseApplyResult(await applyInlineMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyInlineMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 
@@ -172,7 +172,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
     expect(start.total).toBe(2);
     expect(start.lastSender).toBe(true);
 
-    const result = parseApplyResult(await applyInlineMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyInlineMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 

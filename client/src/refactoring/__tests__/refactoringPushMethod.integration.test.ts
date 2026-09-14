@@ -146,7 +146,7 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
       ),
     );
     expect(start.outOfScope.decline).toBeNull();
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, []));
+    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(definesSelector(BASE, 'pumUpPure')).toBe(true);
@@ -179,7 +179,7 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     const add = start.page.changes.find((c) => c.kind === 'methodAdd');
     expect(add?.warning).not.toBeNull();
     expect(add?.oldSource).toContain('base');
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, []));
+    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(sourceOf(BASE, 'pumCollide')).toContain('suba');
@@ -204,7 +204,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     );
     const add = start.page.changes.find((c) => c.kind === 'methodAdd');
 
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [add!.id]));
+    const result = parseApplyResult(
+      await applyPushMethod(asyncExec, 'up', token, [add!.id], 'test undo'),
+    );
 
     expect(result.failed).toEqual([]);
     expect(sourceOf(BASE, 'pumCollide')).toContain('base'); // superclass unchanged
@@ -232,7 +234,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     expect(addA?.warning).not.toBeNull(); // A already overrides -> overwrite
     expect(addB?.warning).toBeNull(); // B is a fresh add
 
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'down', token, []));
+    const result = parseApplyResult(
+      await applyPushMethod(asyncExec, 'down', token, [], 'test undo'),
+    );
 
     expect(result.failed).toEqual([]);
     expect(sourceOf(SUBA, 'pumOver')).toContain('base'); // A's override replaced
@@ -271,7 +275,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
       ),
     );
     expect(start.total).toBe(3); // two adds + one remove
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'down', token, []));
+    const result = parseApplyResult(
+      await applyPushMethod(asyncExec, 'down', token, [], 'test undo'),
+    );
 
     expect(result.failed).toEqual([]);
     expect(definesSelector(SUBA, 'pumDown')).toBe(true);
@@ -313,7 +319,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     const addB = start.page.changes.find((c) => c.kind === 'methodAdd' && c.className === SUBB);
     expect(addB).toBeDefined();
 
-    const result = parseApplyResult(await applyPushMethod(asyncExec, 'down', token, [addB!.id]));
+    const result = parseApplyResult(
+      await applyPushMethod(asyncExec, 'down', token, [addB!.id], 'test undo'),
+    );
 
     expect(result.failed).toEqual([]);
     expect(definesSelector(BASE, 'pumDown')).toBe(true); // guarded remove skipped

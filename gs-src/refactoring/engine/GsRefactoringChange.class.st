@@ -115,6 +115,18 @@ GsRefactoringChange class >> classAddId: anId dictName: dn className: cn supercl
 ]
 
 { #category : 'instance creation' }
+GsRefactoringChange class >> classRemoveId: anId dictName: dn className: cn oldSource: os [
+	"A class to UNBIND from its dictionary. Staged only by an UNDO: a refactoring that CREATED a
+	 class (extract-superclass's inserted parent, split-class's component) has no earlier version
+	 to revert that class to, so reversing it means taking the name back out. oldSource is the
+	 class's current definition and newSource is nil, so the before/after diff renders as an
+	 all-removed class. No forward refactoring stages this kind."
+	^self new
+		setId: anId kind: #classRemove dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: os newSource: nil
+]
+
+{ #category : 'instance creation' }
 GsRefactoringChange class >> classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns [
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct

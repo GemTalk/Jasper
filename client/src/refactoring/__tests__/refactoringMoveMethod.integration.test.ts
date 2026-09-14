@@ -144,7 +144,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(start.total).toBe(2);
     expect(start.movableCount).toBe(1);
 
-    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 
@@ -174,7 +174,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(start.movableCount).toBe(2);
     expect(start.skippedMethods.map((s) => s.selector)).toContain('callsSuper');
 
-    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(4);
 
     expect(includesSelector(TARGET, 'pure')).toBe(true);
@@ -207,7 +207,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(start.movableCount).toBe(0);
     expect(start.skippedMethods.map((s) => s.selector)).toContain('callsSuper');
 
-    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(0);
     expect(result.failed).toEqual([]);
 
@@ -236,7 +236,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     );
     expect(start.movableCount).toBe(1);
 
-    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(2);
 
     expect(includesSelector(SOURCE, 'pure', true)).toBe(true);

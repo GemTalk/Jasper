@@ -12,6 +12,11 @@ import { asCount } from './previewCounts';
  * base through `parseApplyResultWith` and contribute only their extra fields, so
  * the envelope validation, the `failed` filtering and the `asCount` clamp have
  * exactly one implementation. No `vscode` dependency, so it unit-tests directly.
+ *
+ * Two more producers arrived with undo (#434): a method-only refactoring's apply
+ * adds `undoRecorded`, and UNDOING one answers this same envelope. Both are read
+ * through the plain `parseApplyResult` -- an unknown extra field is ignored, so
+ * neither needed a variant of its own.
  */
 export interface ApplyResult {
   applied: number;
