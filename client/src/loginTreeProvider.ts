@@ -8,6 +8,7 @@ import {
   modeDescription,
   transactionStateLabel,
 } from './queries/transactionMode';
+import { McpOwnership } from './mcpServerTreeProvider';
 
 /** A configured login (tree root). Its active sessions appear as children. */
 export class GemStoneLoginItem extends vscode.TreeItem {
@@ -64,18 +65,62 @@ export function sessionContextValue(session: ActiveSession): string {
 }
 
 /**
- * The dimmed text beside a session row: which session, which stone, and — once
- * it has been read — which transaction mode.
+ * The dimmed text beside a session row: which session, which stone, whether
+ * Claude's tools are pointed at it, and — once it has been read — which
+ * transaction mode.
+ *
+ * `· MCP` stays immediately after the version, where it can be scanned down a
+ * column of rows: at most one row across all windows ever carries it, while the
+ * mode is on every row and varies in length, so the mode trails rather than
+ * pushing the rarer marker around.
  *
  * The mode segment is dropped rather than shown as "Unknown" when the state has
  * not been read: a row that has always said `Session 3 (3.7.2)` should not start
  * announcing an absence. The tooltip still says the mode could not be read, for
  * anyone who goes looking.
  */
-export function sessionDescription(session: ActiveSession): string {
-  const base = `Session ${session.id} (${session.stoneVersion})`;
-  if (session.transactionMode === undefined) return base;
-  return `${base} · ${transactionStateLabel(session.transactionMode, session.inTransaction)}`;
+export function sessionDescription(session: ActiveSession, mcp: SessionMcpState = 'off'): string {
+  let text = `Session ${session.id} (${session.stoneVersion})`;
+  if (mcp === 'serving') text += ' · MCP';
+  if (session.transactionMode !== undefined) {
+    text += ` · ${transactionStateLabel(session.transactionMode, session.inTransaction)}`;
+  }
+  return text;
+}
+
+/**
+ * What a session row says about MCP. Only one thing, deliberately: whether
+ * Claude's tools are acting on *this* session. Everything else about the
+ * server — who owns it, where its socket is, how to take it — belongs to the
+ * window rather than to any session, and lives on the Databases section header
+ * and in the MCP Server tab (see mcpWindowStatus).
+ *
+ * The server answers tool calls against whichever session is selected in the
+ * window that owns it, so exactly one row across all windows can be `serving`,
+ * and only ever a selected one.
+ *
+ * - `off`      MCP is disabled, or no folder is open: say nothing.
+ * - `idle`     running somewhere, but this row is not the one being served.
+ * - `serving`  this window owns the server and this is its selected session.
+ */
+export type SessionMcpState = 'off' | 'idle' | 'serving';
+
+/**
+ * Reduce MCP ownership to what one session row should show. `ownership` is
+ * undefined when the MCP surface isn't running in this window at all.
+ */
+export function sessionMcpState(
+  ownership: McpOwnership | undefined,
+  session: ActiveSession,
+  isSelected: boolean,
+): SessionMcpState {
+  if (!ownership) return 'off';
+  // Ownership alone isn't enough: the tools follow the selected session, so an
+  // unselected row is not the one being served even in the owning window.
+  if (ownership.kind === 'this' && isSelected && ownership.selectedSession?.id === session.id) {
+    return 'serving';
+  }
+  return 'idle';
 }
 
 /** An active session (tree child of the login that started it). */
@@ -83,23 +128,36 @@ export class GemStoneSessionItem extends vscode.TreeItem {
   constructor(
     public readonly activeSession: ActiveSession,
     isSelected: boolean,
+    mcp: SessionMcpState = 'off',
   ) {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
     const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
-    // The transaction state is in the id so a mode switch redraws the row: VS Code
-    // reuses a node whose id is unchanged, which would leave the old mode — and
-    // the old set of inline buttons — on screen.
-    this.id = `session-${id}-${sessionContextValue(activeSession)}`;
-    this.description = sessionDescription(activeSession);
+    // Both the MCP marker and the transaction state are in the id, because VS Code
+    // reuses a node whose id is unchanged — which would leave the old text, and
+    // the old set of inline buttons, on screen after either one moves.
+    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}`;
+    this.description = sessionDescription(activeSession, mcp);
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
       `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
     );
+    if (mcp === 'serving') {
+      tooltip.appendMarkdown(
+        'Claude Code and Claude Desktop run their GemStone tools against this session.\n\n',
+      );
+    }
     tooltip.appendMarkdown(
       `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
     );
     this.tooltip = tooltip;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
+    // The contextValue says what THIS session can do — Begin and Commit are each
+    // offered only where the stone would accept them — so it is not one fixed
+    // string. The row's actions survive that because their `when` clauses match
+    // `viewItem =~ /^gemstoneSession/` rather than `== gemstoneSession`; see the
+    // session entries in package.json. MCP state is deliberately NOT encoded
+    // here: being the served session changes nothing about what the session can
+    // do, and `· MCP` in the description is its marker.
     this.contextValue = sessionContextValue(activeSession);
   }
 }
@@ -119,6 +177,9 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
   constructor(
     private storage: LoginStorage,
     private sessionManager?: SessionManager,
+    // Read fresh on every render rather than cached: ownership can change in
+    // another window, and the sidecar watcher answers that with a refresh.
+    private mcpOwnership: () => McpOwnership | undefined = () => undefined,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
     // A mode switch changes what a session row says and which buttons it carries,
@@ -175,9 +236,11 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
 
     if (element instanceof GemStoneLoginItem) {
       const selectedId = this.sessionManager?.selectedId;
-      return sessionsForLogin(element.index, logins, sessions).map(
-        (s) => new GemStoneSessionItem(s, s.id === selectedId),
-      );
+      const ownership = this.mcpOwnership();
+      return sessionsForLogin(element.index, logins, sessions).map((s) => {
+        const isSelected = s.id === selectedId;
+        return new GemStoneSessionItem(s, isSelected, sessionMcpState(ownership, s, isSelected));
+      });
     }
 
     return [];

@@ -25,15 +25,22 @@ function inlineRank(group: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-// Matched on a substring of the `when` clause rather than the whole thing: the
+// Matched on a FRAGMENT of the `when` clause rather than the whole thing: the
 // session clauses use `viewItem =~ /.../` so a row can carry its own answer about
 // what it can do (see sessionContextValue in loginTreeProvider.ts), and no single
 // literal clause covers them all.
-function inlineOrderFor(viewItemFragment: string): string[] {
+function inlineItemsFor(viewItemFragment: string): MenuItem[] {
   return itemContext
     .filter((m) => m.group?.startsWith('inline') && (m.when ?? '').includes(viewItemFragment))
-    .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!))
-    .map((m) => m.command);
+    .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!));
+}
+
+function inlineOrderFor(viewItemFragment: string): string[] {
+  return inlineItemsFor(viewItemFragment).map((m) => m.command);
+}
+
+function inlineRanksFor(viewItemFragment: string): number[] {
+  return inlineItemsFor(viewItemFragment).map((m) => inlineRank(m.group!));
 }
 
 function sessionMenuItemFor(command: string): MenuItem | undefined {
@@ -60,6 +67,10 @@ describe('session row inline button order', () => {
     //
     // Ping is absent too — it lives on a session row in the Databases & Versions
     // panel, which has the room to show its answer beside the row that asked.
+    //
+    // Nothing MCP is here: claiming the server is a property of the window, not
+    // of a session, so it lives on the Databases section header and in the MCP
+    // Server tab. The row's only MCP mark is `· MCP` in its description.
     expect(order).toEqual([
       'gemstone.fileIn',
       'gemstone.sessionBegin',
@@ -95,6 +106,14 @@ describe('session row inline button order', () => {
     expect(setMode?.group).toBe('1_transaction@1');
   });
 
+  // A vacated number is invisible in the rendered row — VS Code just sorts —
+  // but it reads as a missing button to whoever adds the next one, which is how
+  // a button ends up in the wrong place. Removing a button means renumbering
+  // the ones after it.
+  it('numbers the row 1..n with no vacated slot', () => {
+    expect(inlineRanksFor('gemstoneSession')).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {
     const sessionItems = itemContext.filter((m) => (m.when ?? '').includes('gemstoneSession'));
 
@@ -111,5 +130,9 @@ describe('login row inline button order', () => {
     const order = inlineOrderFor('viewItem == gemstoneLogin');
 
     expect(order).toEqual(['gemstone.login', 'gemstone.editLogin', 'gemstone.deleteLogin']);
+  });
+
+  it('numbers the row 1..n with no vacated slot', () => {
+    expect(inlineRanksFor('viewItem == gemstoneLogin')).toEqual([1, 2, 3]);
   });
 });
