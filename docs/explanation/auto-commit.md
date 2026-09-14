@@ -80,17 +80,30 @@ not a defect to be fixed, it is what the user asked for; but a user who does not
 will reach for Abort and find nothing to abort. Hence:
 
 - **the session's own row in the Logins view**, which says the state in words — `· auto-commit ON`,
-  `· auto-commit off`, `· auto-commit FAILED` — and tints the row's icon for the two states worth
-  catching out of the corner of an eye;
+  `· auto-commit off`, `· auto-commit FAILED`;
+- **a tint on that row's icon** — amber armed, red failed, plain off. This is the part that survives
+  a narrow sidebar: the description is the first thing VS Code truncates, and a login label like
+  `DataCurator on gs64stone_375 (localhost)` fills the row on its own at any ordinary width;
+- **a button on the row** whose icon is the state — `$(sync-ignored)` off, `$(sync)` on, `$(error)`
+  failed — and whose click is the switch;
 - a tooltip on that row, and a turn-on notice, that both say Abort will not take a change back;
 - a prompt before arming over a transaction that already holds uncommitted work, because the next
   change would commit all of it.
 
 **The row, and not the status bar.** A status-bar item can only ever speak for one session, and this
 is a per-session feature: the state belongs to a transaction, two sessions can hold different
-answers, and the display has to be able to show both at once. Putting it on the row also puts it next
-to the switch — the toggle is on that row's context menu — so reading the state and changing it are
-one gesture apart.
+answers, and the display has to be able to show both at once. Putting it on the row also puts the
+switch where the state is, so reading it and changing it are one gesture apart.
+
+**Why the button costs three commands.** A contributed menu entry's icon is fixed text in the
+manifest, so one command could offer the click but could never show the state.
+`gemstone.autoCommit.turnOn` / `turnOff` / `recover` differ only in icon and title; each is gated on
+one exact `contextValue` (`gemstoneSession`, `gemstoneSessionAutoCommitOn`,
+`gemstoneSessionAutoCommitFailed`, written by `sessionContextValue`), so exactly one is ever on the
+row and they all land in the same handler. It is the bargain the `undoLast`/`revertLast` pair
+already strikes. Note the consequence for every OTHER entry on that row: they match the family with
+`=~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/` rather than one value, and a new entry that
+forgets to will silently vanish whenever auto-commit is on.
 
 That is also why the row speaks in **both** directions rather than only when armed. As one display
 among several, silence for "off" was fine; as the only one, it is not — a row that says nothing does

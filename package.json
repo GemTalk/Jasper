@@ -939,8 +939,25 @@
       {
         "command": "gemstone.autoCommit.toggle",
         "title": "Toggle Auto-Commit for This Session",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.autoCommit.turnOn",
+        "title": "Turn Auto-Commit On for This Session",
+        "category": "GemStone",
+        "icon": "$(sync-ignored)"
+      },
+      {
+        "command": "gemstone.autoCommit.turnOff",
+        "title": "Turn Auto-Commit Off for This Session",
         "category": "GemStone",
         "icon": "$(sync)"
+      },
+      {
+        "command": "gemstone.autoCommit.recover",
+        "title": "Auto-Commit Failed — Show the Ways Out",
+        "category": "GemStone",
+        "icon": "$(error)"
       },
       {
         "command": "gemstone.sessionPing",
@@ -2280,6 +2297,18 @@
           "when": "gemstone.hasActiveSession"
         },
         {
+          "command": "gemstone.autoCommit.turnOn",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.autoCommit.turnOff",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.autoCommit.recover",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.abort",
           "when": "gemstone.hasActiveSession"
         },
@@ -3165,56 +3194,71 @@
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "2_transfer@0"
         },
         {
           "command": "gemstone.sessionCommit",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.sessionAbort",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "inline@3"
         },
         {
           "command": "gemstone.autoCommit.toggle",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "1_transaction@1"
         },
         {
-          "command": "gemstone.showSessionConfiguration",
+          "command": "gemstone.autoCommit.turnOn",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },
         {
-          "command": "gemstone.sessionLogout",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.autoCommit.turnOff",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSessionAutoCommitOn",
+          "group": "inline@4"
+        },
+        {
+          "command": "gemstone.autoCommit.recover",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSessionAutoCommitFailed",
+          "group": "inline@4"
+        },
+        {
+          "command": "gemstone.showSessionConfiguration",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "inline@5"
         },
         {
+          "command": "gemstone.sessionLogout",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
+          "group": "inline@6"
+        },
+        {
           "command": "gemstone.fullLogicalBackup",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "3_backup@1"
         },
         {
           "command": "gemstone.fullLogicalRestore",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/",
           "group": "3_backup@2"
         },
         {
           "command": "gemstone.exportClasses",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/"
         },
         {
           "command": "gemstone.selectSession",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession(AutoCommitOn|AutoCommitFailed)?$/"
         },
         {
           "command": "gemstone.replaceExtent",

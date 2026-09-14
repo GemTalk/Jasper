@@ -260,6 +260,25 @@ describe('GemStoneSessionItem', () => {
     expect(idle.id).toBe('plug');
   });
 
+  // The `contextValue` is what the manifest gates the row's auto-commit BUTTON on, so it is
+  // the join between the state and which of the three icons appears. Its values are pinned
+  // in sessionMenuOrder.test.ts from the other side.
+  it('names its auto-commit state in the contextValue, which picks the row button', () => {
+    const session = makeSession(makeLogin(), 3);
+
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe('gemstoneSession');
+
+    registerSessionAutoCommit(3, true);
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe(
+      'gemstoneSessionAutoCommitOn',
+    );
+
+    setAutoCommitStatus(3, 'failed');
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe(
+      'gemstoneSessionAutoCommitFailed',
+    );
+  });
+
   it('spells out in the tooltip what the armed state costs — Abort stops being a way back', () => {
     const session = makeSession(makeLogin(), 3);
     registerSessionAutoCommit(3, true);

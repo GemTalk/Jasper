@@ -86,11 +86,35 @@ export function autoCommitRowTooltip(status: AutoCommitStatus): string {
  * where every row is painted says nothing; the two states worth catching out of the corner
  * of an eye get the workbench's own warning and error colours. The icon SHAPE goes on saying
  * which session is selected — colour and shape carry different things.
+ *
+ * This is the signal that survives a narrow sidebar. The description is the first thing VS
+ * Code truncates away, and a login label like `DataCurator on gs64stone_375 (localhost)`
+ * fills the row on its own at any ordinary width — so the words are the explanation, and
+ * the colour is the part that is actually always on screen.
  */
 function autoCommitIconColor(status: AutoCommitStatus): vscode.ThemeColor | undefined {
   if (status === 'on') return new vscode.ThemeColor('problemsWarningIcon.foreground');
   if (status === 'failed') return new vscode.ThemeColor('problemsErrorIcon.foreground');
   return undefined;
+}
+
+/**
+ * The row's `contextValue`, which carries the auto-commit state so the manifest can put the
+ * RIGHT toggle button on the row — a slashed icon to turn it on, a plain one to turn it off,
+ * an error one to open the recovery choices.
+ *
+ * Three menu entries gated on this, rather than one button with a fixed icon, because a
+ * contributed entry's icon is fixed text in the manifest: a single command could offer the
+ * click but could never show the state. The same reason there is an `undoLast`/`revertLast`
+ * pair. Only one of the three is ever on screen, so the row gains one icon, not three.
+ *
+ * Off keeps the bare `gemstoneSession` value so the state is additive: every other entry on
+ * this row matches it with `=~ /^gemstoneSession/` and does not care which suffix it wears.
+ */
+export function sessionContextValue(status: AutoCommitStatus): string {
+  if (status === 'on') return 'gemstoneSessionAutoCommitOn';
+  if (status === 'failed') return 'gemstoneSessionAutoCommitFailed';
+  return 'gemstoneSession';
 }
 
 /** An active session (tree child of the login that started it). */
@@ -111,7 +135,7 @@ export class GemStoneSessionItem extends vscode.TreeItem {
       isSelected ? 'debug-start' : 'plug',
       autoCommitIconColor(autoCommit),
     );
-    this.contextValue = 'gemstoneSession';
+    this.contextValue = sessionContextValue(autoCommit);
   }
 }
 

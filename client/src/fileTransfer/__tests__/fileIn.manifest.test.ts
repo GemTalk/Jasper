@@ -89,8 +89,10 @@ describe('where File In is offered', () => {
   });
 
   it('puts it on a connected session row, where it is easiest to find', () => {
+    // The row's `contextValue` carries its auto-commit state (issue #254), so an entry that
+    // wants the session row whatever that state is matches the family rather than one value.
     const onSession = entriesIn('view/item/context', PICK).filter((e) =>
-      (e.when ?? '').includes('viewItem == gemstoneSession'),
+      /viewItem =~ \/\^gemstoneSession/.test(e.when ?? ''),
     );
 
     // One inline (the row button) and one in the row's right-click menu.
