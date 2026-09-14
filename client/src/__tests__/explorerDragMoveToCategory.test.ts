@@ -16,6 +16,11 @@ import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 import { ExplorerController } from '../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
+import { autoCommitAfterWrite, setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 
 /**
  * Dropping methods on a method category.
@@ -37,8 +42,18 @@ const payload = (selector: string, category: string, isMeta = false) => ({
   dictIndex: 3,
 });
 
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+const armableSession = {
+  id: 1,
+  get gci() {
+    return { GciTsCommit: commit };
+  },
+  handle: {},
+} as unknown as ActiveSession;
+
 // `null` means "no selected session" — passing `undefined` would trigger the default.
-function makeController(session: ActiveSession | null = { id: 1 } as ActiveSession) {
+function makeController(session: ActiveSession | null = armableSession) {
   const sessionManager = {
     getSelectedSession: () => session ?? undefined,
   } as unknown as SessionManager;
@@ -52,6 +67,9 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => COMMIT_OK);
   vi.mocked(queries.recategorizeMethod).mockReturnValue('ok');
   // The slot's captured state carries the CATEGORY: the source category on the way in, the
   // target on the way out.
@@ -201,5 +219,80 @@ describe('ExplorerController.dragMoveToCategory', () => {
     await ctl.dragMoveToCategory([payload('one', 'accessing')], 'accessing');
 
     expect(undoStackDepth(1)).toBe(0);
+  });
+});
+
+/**
+ * One drag is one commit on an auto-commit session (issue #254).
+ *
+ * The grouping is not invented here: this drop already records ONE undo entry because the
+ * user dragged once, and the commit follows the same line. Per-row commits would put a
+ * half-moved selection in the repository if one of them were refused.
+ *
+ * `browserQueries` is mocked, so the real `writing` wrapper never runs — the stub calls
+ * `autoCommitAfterWrite` the way the real query does, which is what the deferred region has
+ * to coalesce.
+ */
+describe('dragMoveToCategory and auto-commit', () => {
+  const writeThrough = () =>
+    vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
+      autoCommitAfterWrite(armableSession);
+      return 'ok';
+    });
+
+  it('commits ONCE for a drag that moved several methods', async () => {
+    registerSessionAutoCommit(1, true);
+    writeThrough();
+    const { ctl } = makeController();
+
+    await ctl.dragMoveToCategory(
+      [payload('one', 'accessing'), payload('two', 'accessing'), payload('three', 'accessing')],
+      'computing',
+    );
+
+    expect(queries.recategorizeMethod).toHaveBeenCalledTimes(3);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when the move came apart part-way', async () => {
+    registerSessionAutoCommit(1, true);
+    let first = true;
+    vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
+      if (first) {
+        first = false;
+        autoCommitAfterWrite(armableSession);
+        return 'ok';
+      }
+      throw new Error('classErrMethCatNotFound');
+    });
+    const { ctl } = makeController();
+
+    await ctl.dragMoveToCategory(
+      [payload('one', 'accessing'), payload('two', 'accessing')],
+      'computing',
+    );
+
+    // The controller reports the failure rather than rethrowing, but the deferred region saw
+    // it come apart, so a half-moved selection stays out of the repository.
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing on a session that never armed it', async () => {
+    writeThrough();
+    const { ctl } = makeController();
+
+    await ctl.dragMoveToCategory([payload('one', 'accessing')], 'computing');
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing when the drag moved nothing', async () => {
+    registerSessionAutoCommit(1, true);
+    writeThrough();
+    const { ctl } = makeController();
+
+    await ctl.dragMoveToCategory([payload('one', 'accessing')], 'accessing');
+
+    expect(commit).not.toHaveBeenCalled();
   });
 });

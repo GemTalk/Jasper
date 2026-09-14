@@ -88,6 +88,11 @@ import {
   listOpenGemstoneTabs,
 } from '../gemstoneFileSystemProvider';
 import { SessionManager } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
+import { autoCommitAfterWrite, setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 import * as queries from '../browserQueries';
 import { BrowserQueryError } from '../browserQueries';
 import type { ExportManager } from '../exportManager';
@@ -109,10 +114,32 @@ beforeEach(() => {
   vi.mocked(captureClassSlots).mockReset();
   vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
   vi.mocked(queries.compileClassDefinition).mockReset();
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => COMMIT_OK);
+  // The auto-commit block gives these a write-through implementation; `clearAllMocks` clears
+  // calls but not implementations, and the suite shuffles.
+  vi.mocked(queries.recategorizeClass).mockReset();
+  vi.mocked(queries.compileMethod).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
 });
 
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+// Reassigned per test so the auto-commit block below can count commits on a fresh spy.
+let commit = vi.fn(() => COMMIT_OK);
+
 function makeSession(id = 1, gs_user = 'DataCurator') {
-  return { id, gci: {}, handle: {}, login: { label: 'Test', gs_user }, stoneVersion: '3.7.2' };
+  return {
+    id,
+    gci: {
+      get GciTsCommit() {
+        return commit;
+      },
+    },
+    handle: {},
+    login: { label: 'Test', gs_user },
+    stoneVersion: '3.7.2',
+  };
 }
 
 function makeSessionManager(gs_user = 'DataCurator') {
@@ -542,6 +569,92 @@ describe('GemStoneFileSystemProvider', () => {
 
   describe('writeFile', () => {
     const encode = (s: string) => new TextEncoder().encode(s);
+
+    /**
+     * One SAVE is one change as far as auto-commit is concerned (issue #254).
+     *
+     * `browserQueries` is mocked here, so the real `writing` wrapper never runs — these make
+     * the mocked queries do what the real ones do, call `autoCommitAfterWrite`, which is
+     * what the provider's deferred region has to coalesce. That the wrapper itself commits
+     * is pinned separately, in browserQueriesAutoCommit.test.ts.
+     */
+    describe('and auto-commit', () => {
+      const writeThrough = () => {
+        const session = makeSession();
+        vi.mocked(queries.compileMethod).mockImplementation(() => {
+          autoCommitAfterWrite(session as never);
+          return 'Compiled: Array >> at:';
+        });
+        vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
+          autoCommitAfterWrite(session as never);
+          return 'Array';
+        });
+        vi.mocked(queries.recategorizeClass).mockImplementation(() => {
+          autoCommitAfterWrite(session as never);
+          return 'Recategorized: Array';
+        });
+      };
+
+      it('commits a method save once', () => {
+        registerSessionAutoCommit(1, true);
+        writeThrough();
+
+        provider.writeFile(
+          Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A'),
+          encode('at: index\n  ^self basicAt: index'),
+          { create: false, overwrite: true },
+        );
+
+        expect(commit).toHaveBeenCalledTimes(1);
+      });
+
+      it('commits a class-definition save ONCE, not once per write', () => {
+        // A definition save writes the definition and then its category. A commit between
+        // them would put a class in the repository filed under the category it is being
+        // moved out of.
+        registerSessionAutoCommit(1, true);
+        writeThrough();
+
+        provider.writeFile(
+          Uri.parse('gemstone://1/Globals/Array/definition'),
+          encode("category: 'Kernel'\nObject subclass: 'Array'\n  instVarNames: #()"),
+          { create: false, overwrite: true },
+        );
+
+        expect(queries.compileClassDefinition).toHaveBeenCalled();
+        expect(commit).toHaveBeenCalledTimes(1);
+      });
+
+      it('commits nothing when the compile fails', () => {
+        // The provider turns a BrowserQueryError into an inline diagnostic rather than
+        // rethrowing, so the deferred region exits normally — but nothing wrote, so there
+        // is nothing owed and nothing to commit.
+        registerSessionAutoCommit(1, true);
+        vi.mocked(queries.compileMethod).mockImplementation(() => {
+          throw new queries.BrowserQueryError('does not compile (line 2)');
+        });
+
+        provider.writeFile(
+          Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A'),
+          encode('at: index\n  ^'),
+          { create: false, overwrite: true },
+        );
+
+        expect(commit).not.toHaveBeenCalled();
+      });
+
+      it('commits nothing on a session that never armed it', () => {
+        writeThrough();
+
+        provider.writeFile(
+          Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A'),
+          encode('at: index\n  ^self basicAt: index'),
+          { create: false, overwrite: true },
+        );
+
+        expect(commit).not.toHaveBeenCalled();
+      });
+    });
 
     it('compiles a method on save', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A');

@@ -17,10 +17,13 @@ import {
   setAutoCommitStatus,
 } from '../autoCommitState';
 import {
+  AUTO_COMMIT_DEFAULT_SETTING,
+  autoCommitDefaultForNewSessions,
   autoCommitTransactionSettled,
   offerAutoCommitRecovery,
   toggleAutoCommit,
 } from '../autoCommitUi';
+import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
 
 const OK = { success: true, err: { number: 0, message: '' } };
 
@@ -43,6 +46,7 @@ const inform = vscode.window.showInformationMessage as unknown as ReturnType<typ
 
 beforeEach(() => {
   _resetAutoCommitStateForTests();
+  __resetConfig();
   vi.mocked(queries.sessionNeedsCommit).mockReturnValue(false);
   warn.mockReset();
   warn.mockResolvedValue(undefined);
@@ -225,5 +229,49 @@ describe('a manual commit or abort settling the transaction', () => {
   it('leaves a session that never armed it alone', () => {
     autoCommitTransactionSettled(9);
     expect(getAutoCommitStatus(9)).toBe('off');
+  });
+});
+
+/**
+ * The window-wide default (issue #254). It decides only where a NEW session starts — the
+ * per-session switch is what a session actually runs on — so the two must not be confused.
+ */
+describe('the default for new sessions', () => {
+  it('is off when nobody set it', () => {
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
+  });
+
+  it('is what the setting says when they did', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    expect(autoCommitDefaultForNewSessions()).toBe(true);
+  });
+
+  it('does not arm a session on its own — a session is armed by being registered', () => {
+    __setConfig('gemstone', AUTO_COMMIT_DEFAULT_SETTING, true);
+    // Reading the default is not the same as applying it: `activate` reads it once per
+    // login and hands the answer to `registerSessionAutoCommit`.
+    expect(getAutoCommitStatus(1)).toBe('off');
+  });
+
+  it('is offered from the turn-on notice, so it is reachable without opening Settings', async () => {
+    inform.mockResolvedValue('Make This the Default');
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    // The notice is fire-and-forget, so let its tail run.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Asserted through the setting's own reader rather than the update spy: the mock hands
+    // back a fresh configuration object per call, so the spy a test holds is never the one
+    // the code used.
+    expect(autoCommitDefaultForNewSessions()).toBe(true);
+  });
+
+  it('is left alone when the notice is dismissed', async () => {
+    inform.mockResolvedValue(undefined);
+
+    await toggleAutoCommit(managerFor(makeSession()));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(autoCommitDefaultForNewSessions()).toBe(false);
   });
 });

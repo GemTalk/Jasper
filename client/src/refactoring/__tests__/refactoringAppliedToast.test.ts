@@ -11,6 +11,12 @@ import { notifyRefactoringApplied } from '../refactoringAppliedToast';
 import { UNDO_COMMAND } from '../../undo/undoUi';
 import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../../autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from '../../autoCommit/autoCommitRunner';
 
 /**
  * The shared post-apply notice (#434). This is where an applied refactoring joins Jasper's
@@ -20,7 +26,14 @@ import type { ActiveSession } from '../../sessionManager';
  * refactorings had before, rather than growing a dead button.
  */
 
-const session = { id: 7 } as ActiveSession;
+const OK = { success: true, err: { number: 0, message: '' } };
+
+// A session that can be asked to commit, so the auto-commit tests below can see whether the
+// notice actually did. The other tests here never arm it, so `GciTsCommit` goes uncalled.
+let commit = vi.fn(() => OK);
+const makeSession = (id = 7): ActiveSession =>
+  ({ id, gci: { GciTsCommit: commit }, handle: {} }) as unknown as ActiveSession;
+const session = makeSession();
 const status = (available: boolean, supported = true) => ({
   available,
   supported,
@@ -37,13 +50,18 @@ const status = (available: boolean, supported = true) => ({
 // let the microtask queue drain before asserting.
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-describe('notifyRefactoringApplied', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetUndoStacks();
-    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
-  });
+// File-level, so both describes below start from the same clean slate — in particular a
+// fresh `commit` spy, which the auto-commit block counts calls on.
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetUndoStacks();
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => OK);
+  vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+});
 
+describe('notifyRefactoringApplied', () => {
   it('offers Undo on the toast when the stone recorded one', async () => {
     vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
 
@@ -149,5 +167,61 @@ describe('notifyRefactoringApplied', () => {
     await settle();
     expect(vscode.window.showInformationMessage).toHaveBeenCalled();
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(UNDO_COMMAND);
+  });
+});
+
+/**
+ * This is also where an applied refactoring meets auto-commit (issue #254), and the reason
+ * it is HERE rather than at the engine's apply is the thing worth pinning: a refactoring can
+ * stop at its first failure and strand a partly-reshaped class, and the panels recover from
+ * that by ABORTING the transaction. A commit inside the apply would leave that button
+ * rewinding to a repository that already held the wreckage. By the time this runs the apply
+ * has landed and the panel has closed, so the abort window is shut.
+ */
+describe('notifyRefactoringApplied and auto-commit', () => {
+  beforeEach(() => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+  });
+
+  it('commits the refactoring on an armed session', () => {
+    registerSessionAutoCommit(7, true);
+
+    notifyRefactoringApplied(makeSession(), 'Renamed it.');
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits before it puts the toast up, not after the user answers it', () => {
+    // The work is safe the moment the apply lands. Deferring the commit into the toast's
+    // async tail would leave it riding on a notice the user may never look at — and the
+    // toast resolves only when they dismiss it.
+    registerSessionAutoCommit(7, true);
+
+    notifyRefactoringApplied(makeSession(), 'Renamed it.');
+
+    const toast = vi.mocked(vscode.window.showInformationMessage);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(commit.mock.invocationCallOrder[0]).toBeLessThan(toast.mock.invocationCallOrder[0]);
+  });
+
+  it('commits nothing on a session that never armed it', () => {
+    notifyRefactoringApplied(makeSession(), 'Renamed it.');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing once a previous commit has failed', () => {
+    registerSessionAutoCommit(7, true);
+    setAutoCommitStatus(7, 'failed');
+
+    notifyRefactoringApplied(makeSession(), 'Renamed it.');
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('does not fall over when there is no session to commit', () => {
+    // The signature allows it, and a stone-less call must still put up its notice.
+    expect(() => notifyRefactoringApplied(undefined, 'Renamed it.')).not.toThrow();
+    expect(commit).not.toHaveBeenCalled();
   });
 });

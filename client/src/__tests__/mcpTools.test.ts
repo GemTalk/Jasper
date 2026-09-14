@@ -64,6 +64,11 @@ import * as sunit from '../sunitQueries';
 import * as python from '../pythonQueries';
 import { registerMcpTools } from '../mcpTools';
 import { ActiveSession } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 
 interface ToolRegistration {
   name: string;
@@ -93,10 +98,17 @@ function createMockServer() {
   };
 }
 
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+
 function makeSession(): ActiveSession {
   return {
     id: 1,
-    gci: {} as ActiveSession['gci'],
+    gci: {
+      get GciTsCommit() {
+        return commit;
+      },
+    } as unknown as ActiveSession['gci'],
     handle: {},
     login: { label: 'DataCurator on gs64stone (localhost)' } as ActiveSession['login'],
     stoneVersion: '3.7.4',
@@ -112,6 +124,9 @@ describe('registerMcpTools', () => {
     session = makeSession();
     registerMcpTools(server as unknown as Parameters<typeof registerMcpTools>[0], () => session);
     vi.clearAllMocks();
+    _resetAutoCommitStateForTests();
+    setAutoCommitFailureHandler(undefined);
+    commit = vi.fn(() => COMMIT_OK);
   });
 
   it('registers the expected tools in alphabetical order', () => {
@@ -871,5 +886,49 @@ describe('registerMcpTools', () => {
     vi.mocked(queries.executeFetchString).mockReturnValue('1');
     const present = await server.getTool('execute_code')!.handler({ code: '1' });
     expect(present.isError).toBeUndefined();
+  });
+
+  /**
+   * These tools run on the USER's active session, so a session the user armed for
+   * auto-commit (issue #254) commits an agent's doit exactly as it commits the user's own.
+   * The standalone `mcp-server` workspace is a different thing entirely — its own GCI
+   * sessions, no auto-commit at all — which is why its tool descriptions still say
+   * "NOT committed automatically" and these no longer do.
+   */
+  describe('auto-commit', () => {
+    it('commits after execute_code on an armed session', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockReturnValue('42');
+
+      await server.getTool('execute_code')!.handler({ code: 'UserGlobals at: #x put: 42' });
+
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits nothing when the code raised', async () => {
+      registerSessionAutoCommit(1, true);
+      vi.mocked(queries.executeFetchString).mockImplementation(() => {
+        throw new Error('doesNotUnderstand');
+      });
+
+      await server.getTool('execute_code')!.handler({ code: 'nil foo' });
+
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing on a session that never armed it', async () => {
+      vi.mocked(queries.executeFetchString).mockReturnValue('42');
+
+      await server.getTool('execute_code')!.handler({ code: '42' });
+
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('no longer promises the change is uncommitted, because it may not be', () => {
+      for (const name of ['execute_code', 'compile_method', 'delete_method']) {
+        expect(server.getTool(name)!.description).not.toContain('NOT committed automatically');
+      }
+      expect(server.getTool('compile_method')!.description).toContain('auto-commit');
+    });
   });
 });

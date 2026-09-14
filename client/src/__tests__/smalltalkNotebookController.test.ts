@@ -4,6 +4,8 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../gciLog', () => ({
   logError: vi.fn(),
+  logInfo: vi.fn(),
+  logWarning: vi.fn(),
 }));
 
 import { notebooks } from '../__mocks__/vscode';
@@ -15,6 +17,11 @@ import {
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 
 // Cells run on the non-blocking execute path (live transcript). The mock gci
 // covers that path: NbExecute starts the doit, NbPoll reports ready, NbResult
@@ -32,6 +39,8 @@ function makeGci(overrides: Record<string, unknown> = {}) {
     GciTsNbResult: vi.fn(() => ({ result: 200n, err: { number: 0, message: '', context: 0x14n } })),
     GciTsFetchUtf8: vi.fn(() => ({ data: '7', err: { number: 0 } })),
     executeAndFetchString: vi.fn((..._args: unknown[]) => ''),
+    // Auto-commit's one call (issue #254) — unreached unless a test arms the session.
+    GciTsCommit: vi.fn(() => ({ success: true, err: { number: 0, message: '' } })),
     ...overrides,
   };
 }
@@ -75,6 +84,8 @@ async function runCells(cells: unknown[]) {
 describe('SmalltalkNotebookController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetAutoCommitStateForTests();
+    setAutoCommitFailureHandler(undefined);
   });
 
   it('registers a controller for the jupyter-notebook type with smalltalk cells', () => {
@@ -183,5 +194,57 @@ describe('SmalltalkNotebookController', () => {
     const mock = lastController();
     ctrl.dispose();
     expect(mock.dispose).toHaveBeenCalled();
+  });
+
+  // A cell is a doit by another route, so it commits on an armed session exactly as Do It in
+  // the editor does (issue #254) — a notebook that quietly did not would be the odd one out.
+  describe('auto-commit', () => {
+    it('commits a cell that ran, on an armed session', async () => {
+      const gci = makeGci();
+      registerSessionAutoCommit(1, true);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('UserGlobals at: #x put: 42')]);
+
+      expect(gci.GciTsCommit).toHaveBeenCalledTimes(1);
+      ctrl.dispose();
+    });
+
+    it('commits once per cell, not once per notebook run', async () => {
+      const gci = makeGci();
+      registerSessionAutoCommit(1, true);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('1'), makeCell('2')]);
+
+      expect(gci.GciTsCommit).toHaveBeenCalledTimes(2);
+      ctrl.dispose();
+    });
+
+    it('commits nothing when the cell raised', async () => {
+      const gci = makeGci({
+        GciTsNbResult: vi.fn(() => ({
+          result: 0n,
+          err: { number: 2003, message: 'doesNotUnderstand', context: 0x14n },
+        })),
+      });
+      registerSessionAutoCommit(1, true);
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('nil foo')]);
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('commits nothing on a session that never armed it', async () => {
+      const gci = makeGci();
+      const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+
+      await runCells([makeCell('1')]);
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
   });
 });

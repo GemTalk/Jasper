@@ -5,6 +5,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({
   logError: vi.fn(),
   logInfo: vi.fn(),
+  logWarning: vi.fn(),
 }));
 
 vi.mock('../transcriptChannel', () => ({
@@ -34,6 +35,12 @@ import { DebuggerPanel } from '../debuggerPanel';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { BasicInspector } from '../basicInspector/basicInspector';
 import { SessionManager, ActiveSession } from '../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+  setAutoCommitStatus,
+} from '../autoCommit/autoCommitState';
+import { setAutoCommitFailureHandler } from '../autoCommit/autoCommitRunner';
 import * as vscode from 'vscode';
 import { __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from '../transcriptChannel';
@@ -83,6 +90,8 @@ function makeGci(overrides: Record<string, unknown> = {}) {
     GciTsClearStack: vi.fn(),
     GciTsObjExists: vi.fn(() => false),
     GciTsFetchClass: vi.fn(() => ({ result: 0n, err: { number: 0 } })),
+    // Auto-commit's one call (issue #254) — never reached unless a test arms the session.
+    GciTsCommit: vi.fn(() => ({ success: true, err: { number: 0, message: '' } })),
     ...overrides,
   };
 }
@@ -240,9 +249,84 @@ describe('CodeExecutor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __resetConfig();
+    _resetAutoCommitStateForTests();
+    setAutoCommitFailureHandler(undefined);
     gci = makeGci();
     session = makeSession(gci);
     executor = new CodeExecutor(makeSessionManager(session));
+  });
+
+  // ── Auto-commit (issue #254) ───────────────────────────────
+
+  /**
+   * A completed execution is real work the session did on the server, so an armed session
+   * commits it — the same reading a compiled method gets. Debug It is the exception and the
+   * reason this is worth pinning: it stops on its first statement BY DESIGN, and the
+   * execution is still in flight in the debugger, so there is nothing finished to commit.
+   */
+  describe('auto-commit', () => {
+    const runIt = async (code = '3 + 4') => {
+      (gci.executeAndFetchString as Mock).mockReturnValue('7');
+      setActiveEditor(makeEditor(code));
+    };
+
+    it('commits after Execute It on an armed session', async () => {
+      registerSessionAutoCommit(1, true);
+      await runIt();
+
+      await executor.executeIt();
+
+      expect(gci.GciTsCommit).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits after Display It too', async () => {
+      registerSessionAutoCommit(1, true);
+      await runIt();
+
+      await executor.displayIt();
+
+      expect(gci.GciTsCommit).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT commit after Debug It — the execution is still suspended', async () => {
+      registerSessionAutoCommit(1, true);
+      await runIt();
+
+      await executor.debugIt();
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing when the code failed to run', async () => {
+      registerSessionAutoCommit(1, true);
+      (gci.GciTsNbExecute as Mock).mockReturnValue({
+        success: false,
+        err: { number: 1001, message: 'parse error (line 1)', context: OOP_NIL },
+      });
+      setActiveEditor(makeEditor('3 +'));
+
+      await executor.executeIt();
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing on a session that never armed it', async () => {
+      await runIt();
+
+      await executor.executeIt();
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing once a previous commit has failed', async () => {
+      registerSessionAutoCommit(1, true);
+      setAutoCommitStatus(1, 'failed');
+      await runIt();
+
+      await executor.executeIt();
+
+      expect(gci.GciTsCommit).not.toHaveBeenCalled();
+    });
   });
 
   // ── Syntax error diagnostics ───────────────────────────────

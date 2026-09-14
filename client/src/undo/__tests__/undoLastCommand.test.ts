@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
+vi.mock('../../gciLog', () => ({ logInfo: vi.fn(), logWarning: vi.fn() }));
 vi.mock('../reverseMethodEdit', () => ({ reverseMethodEdit: vi.fn() }));
 vi.mock('../reverseClassEdit', () => ({ reverseClassEdit: vi.fn() }));
 vi.mock('../reverseClassComment', () => ({ reverseClassComment: vi.fn() }));
@@ -36,6 +36,14 @@ import { undoLastCommand } from '../undoLastCommand';
 import { peekUndoEntry, pushUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { NewUndoEntry } from '../undoTypes';
 import type { ActiveSession, SessionManager } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import {
+  autoCommitAfterWrite,
+  setAutoCommitFailureHandler,
+} from '../../autoCommit/autoCommitRunner';
 
 /**
  * The dispatcher (#434) — the single Undo every affordance runs.
@@ -49,7 +57,16 @@ import type { ActiveSession, SessionManager } from '../../sessionManager';
  * stone no longer holds is dropped and skipped rather than previewed over nothing.
  */
 
-const session = { id: 1 } as ActiveSession;
+const OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => OK);
+
+const session = {
+  id: 1,
+  get gci() {
+    return { GciTsCommit: commit };
+  },
+  handle: {},
+} as unknown as ActiveSession;
 const sessions = { getSelectedSession: () => session } as unknown as SessionManager;
 
 const status = (available: boolean, sequence = 1) => ({
@@ -145,6 +162,9 @@ function confirmTheModal(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => OK);
   confirmTheModal();
 });
 
@@ -395,5 +415,64 @@ describe('undoLastCommand', () => {
     const none = { getSelectedSession: () => undefined } as unknown as SessionManager;
     await undoLastCommand(none);
     expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain('session');
+  });
+});
+
+/**
+ * Undo and auto-commit (issue #254).
+ *
+ * The reason this needs pinning is the shape of Jasper's undo: it is a FORWARD operation —
+ * it reverses a change by making the opposite one — so a committed change is exactly as
+ * undoable as one that is not, and auto-commit takes nothing away. What it must not do is
+ * commit an undo in pieces: a class-category reversal refiles the classes one at a time,
+ * and half a reversal in the repository is not a reversal.
+ */
+describe('undoLastCommand and auto-commit', () => {
+  it('commits the reversal ONCE, however many writes it took', async () => {
+    registerSessionAutoCommit(session.id, true);
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    // Stand in for the reverser's writes: several, all inside the deferred region.
+    vi.mocked(reverseMethodEdit).mockImplementation(async () => {
+      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session);
+      autoCommitAfterWrite(session);
+      return true;
+    });
+
+    await undoLastCommand(sessions);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits nothing when the reversal throws, so the transaction is the caller’s to sort out', async () => {
+    registerSessionAutoCommit(session.id, true);
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    vi.mocked(reverseMethodEdit).mockImplementation(async () => {
+      autoCommitAfterWrite(session);
+      throw new Error('the recompile failed');
+    });
+
+    await expect(undoLastCommand(sessions)).rejects.toThrow('the recompile failed');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing when the user cancels the confirmation', async () => {
+    registerSessionAutoCommit(session.id, true);
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseMethodEdit).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits nothing on a session that never armed auto-commit', async () => {
+    pushUndoEntry(methodEdit('Save Account>>#balance'));
+    vi.mocked(reverseMethodEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(commit).not.toHaveBeenCalled();
   });
 });

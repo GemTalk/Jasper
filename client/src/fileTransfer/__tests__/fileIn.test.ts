@@ -19,6 +19,14 @@ import * as queries from '../../browserQueries';
 import { fileInFile, fileInUris, fileInCommand } from '../fileIn';
 import { SessionManager } from '../../sessionManager';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  _resetAutoCommitStateForTests,
+  registerSessionAutoCommit,
+} from '../../autoCommit/autoCommitState';
+import {
+  autoCommitAfterWrite,
+  setAutoCommitFailureHandler,
+} from '../../autoCommit/autoCommitRunner';
 
 /**
  * Filing a Topaz `.gs` file back into a session (issue #539).
@@ -28,7 +36,28 @@ import type { ActiveSession } from '../../sessionManager';
  * twenty compiled and the bad one named. These read back what reached the query layer.
  */
 
-const SESSION = { id: 1 } as ActiveSession;
+const COMMIT_OK = { success: true, err: { number: 0, message: '' } };
+let commit = vi.fn(() => COMMIT_OK);
+
+/**
+ * Put auto-commit back to off, and `compileMethod` back to a plain stub, before every test
+ * in this file. An armed session left behind by the auto-commit block below would make the
+ * ordinary tests assert the wrong note — and the suite shuffles, so that is not hypothetical.
+ */
+function resetAutoCommit(): void {
+  _resetAutoCommitStateForTests();
+  setAutoCommitFailureHandler(undefined);
+  commit = vi.fn(() => COMMIT_OK);
+  vi.mocked(queries.compileMethod).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
+}
+const SESSION = {
+  id: 1,
+  get gci() {
+    return { GciTsCommit: commit };
+  },
+  handle: {},
+} as unknown as ActiveSession;
 
 /** A filesystem holding the given absolute-path → content pairs. */
 function withFiles(files: Record<string, string>): void {
@@ -83,6 +112,7 @@ const CLASS_FILE = [
 describe('fileInFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAutoCommit();
     vi.mocked(queries.fileInChunk).mockReturnValue('ok');
     vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
     vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
@@ -311,6 +341,7 @@ describe('the File In command', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAutoCommit();
     vi.mocked(queries.fileInChunk).mockReturnValue('ok');
     vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
     vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
@@ -476,6 +507,64 @@ describe('the File In command', () => {
       expect.stringContaining('Not committed'),
     );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A file-in on an auto-commit session (issue #254) goes in as ONE change, and the summary
+   * has to say so — telling a user to go and commit what has already been committed is the
+   * kind of small lie that teaches them not to read the notice.
+   */
+  describe('and auto-commit', () => {
+    beforeEach(() => {
+      vi.mocked(queries.compileMethod).mockImplementation(() => {
+        autoCommitAfterWrite(SESSION);
+        return 'Compiled';
+      });
+    });
+
+    it('commits the whole file-in once, and says it did', async () => {
+      registerSessionAutoCommit(1, true);
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Committed — this session has auto-commit on'),
+      );
+    });
+
+    it('does not tell an armed session to go and commit', async () => {
+      registerSessionAutoCommit(1, true);
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining('Not committed'),
+      );
+    });
+
+    // Even when the file asked for one: a `commit` line drives the topaz program, and
+    // whether the file-in lands is the session's setting to decide, not the file's.
+    it('says it committed, not that the file asked and was refused', async () => {
+      registerSessionAutoCommit(1, true);
+      withFiles({ [TPZ]: ['doit', "Object subclass: 'Animal'", '%', 'commit'].join('\n') });
+
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(TPZ)], memento);
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Committed — this session has auto-commit on'),
+        'Show Log',
+      );
+    });
+
+    it('leaves the ordinary note alone on a session that never armed it', async () => {
+      await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Not committed'),
+      );
+    });
   });
 
   it('says so plainly when the file asked to commit and did not get one', async () => {
