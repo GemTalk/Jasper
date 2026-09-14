@@ -110,17 +110,49 @@ const TS_EXTENSION_IMPORT = {
 // internally would leave a cached file green after a new entry lands.
 //
 // Background: `docs/explanation/gci-version-compatibility.md`.
+//
+// `addedIn` and `removedIn` interpolate their value, so widening either still
+// renders a hazard. `absentOn` is the one axis whose message is a *phrase*
+// rather than the value, so this config has to restate something the type
+// already knows -- keyed rather than compared, and an unknown key throws.
+// Widening `GciAbsenceReason['absentOn']` without adding a clause here fails
+// the config load, instead of quietly rendering `may be absent ()` with nothing
+// between the parens.
+const ABSENT_ON_CLAUSE = {
+  win32:
+    'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
+};
+
+const absentOnClause = (name, absentOn) => {
+  const clause = ABSENT_ON_CLAUSE[absentOn];
+  if (clause === undefined) {
+    throw new Error(
+      `${name} carries absentOn: '${absentOn}', which eslint.config.mjs has no hazard clause for. ` +
+        'Add one to ABSENT_ON_CLAUSE next to the GciAbsenceReason widening that introduced it.',
+    );
+  }
+  return clause;
+};
+
 const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name, reason]) => {
   // One clause per axis the registry records, so a two-axis entry
   // (`GciTsNbLogin_`) names both hazards rather than the first one found.
   const hazard = [
     reason.addedIn && `absent before ${reason.addedIn}`,
-    reason.absentOn === 'win32' &&
-      'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
+    reason.absentOn && absentOnClause(name, reason.absentOn),
     reason.removedIn && `removed in ${reason.removedIn}`,
   ]
     .filter(Boolean)
     .join('; ');
+  // A new axis on `GciAbsenceReason` that nothing above reads leaves an entry
+  // with no hazard at all. The rule would still fire, but on the message this
+  // rewrite exists to produce -- so fail the load rather than ship the hole.
+  if (hazard === '') {
+    throw new Error(
+      `${name} is gated by ${JSON.stringify(reason)}, no part of which eslint.config.mjs renders. ` +
+        'Add a clause for the new GciAbsenceReason axis to the hazard list above.',
+    );
+  }
   const message = `${name} may be absent from the loaded library (${hazard}). Put the cross-version conditional inside client/src/gciLibrary/ and call a helper from there, so this call site doesn't have to know about optionality.`;
   // Gated on the *mention*, not the call shape. The `RAW_LOGIN_NAMES`
   // selectors below are call-shaped because a test legitimately names a mocked
