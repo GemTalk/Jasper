@@ -217,6 +217,12 @@ describe('SUnit non-blocking runs (integration)', () => {
       return realBreak(h, hard);
     });
 
+    // Tracked as a flag rather than by testing `originalFailure` for truthiness:
+    // a block that throws a falsy value (an undefined rejection, an empty
+    // string) would otherwise read as a pass here and let the drain's error be
+    // reported in its place.
+    let gestureFailed = false;
+    let originalFailure: unknown;
     try {
       const { run, cancel } = await startSlowRun();
       cancel(); // soft
@@ -236,16 +242,33 @@ describe('SUnit non-blocking runs (integration)', () => {
         })
         .join(',');
       expect(['soft', 'soft,hard']).toContain(shape);
-
-      // And the session recovers, which is what the drain is for.
-      await expect(
-        runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
-      ).resolves.toMatchObject({ status: 'passed' });
+    } catch (err) {
+      gestureFailed = true;
+      originalFailure = err;
     } finally {
       // Restored even on failure: the spy is on the shared library object, so a
       // leaked one would follow every later test in the file.
       breaks.mockRestore();
     }
+
+    // Unconditional, and outside the try/finally above: an abandoned hard-break GciTsNb
+    // op left on the session would otherwise fail every later test in this file
+    // via assertCommitGuardIsStillArmed, burying the one real failure under five
+    // unrelated ones.
+    try {
+      await expect(
+        runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
+      ).resolves.toMatchObject({ status: 'passed' });
+    } catch (drainErr) {
+      // Only swallowed when the gesture above already failed — the drain
+      // couldn't recover a session already left in a bad state by that
+      // failure, which is expected and shouldn't bury the original error.
+      // On the happy path a drain failure is itself the real bug and must
+      // surface normally.
+      if (!gestureFailed) throw drainErr;
+    }
+
+    if (gestureFailed) throw originalFailure;
   }, 120_000);
 
   it('discovers the probe class, and its methods carry the category the URI needs', () => {
