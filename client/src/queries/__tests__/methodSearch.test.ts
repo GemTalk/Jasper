@@ -10,6 +10,7 @@ import {
   stringLiteralReferences,
   hierarchyImplementorsOf,
   dedupeMethodResults,
+  effectiveScanMode,
   type MethodSearchResult,
 } from '../methodSearch';
 import { getClassHierarchy } from '../getClassHierarchy';
@@ -17,6 +18,165 @@ import { getSiblingClassNames } from '../../refactoring/queries/getSiblingClassN
 import { getClassDescendantNames } from '../../refactoring/queries/getClassDescendantNames';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
+
+/**
+ * GemStone Search's Prefix chip, over method source. "The target starts with the
+ * query" has no useful meaning for a whole method body, so Prefix narrows to
+ * matches that START A TOKEN — the fix for `foo` returning `barfoo` and
+ * `doFooling`. The narrowing is Smalltalk because the rows carry no source text
+ * to test on the client, and because the result cap is server-side.
+ */
+/**
+ * Fuzzy over Source is per-identifier, so a term that cannot BE an identifier has no
+ * reading there — and the scan does not degrade gracefully, it matches nothing at all,
+ * silently. These pin the fallback that keeps such a term answerable.
+ */
+describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
+  const codeFor = (term: string, mode: Parameters<typeof searchMethodSource>[3]): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, true, mode);
+    return execute.mock.calls[0][0];
+  };
+
+  it('keeps fuzzy for a plain identifier', () => {
+    expect(effectiveScanMode('ordcol', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(effectiveScanMode('order_col9', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(codeFor('ordcol', 'fuzzyToken')).toContain('isAlphaNumeric');
+  });
+
+  it.each([
+    ['a keyword selector', 'at:put:'],
+    ['a unary selector with a colon', 'printOn:'],
+    ['a phrase', 'no such element'],
+    ['punctuation', 'foo-bar'],
+  ])('runs %s as substring instead of matching nothing', (_label, term) => {
+    expect(effectiveScanMode(term, 'fuzzyToken')).toBe('substring');
+    const code = codeFor(term, 'fuzzyToken');
+    // The engine's substring scan, not the per-identifier walk.
+    expect(code).toContain('substringSearch:');
+    expect(code).not.toContain('isAlphaNumeric');
+  });
+
+  it('leaves the other two chip positions alone', () => {
+    expect(effectiveScanMode('at:put:', 'substring')).toBe('substring');
+    expect(effectiveScanMode('at:put:', 'wordStart')).toBe('wordStart');
+  });
+});
+
+/**
+ * A lowercased copy of every method body in the image, built inside one doit, is the
+ * allocation shape classOrganizer.ts records as producing AlmostOutOfMemoryError (6022).
+ * The needle is folded once; the source is folded one character at a time.
+ */
+describe('fuzzy Source folds case without copying method bodies', () => {
+  const codeFor = (ignoreCase: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, 'ordcol', ignoreCase, 'fuzzyToken');
+    return execute.mock.calls[0][0];
+  };
+
+  it('never lowercases the whole source', () => {
+    const code = codeFor(true);
+    expect(code).toContain('m sourceString]');
+    expect(code).not.toContain('m sourceString asLowercase');
+  });
+
+  it('folds the needle once and each source character at comparison', () => {
+    const code = codeFor(true);
+    expect(code).toContain("needle := 'ordcol' asLowercase");
+    expect(code).toContain('ch asLowercase = (needle at: ni)');
+  });
+
+  it('folds nothing when the search is case-sensitive', () => {
+    const code = codeFor(false);
+    expect(code).not.toContain('asLowercase');
+    expect(code).toContain('ch = (needle at: ni)');
+  });
+});
+
+describe('searchMethodSource word-boundary narrowing', () => {
+  const codeFor = (term: string, ignoreCase: boolean, narrowed: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, ignoreCase, narrowed ? 'wordStart' : 'substring');
+    return execute.mock.calls[0][0];
+  };
+
+  it('adds no filter by default, so Substring and Fuzzy scan as before', () => {
+    const code = codeFor('foo', true, false);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).not.toContain('indexOfSubCollection');
+    expect(code).not.toContain('select:');
+  });
+
+  it('filters on the character before the match when asked', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).toContain('methods := methods select:');
+    // A word character before the match disqualifies it; anything else starts a token.
+    expect(code).toContain('prev isAlphaNumeric');
+    expect(code).toContain('prev = $_');
+  });
+
+  // The camelCase hump that `omniMatch.isWordStart` counts as a word start is
+  // deliberately NOT honoured here: it would keep `doFooling` as a hit for `foo`.
+  it('tests only the preceding character, not a camelCase hump', () => {
+    expect(codeFor('foo', true, true)).not.toContain('isUppercase');
+  });
+
+  /**
+   * Both sides of the comparison are folded by the STONE. Folding the needle with
+   * JavaScript's `toLowerCase` and the source with `asLowercase` would put two
+   * different Unicode case-folding implementations either side of the same test,
+   * and where they disagree the filter drops methods the scan legitimately matched.
+   */
+  it('folds the needle in Smalltalk, not in JavaScript, when case is ignored', () => {
+    const code = codeFor('Foo', true, true);
+
+    // The term reaches the stone as typed, and is folded there.
+    expect(code).toContain("needle := 'Foo' asLowercase");
+    expect(code).toContain('m sourceString asLowercase');
+    // A JS-folded needle would have been embedded already lowercased.
+    expect(code).not.toContain("needle := 'foo'");
+  });
+
+  it('compares as typed when case is significant', () => {
+    const code = codeFor('Foo', false, true);
+    expect(code).toContain("needle := 'Foo'");
+    expect(code).not.toContain('asLowercase');
+  });
+
+  // Bound once rather than inlined at both search sites, so the two can never drift.
+  it('binds the needle once and reuses it', () => {
+    const code = codeFor('Foo', true, true);
+    expect(code.match(/indexOfSubCollection: needle/g)).toHaveLength(2);
+    expect(code.match(/needle :=/g)).toHaveLength(1);
+    expect(code).toContain('classDict sl needle |');
+  });
+
+  // The temp is only declared when the filter is actually emitted.
+  it('does not declare the needle when not narrowing', () => {
+    expect(codeFor('Foo', true, false)).not.toContain('needle');
+  });
+
+  // The filter runs before methodSerialization, so METHOD_SEARCH_RESULT_LIMIT caps
+  // boundary hits rather than truncating substring hits before they are reached.
+  it('narrows before the result cap is applied', () => {
+    const code = codeFor('foo', true, true);
+    expect(code.indexOf('methods := methods select:')).toBeLessThan(code.indexOf('limit :='));
+  });
+
+  it('escapes a term carrying a quote', () => {
+    expect(codeFor("it's", true, true)).toContain("needle := 'it''s'");
+  });
+
+  // 3.6.2 does not implement includesSubstring:, and non-ASCII in generated source
+  // trips ComStrmSetCursor.
+  it('stays on 3.6.2-safe, ASCII-only primitives', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).not.toContain('includesSubstring:');
+    expect([...code].every((ch) => ch.charCodeAt(0) < 128)).toBe(true);
+  });
+});
 
 describe('environment on a result row', () => {
   it('reads the environment column when the scan reports one', () => {

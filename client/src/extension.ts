@@ -97,6 +97,7 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { registerStashRelease } from './undo/releaseStash';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
@@ -110,6 +111,7 @@ import {
   installStaleGemstoneTabReaper,
   parseMethodUri,
   isMethodEditorUri,
+  isClassCommentUri,
 } from './gemstoneFileSystemProvider';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
@@ -144,7 +146,7 @@ import { SmalltalkNotebookController } from './smalltalkNotebookController';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
-import { getGciLog } from './gciLog';
+import { getGciLog, logError } from './gciLog';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
@@ -1016,7 +1018,17 @@ export function activate(context: vscode.ExtensionContext) {
           const uri = event.uri;
           if (uri.scheme === 'gemstone') {
             const parts = uri.path.split('/').map(decodeURIComponent);
-            // parts: ['', dictName, className, side, category, selector]
+            // parts: ['', dictName, className, side, category, selector] for a method.
+            // A class comment is recognised by isClassCommentUri instead — it has two
+            // path shapes, and that predicate lives beside the builder that emits them.
+            // A comment save is not a method compile. Forwarding it as one cost a
+            // getClassEnvironments round trip that redrew the Methods pane — the one
+            // pane a comment cannot change — while leaving the Classes pane, whose row
+            // really did change, alone. The 📖 button is updated from the provider's
+            // own onClassCommentSaved event instead, which carries the saved text's
+            // verdict. Asked of the module that owns the URI format rather than by
+            // path index, because a comment URI has two shapes.
+            if (isClassCommentUri(uri)) continue;
             if (parts.length >= 3) {
               const sessionId = parseInt(uri.authority, 10);
               const className = parts[2];
@@ -1054,6 +1066,11 @@ export function activate(context: vscode.ExtensionContext) {
         omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
+    // A comment save changes one thing in the Explorer — whether the class's row
+    // offers the 📖 button — and no compile event reports it.
+    gemstoneFs.onClassCommentSaved((e) =>
+      explorer.onClassCommentSaved(e.sessionId, e.dictName, e.className, e.hasComment),
+    ),
   );
 
   context.subscriptions.push(
@@ -1545,6 +1562,22 @@ export function activate(context: vscode.ExtensionContext) {
         // now in. Offering them would put back source the abort already discarded.
         clearUndoStack(session.id);
         refreshUndoUi(sessionManager.getSelectedSession());
+        // Last, and behind its own guard. The editors were the one thing this resync
+        // did not reach: a tab left over a method the abort discarded stays editable,
+        // and saving it compiles the method straight back into the transaction the
+        // abort just abandoned. It runs after the state above because the abort has
+        // already happened and cannot be undone — anything that throws here must not
+        // leave the undo stack un-cleared, nor reach the outer catch, which would
+        // report "Abort failed" over an abort that succeeded and was already
+        // announced.
+        try {
+          await resyncEditorsAfterAbort(session);
+        } catch (e: unknown) {
+          logError(
+            session.id,
+            `Could not resync open editors after the abort: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
