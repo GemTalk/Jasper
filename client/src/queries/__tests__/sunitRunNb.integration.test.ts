@@ -17,7 +17,7 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { MIN_HARD_BREAK_GAP_MS, NbCancelledError } from '../../nbRunner';
+import { NbCancelledError } from '../../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -197,25 +197,20 @@ describe('SUnit non-blocking runs (integration)', () => {
     ).resolves.toMatchObject({ status: 'passed' });
   }, 120_000);
 
-  it('takes a second press without sending the two breaks back-to-back', async () => {
+  it('takes a second press without faulting the client', async () => {
     // Pressing stop twice in a row is the gesture that once faulted the client
     // process outright, because the hard break went out on the heels of the soft
     // one. The runner defers it instead, and only a live GCI can show that the
     // deferral holds — a stubbed one cannot fault.
     //
-    // Deliberately NOT asserted here: that a hard break is sent at all. Whether
-    // it is depends on whether the gem services the soft break within the gap
-    // (~80ms) or after it (~1.9s), which is not something the client controls.
+    // The scheduling decision itself (does the second press get deferred, does
+    // it fire no earlier than the gap) is asserted deterministically, with a
+    // fake clock, in nbRunner.test.ts — this test only needs to show that a real
+    // GCI survives the real gesture end to end. It deliberately does not measure
+    // the gap between the two GciTsBreak calls with the wall clock: that
+    // measurement is inherently racy on a loaded CI runner and is exactly what
+    // the unit test replaces.
     installSlowTest();
-
-    // Time each break as it goes out, and still let the real one through — the
-    // point is the gap between them on a live library, so this must not stub.
-    const sent: { hard: boolean; at: number }[] = [];
-    const realBreak = gci.GciTsBreak.bind(gci);
-    const breaks = vi.spyOn(gci, 'GciTsBreak').mockImplementation((h, hard) => {
-      sent.push({ hard, at: Date.now() });
-      return realBreak(h, hard);
-    });
 
     // Tracked as a flag rather than by testing `originalFailure` for truthiness:
     // a block that throws a falsy value (an undefined rejection, an empty
@@ -229,29 +224,12 @@ describe('SUnit non-blocking runs (integration)', () => {
       cancel(); // hard, deferred internally past the safety gap — never slept for here
 
       expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
-
-      // The sequence as one string, so both legal endings can be named without
-      // asserting inside a conditional: either the gem serviced the soft break
-      // before the deferred hard one came due, or it did not and the hard break
-      // went out — a full gap later. A `hard-too-soon` here is the client-faulting
-      // sequence this test exists to catch.
-      const shape = sent
-        .map((brk, i) => {
-          const soonEnough = i > 0 && brk.at - sent[i - 1].at < MIN_HARD_BREAK_GAP_MS;
-          return `${brk.hard ? 'hard' : 'soft'}${soonEnough ? '-too-soon' : ''}`;
-        })
-        .join(',');
-      expect(['soft', 'soft,hard']).toContain(shape);
     } catch (err) {
       gestureFailed = true;
       originalFailure = err;
-    } finally {
-      // Restored even on failure: the spy is on the shared library object, so a
-      // leaked one would follow every later test in the file.
-      breaks.mockRestore();
     }
 
-    // Unconditional, and outside the try/finally above: an abandoned hard-break GciTsNb
+    // Unconditional, and outside the try above: an abandoned hard-break GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
     try {
