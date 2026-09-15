@@ -397,7 +397,6 @@ jobs:
         shell: bash
         run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (without server plugin)
-        if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -420,7 +419,6 @@ jobs:
         shell: bash
         run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (with server plugin)
-        if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
