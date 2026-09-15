@@ -523,11 +523,18 @@ jobs:
   # the build; see summarize-skipped-tests.mjs. Deliberately independent of
   # ci-complete: it's report-only and never fails, so branch protection / the
   # merge queue neither waits for it nor cares about its outcome.
+  #
+  # No `if:` on purpose, so the default applies and this runs only once every
+  # `needs` job has succeeded. The report's claim — "skipped in EVERY suite run"
+  # — is an intersection over the whole matrix, so it means nothing unless the
+  # whole matrix finished: a leg that died contributes a partial report (or
+  # none), and the tests missing from it would be reported as never executed
+  # anywhere. On a red matrix this job is skipped rather than posting a summary
+  # the run can't support. Nothing gates on it, so skipping it blocks nothing.
   report-skips:
     name: Skipped tests report
     timeout-minutes: 1
     needs: [prepare, health-check]
-    if: always()
     runs-on: ubuntu-latest
     # download-artifact needs actions:read to list/fetch artifacts from this
     # run; the top-level contents:read block doesn't cover that
