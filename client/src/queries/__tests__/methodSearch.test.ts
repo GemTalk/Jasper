@@ -10,6 +10,7 @@ import {
   stringLiteralReferences,
   hierarchyImplementorsOf,
   dedupeMethodResults,
+  effectiveScanMode,
   type MethodSearchResult,
 } from '../methodSearch';
 import { getClassHierarchy } from '../getClassHierarchy';
@@ -25,6 +26,74 @@ const row = 'Globals\tArray\t0\tsize\taccessing\n';
  * `doFooling`. The narrowing is Smalltalk because the rows carry no source text
  * to test on the client, and because the result cap is server-side.
  */
+/**
+ * Fuzzy over Source is per-identifier, so a term that cannot BE an identifier has no
+ * reading there — and the scan does not degrade gracefully, it matches nothing at all,
+ * silently. These pin the fallback that keeps such a term answerable.
+ */
+describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
+  const codeFor = (term: string, mode: Parameters<typeof searchMethodSource>[3]): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, true, mode);
+    return execute.mock.calls[0][0];
+  };
+
+  it('keeps fuzzy for a plain identifier', () => {
+    expect(effectiveScanMode('ordcol', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(effectiveScanMode('order_col9', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(codeFor('ordcol', 'fuzzyToken')).toContain('isAlphaNumeric');
+  });
+
+  it.each([
+    ['a keyword selector', 'at:put:'],
+    ['a unary selector with a colon', 'printOn:'],
+    ['a phrase', 'no such element'],
+    ['punctuation', 'foo-bar'],
+  ])('runs %s as substring instead of matching nothing', (_label, term) => {
+    expect(effectiveScanMode(term, 'fuzzyToken')).toBe('substring');
+    const code = codeFor(term, 'fuzzyToken');
+    // The engine's substring scan, not the per-identifier walk.
+    expect(code).toContain('substringSearch:');
+    expect(code).not.toContain('isAlphaNumeric');
+  });
+
+  it('leaves the other two chip positions alone', () => {
+    expect(effectiveScanMode('at:put:', 'substring')).toBe('substring');
+    expect(effectiveScanMode('at:put:', 'wordStart')).toBe('wordStart');
+  });
+});
+
+/**
+ * A lowercased copy of every method body in the image, built inside one doit, is the
+ * allocation shape classOrganizer.ts records as producing AlmostOutOfMemoryError (6022).
+ * The needle is folded once; the source is folded one character at a time.
+ */
+describe('fuzzy Source folds case without copying method bodies', () => {
+  const codeFor = (ignoreCase: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, 'ordcol', ignoreCase, 'fuzzyToken');
+    return execute.mock.calls[0][0];
+  };
+
+  it('never lowercases the whole source', () => {
+    const code = codeFor(true);
+    expect(code).toContain('m sourceString]');
+    expect(code).not.toContain('m sourceString asLowercase');
+  });
+
+  it('folds the needle once and each source character at comparison', () => {
+    const code = codeFor(true);
+    expect(code).toContain("needle := 'ordcol' asLowercase");
+    expect(code).toContain('ch asLowercase = (needle at: ni)');
+  });
+
+  it('folds nothing when the search is case-sensitive', () => {
+    const code = codeFor(false);
+    expect(code).not.toContain('asLowercase');
+    expect(code).toContain('ch = (needle at: ni)');
+  });
+});
+
 describe('searchMethodSource word-boundary narrowing', () => {
   const codeFor = (term: string, ignoreCase: boolean, narrowed: boolean): string => {
     const execute = vi.fn<QueryExecutor>(() => '');

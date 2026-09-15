@@ -38,7 +38,9 @@ export const OMNI_CATEGORIES: readonly OmniCategory[] = [
     label: 'Source',
     icon: 'file-code',
     explicitOnly: true,
-    searchHint: 'Type text to find inside method source',
+    searchHint:
+      'Type text to find inside method source. The match chip applies here: fuzzy matches ' +
+      'within one identifier, so a term with a space or a colon runs as substring instead.',
   },
   {
     id: 'literals',

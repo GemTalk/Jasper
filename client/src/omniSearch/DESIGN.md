@@ -424,7 +424,17 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   `substringSearch:` — a subsequence is not a substring, so the engine scan would never surface the
   methods it must find — so it walks the symbol list itself, measured at ~315ms over a 16.5k-method
   image against ~50ms for the engine scan. Affordable only because Source is `explicitOnly`,
-  debounced and gated behind `methodMinQueryLength`.
+  debounced and gated behind `methodMinQueryLength`. It folds case one character at a time rather
+  than lowercasing each method body: a copy of every body in the image, inside one doit, is the
+  allocation shape `classOrganizer.ts` records as producing `AlmostOutOfMemoryError` (6022).
+
+  ⚠️ **A term that cannot be an identifier falls back to substring** (`effectiveScanMode`). The
+  fuzzy scan advances its needle only across identifier characters and resets at anything else, so
+  `printOn:`, `at:put:` or a phrase like `no such element` would match *no method at all* — silently,
+  which reads as "the text is not in the image" rather than "that mode cannot express this". Nor
+  does stripping the term rescue it: the source token is broken at the colon too, so `atput` cannot
+  span `at:put:`. The per-identifier reading simply does not apply, so those terms run as substring
+  and the chip's help text says so.
   **Literals still ignores the chip** — that half is #471, and it wants #479's `exact` mode first so
   that honouring the chip does not cost the scope its precision.
   ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the

@@ -157,8 +157,17 @@ export type SourceScanMode = 'substring' | 'wordStart' | 'fuzzyToken';
  * rule in play is the stone's. ASCII-only apart from the user's term.
  */
 function fuzzyTokenScan(term: string, ignoreCase: boolean): string {
-  const fold = ignoreCase ? ' asLowercase' : '';
-  return `needle := '${escapeString(term)}'${fold}.
+  // The NEEDLE is folded once — it is a handful of characters. The SOURCE is folded
+  // one character at a time at the point of comparison, rather than `m sourceString
+  // asLowercase`, which allocated a fresh lowercased copy of every method body in the
+  // image inside a single doit. `classOrganizer.ts` documents that allocation shape
+  // producing AlmostOutOfMemoryError (6022), after which every other operation in the
+  // session reports a broken connection instead of its own error — a failure that
+  // surfaces far from its cause. Per-character folding costs nothing and allocates
+  // nothing.
+  const foldNeedle = ignoreCase ? ' asLowercase' : '';
+  const foldChar = ignoreCase ? 'ch asLowercase' : 'ch';
+  return `needle := '${escapeString(term)}'${foldNeedle}.
 methods := Array new.
 needle isEmpty ifFalse: [
   | seen |
@@ -171,7 +180,7 @@ needle isEmpty ifFalse: [
       | m src ni matched |
       m := cls compiledMethodAt: sel otherwise: nil.
       m ifNotNil: [
-        src := [m sourceString${fold}] on: Error do: [:e | ''].
+        src := [m sourceString] on: Error do: [:e | ''].
         ni := 1.
         matched := false.
         1 to: src size do: [:i |
@@ -180,7 +189,7 @@ needle isEmpty ifFalse: [
             ch := src at: i.
             (ch isAlphaNumeric or: [ch = $_])
               ifTrue: [
-                ch = (needle at: ni) ifTrue: [
+                ${foldChar} = (needle at: ni) ifTrue: [
                   ni := ni + 1.
                   ni > needle size ifTrue: [matched := true]]]
               ifFalse: [ni := 1]]].
@@ -218,12 +227,35 @@ methods := methods select: [:m |
  * is meaningless for 370 characters of source — so each is given the reading that
  * is useful there. GemStone Search owns that mapping; see `sourceProvider`.
  */
+/**
+ * A term fuzzy-token matching can actually answer: one identifier's worth of characters.
+ *
+ * The fuzzy scan advances its needle only while walking identifier characters and resets
+ * at anything else, so a term carrying a `:`, a space or punctuation can never match ANY
+ * method — `printOn:`, `at:put:` or a phrase like `no such element` come back silently
+ * empty, where substring finds them. Silent is the worst shape: the reader concludes the
+ * text is not in the image.
+ *
+ * Stripping the offending characters does not rescue it, because the SOURCE token is
+ * broken at the colon too — `atput` cannot span `at:put:` any more than `at:put:` can.
+ * The per-identifier reading simply does not apply to a term that is not an identifier,
+ * so such a term runs as a substring instead. Fuzzy still means fuzzy everywhere it can.
+ */
+const IDENTIFIER_ONLY = /^[A-Za-z0-9_]+$/;
+
+/** The scan a term will really run under, after the fallback above. Exported so the UI can
+ *  say which mode answered rather than leaving a silently-downgraded search unexplained. */
+export function effectiveScanMode(term: string, mode: SourceScanMode): SourceScanMode {
+  return mode === 'fuzzyToken' && !IDENTIFIER_ONLY.test(term) ? 'substring' : mode;
+}
+
 export function searchMethodSource(
   execute: QueryExecutor,
   term: string,
   ignoreCase: boolean,
-  mode: SourceScanMode = 'substring',
+  requestedMode: SourceScanMode = 'substring',
 ): MethodSearchResult[] {
+  const mode = effectiveScanMode(term, requestedMode);
   const needsNeedle = mode !== 'substring';
   const engineScan = `results := ${classOrganizerExpr(0)}
   substringSearch: '${escapeString(term)}' ignoreCase: ${ignoreCase}.

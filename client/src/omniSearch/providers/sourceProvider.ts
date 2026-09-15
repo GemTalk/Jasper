@@ -21,6 +21,10 @@
  *                     it means what the chip means everywhere else (fuzzy over a NAME), applied
  *                     to the names the body mentions. It is the one mode that cannot use the
  *                     engine's substring scan, since a subsequence is not a substring.
+ *                     A term that cannot BE an identifier — one carrying a space, a colon or
+ *                     punctuation — has no per-identifier reading, and would match nothing at
+ *                     all rather than approximately; those fall back to substring. See
+ *                     `effectiveScanMode` in methodSearch.ts.
  */
 import { MethodSearchResult, SourceScanMode } from '../../queries/methodSearch';
 import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
