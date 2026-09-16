@@ -12,7 +12,11 @@ pre-commit:
       run: npx --no cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint {staged_files}
     - name: prettier
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx --no prettier --check {staged_files}
+      # `--` separates npx's own flags from prettier's: without it, npm 11's
+      # arg parser swallows `--check` as an unrecognized npm cli config
+      # instead of forwarding it, so prettier silently runs in its default
+      # "print reformatted source to stdout" mode and the check never happens.
+      run: npx --no -- prettier --check {staged_files}
 
 post-checkout:
   jobs:
