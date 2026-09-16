@@ -212,6 +212,16 @@ describe('SUnit non-blocking runs (integration)', () => {
     // the unit test replaces.
     installSlowTest();
 
+    // The ORDER of the breaks, though, needs no clock, so it is still observed
+    // here — and the real break still goes through, since a stubbed GCI cannot
+    // fault. It also puts the branch that ran into the CI log.
+    const sent: boolean[] = [];
+    const realBreak = gci.GciTsBreak.bind(gci);
+    const breaks = vi.spyOn(gci, 'GciTsBreak').mockImplementation((h, hard) => {
+      sent.push(hard);
+      return realBreak(h, hard);
+    });
+
     // Tracked as a flag rather than by testing `originalFailure` for truthiness:
     // a block that throws a falsy value (an undefined rejection, an empty
     // string) would otherwise read as a pass here and let the drain's error be
@@ -224,12 +234,24 @@ describe('SUnit non-blocking runs (integration)', () => {
       cancel(); // hard, deferred internally past the safety gap — never slept for here
 
       expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
+
+      // Both legal endings named in one assertion rather than asserted inside a
+      // conditional: either the gem serviced the soft break before the deferred
+      // hard one came due, or it did not and the hard break went out. Anything
+      // else — a hard break with no soft one before it, a repeat — is a real
+      // regression on a live library.
+      expect(['soft', 'soft,hard']).toContain(sent.map((h) => (h ? 'hard' : 'soft')).join(','));
     } catch (err) {
       gestureFailed = true;
       originalFailure = err;
+    } finally {
+      // Restored even on failure: the spy is on the shared library object and
+      // there is no global restoreMocks, so a leaked one would follow every
+      // later test in this file.
+      breaks.mockRestore();
     }
 
-    // Unconditional, and outside the try above: an abandoned hard-break GciTsNb
+    // Unconditional, and outside the try/finally above: an abandoned hard-break GciTsNb
     // op left on the session would otherwise fail every later test in this file
     // via assertCommitGuardIsStillArmed, burying the one real failure.
     try {
