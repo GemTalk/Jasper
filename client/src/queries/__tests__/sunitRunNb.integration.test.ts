@@ -265,6 +265,14 @@ describe('SUnit non-blocking runs (integration)', () => {
       // On the happy path a drain failure is itself the real bug and must
       // surface normally.
       if (!gestureFailed) throw drainErr;
+
+      // Demoted, not discarded. The gesture may have failed for something
+      // trivial (a legal ending missing from STOPPED_ENDINGS) while this one
+      // says drainAbandonedCall itself regressed — the more serious signal of
+      // the two. A non-Error gesture failure can't carry a cause, hence the
+      // fallback.
+      if (originalFailure instanceof Error) originalFailure.cause = drainErr;
+      else console.warn('sunitRunNb: drain failed after the gesture failed:', drainErr);
     }
 
     if (gestureFailed) throw originalFailure;
