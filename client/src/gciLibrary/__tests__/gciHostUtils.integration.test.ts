@@ -47,12 +47,12 @@ describe('GCI host utilities (integration)', () => {
 
   describe('GciHostMilliSleep', () => {
     it('sleeps for at least about the requested duration', () => {
-      const start = Date.now();
+      const start = performance.now();
 
       gci.GciHostMilliSleep(50);
 
       // Some tolerance: the host clock's resolution can under-report a sleep.
-      expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+      expect(performance.now() - start).toBeGreaterThanOrEqual(40);
     });
   });
 
