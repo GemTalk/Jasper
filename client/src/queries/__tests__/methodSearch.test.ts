@@ -293,11 +293,25 @@ describe('referencesToObject', () => {
     expect(code).toContain("objectNamed: #'MyGlobal'");
   });
 
+  it('answers nothing for a name the symbol list does not bind', () => {
+    // objectNamed: answers nil for an unbound name, and `referencesToObject: nil` is a
+    // real question with a useless answer — references to nil, reported as though they
+    // were references to the global. The MCP find_references_to tool takes its name from
+    // a model, so an invented global is an ordinary input, not an edge case.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'NoSuchGlobal');
+
+    expect(execute.mock.calls[0][0]).toContain("obj isNil ifTrue: [^ '']");
+  });
+
   it('scopes the organizer to the environment, not just the serialization', () => {
     // The organizer gathers its classes under one environment, so a hardwired 0 here
     // answered environment-0 references however high an environment the caller asked
-    // about — and every caller sweeping 0..maxEnvironment paid for a full image scan
-    // per environment to get that same answer back each time.
+    // about. A sweep did not pay for a scan per environment — the organizer is cached
+    // per environment key, so every pass hit the same cached one — it collected the
+    // same environment-0 answer N times under N different environment stamps, which
+    // dedupeMethodResults keys on and so could not fold together.
     const execute = vi.fn<QueryExecutor>(() => '');
 
     referencesToObject(execute, 'MyGlobal', 2);
@@ -315,7 +329,9 @@ describe('referencesToObject', () => {
 
     referencesToObject(execute, 'MyGlobal');
 
-    expect(execute.mock.calls[0][0]).toContain('asArray');
+    // Anchored to the send under test, so an `asArray` elsewhere in the doit cannot
+    // satisfy it.
+    expect(execute.mock.calls[0][0]).toMatch(/referencesToObject: obj\) asArray/);
   });
 });
 

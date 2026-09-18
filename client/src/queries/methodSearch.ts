@@ -376,19 +376,35 @@ ${methodSerialization(environmentId)}`;
 // The environment goes on the ORGANIZER, not just on the serialization: an
 // organizer gathers its classes under one environment, so a hardwired 0 here
 // answered environment-0 references however high an environment the caller
-// asked about — and each of the callers sweeping 0..maxEnvironment paid for a
-// full image scan per environment to get that same answer back every time.
+// asked about.
+//
+// What that cost the callers sweeping 0..maxEnvironment was NOT repeated scanning —
+// classOrganizerExpr caches per environment key, so every iteration of such a sweep asked
+// for JasperClassOrganizer_0 and hit the cache after the first. It was the same
+// environment-0 answer N times, each pass stamping it with a different environment, and
+// dedupeMethodResults keys on the environment — so the rows did not fold together and the
+// same method appeared once per environment, every copy above 0 opening nothing.
+//
+// Scoping the organizer is the only way to the right answer, but it is a cost, not a
+// saving: a sweep now builds and RETAINS maxEnvironment + 1 organizers in SessionTemps,
+// which is the allocation shape classOrganizer.ts documents as able to reach
+// AlmostOutOfMemoryError and take the gem with it.
+//
 // Compare referencesToClassInDict, which resolves the class by identity through
 // a named dictionary rather than taking the first binding of the name anywhere
-// in the symbol list.
+// in the symbol list — and which guards its lookup, as this one now does. An unbound
+// name answers nil, and `referencesToObject: nil` is a real question with a useless
+// answer; the MCP find_references_to tool takes its name from a model, where an
+// invented global is entirely likely.
 export function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
   environmentId: number = 0,
 ): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl |
-methods := (${classOrganizerExpr(environmentId)} referencesToObject:
-  (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')) asArray.
+  const code = `| obj methods stream limit classDict sl |
+obj := System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}'.
+obj isNil ifTrue: [^ ''].
+methods := (${classOrganizerExpr(environmentId)} referencesToObject: obj) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
