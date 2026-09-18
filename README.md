@@ -40,7 +40,7 @@ To install, manage, and run a GemStone server locally:
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
-4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone release from its Versions list.
+4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone version from its Versions list.
 5. Click **New Database** in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
@@ -74,17 +74,17 @@ Versions live in the **Databases & Versions** panel, opened with **Manage Databa
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
-The panel header carries **Install Version…**, which lists the releases you do not yet have. A release you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
+The panel header carries **Install Version…**, which lists the versions you do not yet have. A version you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
 
 On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone version, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed version, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
-A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone release from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record. The same distinction holds in the sidebar, where a registered row offers Unregister rather than Delete, and neither **Replace Extent** nor the extent backups, which reach for files the installation owns. On Windows the product directory has to be one inside WSL (a `\\wsl$\<distro>\…` path in the folder dialog) — GemStone has no Windows build, so a tree on the Windows side is refused with that reason.
+A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone version from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record. The same distinction holds in the sidebar, where a registered row offers Unregister rather than Delete, and neither **Replace Extent** nor the extent backups, which reach for files the installation owns. On Windows the product directory has to be one inside WSL (a `\\wsl$\<distro>\…` path in the folder dialog) — GemStone has no Windows build, so a tree on the Windows side is refused with that reason.
 
 Each database node expands to show:
 
@@ -130,9 +130,13 @@ Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted
 
 A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
-### MCP Server view
+### MCP Server
 
-The **MCP Server** view shows which Jasper window is currently serving MCP tool calls, the active session it's bound to, the socket path, and the HTTPS URL when available. Click **Socket:** or **HTTPS:** to copy the value to the clipboard. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
+Jasper can serve MCP tool calls so Claude Code and Claude Desktop work directly against your GemStone session. Only one VS Code window serves it at a time — the socket is machine-wide — and it runs against the **active session of whichever window owns the server**.
+
+Because that is a fact about the *window*, it is reported where there is one per window. The **Databases** section header reads `MCP: this window`, `MCP: other window` or `MCP: unclaimed` at a glance, and its plug button opens the **MCP Server** tab (`GemStone: Show MCP Server`), which is the one place to see and change everything: the session being served, the socket path and HTTPS endpoint (click either to copy), **Claim MCP Server**, **Stop MCP**, **Refresh** — and, when another window holds the server, that window's name as its title bar shows it, its workspace, pid and session — with the path clickable to switch to that window where doing so would actually reach it (an extension cannot focus another window directly; opening its folder is the only lever, so the jump is withheld, with the reason, where the folder does not identify the window). Each value carries the sentence that explains it, rather than hiding it on a tooltip the way the old pane had to. Taking the server over is **Ask It to Release**, which needs no navigation at all: it has the owning window let go and then claims here — a bound socket is only ever released by its owner, and the old MCP pane had no way to release at all. If that window is running a Jasper too old to answer, you get a timeout rather than a hang, and can open it and use **Stop MCP**. In **Logins & Sessions**, the session actually being served is marked `· MCP`.
+
+`GemStone: Show MCP Server`, `Claim MCP Server`, `Stop MCP Server`, `Ask the Other Window to Release MCP`, `Copy MCP Server URL`, `Copy MCP Socket Path`, `Install MCP TLS Certificate` and `Open MCP Inspector` are in the Command Palette. Turn the whole thing off with the **`jasper.mcp.enabled`** setting — no socket, no HTTPS listener, no client configuration written, and those commands leave the UI rather than failing when used. The MCP Server tab stays available even then, since it is what tells you MCP is off. See the [MCP Server design doc](docs/mcp-server.md) for the full picture.
 
 ## IDE Features
 
@@ -153,6 +157,8 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
+
+The session Claude Code and Claude Desktop run their GemStone tools against is marked `· MCP` in its description — see [MCP Server](#mcp-server), which is set up from the **Databases** header rather than from a session row, since it belongs to the window.
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
@@ -191,7 +197,7 @@ Long-running expressions show a progress notification with soft-break and hard-b
 
 ### GemStone Explorer
 
-The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Actions & Navigation**, **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. **Class Categories** and **Hierarchy** start collapsed, so the panes that are open have room to be resized. **Actions & Navigation** sits at the top: a row of the controls you reach for while developing — **Go Back**, **Go Forward**, **Recent Locations**, **Clear Navigation History**, **Refresh**, **Commit**, **Abort**, a full-locations/selectors-only toggle for the list, and **Open Workspace** — over a line naming where you are now and the trail of the methods you have been reading. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Actions & Navigation**, **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. **Class Categories** and **Hierarchy** start collapsed, so the panes that are open have room to be resized. A pane you collapse stays collapsed: navigating — **Go Back** / **Go Forward**, a trail row, a GemStone Search hit, Go to Definition, clicking a class in **Hierarchy**, a jump from the Inspector or the debugger — highlights rows in the panes that are open and never re-opens one that is not, and when you do open it again it is already sitting on the right row. Asking to be taken somewhere specific still opens the pane that holds it, such as a GemStone Search result on a dictionary or a class category. **Actions & Navigation** sits at the top: a row of the controls you reach for while developing — **Go Back**, **Go Forward**, **Recent Locations**, **Clear Navigation History**, **Refresh**, **Commit**, **Abort**, a full-locations/selectors-only toggle for the list, **Open Workspace** and **Undo** — over a line naming where you are now and the trail of the methods you have been reading. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
 
 Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way. A single click previews a method in one reusable tab, so clicking another replaces it — double-click a method (or use **Keep Method Open**) to keep it open while you browse others.
 
@@ -232,7 +238,7 @@ Context menu operations include:
 
 ### Object Inspector
 
-**Inspect It** opens an object in the **Inspector**, an editor tab beside your code. It presents the object as tabs — **Slots** for named instance variables (click the **Name** column to sort alphabetically or by the class's declaration order), **Items** or **Entries** for what a collection or dictionary holds (paginated for large ones), the full **Print** string, **Bytes** for byte objects — a dump headed by its columns, showing the index each line starts at, in hex or decimal — **Meta** for the class behind it — name, superclass, package and OOP, over sub-tabs for instance methods, class methods, definition and comment, matching the Enhanced Inspector's own Meta tab — and **Evaluate** to run an expression with the object bound to `self`, on the editor's own `Ctrl+K` `D`/`E`/`I` for Display, Execute and Inspect It, with the names in scope listed beside it — grouped by the class that declares them, and the receiver's own size for a collection — to click in or copy. The editor tab is named as Jadeite captions its inspector: the class, plus a character or byte count for a String or ByteArray. A paged tab offers **Load all** beside **Load more**; because each page is a round trip that holds the session, one **Load all** click reads 5,000 rows and then says so — click again for the next 5,000, or click the setting named in that note, `gemstone.inspector.loadAllPageLimit`, to open it and read more per click. Double-click a row to open that object in a new column to the right, so the trail you followed stays on screen; a row's context menu also copies its printString or OOP, browses its class in the GemStone Explorer, and edits its value in place. Inspecting the same global again from the Explorer's **Globals** view focuses the Inspector already open on it rather than opening a second tab for it.
+**Inspect It** opens an object in the **Inspector**, an editor tab beside your code. It presents the object as tabs — **Slots** for named instance variables (click the **Name** column to sort alphabetically or by the class's declaration order), **Items** or **Entries** for what a collection or dictionary holds (paginated for large ones), the full **Print** string, **Bytes** for byte objects — a dump headed by its columns, showing the index each line starts at, in hex or decimal — **Meta** for the class behind it — name, superclass, class category and OOP, over sub-tabs for instance methods, class methods, definition and comment, matching the Enhanced Inspector's own Meta tab, where right-clicking a selector offers **Browse Method** to open it in the GemStone Explorer — and **Evaluate** to run an expression with the object bound to `self`, on the editor's own `Ctrl+K` `D`/`E`/`I` for Display, Execute and Inspect It, with the names in scope listed beside it — grouped by the class that declares them, and the receiver's own size for a collection — to click in or copy. The editor tab is named as Jadeite captions its inspector: the class, plus a character or byte count for a String or ByteArray. A paged tab offers **Load all** beside **Load more**; because each page is a round trip that holds the session, one **Load all** click reads 5,000 rows and then says so — click again for the next 5,000, or click the setting named in that note, `gemstone.inspector.loadAllPageLimit`, to open it and read more per click. Double-click a row to open that object in a new column to the right, so the trail you followed stays on screen; a row's context menu also copies its printString or OOP, browses its class in the GemStone Explorer, and edits its value in place. Inspecting the same global again from the Explorer's **Globals** view focuses the Inspector already open on it rather than opening a second tab for it.
 
 #### Enhanced Inspector
 
@@ -252,14 +258,24 @@ Installing the support does not by itself change what **Inspect It** opens. The 
 
 ### Debugging
 
-When code execution hits an error, a **Debug** button opens the VS Code debugger with:
+When code execution hits an error, a **Debug** button opens the GemStone
+Debugger — a Smalltalk-style panel in its own editor column, with the frame's
+source in the pane directly below it:
 
 - Full stack trace with `ClassName >> #selector` frame names
-- Click any frame to view its method source
-- **Arguments & Temps** and **Receiver** variable scopes with drill-down
-- Step Over, Step Into, Step Out, and Continue
-- Restart Frame support
-- Evaluate expressions in the Debug Console in any frame context
+- The top frame's source opens with the debugger; selecting another frame swaps it
+- **Receiver**, **Instance variables** and **Arguments & Temps** panes, with
+  drill-down into any value and single-level revert of an edited slot
+- Step Over, Step Into, Step Through, Restart Frame, Run to Cursor and Resume
+- Evaluate an expression in any frame's context, and see values inline in the source
+- Save the source pane to recompile and re-enter the method (edit-and-continue)
+- Right-click a frame to **Browse** it — the GemStone Explorer cascades to the
+  class the running method is defined in and opens that method
+
+The older VS Code (DAP) debugger has not been removed — the `gemstone` debug
+type is still registered — but nothing offers it any more, and it is not a route
+you can take from the Run and Debug view: attaching needs the GCI session id and
+the suspended process's OOP, which only a halt knows. Treat it as dormant.
 
 ### Breakpoints
 

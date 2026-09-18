@@ -6,11 +6,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "vscode-languageserver": "^10.1.0",
+    "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14"
   },
   "devDependencies": {
-    "vitest": "^4.1.11",
+    "vitest": "^5.0.0",
     "esbuild": "^0.28.2"
   }
 }

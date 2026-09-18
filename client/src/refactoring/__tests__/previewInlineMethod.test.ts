@@ -57,7 +57,7 @@ describe('inline-method query builders', () => {
   it('applies a preview passing the deselected ids', async () => {
     const exec = asyncExec();
 
-    const code = await applyInlineMethod(exec, 'tok', ['2']);
+    const code = await applyInlineMethod(exec, 'tok', ['2'], 'test undo');
 
     expect(code).toContain("applyForToken: 'tok'");
     expect(code).toContain("deselected: #('2')");

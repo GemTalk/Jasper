@@ -10,7 +10,9 @@ vi.mock('../../browserQueries', () => ({
 }));
 
 import * as vscode from 'vscode';
+import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
 import * as queries from '../../browserQueries';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import { ExplorerController, MethodCategoryItem, MethodItem } from '../../gemstoneExplorer';
 import { ALL_METHODS_CATEGORY } from '../../systemBrowser';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
@@ -18,10 +20,13 @@ import type { EnvCategoryLine } from '../../browserQueries';
 
 // A minimal five-pane views mock; only the Methods view's reveal/selection are
 // exercised, but setViews() → syncTitles() writes a description to each pane.
+// Every pane reports itself visible: a cascade reveal is skipped while its pane
+// is closed, so a collapsed stub would silently swallow the reveals asserted here.
 function makeViews() {
   const pane = () => ({
     description: '',
     reveal: vi.fn((_node?: unknown) => Promise.resolve()),
+    visible: true,
     selection: [] as unknown[],
   });
   const method = pane();
@@ -65,6 +70,7 @@ const openTextDocument = vi.mocked(vscode.workspace.openTextDocument);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetConfig();
   vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
   vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
   vi.mocked(queries.removeCategory).mockReturnValue('ok');
@@ -94,6 +100,86 @@ describe('ExplorerController.newMethodCategory', () => {
 
     expect(ctl.methodCategories(true).some((c) => c.category === 'printing')).toBe(true);
     expect(ctl.methodCategories(false).some((c) => c.category === 'printing')).toBe(false);
+  });
+
+  // Creating a category also raises an "undoable" toast offering to put it back, which is a
+  // separate notice with its own reason to exist — so these two cases match on the grouping
+  // repair's own wording rather than counting every information message.
+  const groupingNotices = (
+    info: ReturnType<typeof vi.mocked<typeof vscode.window.showInformationMessage>>,
+  ): unknown[][] =>
+    info.mock.calls.filter((c) => String(c[0]).includes("Don't Group Methods by Category"));
+
+  // With grouping off the pane renders selectors only, so there are no category
+  // rows — the reveal had nothing to land on, rejected, and the rejection was
+  // swallowed. The name was never actually lost (turning grouping back on showed
+  // it), but on screen creating a category did nothing whatsoever.
+  it('turns grouping back on so the category it just made is visible', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const { ctl, methodView } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+
+    const setGrouping = vi.spyOn(ctl, 'setGroupMethodsByCategory');
+
+    await ctl.newMethodCategory(false);
+
+    expect(setGrouping).toHaveBeenCalledWith(true);
+    expect(ctl.groupMethodsByCategory()).toBe(true);
+    expect(methodView.reveal).toHaveBeenCalledTimes(1);
+    const revealed = methodView.reveal.mock.calls[0][0] as MethodCategoryItem;
+    expect(revealed.category).toBe('accessing');
+    // And the category itself is there, as it always was.
+    expect(ctl.methodCategories(false).some((c) => c.category === 'accessing')).toBe(true);
+  });
+
+  // The switch writes a GLOBAL preference, so a user who deliberately turned grouping
+  // off has it changed for every workspace from now on. Doing that in silence is
+  // indistinguishable from a bug — the pane just looks different and stays that way —
+  // so the repair names itself, and names the toggle that undoes it.
+  it('says so when it turns grouping back on', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(groupingNotices(info)).toHaveLength(1);
+    const said = String(groupingNotices(info)[0][0]);
+    expect(said).toContain('accessing');
+    expect(said).toContain("Don't Group Methods by Category");
+  });
+
+  it('says nothing about grouping when the pane was already grouped', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', true);
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValue('accessing');
+    const info = vi.mocked(vscode.window.showInformationMessage);
+    info.mockClear();
+
+    await ctl.newMethodCategory(false);
+
+    expect(groupingNotices(info)).toHaveLength(0);
+  });
+
+  // The switch is a repair for an unusable pane state, not a preference the command
+  // owns: with grouping already on there is nothing to fix, so it must not write the
+  // setting at all.
+  it('leaves the grouping preference alone when the pane is already grouped', async () => {
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', true);
+    const { ctl } = makeController();
+    // Spied on the controller, not on getConfiguration().update: the vscode mock
+    // hands back a fresh config object (and a fresh update mock) per call, so an
+    // assertion on that mock would be watching a function the controller never
+    // touched and would pass whatever the code did.
+    const setGrouping = vi.spyOn(ctl, 'setGroupMethodsByCategory');
+    showInputBox.mockResolvedValue('accessing');
+
+    await ctl.newMethodCategory(false);
+
+    expect(setGrouping).not.toHaveBeenCalled();
+    expect(ctl.groupMethodsByCategory()).toBe(true);
   });
 
   it('does nothing when the name prompt is cancelled', async () => {
@@ -158,6 +244,184 @@ describe('ExplorerController.renameMethodCategory', () => {
     await ctl.renameMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
     expect(queries.renameCategory).not.toHaveBeenCalled();
+  });
+
+  it('records a server rename, so it can be renamed back (#434)', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', ['bar'])]);
+    showInputBox.mockResolvedValue('renamed-accessing');
+
+    await ctl.renameMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      before: 'accessing',
+      after: 'renamed-accessing',
+      slot: { className: 'M4Demo', isMeta: false, dict: 3 },
+    });
+  });
+
+  it('records a still-empty category too, so the rename LOOKS undoable like any other', async () => {
+    // It exists only in the overlay, but the user renamed something and it stayed renamed;
+    // which side of the wire that happened on is not theirs to keep track of.
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('class method category');
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('renamed category');
+
+    await ctl.renameMethodCategory(new MethodCategoryItem(true, 'class method category', false));
+
+    expect(queries.renameCategory).not.toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      before: 'class method category',
+      after: 'renamed category',
+      slot: { className: 'M4Demo', isMeta: true },
+    });
+  });
+});
+
+describe('ExplorerController.newMethodCategory — undo', () => {
+  it('records the create, so a new category looks as undoable as anything else', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('  tests  ');
+
+    await ctl.newMethodCategory(true);
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      label: "Create category 'tests' in M4Demo class",
+      // null `before` is what makes the reversal a removal rather than a rename.
+      before: null,
+      after: 'tests',
+      slot: { className: 'M4Demo', isMeta: true, dict: 3 },
+    });
+  });
+
+  it('records nothing when the prompt is cancelled or empty', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce(undefined);
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('   ');
+    await ctl.newMethodCategory(true);
+
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+});
+
+describe('ExplorerController.removeOverlayMethodCategory', () => {
+  const slot = (isMeta = true) => ({ className: 'M4Demo', isMeta, dict: 3 });
+
+  it('takes a still-empty category back out of the overlay', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.removeOverlayMethodCategory(slot(), 'fresh')).toBe('ok');
+
+    expect(ctl.methodCategories(true).map((c) => c.category)).not.toContain('fresh');
+  });
+
+  it('clears a selection that pointed at the row it just removed', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+    ctl.state.selectedIsMeta = true;
+    ctl.state.selectedMethodCategory = 'fresh';
+
+    ctl.removeOverlayMethodCategory(slot(), 'fresh');
+
+    expect(ctl.state.selectedMethodCategory).toBeUndefined();
+  });
+
+  it('answers not-listed when the pane has moved to another class', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(
+      ctl.removeOverlayMethodCategory({ ...slot(), className: 'SomeOtherClass' }, 'fresh'),
+    ).toBe('not-listed');
+  });
+
+  it('answers not-listed for a category the overlay never had', () => {
+    const { ctl } = makeController();
+
+    expect(ctl.removeOverlayMethodCategory(slot(), 'never-existed')).toBe('not-listed');
+  });
+
+  it('keeps the two sides apart', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true); // class side
+
+    expect(ctl.removeOverlayMethodCategory(slot(false), 'fresh')).toBe('not-listed');
+  });
+});
+
+describe('ExplorerController.renameOverlayMethodCategory', () => {
+  const slot = (isMeta = true) => ({ className: 'M4Demo', isMeta, dict: 3 });
+
+  it('renames a still-empty category back in the overlay', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'fresher')).toBe('ok');
+
+    const names = ctl.methodCategories(true).map((c) => c.category);
+    expect(names).toContain('fresher');
+    expect(names).not.toContain('fresh');
+  });
+
+  it('answers not-listed when the pane has moved to another class', async () => {
+    // The overlay is discarded whenever the browsed class changes, so an entry easily
+    // outlives the category it describes. That is not a failure.
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(
+      ctl.renameOverlayMethodCategory({ ...slot(), className: 'SomeOtherClass' }, 'fresh', 'x'),
+    ).toBe('not-listed');
+  });
+
+  it('answers not-listed for a category the overlay never had', () => {
+    const { ctl } = makeController();
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'never-existed', 'x')).toBe('not-listed');
+  });
+
+  it('answers collision when another fresh category has taken the name', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('taken');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'taken')).toBe('collision');
+  });
+
+  it('answers collision when a REAL category has taken the name', async () => {
+    // Two rows with one name is the same problem whichever side it came from.
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(true, 'real-one', ['make'])]);
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'real-one')).toBe('collision');
+  });
+
+  it('keeps the two sides apart', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true); // class side
+
+    expect(ctl.renameOverlayMethodCategory(slot(false), 'fresh', 'x')).toBe('not-listed');
   });
 });
 

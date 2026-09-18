@@ -1,5 +1,6 @@
 import { QueryExecutor } from './types';
 import { splitLines, dictLookupExpr } from './util';
+import { hasRealCommentExpr } from './classCommentPresence';
 
 export interface ClassCategoryEntry {
   className: string;
@@ -14,21 +15,15 @@ export interface ClassCategoryEntry {
 // Classes whose category is nil/empty are reported under 'as yet unclassified'.
 //
 // Each entry also reports whether the class carries a real comment, so the
-// Explorer can withhold the comment button on classes that have none (#387 item
-// 11). The test is the `#comment` key in the class's extra dict, NOT `Class>>
-// comment`: since 3.1 that accessor SYNTHESISES a placeholder ("No class-specific
-// documentation for X…", plus a rendered hierarchy) when the key is absent, so it
-// never returns nil or empty and cannot answer "is there a comment?". Reading the
-// key is also the cheaper of the two — measured at ~0.12µs per class, so adding it
-// to this existing per-class loop costs nothing noticeable even on a large
+// Explorer can withhold the comment button on classes that have none
+// ([#387](https://github.com/GemTalk/Jasper/issues/387)). The rule itself lives
+// in {@link hasRealCommentExpr} — reading the
+// `#comment` extra-dict key rather than `Class>>comment`, and counting
+// present-but-blank as none — because the file-system provider has to apply the
+// same rule when it decides what a comment document opens on. Reading the key is
+// also the cheaper of the two: measured at ~0.12µs per class, so adding it to
+// this existing per-class loop costs nothing noticeable even on a large
 // dictionary, and adds no round trip.
-//
-// Present-but-blank counts as NO comment. Emptying the editor and saving stores
-// `''` rather than removing the key, so a bare nil test kept offering a button that
-// opened an empty document — the very promise item 11 set out to stop making. The
-// test is "any non-whitespace character", not `isEmpty not`, because a save can
-// leave a lone newline behind (VS Code's insert-final-newline) and a comment of
-// pure whitespace is no more readable than none.
 export function getClassesWithCategory(
   execute: QueryExecutor,
   dict: number | string,
@@ -43,10 +38,7 @@ dict keysAndValuesDo: [:k :v |
     | cat cmt |
     cat := [v category] on: Error do: [:e | nil].
     (cat isNil or: [cat isEmpty]) ifTrue: [cat := 'as yet unclassified'].
-    cmt := [(v _extraDictAt: #comment)
-              ifNil: [false]
-              ifNotNil: [:c | (c detect: [:ch | ch isSeparator not] ifNone: [nil]) notNil]]
-            on: Error do: [:e | false].
+    cmt := ${hasRealCommentExpr('v')}.
     ws nextPutAll: cat asString; tab;
        nextPutAll: (cmt ifTrue: ['1'] ifFalse: ['0']); tab;
        nextPutAll: k; lf]].

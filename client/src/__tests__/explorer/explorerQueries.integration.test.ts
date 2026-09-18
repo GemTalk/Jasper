@@ -165,11 +165,14 @@ describe('explorer queries (integration)', () => {
       expect(categoryOf(WIDGET)).toBe('JasperIt-Alpha');
     });
 
-    // #387 item 11 drives the class row's comment button off this flag, so what
-    // counts as "has a comment" has to be decided against a real class, not a
-    // mocked line of output: `Class>>comment` SYNTHESISES a placeholder when there
-    // is none, and `comment: ''` STORES the empty string rather than dropping the
-    // key. Both are engine behaviours a unit test cannot show.
+    // The class row's comment button is driven off this flag, so what counts as
+    // "has a comment" has to be decided against a real class, not a mocked line of
+    // output. Two engine behaviours a unit test cannot show: `Class>>comment`
+    // SYNTHESISES a placeholder when there is none, and the raw `comment: ''`
+    // message STORES the empty string rather than dropping the key — which is why
+    // setClassComment removes the key itself for an empty comment rather than
+    // sending that message.
+    // ([#387](https://github.com/GemTalk/Jasper/issues/387))
     const commentedOf = (className: string): boolean | undefined =>
       q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === className)
         ?.hasComment;
@@ -192,16 +195,22 @@ describe('explorer queries (integration)', () => {
       expect(commentedOf(WIDGET)).toBe(true);
     });
 
-    it('reports a comment emptied by the editor as uncommented', () => {
+    // Emptying the editor takes the key away, so the class is left exactly as it
+    // was found: `comment` goes back to answering the synthesised placeholder, and
+    // a file-out shows no comment rather than an empty one.
+    it('takes the comment away when the editor is emptied', () => {
       defineClass(WIDGET);
       q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
       q.setClassComment(session(), WIDGET, '', userIndex());
 
-      // The key survives the emptying — a nil test would still answer "commented".
       expect(
-        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) notNil printString`).trim(),
+        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) isNil printString`).trim(),
       ).toBe('true');
       expect(commentedOf(WIDGET)).toBe(false);
+      // Back to the placeholder — which is what an uncommented class answers.
+      expect(exec(`(UserGlobals at: #'${WIDGET}') comment isEmpty printString`).trim()).toBe(
+        'false',
+      );
     });
 
     it('reports a whitespace-only comment as uncommented', () => {
@@ -209,6 +218,14 @@ describe('explorer queries (integration)', () => {
       // What a save can leave behind after the text is deleted (insert-final-newline).
       q.setClassComment(session(), WIDGET, '\n', userIndex());
 
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    // Emptying an already-uncommented class removes a key that was never there.
+    it('does nothing when a class with no comment is saved empty', () => {
+      defineClass(WIDGET);
+
+      expect(q.setClassComment(session(), WIDGET, '', userIndex())).toContain('Comment set:');
       expect(commentedOf(WIDGET)).toBe(false);
     });
   });
@@ -297,6 +314,105 @@ describe('explorer queries (integration)', () => {
 
       expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
       expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('CREATES a category the class does not have yet, rather than refusing', () => {
+      // The Explorer's "+ new category" leaves the stone untouched until something is
+      // filed there, so dropping a method on one of those rows targets a category that
+      // does not exist yet: bare `moveMethod:toCategory:` answers classErrMethCatNotFound.
+      defineWidget();
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('fresh-category');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'fresh-category');
+
+      expect(selectorsIn(WIDGET, false, 'fresh-category')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('does not fall over on a category that IS already there', () => {
+      // `addCategory:` raises classErrMethCatExists on one that exists, so it is guarded.
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'baz ^0');
+
+      expect(q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated').trim()).toBe('ok');
+    });
+
+    it('moves back into a category a RENAME emptied out of existence', () => {
+      // The exact sequence that failed in the Explorer: rename `accessing` away, which
+      // takes its methods AND the category itself with it, then create a fresh `accessing`
+      // with the "+" button (client overlay only) and drag a method into it. The target
+      // category has a familiar name but no server existence at all.
+      defineWidget();
+      q.renameCategory(session(), WIDGET, false, 'accessing', 'accessing-renamed');
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'accessing');
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing-renamed')).not.toContain('bar');
+    });
+
+    it('creates the category on the CLASS side when that is the side being moved', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'building');
+
+      expect(selectorsIn(WIDGET, true, 'building')).toContain('make');
+      // The instance side is left alone — the two sides have separate category lists.
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('building');
+    });
+  });
+
+  describe('removeMethodCategory', () => {
+    it('removes an empty category', () => {
+      defineWidget();
+      // Emptied by moving its one method away — the category itself survives that.
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'elsewhere');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('ok');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+    });
+
+    it('REFUSES a category that holds methods, and leaves them alone', () => {
+      // The fact the guard exists for: GemStone's `removeCategory:` does not refuse a
+      // category with methods in it, it deletes them along with the category. Pinned here so
+      // it cannot change underneath the undo that relies on being told first.
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('holds:1');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('bare removeCategory: really does take the methods with it', () => {
+      // The unguarded behaviour, stated outright so the guard above reads as necessary
+      // rather than defensive.
+      defineWidget();
+
+      exec(`(UserGlobals at: #'${WIDGET}') removeCategory: 'accessing'. 'ok'`);
+
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') includesSelector: #bar) printString`).trim(),
+      ).toBe('false');
+    });
+
+    it('answers not-found rather than raising on a category the class does not have', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'no-such-category').trim()).toBe(
+        'not-found',
+      );
+    });
+
+    it('keeps the two sides apart', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, true, 'accessing').trim()).toBe('not-found');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
     });
   });
 

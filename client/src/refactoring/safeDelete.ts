@@ -263,7 +263,12 @@ export async function decideSafeDelete(
 /** Report a deletion the user was never asked about, so it does not happen invisibly.
  *  Only for the `silent` decision — a confirmed deletion already had the user's attention. */
 export function announceSilentDelete(target: SafeDeleteTarget): void {
-  void vscode.window.showInformationMessage(
-    `Removed ${target.kind} ${target.label} — ${target.silentNote ?? 'nothing referenced it'}.`,
-  );
+  void vscode.window.showInformationMessage(silentDeleteMessage(target));
+}
+
+/** The same sentence, for a caller that has its own notice to put it on — a deletion that is
+ *  also UNDOABLE says both things at once rather than stacking two notices for one action, and
+ *  only `notifyUndoable` can carry the button (#434). */
+export function silentDeleteMessage(target: SafeDeleteTarget): string {
+  return `Removed ${target.kind} ${target.label} — ${target.silentNote ?? 'nothing referenced it'}.`;
 }

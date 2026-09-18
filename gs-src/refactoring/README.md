@@ -53,6 +53,7 @@ the filename, so the class list *is* the file list:
 | `GsRefactoringEnvironment.class.st` | `GsRefactoringEnvironment` — read-only queries over the whole symbol list |
 | `GsRefactoringChange.class.st` | `GsRefactoringChange` — one addressable change (a method recompile or class-definition edit) |
 | `GsRefactoringChangeSet.class.st` | `GsRefactoringChangeSet` — a non-committing set of changes the client previews |
+| `GsRefactoringUndo.class.st` | `GsRefactoringUndo` — the undo record for the last applied refactoring, and the executor that reverses it |
 | `GsRenameInstanceVariableRefactoring.class.st` | `GsRenameInstanceVariableRefactoring` — the rename-ivar refactoring itself |
 
 Each class carries a doc comment at the top of its file; read those for the

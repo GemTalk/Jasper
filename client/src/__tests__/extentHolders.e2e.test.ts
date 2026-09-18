@@ -48,7 +48,7 @@ const NO_PROBE = NOT_POSIX || ['fuser', 'lsof'].filter(toolAvailable).length ===
 /** The production probe, run for real: `fuser` first, `lsof` as the fallback. */
 function findHolders(extent: string) {
   for (const probe of [`fuser "${extent}"`, `lsof -n -P -w -t -- "${extent}"`]) {
-    let pids: number[] = [];
+    let pids: number[];
     try {
       pids = parseHolderPids(
         execFileSync('sh', ['-c', `${probe} 2>/dev/null || true`], { encoding: 'utf-8' }),

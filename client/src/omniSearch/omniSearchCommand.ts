@@ -169,8 +169,8 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
     ),
     createDictionariesProvider(session.id, () => getDictionaryNames(exec)),
     createGlobalsProvider(session.id, () => getAllGlobalNames(exec)),
-    createSourceProvider(session.id, (term, ignoreCase) =>
-      searchMethodSource(exec, term, ignoreCase),
+    createSourceProvider(session.id, (term, ignoreCase, mode) =>
+      searchMethodSource(exec, term, ignoreCase, mode),
     ),
     createLiteralsProvider(
       session.id,

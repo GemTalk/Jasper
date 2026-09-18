@@ -4,8 +4,9 @@
  * keyword part WITH the argument it binds and reorderable as a unit (▲/▼) — plus,
  * for M5, an "Add parameter" button (append a row with a new keyword part, a new
  * argument name, and a default-value spliced at senders) and a per-row Remove
- * control. Renaming a part, reordering arguments, adding a parameter, and removing an
- * (unused) parameter are therefore all direct row edits.
+ * control. Renaming a part, reordering arguments, adding a parameter, removing an
+ * (unused) parameter, and turning a unary selector into a one-argument keyword
+ * selector by typing a colon are therefore all direct row edits.
  *
  * A reused parameter keeps its own argument name (M5 does not rename reused args —
  * that is R5), so its argument is shown read-only; a newly-added parameter carries an
@@ -48,7 +49,11 @@ const removeControl =
   '<button class="remove" title="Remove this parameter (must be unused in the body)" tabindex="-1">&#10005; Remove</button>';
 
 /** A reused-parameter row: an editable keyword part and a read-only argument (M5
- *  keeps reused argument names). `hasArg` is false for a unary selector's sole part. */
+ *  keeps reused argument names). `hasArg` is false for a unary selector's sole part,
+ *  which therefore renders "(no argument)" and no `data-orig`. That is the row's
+ *  STARTING shape only: typing a colon in the part promotes it to the addRowTemplate
+ *  shape in the webview (see syncRowShape in changeSignatureEditorView.js), and
+ *  deleting the colon collapses it back. */
 function renderReusedRow(
   part: string,
   argName: string | undefined,
@@ -70,7 +75,9 @@ function renderReusedRow(
 
 /** The template row cloned by the webview when "Add parameter" is clicked: an
  *  editable keyword part, an editable new argument name, and a default-value input
- *  (the source spliced at every send site). `data-orig="0"` marks it a new parameter. */
+ *  (the source spliced at every send site). `data-orig="0"` marks it a new parameter.
+ *  Also the source of the argument-name and default inputs spliced into a unary row
+ *  when a colon is typed into it, so the two paths cannot drift apart. */
 function addRowTemplate(): string {
   return `<template id="addRowTemplate"><li class="kwrow" data-orig="0">
     ${reorderControls}
@@ -216,7 +223,7 @@ export function renderSignatureEditorHtml(opts: SignatureEditorHtmlOptions): str
     <p class="hint">${
       keyword
         ? 'Edit each keyword part in place; use ▲▼ to reorder (the argument moves with its keyword) and Remove to drop a parameter (it must be unused in the body). Add a parameter with the button below; each added parameter takes a default value spliced at every call site.'
-        : 'Edit the selector name, or add a parameter (its default value is spliced at every call site).'
+        : 'Edit the selector name, or add a parameter (its default value is spliced at every call site). Typing a colon turns the selector into a keyword and gives the row an argument.'
     }</p>
     <ul class="rows">
 ${rows}

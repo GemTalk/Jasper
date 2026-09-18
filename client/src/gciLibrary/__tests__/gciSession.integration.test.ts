@@ -1,17 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
-import { GciTestContext, useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
 /**
  * Session-lifecycle GCI calls that aren't the login/logout calls themselves:
- * querying whether a session is still alive, logging one out non-blockingly,
- * the transaction-control primitives, and resuming a suspended process.
+ * querying whether a session is still alive, the transaction-control
+ * primitives, and resuming a suspended process.
  *
  * None of this needs `allowedCommits`: at the default budget of 0 the harness
  * opens no nested transaction levels, so the `afterEach` floor check never
  * runs -- teardown just aborts the single transaction `beforeEach` opened.
  * Do not add a budget here.
+ *
+ * GciTsLogout frees the session, so calling GciTsSessionIsRemote -- or any
+ * GCI function -- on a session that has already been logged out is
+ * undefined behavior and is intentionally not exercised here. GciTsNbLogout
+ * is skipped for the same reason: the only way to exercise it here is via
+ * `withTransientSession`, whose own teardown unconditionally calls
+ * GciTsLogout on the session afterward -- a second, undefined-behavior GCI
+ * call on a session GciTsNbLogout may have already freed.
  */
 describe('GCI session lifecycle (integration)', () => {
   // RT_ERR_NO_PROCESS_TO_CONTINUE in gcierr.ht -- same value in every vendored
@@ -21,16 +29,10 @@ describe('GCI session lifecycle (integration)', () => {
 
   let gci: GciLibrary;
   let session: unknown;
-  let login: GciTestContext['login'];
-  let logout: GciTestContext['logout'];
-  let withTransientSession: GciTestContext['withTransientSession'];
 
   useIntegrationTest((testContext) => {
     gci = testContext.gciLibrary;
     session = testContext.session;
-    login = testContext.login;
-    logout = testContext.logout;
-    withTransientSession = testContext.withTransientSession;
   });
 
   describe('GciTsSessionIsRemote', () => {
@@ -38,25 +40,6 @@ describe('GCI session lifecycle (integration)', () => {
       // The harness always logs in through an RPC gem NRS, never a linked one,
       // so 1 (RPC) is the only value an active session here can answer.
       expect(gci.GciTsSessionIsRemote(session)).toBe(1);
-    });
-
-    it('reports a logged-out session as invalid', () => {
-      const loggedOutSession = logout();
-
-      expect(gci.GciTsSessionIsRemote(loggedOutSession)).toBe(-1);
-
-      login();
-    });
-  });
-
-  describe('GciTsNbLogout', () => {
-    it('logs the session out non-blockingly', () => {
-      withTransientSession((transientSession) => {
-        const { success } = gci.GciTsNbLogout(transientSession);
-
-        expect(success).toBe(true);
-        expect(gci.GciTsSessionIsRemote(transientSession)).toBe(-1);
-      });
     });
   });
 

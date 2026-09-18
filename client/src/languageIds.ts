@@ -86,6 +86,26 @@ export function isMethodSourceUri(uri: vscode.Uri): boolean {
 }
 
 /**
+ * Whether `uri` is a class-definition editor.
+ *
+ * Asked by the formatting middleware, which has to refuse Format Document on a
+ * definition by hand: the language server advertises `documentFormattingProvider`
+ * as one boolean for every document it serves, so it cannot decline per URI, and a
+ * definition shares `gemstone-smalltalk` with workspaces, `.gst` files and
+ * new-method editors — all of which format — so the document selector cannot
+ * separate it either. A class comment needs none of this: its own
+ * `gemstone-class-comment` language keeps it out of the selector entirely, so VS
+ * Code never offers the command there.
+ */
+export function isClassDefinitionUri(uri: vscode.Uri): boolean {
+  try {
+    return parseUri(uri).kind === 'definition';
+  } catch {
+    return false; // unrecognized URI — not a definition
+  }
+}
+
+/**
  * The language id for a `gemstone://` document.
  *
  * A class comment is prose. A compiled method's source gets the language that

@@ -32,6 +32,7 @@ import {
   saveIfDirty,
   codePointsBefore,
 } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** Run the inline-method flow for the active method editor at the caret. */
 export async function inlineMethodCommand(
@@ -136,7 +137,9 @@ export async function inlineMethodCommand(
     loadPage: async (off) =>
       parsePage(await queries.pageInlineMethodPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async (deselected) =>
-      parseApplyResult(await queries.applyInlineMethod(session, token, deselected)),
+      parseApplyResult(
+        await queries.applyInlineMethod(session, token, deselected, `Inline ${targetLabel}`),
+      ),
     cleanup: safeClear,
   });
   if (!result) {
@@ -173,5 +176,5 @@ export async function inlineMethodCommand(
       /* the Explorer may not be active */
     }
   }
-  void vscode.window.setStatusBarMessage(`Inlined ${targetLabel}`, 4000);
+  notifyRefactoringApplied(session, `Inlined ${targetLabel}.`);
 }

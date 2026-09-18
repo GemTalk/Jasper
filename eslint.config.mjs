@@ -5,6 +5,12 @@ import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import gitignore from 'eslint-config-flat-gitignore';
 import vitest from '@vitest/eslint-plugin';
+// The gated set of the GCI optionality rule below, read from the registry
+// itself rather than restated here -- the drift that registry exists to end.
+// Imported as `.ts` on purpose: Node strips the types, so the config reads the
+// same module `gciLibrary.ts` does. Keep that file free of non-erasable syntax
+// (`enum`, `namespace`), which would break lint while still compiling.
+import { GCI_OPTIONAL_FUNCTIONS } from './client/src/gciLibrary/optionalFunctions.ts';
 
 // `vitest/no-restricted-matchers` matches the *whole* modifier chain, and for a
 // plain matcher name it compares by exact equality — so a `toBeTruthy` key does
@@ -64,6 +70,17 @@ const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
 
+// A halt offers ONE debugger -- the GemStone Debugger panel. The DAP debugger is
+// still registered (`registerDebugAdapterDescriptorFactory('gemstone', ...)` in
+// extension.ts, plus the `gemstone` entry under contributes.debuggers), but
+// registration is not a way in: attaching needs the `sessionId` and `gsProcess`
+// attributes, and nothing supplies them any more, so it is dormant. What is
+// fenced off here is the extension re-growing a caller that puts it in front of
+// the user unasked -- the two lines that would do it, on a halt path where no
+// per-path unit test would be looking.
+const DAP_ENTRY_POINT =
+  'Nothing in the extension may open the DAP debugger for the user: a halt offers the GemStone Debugger panel (DebuggerPanel.create). The `gemstone` debug type stays registered rather than torn out, but with no caller to supply its `sessionId`/`gsProcess` attach attributes it is dormant, not a second way in.';
+
 // `rewriteRelativeImportExtensions` in tsconfig.base.json makes a `.ts`
 // specifier legal in every workspace, but it is wanted in only the few modules
 // that must also load under Node's type-stripping, which resolves nothing else.
@@ -79,6 +96,93 @@ const TS_EXTENSION_IMPORT = {
   message:
     'Import the module without the `.ts` extension. An explicit `.ts` specifier is for modules that must also load under Node type-stripping, and the exceptions are listed in eslint.config.mjs.',
 };
+
+// Production code must not call a `GciTs*` binding that may be absent from the
+// loaded library. Those bind through `optionalFunc`, so Jasper still *loads*
+// against a library missing them -- it's the call that throws, and neither a
+// 3.7.5 dev image nor a macOS/Linux dev machine ever shows you that. Every
+// entry of the registry is gated, on all three of its axes.
+//
+// Selectors generated from the registry rather than a custom rule, so the
+// gated names live in the *rule options*: `eslint`'s result cache keys each
+// file on a hash of its resolved config (`lint-result-cache.js`), which sees
+// options but not data a rule closed over -- so a rule reading the registry
+// internally would leave a cached file green after a new entry lands.
+//
+// Background: `docs/explanation/gci-version-compatibility.md`.
+//
+// `addedIn` and `removedIn` interpolate their value, so widening either still
+// renders a hazard. `absentOn` is the one axis whose message is a *phrase*
+// rather than the value, so this config has to restate something the type
+// already knows -- keyed rather than compared, and an unknown key throws.
+// Widening `GciAbsenceReason['absentOn']` without adding a clause here fails
+// the config load, instead of quietly rendering `may be absent ()` with nothing
+// between the parens.
+const ABSENT_ON_CLAUSE = {
+  win32:
+    'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
+};
+
+const absentOnClause = (name, absentOn) => {
+  const clause = ABSENT_ON_CLAUSE[absentOn];
+  if (clause === undefined) {
+    throw new Error(
+      `${name} carries absentOn: '${absentOn}', which eslint.config.mjs has no hazard clause for. ` +
+        'Add one to ABSENT_ON_CLAUSE next to the GciAbsenceReason widening that introduced it.',
+    );
+  }
+  return clause;
+};
+
+const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name, reason]) => {
+  // One clause per axis the registry records, so a two-axis entry
+  // (`GciTsNbLogin_`) names both hazards rather than the first one found.
+  const hazard = [
+    reason.addedIn && `absent before ${reason.addedIn}`,
+    reason.absentOn && absentOnClause(name, reason.absentOn),
+    reason.removedIn && `removed in ${reason.removedIn}`,
+  ]
+    .filter(Boolean)
+    .join('; ');
+  // A new axis on `GciAbsenceReason` that nothing above reads leaves an entry
+  // with no hazard at all. The rule would still fire, but on the message this
+  // rewrite exists to produce -- so fail the load rather than ship the hole.
+  if (hazard === '') {
+    throw new Error(
+      `${name} is gated by ${JSON.stringify(reason)}, no part of which eslint.config.mjs renders. ` +
+        'Add a clause for the new GciAbsenceReason axis to the hazard list above.',
+    );
+  }
+  const message = `${name} may be absent from the loaded library (${hazard}). Put the cross-version conditional inside client/src/gciLibrary/ and call a helper from there, so this call site doesn't have to know about optionality.`;
+  // Gated on the *mention*, not the call shape. The `RAW_LOGIN_NAMES`
+  // selectors below are call-shaped because a test legitimately names a mocked
+  // binding (`expect(gci.GciTsLogin).not.toHaveBeenCalled()`); this block's
+  // `files`/`ignores` already exclude tests and mocks, so in the files it
+  // covers there is no innocent reason to name one of these at all. A bare
+  // member access is the hazard whatever wraps it -- a cast, `.call`, `.bind`
+  // or a renaming destructure all reach the native library just the same.
+  //
+  // One selector per syntax the name can wear: `.name` for `gci.GciTsNbPoll`,
+  // `.value` for the `Literal` in `gci['GciTsNbPoll']` (as the password
+  // selectors below are matched both ways), `callee.name` for a destructured
+  // local, the `ObjectPattern` clause for the destructure that binds it, and
+  // `quasis` for a template-literal key. The `ObjectPattern >` prefix is
+  // load-bearing: a bare `Property[key.name]` would flag the registry's own
+  // object literal in `gciLibrary/optionalFunctions.ts`, which this block
+  // covers -- only `gciLibrary.ts` is exempt.
+  //
+  // Where the fence ends: genuinely dynamic dispatch still slips through --
+  // `gci[k](...)` for a computed `k`, `Reflect.get(gci, name)`, a name
+  // assembled at runtime. No syntactic selector can see those, and the deleted
+  // test documented the same blind spot; this is that sentence.
+  return [
+    { selector: `MemberExpression[property.name='${name}']`, message },
+    { selector: `MemberExpression[property.value='${name}']`, message },
+    { selector: `CallExpression[callee.name='${name}']`, message },
+    { selector: `ObjectPattern > Property[key.name='${name}']`, message },
+    { selector: `MemberExpression[property.quasis.0.value.raw='${name}']`, message },
+  ];
+});
 
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
@@ -212,6 +316,62 @@ export default tseslint.config(
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   {
+    // Read as syntax rather than as text: the guard this replaced scanned the
+    // source with a regex, which cannot tell a call from the same words inside a
+    // comment or a string -- so a doc-comment naming `debug.startDebugging` to
+    // explain why nothing calls it read as a violation. Tests and mocks are
+    // excluded: `client/src/__mocks__/vscode.ts` has to DEFINE `debug.startDebugging`
+    // for the mocked API to be shaped like the real one, and a test asserting that
+    // nothing reveals the Run and Debug view has to name the command id to look
+    // for it.
+    //
+    // Matched by basename, not by path: most client tests live in a nested
+    // `__tests__` (client/src/enhancedInspector/__tests__/ and its siblings), which
+    // `client/src/__tests__/**` does not cover -- those files were exempt only
+    // because the `**/*.test.ts` block further down configures this same rule, and
+    // flat config *replaces* a rule's options rather than merging them, which
+    // silently dropped these selectors for everything it matched. That left the
+    // exclusion true by accident and false for a `__tests__/support/` helper, which
+    // is not a `*.test.ts` and so was covered by neither.
+    files: ['client/src/**/*.ts'],
+    ignores: ['**/__tests__/**', '**/__mocks__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // Matched on the property, not the receiver: the call is written
+          // `vscode.debug.startDebugging(...)` today, but pulling `debug` out of
+          // the namespace into a local first must not shake the ban off.
+          selector: "CallExpression[callee.property.name='startDebugging']",
+          message: DAP_ENTRY_POINT,
+        },
+        {
+          // The destructured form (`const { startDebugging } = vscode.debug`)
+          // calls a bare identifier, which the property selector above cannot
+          // see. Neither could the regex guard this replaced.
+          selector: "CallExpression[callee.name='startDebugging']",
+          message: DAP_ENTRY_POINT,
+        },
+        {
+          // Revealing the Run and Debug view is the other way in, and it is a
+          // command id rather than a call -- so the string itself is what gets
+          // banned, wherever it is passed. `.value` reads the literal in both
+          // `executeCommand('workbench.view.debug')` and a `const` holding it.
+          selector: "Literal[value='workbench.view.debug']",
+          message: DAP_ENTRY_POINT,
+        },
+        {
+          // A template literal is not a `Literal` node, so the selector above
+          // walks straight past `` `workbench.view.debug` `` -- which the regex
+          // guard this replaced did catch (it accepted backticks explicitly).
+          // Matching the text of the quasi keeps that half of the ban.
+          selector: "TemplateElement[value.raw='workbench.view.debug']",
+          message: DAP_ENTRY_POINT,
+        },
+      ],
+    },
+  },
+  {
     // jsdom test setup: runs under Node but polyfills the simulated browser
     // `window`, so it needs both Node globals (from the `**/*.cjs` block above,
     // which still applies) and browser globals (added here) to satisfy `no-undef`.
@@ -266,6 +426,35 @@ export default tseslint.config(
     // not fixed in place.
     files: ['client/src/__tests__/gci/**/*.test.ts'],
     rules: { 'vitest/no-conditional-expect': 'off' },
+  },
+  {
+    // The GCI optionality gate (see OPTIONAL_GCI_CALL above). Scoped to the
+    // three workspaces' production sources; tests and mocks are exempt because
+    // an absent-world test's whole job is to call the symbol and watch it
+    // throw. `gciLibrary.ts` is exempt because the bindings *are* its subject:
+    // it holds every `this._optional.GciTsX(...)` call there is. Once a
+    // cross-version helper lives under `client/src/gciLibrary/`, this exemption
+    // widens to that directory -- and belongs to the commit that puts one there.
+    files: ['client/src/**/*.ts', 'server/src/**/*.ts', 'mcp-server/src/**/*.ts'],
+    ignores: [
+      '**/__tests__/**',
+      '**/__mocks__/**',
+      // A test file outside `__tests__/` is exempt too, and has to be listed
+      // here to say so: the test-session block below configures
+      // `no-restricted-syntax` for these globs, and flat config *replaces* a
+      // rule's options rather than merging them -- so these selectors are
+      // dropped for such a file whether or not this line exists. Stated
+      // explicitly rather than left to fall out of block ordering, which is
+      // invisible at the call site. Not `**/*.test.tsx`: the `files` above are
+      // all `*.ts`, so it could never match.
+      '**/*.test.ts',
+      '**/*.spec.ts',
+      // Path-anchored rather than a `**/` basename glob: the bindings are this
+      // one module's subject, and a future `server/src/gciLibrary.ts` should be
+      // gated like any other production source.
+      'client/src/gciLibrary.ts',
+    ],
+    rules: { 'no-restricted-syntax': ['error', ...OPTIONAL_GCI_CALL] },
   },
   {
     // Confines every test to the harness's session (see the message constants
