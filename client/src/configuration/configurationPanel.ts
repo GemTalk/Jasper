@@ -387,11 +387,18 @@ export class ConfigurationPanel {
    * when the reversal actually landed: if it did not, the value is still where
    * the change left it, and the change is still the thing to undo.
    *
-   * A parameter someone has changed since is refused rather than overwritten.
-   * The entry describes a step from one value to another; if the session is no
-   * longer at the value the step ended on, putting `from` back would not be
-   * undoing this panel's change, it would be discarding somebody else's. The
-   * entry is dropped in that case — it no longer describes anything true.
+   * A parameter changed since is refused rather than overwritten — as of the
+   * panel's LAST READ of it, which is the limit worth knowing. `lastPayload` is
+   * written by a load and by a set, so a change made outside the panel (a second
+   * SystemUser session on a stone key; a Workspace `Do It` or an MCP execute on
+   * a gem one, which needs no privilege) is caught once a Refresh has picked it
+   * up, not the moment it happens. Deliberately not a fresh read per Undo: the
+   * clobbered value is one the user just typed and can type again, and the panel
+   * reports where it settled either way.
+   *
+   * When it does fire the entry is dropped — it no longer describes anything
+   * true: putting `from` back would discard the newer change instead of
+   * reversing this panel's.
    */
   private stepHistory(direction: 'undo' | 'redo'): void {
     const history = direction === 'undo' ? this.undoHistory : this.redoHistory;
