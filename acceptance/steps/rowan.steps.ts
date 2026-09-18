@@ -15,7 +15,6 @@ import {
   beginStep,
   shot,
 } from '../helpers/vscode';
-import { RowanView } from '../pageobjects/rowanView';
 import { SourceControlView } from '../pageobjects/sourceControlView';
 import { IntegratedBrowser } from '../pageobjects/integratedBrowser';
 import { ThisProjectView } from '../pageobjects/thisProjectView';
@@ -40,22 +39,38 @@ AfterStep(async ({ window, $step, $testInfo }) => {
 
 // ── Creating a project ──────────────────────────────────────
 
-Given('an empty folder is open in the Rowan view', async ({ window }) => {
-  const rowan = new RowanView(window);
-  await rowan.open();
+// Creating a project is a Command Palette action. Jasper's only Rowan section is
+// the one in the Explorer, and it is contributed for a folder that already *is*
+// a project — so an empty folder is one with no Rowan section to be seen.
+const CREATE_PROJECT = 'GemStone: Create Rowan Project';
 
-  await shows(rowan.createProjectButton);
+/** The Explorer's Rowan section header — present only for a Rowan project. */
+function rowanSection(window: Page): Locator {
+  return window.locator('.sidebar').getByRole('button', { name: /^Rowan\b/ });
+}
+
+async function createRowanProject(window: Page): Promise<void> {
+  await runCommand(window, CREATE_PROJECT);
+}
+
+Given('an empty folder is open', async ({ window }) => {
+  await touch(window.getByRole('tab', { name: /^Explorer/ }));
+
+  await expect(rowanSection(window)).toBeHidden();
 });
 
 When('I create a Rowan project', async ({ window }) => {
-  await touch(new RowanView(window).createProjectButton);
+  await createRowanProject(window);
 });
 
 Then('the folder becomes a Rowan project', async ({ window }) => {
-  await expect(new RowanView(window).createProjectButton).toBeHidden();
-
   // Create Rowan Project opens the new load spec; close it for a clean view.
   await window.keyboard.press(process.platform === 'darwin' ? 'Meta+KeyW' : 'Control+KeyW');
+
+  // The Explorer's Rowan section is contributed only for a folder that is one,
+  // so its arrival is the folder having become a project.
+  await new ThisProjectView(window).open();
+  await shows(rowanSection(window));
 });
 
 // ── Committing to git ───────────────────────────────────────
@@ -118,9 +133,7 @@ Then('nothing is left to commit', async ({ window }) => {
 // ── A dependency's state ────────────────────────────────────
 
 Given('a committed Rowan project is open', async ({ window }) => {
-  const rowan = new RowanView(window);
-  await rowan.open();
-  await touch(rowan.createProjectButton);
+  await createRowanProject(window);
 
   await putUnderVersionControl(window);
   await commitEverything(window, 'Start a Rowan project');

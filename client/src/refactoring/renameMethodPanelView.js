@@ -1,6 +1,13 @@
 /**
- * Webview-side behavior for the PAGINATED rename-method preview panel
- * (renameMethodPanel.ts).
+ * Webview-side behavior for the PAGINATED preview panels.
+ *
+ * Written for the rename-method panel (renameMethodPanel.ts) and SHARED verbatim by
+ * the undo-a-refactoring panel (undoRefactoringPanel.ts, #434), whose DOM contract is
+ * identical: same element ids, same `apply` / `loadMore` / `loadAll` / `cancel`
+ * messages. Keep it panel-agnostic — anything specific to one panel belongs in that
+ * panel's HTML, not here. (The global name below stays `RenameMethodPanel` for the
+ * same reason it always was: renaming it would break every existing caller for no
+ * behavioural gain.)
  *
  * Read at runtime and injected as a <script> tag (NOT bundled) so the checkbox
  * bookkeeping, diff toggle, pagination, and apply dispatch can be unit-tested in

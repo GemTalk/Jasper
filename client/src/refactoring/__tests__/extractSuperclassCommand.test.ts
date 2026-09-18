@@ -9,6 +9,10 @@ vi.mock('../../browserQueries', () => ({
   applyExtractSuperclass: vi.fn(),
   clearExtractSuperclassPreview: vi.fn(),
   globalNameInUse: vi.fn(() => false),
+  captureClassHistory: vi.fn(),
+  commitHistoryRevert: vi.fn(),
+  discardPendingCapture: vi.fn(),
+  refactoringUndoStatus: vi.fn(() => '{"available":false}'),
 }));
 vi.mock('../extractSuperclassPanel', () => ({
   showExtractSuperclassPanel: vi.fn(),
@@ -23,6 +27,7 @@ import {
   ExtractSuperContext,
 } from '../extractSuperclassCommand';
 import type { ActiveSession } from '../../sessionManager';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 
 /**
  * Drives the extract-superclass COMMAND orchestrator (not the engine). Pins the picker →
@@ -236,6 +241,36 @@ describe('extract superclass command', () => {
       expect.stringContaining('no can do'),
     );
     expect(queries.analyzeExtractSuperclass).not.toHaveBeenCalled();
+  });
+
+  it('offers to undo the extraction, on the toast and on the undo stack', async () => {
+    // The extraction records its reversal in the stone; a bare toast left that record with no
+    // way to reach it — no button, and nothing on the status bar or Ctrl+K U.
+    resetUndoStacks();
+    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
+    vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
+    vi.mocked(queries.analyzeExtractSuperclass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startExtractSuperclassPreview).mockResolvedValue(startJson());
+    vi.mocked(showExtractSuperclassPanel).mockResolvedValue({ applied: 3, failed: [] });
+    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+      JSON.stringify({
+        available: true,
+        label: "Extract superclass 'Pet'",
+        engine: 'GsExtractSuperclassRefactoring',
+        sequence: 2,
+        total: 3,
+      }),
+    );
+
+    await extractSuperclassCommand(ctx());
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('applied 3 change(s)'),
+      'Undo',
+    );
+    expect(peekUndoEntry(1)).toMatchObject({ kind: 'refactoring', sequence: 2 });
   });
 
   it('reports a failed apply and does not reveal', async () => {

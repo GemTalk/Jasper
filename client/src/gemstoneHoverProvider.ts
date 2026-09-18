@@ -113,6 +113,10 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**${word}** *${entry.dictName}*\n\n`);
     try {
+      // The synthesised comment is wanted here: a class with none still hovers with
+      // its hierarchy, which is the useful thing to see. Only the editable
+      // gemstone:// comment document opens on the stored text — see
+      // getStoredClassComment.
       const comment = queries.getClassComment(session, word);
       if (comment) {
         const preview = comment.length > 500 ? comment.substring(0, 500) + '...' : comment;

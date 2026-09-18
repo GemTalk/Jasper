@@ -141,7 +141,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
     );
     expect(start.total).toBe(2);
 
-    const result = parseApplyResult(await applyExtractMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyExtractMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 

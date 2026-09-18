@@ -58,7 +58,7 @@ describe('inline-temporary query builders', () => {
   it('applies a preview with an empty deselected set (single all-or-nothing change)', async () => {
     const exec = asyncExec();
 
-    const code = await applyInlineTemporary(exec, 'tok');
+    const code = await applyInlineTemporary(exec, 'tok', 'test undo');
 
     expect(code).toContain("applyForToken: 'tok'");
     expect(code).toContain('deselected: #()');

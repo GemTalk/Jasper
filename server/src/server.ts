@@ -29,7 +29,7 @@ import {
 } from './services/definition';
 import { findSelectorAtPosition } from './utils/astUtils';
 import { getFoldingRanges } from './services/folding';
-import { formatDocument } from './services/formatting';
+import { formatDocument, isFormattableDocument } from './services/formatting';
 import { FormatterSettings, DEFAULT_SETTINGS } from './services/formatterSettings';
 import {
   collectSemanticTokens,
@@ -322,8 +322,7 @@ connection.onDocumentFormatting((params) => {
   const doc = documentManager.get(params.textDocument.uri);
   if (!doc) return [];
 
-  // Formatting only supported for Topaz files
-  if (doc.format === 'tonel' || doc.format === 'smalltalk') return [];
+  if (!isFormattableDocument(doc)) return [];
 
   const settings: FormatterSettings = {
     ...formatterSettings,

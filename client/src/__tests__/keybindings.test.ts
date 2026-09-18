@@ -36,25 +36,57 @@ describe('keybindings', () => {
     }
   });
 
-  it('should have no duplicate second keys', () => {
-    const secondKeys = chordBindings.map((kb) => kb.key.split(' ')[1]);
-    expect(new Set(secondKeys).size).toBe(secondKeys.length);
+  // The terms of a `when` clause, e.g. "a && !b" -> ["a", "!b"].
+  const terms = (when: string): string[] => when.split('&&').map((t) => t.trim());
+
+  // Two clauses that can never both hold, because one requires a key the other forbids.
+  const mutuallyExclusive = (a: string, b: string): boolean =>
+    terms(a).some((t) => !t.startsWith('!') && terms(b).includes(`!${t}`)) ||
+    terms(b).some((t) => !t.startsWith('!') && terms(a).includes(`!${t}`));
+
+  const byLetter = (): Map<string, typeof chordBindings> => {
+    const groups = new Map<string, typeof chordBindings>();
+    for (const kb of chordBindings) {
+      const letter = kb.key.split(' ')[1];
+      groups.set(letter, [...(groups.get(letter) ?? []), kb]);
+    }
+    return groups;
+  };
+
+  it('should reuse a second key only for commands that can never both be live', () => {
+    // Ctrl+K U is deliberately bound twice: Undo and Revert are the same act under two names
+    // (the title-bar tooltip can only carry a fixed string, so the verb needs its own command),
+    // and a command with no binding loses the chord from its tooltip. Their conditions are
+    // opposites, so exactly one is ever active and the chord is never ambiguous.
+    for (const [letter, group] of byLetter()) {
+      if (group.length === 1) continue;
+      for (let i = 0; i < group.length; i += 1) {
+        for (let j = i + 1; j < group.length; j += 1) {
+          expect(
+            mutuallyExclusive(group[i].when, group[j].when),
+            `ctrl+k ${letter}: ${group[i].command} and ${group[j].command} can both be active`,
+          ).toBe(true);
+        }
+      }
+    }
   });
 
   it('should map to expected commands', () => {
-    const expected: Record<string, string> = {
-      d: 'gemstone.displayIt',
-      e: 'gemstone.executeIt',
-      r: 'gemstone.debugIt',
-      i: 'gemstone.inspectIt',
-      b: 'gemstone.openBrowser',
-      c: 'gemstone.findClass',
-      m: 'gemstone.findMethodInClass',
+    const expected: Record<string, string[]> = {
+      d: ['gemstone.displayIt'],
+      e: ['gemstone.executeIt'],
+      r: ['gemstone.debugIt'],
+      i: ['gemstone.inspectIt'],
+      b: ['gemstone.openBrowser'],
+      c: ['gemstone.findClass'],
+      m: ['gemstone.findMethodInClass'],
+      // One act, two names: whichever of the two is live for the entry on top of the stack.
+      u: ['gemstone.undoLast', 'gemstone.revertLast'],
     };
 
     for (const kb of chordBindings) {
       const letter = kb.mac.split(' ')[1];
-      expect(expected[letter]).toBe(kb.command);
+      expect(expected[letter]).toContain(kb.command);
     }
   });
 

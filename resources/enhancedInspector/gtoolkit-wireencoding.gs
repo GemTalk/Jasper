@@ -1,13 +1,17 @@
 ! Jasper Enhanced Inspector vendored source
 ! ----------------------------------------------------------------------------
-! Origin : https://github.com/feenkcom/gtoolkit-wireencoding
-! Source : src-gs/gtoolkit-wireencoding.gs
-! License: MIT - Copyright (c) feenk gmbh. See LICENSE in the origin repository.
+! Origin  : https://github.com/feenkcom/gtoolkit-wireencoding
+! Source  : src-gs/gtoolkit-wireencoding.gs
+! License : MIT - Copyright (c) 2024 feenk
+!           Full MIT notice and permission text: THIRD-PARTY.md and
+!           NOTICE at the root of https://github.com/GemTalk/Jasper
 !
 ! Vendored into Jasper and filed into the stone by the Enhanced Inspector
-! installer. DO NOT EDIT BY HAND - regenerated from upstream by
-! update_enhanced_inspector_support.sh, which re-applies this header and rewrites
-! class placement from Globals to the dedicated GsEnhancedInspector dictionary.
+! installer. DO NOT EDIT BY HAND - refreshed from upstream by
+! update_enhanced_inspector_support.sh, then post-processed by
+! gs-src/enhancedInspector/build/apply_jasper_transforms.sh, which writes this
+! header from its attribution table and rewrites class placement from Globals
+! to the dedicated GsEnhancedInspector dictionary.
 ! ----------------------------------------------------------------------------
 ! Class Declarations
 ! Generated file, do not Edit

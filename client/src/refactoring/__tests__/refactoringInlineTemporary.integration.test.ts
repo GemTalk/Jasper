@@ -135,7 +135,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
     expect(start.total).toBe(1);
     expect(start.name).toBe('t');
 
-    const result = parseApplyResult(await applyInlineTemporary(asyncExec, token));
+    const result = parseApplyResult(await applyInlineTemporary(asyncExec, token, 'test undo'));
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 

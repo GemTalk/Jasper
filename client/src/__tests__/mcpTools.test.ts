@@ -179,6 +179,65 @@ describe('registerMcpTools', () => {
   });
 
   describe('with an active session', () => {
+    /**
+     * The query answers '' both for a class that will not resolve and for a selector the
+     * class does not implement — the EDITOR wants an empty buffer rather than a walkback.
+     * A tool caller cannot act on that: '' would read as "a method whose source is empty",
+     * which GemStone cannot hold. Mirrors the two tests on the mcp-server twin, which has
+     * the same behaviour behind a different error shape.
+     */
+    it('get_method_source reports a method that does not exist rather than answering empty', async () => {
+      vi.mocked(queries.getMethodSource).mockReturnValue('');
+
+      const result = await server.getTool('get_method_source')!.handler({
+        className: 'Ghost',
+        isMeta: false,
+        selector: 'balance',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('#balance');
+      expect(result.content[0].text).toContain('Ghost');
+    });
+
+    it('get_method_source says which side it looked on', async () => {
+      vi.mocked(queries.getMethodSource).mockReturnValue('');
+
+      const instanceSide = await server.getTool('get_method_source')!.handler({
+        className: 'Ghost',
+        isMeta: false,
+        selector: 'balance',
+      });
+      const classSide = await server.getTool('get_method_source')!.handler({
+        className: 'Ghost',
+        isMeta: true,
+        selector: 'balance',
+      });
+
+      expect(instanceSide.content[0].text).toContain('instance-side');
+      expect(classSide.content[0].text).toContain('class-side');
+    });
+
+    /**
+     * The wording must match the mcp-server twin byte for byte: a caller should not be
+     * able to tell which server answered. `wrap` renders a throw as `Error: <message>`,
+     * so the thrown text starts lower-case to compose into `Error: no class-side …`.
+     */
+    it('get_method_source words the miss exactly as the mcp-server twin does', async () => {
+      vi.mocked(queries.getMethodSource).mockReturnValue('');
+
+      const result = await server.getTool('get_method_source')!.handler({
+        className: 'Ghost',
+        isMeta: true,
+        selector: 'balance',
+      });
+
+      expect(result.content[0].text).toBe(
+        'Error: no class-side method #balance on Ghost' +
+          ' — the class may not exist, or may not implement that selector.',
+      );
+    });
+
     it('execute_code wraps the code with printString', async () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('42');
       const result = await server.getTool('execute_code')!.handler({ code: '6 * 7' });

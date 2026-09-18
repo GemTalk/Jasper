@@ -98,15 +98,177 @@ export function parseMethodSearchResults(raw: string): MethodSearchResult[] {
   return results;
 }
 
+/**
+ * Smalltalk that narrows an already-found set of methods to those whose source
+ * contains `term` starting at a WORD BOUNDARY — the character before the match is
+ * neither alphanumeric nor `_`, or the match is at the very start.
+ *
+ * `ClassOrganizer>>substringSearch:ignoreCase:` is the only full-text scan the
+ * engine offers and it matches anywhere, so the boundary test is a second pass
+ * over what it found. It runs HERE rather than on the client because the rows
+ * shipped back carry no source text to test — only class, selector, category and
+ * environment — and because the `METHOD_SEARCH_RESULT_LIMIT` cut is server-side:
+ * filtering first means the cap applies to boundary hits rather than truncating
+ * the substring hits before the narrower ones are reached.
+ *
+ * Deliberately NOT the `isWordStart` rule that `omniMatch` uses for names, which
+ * counts a camelCase hump as a word start. That would keep `doFooling` as a hit
+ * for `foo`, which is precisely the mid-word noise this exists to remove. A name
+ * is read as words; a method body is read as tokens.
+ *
+ * The needle is folded HERE, by GemStone, not by JavaScript. Folding the term with
+ * `String.prototype.toLowerCase` and comparing it against a source folded with
+ * `asLowercase` puts two different Unicode case-folding implementations on the two
+ * sides of the same comparison; where they disagree (dotted/dotless I, ß) the
+ * filter would silently drop methods `substringSearch:` had legitimately matched.
+ * Both sides now fold the same way, so the only case rule in play is the stone's.
+ *
+ * `indexOfSubCollection:startingAt:` rather than `includesSubstring:`, which 3.6.2
+ * does not implement. Generated source stays ASCII apart from the user's own term,
+ * which `substringSearch:` already embeds (the ComStrmSetCursor note).
+ */
+/**
+ * How a Source scan decides what counts as a hit. Named for what the SCAN does,
+ * not for the chip that chooses it — GemStone Search owns the mapping from its
+ * Fuzzy/Substring/Prefix chip onto these, and this module stays stone-facing.
+ */
+export type SourceScanMode = 'substring' | 'wordStart' | 'fuzzyToken';
+
+/**
+ * Smalltalk for a per-IDENTIFIER subsequence scan: a hit is a method with some
+ * token whose characters contain the needle's in order (`ordcol` finds a mention
+ * of `OrderedCollection`).
+ *
+ * Per token, not per method body, and that is the whole design. A subsequence
+ * across a 370-character method matches very nearly anything, which is why the
+ * naive reading of "fuzzy over source" is useless. Constraining it to a single
+ * identifier makes it mean what the chip means everywhere else — fuzzy over a
+ * NAME — applied to the names the body mentions.
+ *
+ * This one cannot ride on `substringSearch:` the way the other two modes do: a
+ * subsequence is not a substring, so the engine scan would never surface the
+ * methods this is meant to find (`oc` matches `OrderedCollection`, which contains
+ * no literal "oc"). It therefore walks the symbol list itself. Measured at ~315ms
+ * over a 16.5k-method image versus ~50ms for the engine scan — affordable only
+ * because Source is `explicitOnly`, debounced, and gated behind
+ * `methodMinQueryLength`, never part of the default fan-out.
+ *
+ * Both sides fold through `asLowercase` when case is ignored, so the only case
+ * rule in play is the stone's. ASCII-only apart from the user's term.
+ */
+function fuzzyTokenScan(term: string, ignoreCase: boolean): string {
+  // The NEEDLE is folded once — it is a handful of characters. The SOURCE is folded
+  // one character at a time at the point of comparison, rather than `m sourceString
+  // asLowercase`, which allocated a fresh lowercased copy of every method body in the
+  // image inside a single doit. `classOrganizer.ts` documents that allocation shape
+  // producing AlmostOutOfMemoryError (6022), after which every other operation in the
+  // session reports a broken connection instead of its own error — a failure that
+  // surfaces far from its cause. Per-character folding costs nothing and allocates
+  // nothing.
+  const foldNeedle = ignoreCase ? ' asLowercase' : '';
+  const foldChar = ignoreCase ? 'ch asLowercase' : 'ch';
+  return `needle := '${escapeString(term)}'${foldNeedle}.
+methods := Array new.
+needle isEmpty ifFalse: [
+  | seen |
+  seen := IdentitySet new.
+  System myUserProfile symbolList do: [:d |
+    d keysAndValuesDo: [:k :v |
+      v isBehavior ifTrue: [seen add: v; add: v class]]].
+  seen do: [:cls |
+    [cls selectors do: [:sel |
+      | m src ni matched |
+      m := cls compiledMethodAt: sel otherwise: nil.
+      m ifNotNil: [
+        src := [m sourceString] on: Error do: [:e | ''].
+        ni := 1.
+        matched := false.
+        1 to: src size do: [:i |
+          matched ifFalse: [
+            | ch |
+            ch := src at: i.
+            (ch isAlphaNumeric or: [ch = $_])
+              ifTrue: [
+                ${foldChar} = (needle at: ni) ifTrue: [
+                  ni := ni + 1.
+                  ni > needle size ifTrue: [matched := true]]]
+              ifFalse: [ni := 1]]].
+        matched ifTrue: [methods add: m]]]]
+      on: Error do: [:e | nil]]].`;
+}
+
+function wordBoundaryFilter(term: string, ignoreCase: boolean): string {
+  const fold = ignoreCase ? ' asLowercase' : '';
+  return `needle := '${escapeString(term)}'${fold}.
+methods := methods select: [:m |
+  | src idx ok prev |
+  src := [m sourceString${fold}] on: Error do: [:e | ''].
+  ok := false.
+  idx := src indexOfSubCollection: needle startingAt: 1.
+  [ok not and: [idx > 0]] whileTrue: [
+    prev := idx = 1 ifTrue: [nil] ifFalse: [src at: idx - 1].
+    (prev isNil or: [(prev isAlphaNumeric or: [prev = $_]) not])
+      ifTrue: [ok := true]
+      ifFalse: [idx := src indexOfSubCollection: needle startingAt: idx + 1]].
+  ok].`;
+}
+
+/**
+ * Methods whose SOURCE matches `term`, under one of three scan modes.
+ *
+ * `substring` is the engine's own `ClassOrganizer>>substringSearch:ignoreCase:` —
+ * the term anywhere in the body. `wordStart` runs that scan and then keeps only
+ * the methods where the match begins a token. `fuzzyToken` cannot use the engine
+ * scan at all (a subsequence is not a substring) and walks the symbol list itself.
+ *
+ * The modes exist because GemStone Search's match chip is a single global control,
+ * and a scope that ignores it states something untrue. Its name-oriented meanings
+ * do not transfer literally to a method body — "the target starts with the query"
+ * is meaningless for 370 characters of source — so each is given the reading that
+ * is useful there. GemStone Search owns that mapping; see `sourceProvider`.
+ */
+/**
+ * A term fuzzy-token matching can actually answer: one identifier's worth of characters.
+ *
+ * The fuzzy scan advances its needle only while walking identifier characters and resets
+ * at anything else, so a term carrying a `:`, a space or punctuation can never match ANY
+ * method — `printOn:`, `at:put:` or a phrase like `no such element` come back silently
+ * empty, where substring finds them. Silent is the worst shape: the reader concludes the
+ * text is not in the image.
+ *
+ * Stripping the offending characters does not rescue it, because the SOURCE token is
+ * broken at the colon too — `atput` cannot span `at:put:` any more than `at:put:` can.
+ * The per-identifier reading simply does not apply to a term that is not an identifier,
+ * so such a term runs as a substring instead. Fuzzy still means fuzzy everywhere it can.
+ */
+const IDENTIFIER_ONLY = /^[A-Za-z0-9_]+$/;
+
+/** The scan a term will really run under, after the fallback above. Exported so the UI can
+ *  say which mode answered rather than leaving a silently-downgraded search unexplained. */
+export function effectiveScanMode(term: string, mode: SourceScanMode): SourceScanMode {
+  return mode === 'fuzzyToken' && !IDENTIFIER_ONLY.test(term) ? 'substring' : mode;
+}
+
 export function searchMethodSource(
   execute: QueryExecutor,
   term: string,
   ignoreCase: boolean,
+  requestedMode: SourceScanMode = 'substring',
 ): MethodSearchResult[] {
-  const code = `| results methods stream limit classDict sl |
-results := ${classOrganizerExpr(0)}
+  const mode = effectiveScanMode(term, requestedMode);
+  const needsNeedle = mode !== 'substring';
+  const engineScan = `results := ${classOrganizerExpr(0)}
   substringSearch: '${escapeString(term)}' ignoreCase: ${ignoreCase}.
-methods := results at: 1.
+methods := results at: 1.`;
+  const scan =
+    mode === 'fuzzyToken'
+      ? fuzzyTokenScan(term, ignoreCase)
+      : mode === 'wordStart'
+        ? `${engineScan}\n${wordBoundaryFilter(term, ignoreCase)}`
+        : engineScan;
+
+  const code = `| results methods stream limit classDict sl${needsNeedle ? ' needle' : ''} |
+${scan}
 ${methodSerialization(0)}`;
 
   return parseMethodSearchResults(execute(code));

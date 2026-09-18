@@ -130,6 +130,37 @@ describe('setClassComment', () => {
     setClassComment(execute, 'Foo', 'x', 2);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 2');
   });
+
+  /**
+   * An empty comment REMOVES the key rather than storing `''`, so undoing a
+   * comment back to nothing leaves the class as it was found — `comment` answers
+   * GemStone's synthesised placeholder again, and a file-out shows no comment.
+   */
+  it('removes the comment key when the comment is empty', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'Comment set: Foo');
+
+    expect(setClassComment(execute, 'Foo', '')).toBe('Comment set: Foo');
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('_extraDictRemoveKey: #comment');
+    expect(code).not.toContain('cls comment:');
+  });
+
+  // insert-final-newline can leave one behind after the text is deleted, and a
+  // comment of pure whitespace is no more a comment than none.
+  it('treats a whitespace-only comment as empty', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    setClassComment(execute, 'Foo', '\n  \t');
+    expect(execute.mock.calls[0][0]).toContain('_extraDictRemoveKey: #comment');
+  });
+
+  // `_extraDictRemoveKey:` is a private accessor; storing nil under the key reads
+  // back identically to an absent one, so the removal has somewhere to fall back to.
+  it('falls back to storing nil if the key cannot be removed', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    setClassComment(execute, 'Foo', '');
+    expect(execute.mock.calls[0][0]).toContain('_extraDictAt: #comment put: nil');
+  });
 });
 
 describe('deleteMethod', () => {

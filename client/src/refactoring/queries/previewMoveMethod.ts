@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Move-method (M6) query builders. The engine (GsMoveMethodRefactoring) is addressed
 // by a SOURCE class + a COLLECTION of selectors + the source side (isMeta), plus a
@@ -92,15 +93,16 @@ export function pageMoveMethodPreview(
 
 /** Apply a started preview server-side (compile on the target + remove from the
  *  source, the removal guarded so a deselected add never strands a method), WITHOUT
- *  committing. `deselectedIds` skips individual staged changes. */
+ *  committing. `deselectedIds` skips individual staged changes.
+ *  Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+ *  see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`. */
 export function applyMoveMethod(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code =
-    `GsMoveMethodRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #(${ids})`;
+  const code = recordedApplyExpr('GsMoveMethodRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyMoveMethod(${token})`, code);
 }
 

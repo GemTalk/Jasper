@@ -639,6 +639,54 @@ removeallclassmethods GsRefactoringParseTest
 
 doit
 | cls |
+cls := TestCase subclass: 'GsRefactoringUndoTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the refactoring UNDO record and executor (issue #434).
+
+GsRefactoringUndo wraps an ordinary refactoring apply, snapshots the live state of
+every method slot the change set touches BEFORE and AFTER it, and diffs the two into
+an INVERSE change set that puts the stone back.
+
+This suite pins down, for each of the method-only refactorings, that apply-then-undo
+returns the affected classes to their ORIGINAL state -- and it asserts that over the
+WHOLE class, both sides, including methods the refactoring had no reason to touch,
+with their categories intact, because those are the ones no change set mentions and
+so nothing else would catch their loss.
+
+It also pins down the machinery around that:
+
+  - the inverse is ordered restore-then-recompile-then-remove, so undoing a rename
+    brings the old selector back before the new one goes;
+  - a change set that touches CLASS SHAPE records no undo entry at all (this tier is
+    method changes only) and says so via an undoRecorded:false field;
+  - deselecting an inverse change leaves that one slot alone and keeps the entry;
+  - a clean undo consumes the entry (there is nothing left to undo);
+  - drift -- a method edited after the refactoring -- surfaces as a per-change
+    warning rather than a refusal, and undoing still proceeds;
+  - undoing is idempotent where it can be (removing an already-removed method is
+    not an error);
+  - nothing here commits.
+
+Every fixture selector is prefixed `gsu` so no refactoring in this suite can reach a
+same-named method elsewhere in the image, and every scope used is #class.
+
+setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
+removes them and clears again, so no test leaks an entry into the next.
+'.
+true.
+%
+
+removeallmethods GsRefactoringUndoTest
+removeallclassmethods GsRefactoringUndoTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsRenameClassRefactoringTest'
   instVarNames: #()
   classVars: #()
@@ -8223,6 +8271,1260 @@ testWideAndAsciiCommentYieldSameSelector
 	ascii := 'foo ', dq, 'cxd', dq, ' ^42'.
 	self assert: ((RBParser parseMethod: wide) selector
 		= (RBParser parseMethod: ascii) selector)
+%
+
+category: 'asserting'
+method: GsRefactoringUndoTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsRefactoringUndoTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+fixture
+	^UserGlobals at: #GsUndoAccount
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+otherFixture
+	^UserGlobals at: #GsUndoLedger
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+subFixture
+	^UserGlobals at: #GsUndoSavings
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+compile: aSource in: aClass category: aCategory
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: aCategory]
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+sourceOf: aSelector in: aBehavior
+	^(aBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil]
+		ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+categoryOf: aSelector in: aBehavior
+	^(aBehavior categoryOfSelector: aSelector environmentId: 0)
+		ifNil: [nil]
+		ifNotNil: [:c | c asString]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+offsetIn: aBehavior selector: aSelector at: aSubstring
+	^(self sourceOf: aSelector in: aBehavior) indexOfSubCollection: aSubstring
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+snapshotOf: aClass
+	"Everything about aClass an undo must restore: every selector on BOTH sides, each
+	 with its source and its category. Deliberately whole-class -- an undo that quietly
+	 loses a method it never mentioned is exactly what this catches."
+	| result |
+	result := Dictionary new.
+	(Array with: false with: true) do: [:meta | | behavior |
+		behavior := meta ifTrue: [aClass class] ifFalse: [aClass].
+		behavior selectors do: [:sel |
+			result
+				at: (meta printString, '|', sel asString)
+				put: (Array
+					with: (self sourceOf: sel in: behavior)
+					with: (self categoryOf: sel in: behavior))]].
+	^result
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+assertSnapshot: expected restoredFor: aClass
+	"aClass is back to `expected` EXACTLY: the same selectors on both sides (nothing
+	 lost, nothing left over), each with the same source and the same category."
+	| actual |
+	actual := self snapshotOf: aClass.
+	self
+		assert: actual keys asSortedCollection asArray
+		equals: expected keys asSortedCollection asArray.
+	expected keysAndValuesDo: [:k :v |
+		self assert: (GsRefactoringUndo source: (actual at: k) first matches: (v at: 1)).
+		self assert: (actual at: k) last equals: (v at: 2)]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+applyRecording: aRefactoring
+	"Stage aRefactoring's preview under a token and apply it through the recorder,
+	 exactly as the client does. Answers the apply-result JSON."
+	^self applyRecording: aRefactoring deselected: #()
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+applyRecording: aRefactoring deselected: ids
+	| token |
+	token := 'undo-test-token'.
+	aRefactoring changeSet.
+	SessionTemps current at: token asSymbol put: aRefactoring.
+	^[GsRefactoringUndo
+		recordAndApplyForToken: token
+		engine: aRefactoring class name asString
+		deselected: ids
+		label: 'test refactoring']
+		ensure: [SessionTemps current removeKey: token asSymbol ifAbsent: []]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+undoAll
+	"Preview and apply the whole recorded undo, as the client's panel does."
+	^self undoDeselecting: #()
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+undoDeselecting: ids
+	| token |
+	token := 'undo-test-preview'.
+	GsRefactoringUndo startPreviewToken: token maxBytes: 1000000.
+	^[GsRefactoringUndo applyForToken: token deselected: ids]
+		ensure: [GsRefactoringUndo clearToken: token]
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+undoPreviewJson
+	| token json |
+	token := 'undo-test-preview'.
+	json := GsRefactoringUndo startPreviewToken: token maxBytes: 1000000.
+	GsRefactoringUndo clearToken: token.
+	^json
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+renameInFixture: oldSelector to: newSelector
+	^GsRenameMethodRefactoring
+		class: self fixture
+		renameSelector: oldSelector
+		toParts: (Array with: newSelector)
+		permutation: #()
+		scope: #class
+%
+
+category: 'running'
+method: GsRefactoringUndoTest
+setUp
+	| account ledger savings |
+	super setUp.
+	GsRefactoringUndo clear.
+	GsRefactoringUndo discardPendingCapture.
+	account := Object
+		subclass: 'GsUndoAccount'
+		instVarNames: #('balance' 'owner')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	ledger := Object
+		subclass: 'GsUndoLedger'
+		instVarNames: #('balance')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	savings := account
+		subclass: 'GsUndoSavings'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"Instance side. #gsuUntouched and #gsuAlsoUntouched are named in NO change set any
+	 refactoring here stages -- they are the survival canaries."
+	self compile: 'gsuTotal ^ 40 + 2' in: account category: 'computing'.
+	self compile: 'gsuReport ^ ''total is '', self gsuTotal printString' in: account category: 'printing'.
+	self compile: 'gsuUntouched ^ ''kept''' in: account category: 'fixture'.
+	self compile: 'gsuBalance ^ balance' in: account category: 'accessing'.
+	self compile: 'gsuPure ^ 7 * 6' in: account category: 'computing'.
+	"Class side -- an undo must not disturb it, and must restore it when it is the target."
+	self compile: 'gsuAlsoUntouched ^ ''class side''' in: account class category: 'fixture'.
+	self compile: 'gsuMake ^ self new' in: account class category: 'instance creation'.
+	"Other class, for move-method."
+	self compile: 'gsuLedgerOwn ^ 1' in: ledger category: 'fixture'.
+	"Subclass, for push up / push down."
+	self compile: 'gsuSavingsOwn ^ 2' in: savings category: 'fixture'
+%
+
+category: 'running'
+method: GsRefactoringUndoTest
+tearDown
+	GsRefactoringUndo clear.
+	GsRefactoringUndo discardPendingCapture.
+	"GsUndoOldLedger / GsUndoVarHolder only exist in the reverse-rename tests, and a test that
+	 fails mid-way can leave either behind -- remove them unconditionally."
+	#(#GsUndoSavings #GsUndoLedger #GsUndoAccount #GsUndoOldLedger #GsUndoVarHolder #GsUndoCreated)
+		do: [:n | UserGlobals removeKey: n ifAbsent: []].
+	super tearDown
+%
+
+category: 'tests - source comparison'
+method: GsRefactoringUndoTest
+testSourceMatchesComparesCharacterwiseAndHandlesNil
+	self assert: (GsRefactoringUndo source: 'abc' matches: 'abc').
+	self deny: (GsRefactoringUndo source: 'abc' matches: 'abd').
+	self deny: (GsRefactoringUndo source: 'abc' matches: 'abcd').
+	self assert: (GsRefactoringUndo source: nil matches: nil).
+	self deny: (GsRefactoringUndo source: nil matches: '').
+	self deny: (GsRefactoringUndo source: '' matches: nil)
+%
+
+category: 'tests - envelope'
+method: GsRefactoringUndoTest
+testResultWithUndoRecordedSplicesTheFlagIn
+	self
+		assert: (GsRefactoringUndo result: '{"applied":3,"failed":[]}' withUndoRecorded: true)
+		equals: '{"applied":3,"failed":[],"undoRecorded":true}'.
+	self
+		assert: (GsRefactoringUndo result: '{"applied":0,"failed":[]}' withUndoRecorded: false)
+		equals: '{"applied":0,"failed":[],"undoRecorded":false}'
+%
+
+category: 'tests - envelope'
+method: GsRefactoringUndoTest
+testResultWithUndoRecordedLeavesANonObjectPayloadAlone
+	"The apply's own answer always matters more than the annotation."
+	self
+		assert: (GsRefactoringUndo result: 'Class not found: Foo' withUndoRecorded: false)
+		equals: 'Class not found: Foo'
+%
+
+category: 'tests - envelope'
+method: GsRefactoringUndoTest
+testStatusJsonReportsNothingToUndoWhenEmpty
+	self assert: GsRefactoringUndo statusJson equals: '{"available":false}'
+%
+
+category: 'tests - scope'
+method: GsRefactoringUndoTest
+testAClassShapeChangeRecordsNoUndoAtAll
+	"This tier reverses METHOD changes only. A change set that reshapes a class must
+	 record NOTHING -- half an undo is worse than none."
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addMethodRecompileInDictionary: nil className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	cs
+		addClassDefinitionEditInDictionary: nil className: 'GsUndoAccount'
+		oldSource: 'old' newSource: 'new'.
+	self assert: (GsRefactoringUndo slotsTouchedIn: cs deselected: #()) isNil
+%
+
+category: 'tests - scope'
+method: GsRefactoringUndoTest
+testADeselectedClassShapeChangeDoesNotBlockRecording
+	"Only the changes that are actually APPLIED constrain what can be undone."
+	| cs classChange slots |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addMethodRecompileInDictionary: nil className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	classChange := cs
+		addClassDefinitionEditInDictionary: nil className: 'GsUndoAccount'
+		oldSource: 'old' newSource: 'new'.
+	slots := GsRefactoringUndo
+		slotsTouchedIn: cs
+		deselected: (Array with: classChange id).
+	self assert: slots size equals: 1.
+	self assert: (slots first at: 4) equals: 'gsuTotal'
+%
+
+category: 'tests - scope'
+method: GsRefactoringUndoTest
+testARenameContributesBothItsSelectorsAsSlots
+	"A #methodRename touches TWO slots on the same class; both must be snapshotted, or
+	 the undo would never notice the new selector appearing."
+	| cs slots names |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addMethodRenameInDictionary: nil className: 'GsUndoAccount' isMeta: false
+		oldSelector: 'gsuTotal' newSelector: 'gsuSum' category: 'computing'
+		oldSource: 'gsuTotal ^1' newSource: 'gsuSum ^1'.
+	slots := GsRefactoringUndo slotsTouchedIn: cs deselected: #().
+	names := (slots collect: [:s | s at: 4]) asSortedCollection asArray.
+	self assert: names equals: #('gsuSum' 'gsuTotal')
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testUndoRenameMethodRestoresTheWholeClass
+	| before applyJson undoJson |
+	before := self snapshotOf: self fixture.
+	applyJson := self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: applyJson includesSubstring: '"undoRecorded":true'.
+	"The rename really happened before we undo it."
+	self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+	self assert: (self sourceOf: #gsuTotal in: self fixture) isNil.
+
+	undoJson := self undoAll.
+	self assert: undoJson includesSubstring: '"failed":[]'.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testUndoRenameMethodRestoresTheSenderToo
+	"#gsuReport sends #gsuTotal; the rename rewrote it. Undoing must put the send back."
+	| before |
+	before := self sourceOf: #gsuReport in: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self deny: (self sourceOf: #gsuReport in: self fixture) includesSubstring: 'self gsuTotal'.
+	self undoAll.
+	self assert: (GsRefactoringUndo source: (self sourceOf: #gsuReport in: self fixture) matches: before)
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testUndoRestoresTheOldSelectorBeforeRemovingTheNewOne
+	"The inverse is ordered restore-then-remove; the change set must reflect that, or an
+	 interrupted undo could leave the method under NEITHER selector."
+	| kinds |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	kinds := GsRefactoringUndo currentEntry changeSet changes collect: [:c | c kind asString].
+	self assert: (kinds indexOf: 'methodAdd') < (kinds indexOf: 'methodRemove')
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testACleanUndoConsumesTheEntry
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry notNil.
+	self undoAll.
+	self assert: GsRefactoringUndo currentEntry isNil.
+	self assert: GsRefactoringUndo statusJson equals: '{"available":false}'
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testAPartialUndoKeepsTheEntryAndLeavesDeselectedSlotsAlone
+	| keep |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	"Deselect the removal of the NEW selector: undoing should bring #gsuTotal back and
+	 leave #gsuSum in place."
+	keep := GsRefactoringUndo currentEntry changeSet changes
+		detect: [:c | c kind == #methodRemove] ifNone: [nil].
+	self assert: keep notNil.
+	self undoDeselecting: (Array with: keep id).
+	self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+	self assert: (self sourceOf: #gsuTotal in: self fixture) notNil.
+	"A partial undo is not used up."
+	self assert: GsRefactoringUndo currentEntry notNil
+%
+
+category: 'tests - rename method'
+method: GsRefactoringUndoTest
+testStatusJsonNamesWhatWouldBeUndone
+	| json |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	json := GsRefactoringUndo statusJson.
+	self assert: json includesSubstring: '"available":true'.
+	self assert: json includesSubstring: '"label":"test refactoring"'.
+	self assert: json includesSubstring: '"engine":"GsRenameMethodRefactoring"'
+%
+
+category: 'tests - drift'
+method: GsRefactoringUndoTest
+testAnEditAfterTheRefactoringWarnsButStillUndoes
+	| json |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	"Edit the renamed method after the fact."
+	self compile: 'gsuSum ^ 999' in: self fixture category: 'computing'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: 'Edited since the refactoring'.
+	self deny: json includesSubstring: '"drifted":0'.
+	"Warned, not refused: the undo still runs and puts the original back."
+	self undoAll.
+	self assert: (self sourceOf: #gsuTotal in: self fixture) notNil.
+	self assert: (self sourceOf: #gsuSum in: self fixture) isNil
+%
+
+category: 'tests - drift'
+method: GsRefactoringUndoTest
+testACleanUndoPreviewReportsNoDrift
+	| json |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"drifted":0'.
+	self assert: json includesSubstring: '"warning":null'
+%
+
+category: 'tests - drift'
+method: GsRefactoringUndoTest
+testRemovingAMethodTheUndoWouldDeleteIsNotAnError
+	"Undo is idempotent where it can be: a method already gone is in the state the undo
+	 wants it in, so the removal succeeds rather than failing."
+	| json |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self fixture removeSelector: #gsuSum.
+	json := self undoAll.
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self sourceOf: #gsuTotal in: self fixture) notNil
+%
+
+category: 'tests - preview'
+method: GsRefactoringUndoTest
+testPreviewWithNothingRecordedAnswersAnErrorEnvelope
+	| json |
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"error"'.
+	self assert: json includesSubstring: 'no refactoring to undo'
+%
+
+category: 'tests - preview'
+method: GsRefactoringUndoTest
+testApplyingAnExpiredUndoTokenAnswersAnErrorEnvelope
+	self
+		assert: (GsRefactoringUndo applyForToken: 'undo-nope' deselected: #())
+		equals: '{"applied":0,"failed":[],"error":"preview session expired"}'
+%
+
+category: 'tests - preview'
+method: GsRefactoringUndoTest
+testThePreviewPaginatesLikeAForwardPreview
+	| first |
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	GsRefactoringUndo startPreviewToken: 'undo-page-token' maxBytes: 1.
+	first := GsRefactoringUndo pageForToken: 'undo-page-token' from: 1 maxBytes: 1.
+	"maxBytes 1 still emits the one change that crosses the threshold, and reports more."
+	self assert: first includesSubstring: '"done":false'.
+	self assert: first includesSubstring: '"nextOffset":2'.
+	GsRefactoringUndo clearToken: 'undo-page-token'
+%
+
+category: 'tests - preview'
+method: GsRefactoringUndoTest
+testClosingThePreviewDoesNotThrowTheUndoAway
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self undoPreviewJson.
+	self assert: GsRefactoringUndo currentEntry notNil
+%
+
+category: 'tests - extract method'
+method: GsRefactoringUndoTest
+testUndoExtractMethodRestoresTheWholeClass
+	| before start |
+	before := self snapshotOf: self fixture.
+	start := self offsetIn: self fixture selector: #gsuTotal at: '40 + 2'.
+	self applyRecording: (GsExtractMethodRefactoring
+		class: self fixture
+		selector: #gsuTotal
+		meta: false
+		selStart: start
+		selStop: start + '40 + 2' size - 1
+		newSelector: 'gsuAnswer').
+	self assert: (self sourceOf: #gsuAnswer in: self fixture) notNil.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - inline method'
+method: GsRefactoringUndoTest
+testUndoInlineMethodBringsTheRemovedMethodBackWithItsCategory
+	| before |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsInlineMethodRefactoring
+		class: self fixture
+		selector: #gsuReport
+		meta: false
+		atOffset: (self offsetIn: self fixture selector: #gsuReport at: 'gsuTotal printString')).
+	"The last sender was inlined, so the target method was deleted."
+	self assert: (self sourceOf: #gsuTotal in: self fixture) isNil.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture.
+	"Explicitly: the category came back too, not 'as yet unclassified'."
+	self assert: (self categoryOf: #gsuTotal in: self fixture) equals: 'computing'
+%
+
+category: 'tests - move method'
+method: GsRefactoringUndoTest
+testUndoMoveMethodRestoresBothClasses
+	| beforeSource beforeTarget |
+	beforeSource := self snapshotOf: self fixture.
+	beforeTarget := self snapshotOf: self otherFixture.
+	self applyRecording: (GsMoveMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false
+		toClassNamed: 'GsUndoLedger'
+		toMeta: false).
+	self assert: (self sourceOf: #gsuPure in: self otherFixture) notNil.
+	self assert: (self sourceOf: #gsuPure in: self fixture) isNil.
+	self undoAll.
+	self assertSnapshot: beforeSource restoredFor: self fixture.
+	self assertSnapshot: beforeTarget restoredFor: self otherFixture
+%
+
+category: 'tests - push method'
+method: GsRefactoringUndoTest
+testUndoPushDownMethodRestoresBothClasses
+	| beforeParent beforeChild |
+	beforeParent := self snapshotOf: self fixture.
+	beforeChild := self snapshotOf: self subFixture.
+	self applyRecording: (GsPushDownMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false).
+	self assert: (self sourceOf: #gsuPure in: self subFixture) notNil.
+	self undoAll.
+	self assertSnapshot: beforeParent restoredFor: self fixture.
+	self assertSnapshot: beforeChild restoredFor: self subFixture
+%
+
+category: 'tests - push method'
+method: GsRefactoringUndoTest
+testUndoPushUpMethodRestoresBothClasses
+	| beforeParent beforeChild |
+	self compile: 'gsuSavingsPure ^ 3' in: self subFixture category: 'computing'.
+	beforeParent := self snapshotOf: self fixture.
+	beforeChild := self snapshotOf: self subFixture.
+	self applyRecording: (GsPushUpMethodRefactoring
+		sourceClass: self subFixture
+		selectors: #('gsuSavingsPure')
+		meta: false).
+	self assert: (self sourceOf: #gsuSavingsPure in: self fixture) notNil.
+	self undoAll.
+	self assertSnapshot: beforeParent restoredFor: self fixture.
+	self assertSnapshot: beforeChild restoredFor: self subFixture
+%
+
+category: 'tests - change signature'
+method: GsRefactoringUndoTest
+testUndoChangeSignatureRestoresTheWholeClass
+	| before |
+	self compile: 'gsuScaleBy: aNumber ^ 42 * aNumber' in: self fixture category: 'computing'.
+	self compile: 'gsuUseScale ^ self gsuScaleBy: 2' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsChangeSignatureRefactoring
+		class: self fixture
+		meta: false
+		changeSelector: #'gsuScaleBy:'
+		toParts: #('gsuTimes:')
+		permutation: #(1)
+		argNames: #('aNumber')
+		defaults: (Array with: nil)
+		scope: #class).
+	self assert: (self sourceOf: #'gsuTimes:' in: self fixture) notNil.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - temporaries'
+method: GsRefactoringUndoTest
+testUndoRenameTemporaryRestoresTheMethod
+	| before |
+	self compile: 'gsuWithTemp | t | t := 3. ^ t + 1' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsRenameTemporaryRefactoring
+		class: self fixture
+		selector: #gsuWithTemp
+		meta: false
+		renameTemp: 't'
+		to: 'count'
+		atOffset: (self offsetIn: self fixture selector: #gsuWithTemp at: 't := 3')).
+	self assert: (self sourceOf: #gsuWithTemp in: self fixture) includesSubstring: 'count'.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - temporaries'
+method: GsRefactoringUndoTest
+testUndoExtractTemporaryRestoresTheMethod
+	| before start |
+	before := self snapshotOf: self fixture.
+	start := self offsetIn: self fixture selector: #gsuPure at: '7 * 6'.
+	self applyRecording: (GsExtractTemporaryRefactoring
+		class: self fixture
+		selector: #gsuPure
+		meta: false
+		selStart: start
+		selStop: start + '7 * 6' size - 1
+		newName: 'product').
+	self assert: (self sourceOf: #gsuPure in: self fixture) includesSubstring: 'product'.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - temporaries'
+method: GsRefactoringUndoTest
+testUndoInlineTemporaryRestoresTheMethod
+	| before |
+	self compile: 'gsuInlineMe | tOnce | tOnce := 5. ^ tOnce + 1' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsInlineTemporaryRefactoring
+		class: self fixture
+		selector: #gsuInlineMe
+		meta: false
+		atOffset: (self offsetIn: self fixture selector: #gsuInlineMe at: 'tOnce := 5')).
+	self deny: (self sourceOf: #gsuInlineMe in: self fixture) includesSubstring: 'tOnce := 5'.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - class side'
+method: GsRefactoringUndoTest
+testUndoRestoresAClassSideRenameAndLeavesTheInstanceSideAlone
+	| before |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuMake' to: 'gsuBuild').
+	self assert: (self sourceOf: #gsuBuild in: self fixture class) notNil.
+	self assert: (self sourceOf: #gsuMake in: self fixture class) isNil.
+	self undoAll.
+	self assertSnapshot: before restoredFor: self fixture
+%
+
+category: 'tests - non commit'
+method: GsRefactoringUndoTest
+testRecordingAndUndoingCommitNothing
+	"Neither the record nor the undo may commit -- the user commits explicitly."
+	| before |
+	before := System needsCommit.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self undoAll.
+	self assert: System needsCommit equals: before
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+recordClassRenameFrom: fromName to: toName
+	"Record the reversal of a class rename that has already landed: the class is bound under
+	 fromName now, and toName is where it goes back to."
+	^GsRefactoringUndo
+		recordReverseRename: #classRename
+		className: fromName
+		from: fromName
+		to: toName
+		scopeKind: #wholeSystem
+		scopeDictName: nil
+		label: 'Rename class ', toName, ' to ', fromName
+		engine: 'GsRenameClassRefactoring'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testRecordingARenameAnswersARenameBackEntry
+	self assert: (self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger') equals: 'ok'.
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #mirror.
+	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"mirror"'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAMethodEntryReportsTheChangeSetMechanism
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #changeSet.
+	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"changeSet"'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAnUnreversibleKindRecordsNothing
+	"Recording something this cannot reverse must record NOTHING rather than something wrong."
+	self
+		assert: (GsRefactoringUndo
+			recordReverseRename: #splitClass className: 'GsUndoAccount' from: 'a' to: 'b'
+			scopeKind: nil scopeDictName: nil label: 'x' engine: 'GsSplitClassRefactoring')
+		equals: 'unsupported'.
+	self assert: GsRefactoringUndo currentEntry isNil
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testTheReverseIsBuiltFromTheRENAMEEngineItself
+	"The reversal is the same engine run the other way -- not a hand-rolled inverse."
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	self
+		assert: GsRefactoringUndo currentEntry reverseRefactoring class name asString
+		equals: 'GsRenameClassRefactoring'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testTheReverseRefactoringIsBuiltOnceAndCached
+	"The preview and the apply must run against the SAME object, or the change ids the user
+	 deselected in the preview would not match the set the apply walks."
+	| first |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	first := GsRefactoringUndo currentEntry reverseRefactoring.
+	self assert: GsRefactoringUndo currentEntry reverseRefactoring == first
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testTheReversePreviewIsTheReverseRenamesOwnChangeSet
+	| json |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"mechanism":"mirror"'.
+	"A class rename stages a classRename row (plus reparents/recompiles) -- class-shape kinds
+	 the client's undo preview therefore has to render."
+	self assert: json includesSubstring: '"kind":"classRename"'.
+	self assert: json includesSubstring: '"newName":"GsUndoOldLedger"'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAReverseRenamePreviewReportsNoPerChangeDrift
+	"Its change set is derived from the stone as it is right now, by the engine that would
+	 apply it, so every row is current by construction."
+	| json |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"drifted":0'.
+	self assert: GsRefactoringUndo currentEntry driftedCount equals: 0
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testReversingAClassRenamePutsTheNameBack
+	| applied |
+	"Rename GsUndoLedger -> GsUndoOldLedger for real, then record and reverse it."
+	applied := (GsRenameClassRefactoring
+		class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self assert: applied includesSubstring: '"failed":[]'.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) notNil.
+	self assert: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+
+	self assert: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) notNil.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) isNil.
+	"And the class still works -- its methods came forward through both renames."
+	self assert: (self sourceOf: #gsuLedgerOwn in: (UserGlobals at: #GsUndoLedger)) notNil
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testWorkWrittenAfterTheRenameSurvivesTheReversal
+	"The compensation for not being a rollback: a rename carries methods FORWARD, so a method
+	 added after the rename survives -- where a classHistory revert would have discarded it."
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self
+		compile: 'gsuAddedAfterTheRename ^ 99'
+		in: (UserGlobals at: #GsUndoOldLedger)
+		category: 'after'.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+
+	self
+		assert: (self sourceOf: #gsuAddedAfterTheRename in: (UserGlobals at: #GsUndoLedger))
+		notNil.
+	self
+		assert: (self categoryOf: #gsuAddedAfterTheRename in: (UserGlobals at: #GsUndoLedger))
+		equals: 'after'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testACleanReversalConsumesTheEntry
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self assert: GsRefactoringUndo currentEntry notNil.
+	self undoAll.
+	self assert: GsRefactoringUndo currentEntry isNil
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAReversalRefusesWithAReasonWhenTheClassIsGone
+	| json |
+	self recordClassRenameFrom: 'GsUndoNoSuchClass' to: 'GsUndoWhatever'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"error"'.
+	self assert: json includesSubstring: 'no longer exists'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAReversalRefusesWhenTheOldNameHasBeenTakenBySomethingElse
+	"The reachable collision: rename A -> B, then create a NEW class named A. Reversing would
+	 have to put B back as A, and A is taken. It must refuse -- and above all must not clobber
+	 the new A."
+	| newcomer |
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	newcomer := Object
+		subclass: 'GsUndoLedger'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'gsuIAmTheNewOne ^ true' in: newcomer category: 'fixture'.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+
+	"The newcomer is untouched, and the renamed class is still under its new name."
+	self assert: (self sourceOf: #gsuIAmTheNewOne in: (UserGlobals at: #GsUndoLedger)) notNil.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) notNil
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testAnInstVarReversalRefusesWhenTheOldNameIsDeclaredAgain
+	"Rename balance -> gsuFunds, then add a NEW instance variable called balance. Reversing
+	 would declare it twice, which the class-creation primitive rejects mid-apply -- and the
+	 ivar rename engine has no collision check of its own, so the reversal must make it."
+	(GsRenameInstanceVariableRefactoring
+		class: self fixture renameInstVar: 'balance' to: 'gsuFunds') applyDeselected: #().
+	"Re-declare the class with `balance` back alongside `gsuFunds` -- a new class version, which
+	 is what adding an instance variable by hand amounts to."
+	Object
+		subclass: 'GsUndoAccount'
+		instVarNames: #('gsuFunds' 'owner' 'balance')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+
+	GsRefactoringUndo
+		recordReverseRename: #instVarRename className: 'GsUndoAccount'
+		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
+		label: 'Rename instance variable balance to gsuFunds'
+		engine: 'GsRenameInstanceVariableRefactoring'.
+
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'already declares an instance variable'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testReversingARenamedInstanceVariablePutsTheNameBack
+	| cls |
+	(GsRenameInstanceVariableRefactoring
+		class: self fixture renameInstVar: 'balance' to: 'gsuFunds') applyDeselected: #().
+	cls := UserGlobals at: #GsUndoAccount.
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuFunds').
+
+	GsRefactoringUndo
+		recordReverseRename: #instVarRename className: 'GsUndoAccount'
+		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
+		label: 'Rename instance variable balance to gsuFunds'
+		engine: 'GsRenameInstanceVariableRefactoring'.
+	self undoAll.
+
+	cls := UserGlobals at: #GsUndoAccount.
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'balance').
+	self deny: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuFunds').
+	"The accessor that reads it recompiled both ways and still works."
+	self assert: (self sourceOf: #gsuBalance in: cls) includesSubstring: 'balance'
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testReversingARenamedClassVariablePutsTheNameBack
+	| cls |
+	cls := Object
+		subclass: 'GsUndoVarHolder'
+		instVarNames: #()
+		classVars: #('GsuRegistry')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'gsuReadIt ^ GsuRegistry' in: cls category: 'accessing'.
+	[(GsRenameClassVariableRefactoring
+		class: cls renameClassVar: 'GsuRegistry' to: 'GsuCatalog') applyDeselected: #().
+	self assert: (((UserGlobals at: #GsUndoVarHolder) classVarNames
+		collect: [:e | e asString]) includes: 'GsuCatalog').
+
+	GsRefactoringUndo
+		recordReverseRename: #classVarRename className: 'GsUndoVarHolder'
+		from: 'GsuCatalog' to: 'GsuRegistry' scopeKind: nil scopeDictName: nil
+		label: 'Rename class variable GsuRegistry to GsuCatalog'
+		engine: 'GsRenameClassVariableRefactoring'.
+	self undoAll.
+
+	self assert: (((UserGlobals at: #GsUndoVarHolder) classVarNames
+		collect: [:e | e asString]) includes: 'GsuRegistry')]
+		ensure: [UserGlobals removeKey: #GsUndoVarHolder ifAbsent: []]
+%
+
+category: 'tests - reverse rename'
+method: GsRefactoringUndoTest
+testReversingARenameCommitsNothing
+	| before |
+	before := System needsCommit.
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - deselection semantics'
+method: GsRefactoringUndoTest
+testDeselectionMeansThreeDifferentThings
+	"A client that renders all these rows the same way misleads: for one kind un-ticking simply
+	 skips the change, for another it DELETES the method, and for the rest it does nothing at all."
+	self assert: (GsRefactoringUndo deselectionFor: #classRename) equals: #perChange.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarRename) equals: #dropsMethod.
+	self assert: (GsRefactoringUndo deselectionFor: #classVarRename) equals: #ignored.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarAdd) equals: #ignored.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarRemove) equals: #ignored
+%
+
+category: 'tests - deselection semantics'
+method: GsRefactoringUndoTest
+testAChangeSetEntryIsAlwaysPerChange
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry deselection equals: #perChange
+%
+
+category: 'tests - deselection semantics'
+method: GsRefactoringUndoTest
+testThePreviewReportsTheDeselectionSemantics
+	"An instance-variable reshape is all-or-nothing, so the client must render its rows disabled
+	 rather than invite a click that silently does nothing."
+	| json |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self recordInstVarAddOf: 'gsuExtra'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"deselection":"ignored"'
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+recordInstVarAddOf: aName
+	"Record the reversal of an instance-variable ADD that has already landed."
+	^GsRefactoringUndo
+		recordReverseRename: #instVarAdd
+		className: 'GsUndoAccount'
+		from: aName
+		to: aName
+		scopeKind: nil
+		scopeDictName: nil
+		label: 'Add instance variable ', aName, ' to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+recordInstVarRemoveOf: aName
+	^GsRefactoringUndo
+		recordReverseRename: #instVarRemove
+		className: 'GsUndoAccount'
+		from: aName
+		to: aName
+		scopeKind: nil
+		scopeDictName: nil
+		label: 'Remove instance variable ', aName, ' from GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+%
+
+category: 'fixture'
+method: GsRefactoringUndoTest
+ownInstVarsOf: aClassName
+	^((UserGlobals at: aClassName asSymbol) instVarNames collect: [:e | e asString]) asArray
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testReversingAnInstVarAddTakesTheVariableBackOut
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+
+	self recordInstVarAddOf: 'gsuExtra'.
+	self assert: GsRefactoringUndo currentEntry reverseKind equals: #instVarAdd.
+	self undoAll.
+
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	"The variables that were always there, and the methods, survived both reshapes."
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'balance').
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	self assert: (self sourceOf: #gsuAlsoUntouched in: (UserGlobals at: #GsUndoAccount) class) notNil
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testReversingAnInstVarRemovePutsTheVariableBack
+	(GsInstVarRefactoring class: self fixture removeInstVar: 'owner')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+
+	self recordInstVarRemoveOf: 'owner'.
+	self assert: GsRefactoringUndo currentEntry reverseKind equals: #instVarRemove.
+	self undoAll.
+
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testReversingAnAddCountsTheMethodsItWouldDrop
+	"Reversing an ADD removes the variable, so a method written since that USES it cannot be
+	 recompiled and is dropped. The count is surfaced so the client can say the number."
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self compile: 'gsuUsesExtra ^ gsuExtra' in: (UserGlobals at: #GsUndoAccount) category: 'after'.
+
+	self recordInstVarAddOf: 'gsuExtra'.
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount > 0.
+	self assert: self undoPreviewJson includesSubstring: '"dropCount":'
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testAKindWithNothingToDropCountsZero
+	self recordInstVarRemoveOf: 'owner'.
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount equals: 0.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount equals: 0
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testReversingAnAddRefusesWhenTheVariableIsAlreadyGone
+	"Nothing to take back out -- offering it would be misleading."
+	self recordInstVarAddOf: 'gsuNeverExisted'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'nothing to take back out'
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testReversingARemoveRefusesWhenTheNameIsDeclaredAgain
+	"Adding it back would declare it twice, which the class-creation primitive rejects mid-apply."
+	self recordInstVarRemoveOf: 'balance'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'already declares'
+%
+
+category: 'tests - instvar add/remove'
+method: GsRefactoringUndoTest
+testAnInstVarReversalNeverCommitsAndNeverDeletesHistory
+	"migrate and deleteHistory are the two irreversible options in the family: one moves user
+	 data, the other destroys what a later reversal needs. A reversal hardcodes both false, so it
+	 must leave the transaction dirty -- if it had committed, needsCommit would be false."
+	| before |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	before := System needsCommit.
+	self recordInstVarAddOf: 'gsuExtra'.
+	self undoAll.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testCaptureAndCommitMakeAHistoryRevertEntry
+	self assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount') equals: 'ok'.
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'Push up balance' engine: 'GsInstVarStructureRefactoring' created: #())
+		equals: 'ok'.
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #historyRevert
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testCaptureRecordsTheSubtreeTopDown
+	"Parent before child: GsClassHistory re-versions each subclass onto its parent's restored
+	 version, so replaying a child first would re-parent it onto a version about to be superseded."
+	| names |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	names := GsRefactoringUndo currentEntry revertPlan collect: [:e | e at: 1].
+	self assert: (names indexOf: 'GsUndoAccount') < (names indexOf: 'GsUndoSavings')
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testCommittingWithNoCaptureRecordsNothing
+	"A caller that forgot to capture must fail loudly rather than record an empty undo."
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #())
+		equals: 'nothing captured'.
+	self assert: GsRefactoringUndo currentEntry isNil
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testADiscardedCaptureLeavesNoEntry
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo discardPendingCapture.
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #())
+		equals: 'nothing captured'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testCapturingAnUnknownClassRecordsNothing
+	self
+		assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoNoSuchThing')
+		equals: 'not a class'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testAHistoryRevertIsAllOrNothing
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self assert: GsRefactoringUndo currentEntry deselection equals: #ignored.
+	self assert: self undoPreviewJson includesSubstring: '"deselection":"ignored"'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testHistoryRevertRestoresAReshapedClass
+	"The real thing: reshape a class, then put it back to its pre-refactoring state."
+	| before |
+	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuReshaped').
+
+	self undoAll.
+
+	self assert: (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray equals: before.
+	"And the methods came back with the shape -- that is the point of reverting rather than
+	 re-declaring by hand."
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	self assert: (self sourceOf: #gsuAlsoUntouched in: (UserGlobals at: #GsUndoAccount) class) notNil
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testHistoryRevertNamesTheMethodsItWillDiscard
+	"Eric 2026-08-19: the reversal returns the class to its PRE-REFACTORING state, and the user
+	 must be told that -- so anything written since is named, not discovered afterwards."
+	| json |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self compile: 'gsuWrittenAfter ^ 7' in: (UserGlobals at: #GsUndoAccount) category: 'after'.
+
+	self assert: GsRefactoringUndo currentEntry totalDiscardedCount > 0.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: 'pre-refactoring state DISCARDS'.
+	self assert: json includesSubstring: 'gsuWrittenAfter'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testNothingWrittenSinceMeansNothingDiscarded
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self assert: GsRefactoringUndo currentEntry totalDiscardedCount equals: 0
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testThePreviewShowsADefinitionDiffPerRevertedClass
+	| json |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"kind":"classDefinitionEdit"'.
+	self assert: json includesSubstring: '"mechanism":"historyRevert"'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testAClassTheRefactoringCREATEDIsUnbound
+	"An inserted superclass or an extracted component has no earlier version to revert to, so the
+	 reversal takes the name back out."
+	| created |
+	created := Object
+		subclass: 'GsUndoCreated'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Extract superclass GsUndoCreated'
+		engine: 'GsExtractSuperclassRefactoring'
+		created: (Array with: 'GsUndoCreated').
+	self assert: self undoPreviewJson includesSubstring: '"kind":"classRemove"'.
+
+	self undoAll.
+	self assert: (UserGlobals at: #GsUndoCreated ifAbsent: [nil]) isNil
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testAHistoryRevertRefusesWhenEveryClassIsGone
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoLedger'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	UserGlobals removeKey: #GsUndoLedger ifAbsent: [].
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self assert: self undoPreviewJson includesSubstring: 'cannot be reversed'
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testACleanHistoryRevertConsumesTheEntry
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self undoAll.
+	self assert: GsRefactoringUndo currentEntry isNil
+%
+
+category: 'tests - history revert'
+method: GsRefactoringUndoTest
+testAHistoryRevertCommitsNothing
+	| before |
+	before := System needsCommit.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self undoAll.
+	self assert: System needsCommit equals: before
 %
 
 category: 'asserting'

@@ -3,7 +3,7 @@
 // Only the version lifecycle is covered here, because that is where the panel
 // makes a decision of its own rather than delegating: Install downloads *and*
 // unpacks, so Remove has to take away both — and getting that wrong is invisible
-// until a removed release reappears offering to install itself again.
+// until a removed version reappears offering to install itself again.
 //
 // The drawing half is covered in databasesView.test.ts.
 
@@ -630,7 +630,7 @@ describe('Install and Remove are inverses', () => {
     expect(deleteDownload).not.toHaveBeenCalled();
   });
 
-  it('takes the archive too, so a removed release does not come back offering to install', async () => {
+  it('takes the archive too, so a removed version does not come back offering to install', async () => {
     onDisk = [{ ...RELEASE, downloaded: true, extracted: true }];
     vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command: string) => {
       if (command === 'gemstone.deleteExtracted') onDisk = [{ ...RELEASE, downloaded: true }];

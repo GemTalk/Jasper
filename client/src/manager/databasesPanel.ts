@@ -1,5 +1,5 @@
 // Databases & Versions — an editor-tab webview holding the two halves of setting
-// GemStone up: the releases installed on this machine, and the databases made
+// GemStone up: the versions installed on this machine, and the databases made
 // from them. It is mostly a *read/coordinate* surface: it renders live state
 // pulled straight from the sysadmin managers, and most mutating actions are
 // delegated to the existing `gemstone.*` commands, so it inherits their
@@ -90,7 +90,7 @@ interface VersionRow {
   extracted: boolean;
   local?: boolean;
   bundled?: boolean;
-  /** A Windows client for this release is extracted — it can be opened or removed. */
+  /** A Windows client for this version is extracted — it can be opened or removed. */
   clientExtracted?: boolean;
 }
 
@@ -211,7 +211,7 @@ interface FileEntry {
 /** Everything the New Database form needs, so it can be drawn and checked
  *  without a round-trip per keystroke. */
 interface CreateOptions {
-  /** Installed releases, each with the base extents that release ships. */
+  /** Installed versions, each with the base extents that version ships. */
   versions: { version: string; extents: string[] }[];
   /** Stone names already in use, so a clash is caught before Create is pressed. */
   stoneNames: string[];
@@ -339,7 +339,7 @@ export class DatabasesPanel {
    * on every admin change, and asking the site again each time would put a network
    * round trip behind starting a stone — a ten-second wait before the panel
    * redraws, on a machine that is offline. What actually changes between rebuilds
-   * is on disk, and that is read fresh every time; Refresh drops this so a release
+   * is on disk, and that is read fresh every time; Refresh drops this so a version
    * published while the panel sits open is one click away.
    */
   private catalog: CatalogEntry[] | undefined;
@@ -822,7 +822,7 @@ export class DatabasesPanel {
   }
 
   /**
-   * Adding a release the machine does not have yet. The published catalogue runs
+   * Adding a version the machine does not have yet. The published catalogue runs
    * to dozens of entries, so it is offered as a quick pick — the editor's own
    * answer to choosing from a long list — rather than rendered into the panel.
    */
@@ -831,7 +831,7 @@ export class DatabasesPanel {
     const candidates = this.lastVersions.filter((v) => !v.extracted && !v.downloaded && !v.local);
     if (!candidates.length) {
       vscode.window.showInformationMessage(
-        'Every available GemStone release is already installed.',
+        'Every available GemStone version is already installed.',
       );
       return;
     }
@@ -842,7 +842,7 @@ export class DatabasesPanel {
         detail: v.size ? `${(v.size / 1024 ** 3).toFixed(1)} GB download` : undefined,
       })),
       {
-        title: 'Install a GemStone release',
+        title: 'Install a GemStone version',
         placeHolder: 'Select a version to download and install',
       },
     );
@@ -851,7 +851,7 @@ export class DatabasesPanel {
   }
 
   /**
-   * Installing a chosen release is a single action: fetch the archive, then
+   * Installing a chosen version is a single action: fetch the archive, then
    * extract it. The extract only runs once the download has actually landed, so a
    * cancelled or failed fetch never tries to unpack a file that isn't there.
    */
@@ -885,7 +885,7 @@ export class DatabasesPanel {
   /**
    * Remove is the inverse of Install. Install downloads *and* unpacks, so Remove
    * takes away both the unpacked product and any archive it came from. Deleting
-   * only the product left the archive on disk, and the release came straight back
+   * only the product left the archive on disk, and the version came straight back
    * as a row offering to Install it again — which reads as the removal having
    * silently failed.
    *
@@ -904,7 +904,7 @@ export class DatabasesPanel {
   }
 
   /**
-   * Run a version command on the release with this number. They take a tree item
+   * Run a version command on the installed version with this number. They take a tree item
    * and read only its `version`, so that is what the panel hands them.
    */
   private async versionCommand(command: string, version: string): Promise<void> {
@@ -1146,7 +1146,7 @@ export class DatabasesPanel {
     }
     // Reads the host; never the installation. Empty when nothing of it is
     // running, which is a perfectly registerable state.
-    let servers: DiscoveredServer[] = [];
+    let servers: DiscoveredServer[];
     try {
       servers = this.deps.processManager.discoverServersUnder(productPath);
     } catch {
@@ -1330,7 +1330,7 @@ export class DatabasesPanel {
 
   /**
    * What the form can offer. Read from disk on every state build rather than
-   * cached, because a release installed — or a database created — while the
+   * cached, because a version installed — or a database created — while the
    * panel is open has to show up in the next redraw.
    */
   private buildCreateOptions(databases: DatabaseRow[]): CreateOptions {
@@ -2047,6 +2047,20 @@ th.v-num { text-align: right; }
 .cf-check { display: block; margin: 8px 0 4px; }
 .cf-check input { margin-right: 6px; vertical-align: middle; }
 .cf-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+/* The form's action row and its instruction, at the TOP of the form. A submit row at
+   the bottom of the New Database form opened below the fold on a normal window, so the
+   action the form exists for was the one thing off screen. Above the fields it is
+   always visible with no dependency on panel height or scroll position — no sticky
+   positioning, and so no interaction with the section's own overflow. The rule is on a
+   class of its own rather than .cf-actions, which is also the mid-form "Choose Folder…"
+   row in Register Existing. */
+.cf-lead {
+  margin: 0 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--gm-line);
+}
+.cf-lead .cf-actions { margin-top: 0; }
+.cf-lead .cf-note { margin-top: 8px; }
 .cf-note { margin-top: 10px; font-size: 0.9em; }
 .btn[disabled] { opacity: 0.5; cursor: default; }
 
@@ -2073,7 +2087,7 @@ th.v-num { text-align: right; }
   pointer-events: none;
 }
 
-/* Why the New Database form is not on screen, on a machine with no release to
+/* Why the New Database form is not on screen, on a machine with no version to
    make one from. It sits above the lists, with Versions right below it. */
 .gm-blocked {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
