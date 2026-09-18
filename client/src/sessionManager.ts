@@ -437,16 +437,37 @@ export class SessionManager {
 
     if (this._selectedId === id) {
       this._selectedId = null;
-      if (this.sessions.size === 1) {
-        const remaining = this.sessions.values().next().value!;
-        this.selectSession(remaining.id);
+      // Hand the selection on to the OLDEST remaining session rather than
+      // leaving the window with none. Ids are handed out in login order and
+      // never reused, so the lowest id is the session that has been connected
+      // longest — the one a window with several open has most likely been
+      // working in, and a stable answer rather than whichever the map happens
+      // to yield first.
+      //
+      // Leaving nothing selected used to be the outcome whenever two or more
+      // sessions remained, and it is a bad one: every command that acts in "the
+      // current session" then has nothing to act in, so a palette Commit or
+      // Abort has to stop and ask which session it means — a question the user
+      // did not ask for, in the middle of a transaction ending.
+      const oldest = [...this.sessions.values()].reduce<ActiveSession | undefined>(
+        (best, s) => (best === undefined || s.id < best.id ? s : best),
+        undefined,
+      );
+      if (oldest) {
+        this.selectSession(oldest.id);
+        // Said out loud, because the window has just moved out from under the
+        // user: everything that acts in "the current session" — Display It,
+        // Execute It, Debug It, a notebook cell, a search — now acts in a stone
+        // they did not choose, and most of those run without a confirmation of
+        // their own. The alternative was leaving nothing selected, which is what
+        // used to happen and which stopped those commands to ask which session
+        // they meant.
+        vscode.window.showInformationMessage(
+          `Session ${oldest.id} — ${loginLabel(oldest.login)} is now the current session.`,
+        );
       } else {
         this._onDidChangeSelection.fire(null);
-        vscode.commands.executeCommand(
-          'setContext',
-          'gemstone.hasActiveSession',
-          this.sessions.size > 0,
-        );
+        vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', false);
       }
     }
   }

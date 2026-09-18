@@ -4,12 +4,15 @@ import * as path from 'path';
 
 // Commit and Abort are contributed twice: once for a session row in Logins &
 // Sessions and the Databases panel (`gemstone.session*`), once for the GemStone
-// Explorer's title bar, which acts on the selected session
+// Explorer's Actions & Navigation toolbar, which acts on the selected session
 // (`gemstone.explorer.*`). All four carry the same category and the same title,
 // so a palette that offers both pairs offers two indistinguishable
 // `GemStone: Commit` entries — and picking the wrong one used to fail outright.
 // The session pair is the one the palette gets, because it resolves a session
-// for itself; the Explorer pair is withheld.
+// for itself; the Explorer pair is withheld. Withholding costs that toolbar
+// nothing: its buttons are a webview row that calls `executeCommand` directly
+// (`explorerNavigationView.ts`), which a `commandPalette` `when` clause does not
+// govern.
 // See https://github.com/GemTalk/Jasper/issues/455.
 
 interface Command {
