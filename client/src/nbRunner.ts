@@ -45,6 +45,7 @@ export class NbCancelledError extends Error {
  */
 export function pollNbResultReady(session: ActiveSession): { result: number; err: GciError } {
   if (session.gci.isAvailable('GciTsNbPoll')) {
+    // eslint-disable-next-line no-restricted-syntax -- guarded by isAvailable above; the else branch below is the 3.6.x path (GciTsSocket + a native poll)
     return session.gci.GciTsNbPoll(session.handle, 0);
   }
   const { fd, err } = session.gci.GciTsSocket(session.handle);
@@ -240,11 +241,17 @@ export function pollNbToCompletion<T>(
             (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
         );
         softBreakSent = true;
-        softBreakAt = Date.now();
+        // performance.now, not Date.now: this asks how much time has *elapsed*,
+        // and the wall clock answers a different question that anything on the
+        // system can change underneath us. An NTP step or a VM resume that
+        // shoves it forward between here and the second press would make the
+        // gap below look already served and send the hard break back-to-back —
+        // the exact native fault MIN_HARD_BREAK_GAP_MS exists to prevent.
+        softBreakAt = performance.now();
         progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
       } else {
         if (hardBreakScheduled) return;
-        const waited = Date.now() - softBreakAt;
+        const waited = performance.now() - softBreakAt;
         if (waited >= MIN_HARD_BREAK_GAP_MS) {
           sendHardBreak();
           return;

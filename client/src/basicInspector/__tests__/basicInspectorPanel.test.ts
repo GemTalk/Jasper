@@ -681,6 +681,53 @@ describe('acting on a row', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
   });
 
+  /**
+   * The Meta tab's Browse Method is the same landing one level in: the class the
+   * row's value belongs to, refined to the selector — which is where the
+   * debugger's frame Browse goes too.
+   */
+  it('browses a Meta tab selector to that method in the Explorer', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+      dictName: 'UserGlobals',
+      className: 'Account',
+    });
+
+    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Account',
+      session.id,
+      'UserGlobals',
+      { selector: 'deposit:', isMeta: false },
+    );
+  });
+
+  /** A selector that exists on both sides must land on the side being looked at. */
+  it('carries the class side through', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+      dictName: 'UserGlobals',
+      className: 'Account',
+    });
+
+    send({ command: 'browseMethod', oop: '900', selector: 'new', isMeta: true });
+
+    expect(vi.mocked(vscode.commands.executeCommand).mock.calls[0][4]).toMatchObject({
+      isMeta: true,
+    });
+  });
+
+  it('names the method it could not locate rather than navigating to nothing', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
+
+    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('#deposit:'),
+    );
+  });
+
   it('copies text to the clipboard', () => {
     send({ command: 'copyText', text: '900', what: 'OOP' });
 

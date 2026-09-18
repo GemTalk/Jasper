@@ -16,18 +16,21 @@ describe("listing a dictionary's classes with their categories", () => {
     ]);
   });
 
-  // #387 item 11. The flag has to come from the `#comment` extra-dict key, because
+  // The flag has to come from the `#comment` extra-dict key, because
   // `Class>>comment` synthesises "No class-specific documentation for X…" when
   // there is none — so a non-empty comment string proves nothing.
+  // ([#387](https://github.com/GemTalk/Jasper/issues/387))
   it('reports whether each class carries a real comment', () => {
     const execute = vi.fn().mockReturnValue('Kernel\t0\tObject\nKernel\t1\tArray\n');
 
     expect(getClassesWithCategory(execute, 1).map((e) => e.hasComment)).toEqual([false, true]);
   });
 
-  // The engine-side behaviour this encodes (a stored `''`, a whitespace-only
-  // comment) is pinned against a real stone in explorerQueries.integration.test.ts;
-  // here we only pin that a blank comment reaches the Explorer as `hasComment: false`.
+  // The engine-side behaviour this encodes (a whitespace-only comment, and a
+  // comment emptied through the editor — which now removes the key rather than
+  // storing `''`) is pinned against a real stone in
+  // explorerQueries.integration.test.ts; here we only pin that a blank comment
+  // reaches the Explorer as `hasComment: false`, whichever way it got that way.
   it('reports a blank comment as no comment at all', () => {
     const execute = vi.fn().mockReturnValue('Kernel\t0\tEmptied\nKernel\t1\tReal\n');
 
@@ -40,8 +43,10 @@ describe("listing a dictionary's classes with their categories", () => {
     getClassesWithCategory(execute, 1);
 
     const code = execute.mock.calls[0][0] as string;
-    // A bare `notNil` would count the `''` that emptying the editor stores (#387
-    // item 11 / PR #442 review).
+    // A bare `notNil` would count a stored `''` as a comment. Jasper's own save
+    // path no longer leaves one — setClassComment removes the key instead — but the
+    // flag must still be right for a `''` written by anything else.
+    // ([#387](https://github.com/GemTalk/Jasper/issues/387))
     expect(code).not.toMatch(/#comment\) notNil/);
     expect(code).toContain('isSeparator not');
   });

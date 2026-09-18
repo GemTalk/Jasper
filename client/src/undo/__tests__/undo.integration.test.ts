@@ -541,27 +541,33 @@ ws contents`;
   // ── A class comment, recorded and reversed ─────────────────────────────
 
   describe('a class comment, recorded and reversed', () => {
+    // Read through the STORED accessor throughout, which is what the recording uses:
+    // `getClassComment` synthesises "No class-specific documentation for …" for a
+    // class with none, so a round trip measured with it would pass by writing that
+    // boilerplate in as a real comment — the exact thing this has to prove it doesn't do.
     it('puts the earlier comment back', () => {
       defineClass(CLS);
       q.setClassComment(session(), CLS, 'the first comment', DICT);
-      const before = q.getClassComment(session(), CLS, DICT);
+      const before = q.getStoredClassComment(session(), CLS, DICT);
 
       q.setClassComment(session(), CLS, 'a second comment', DICT);
       expect(q.setClassComment(session(), CLS, before, DICT)).toContain('Comment set:');
 
-      expect(q.getClassComment(session(), CLS, DICT)).toBe(before);
+      expect(q.getStoredClassComment(session(), CLS, DICT)).toBe(before);
     });
 
-    it('empties a comment again on a class that had none', () => {
-      // GemStone stores the empty string rather than dropping the comment, so "no comment"
-      // and "empty comment" are the same state — which is what makes the reversal exact.
+    it('leaves a class that had no comment with no comment', () => {
       defineClass(CLS);
-      const before = q.getClassComment(session(), CLS, DICT);
+      const before = q.getStoredClassComment(session(), CLS, DICT);
+      expect(before).toBe('');
 
       q.setClassComment(session(), CLS, 'a first comment', DICT);
       q.setClassComment(session(), CLS, before, DICT);
 
-      expect(q.getClassComment(session(), CLS, DICT)).toBe(before);
+      expect(q.getStoredClassComment(session(), CLS, DICT)).toBe('');
+      // Not an empty comment but no comment: the key is gone, so `comment` answers
+      // the synthesised placeholder again, exactly as it did before the save.
+      expect(exec(`(${CLS} _extraDictAt: #comment) isNil printString`).trim()).toBe('true');
     });
 
     it('does not re-version the class, which is why it is an undo and not a revert', () => {

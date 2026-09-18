@@ -356,6 +356,9 @@ export const window = {
     show: vi.fn(),
     sendText: vi.fn(),
     dispose: vi.fn(),
+    // Undefined while the shell is alive, as the real API has it. Tests that
+    // care about a finished terminal assign a TerminalExitStatus over this.
+    exitStatus: undefined as { code: number | undefined } | undefined,
   })),
   onDidCloseTerminal: vi.fn((_handler: (terminal: unknown) => void) => ({ dispose: vi.fn() })),
   setStatusBarMessage: vi.fn(),

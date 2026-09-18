@@ -13,7 +13,8 @@
  * already has it and a second round trip would buy nothing.
  */
 import { ActiveSession } from '../sessionManager';
-import { getClassComment } from '../browserQueries';
+import { getStoredClassComment } from '../browserQueries';
+import { isRealClassComment } from '../queries/classCommentPresence';
 import { logInfo } from '../gciLog';
 import { pushUndoEntry } from './undoStack';
 import { ClassSlot, UndoEntry } from './undoTypes';
@@ -29,6 +30,12 @@ export interface ClassCommentRecording {
 /**
  * Read what the class's comment says now, so the save about to happen can be reversed.
  *
+ * The STORED comment, matching what the editor was opened on. `Class>>comment`
+ * would answer GemStone's synthesised "No class-specific documentation for …"
+ * placeholder for a class that has none, and recording THAT as the "before" makes
+ * undoing the first comment on a class write the boilerplate in as a real one —
+ * the same trap the read path avoids, reached through Undo instead of Ctrl+Z.
+ *
  * Answers `undefined` — meaning "this save will not be undoable" — when the read fails.
  * A comment that cannot be read cannot be put back, and an entry that would write the
  * empty string over the user's earlier text is worse than no entry at all.
@@ -39,7 +46,7 @@ export function beginClassCommentEdit(
 ): ClassCommentRecording | undefined {
   let before: string;
   try {
-    before = getClassComment(session, slot.className, slot.dict);
+    before = getStoredClassComment(session, slot.className, slot.dict);
   } catch (e: unknown) {
     logInfo(
       `[undo] comment capture failed, save will not be undoable: ` +
@@ -55,7 +62,14 @@ export function beginClassCommentEdit(
   return {
     before,
     commit(after: string): UndoEntry | undefined {
-      if (after === before) {
+      // Record what the save actually STORED, not the raw editor buffer. An empty
+      // or whitespace-only comment REMOVES the key (see setClassComment), so the
+      // stone ends up holding nothing — and recording the buffer's stray newline
+      // as `after` made the reversal read drift nobody caused, popping the "the
+      // comment has changed since…" modal on an undo of the user's own save. It
+      // also made clearing an already-uncommented class look like a change.
+      const stored = isRealClassComment(after) ? after : '';
+      if (stored === before) {
         logInfo(`[undo] not recording the comment on ${slot.className}: it did not change`);
         return undefined;
       }
@@ -65,7 +79,7 @@ export function beginClassCommentEdit(
         label: `Save comment for ${slot.className}`,
         slot,
         before,
-        after,
+        after: stored,
       });
       logInfo(`[undo] recorded #${entry.id} "${entry.label}"`);
       return entry;
