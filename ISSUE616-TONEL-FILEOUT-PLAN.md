@@ -1,5 +1,15 @@
 # Issue #616 — Tonel file out / file in
 
+> ## ⚠️ DELETE THIS FILE BEFORE THE PR
+>
+> This document is **working scaffolding, committed only so the work is backed up** — it
+> is not a deliverable and must not ship. `git rm` it before opening the PR.
+>
+> The repo has no `docs/plans/` convention; `docs/` is shipped documentation. Anything
+> here worth keeping goes into a source comment, `docs/how-to/`, or the PR body. Before
+> deleting, sweep for anything not yet carried across — the rowan3-stone how-to and the
+> NFS `data`-symlink workaround are the likeliest survivors.
+
 **Worktree:** `/export/uffda1/users/ewinger/worktrees/issue616-tonel-fileout`
 **Branch:** `eric/issue616-tonel-fileout` (off `origin/main` @ `f9cd5132`)
 **Issue:** https://github.com/GemTalk/Jasper/issues/616
