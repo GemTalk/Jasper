@@ -134,7 +134,11 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
     // Both the MCP marker and the transaction state are in the id, because VS Code
     // reuses a node whose id is unchanged — which would leave the old text, and
-    // the old set of inline buttons, on screen after either one moves.
+    // the old set of inline buttons, on screen after either one moves. The price
+    // is that the row is a new node whenever they move, so a selection on it is
+    // dropped; the transaction half of the id only changes when a session gains
+    // or loses Begin/Commit, which under autoBegin (almost everyone) is never, and
+    // under manualBegin is the moment the user pressed one of those buttons.
     this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}`;
     this.description = sessionDescription(activeSession, mcp);
     const tooltip = new vscode.MarkdownString();

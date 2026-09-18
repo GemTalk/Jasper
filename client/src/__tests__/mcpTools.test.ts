@@ -106,12 +106,19 @@ function makeSession(): ActiveSession {
 describe('registerMcpTools', () => {
   let server: ReturnType<typeof createMockServer>;
   let session: ActiveSession | undefined;
+  let transactionStateMoved: number[];
 
   beforeEach(() => {
     server = createMockServer();
     session = makeSession();
-    registerMcpTools(server as unknown as Parameters<typeof registerMcpTools>[0], () => session);
+    transactionStateMoved = [];
+    registerMcpTools(
+      server as unknown as Parameters<typeof registerMcpTools>[0],
+      () => session,
+      (id) => transactionStateMoved.push(id),
+    );
     vi.clearAllMocks();
+    transactionStateMoved = [];
   });
 
   it('registers the expected tools in alphabetical order', () => {
@@ -175,6 +182,40 @@ describe('registerMcpTools', () => {
       const result = await server.getTool('abort')!.handler({});
       expect(result.isError).toBe(true);
       expect(queries.executeFetchString).not.toHaveBeenCalled();
+    });
+  });
+
+  // These tools run in the same window as the session row, the status bar and the
+  // gemstone.canCommit / canBegin keys, all of which are drawn from
+  // SessionManager's cached transaction state. Without this, Claude committing a
+  // manualBegin session out of its transaction leaves the row still offering
+  // Commit (which now raises 2030) and still hiding Begin.
+  describe('telling the window the transaction state may have moved', () => {
+    it.each([
+      ['commit', {}],
+      ['abort', {}],
+      ['execute_code', { code: 'System beginTransaction' }],
+    ])('%s says so', async (tool, args) => {
+      await server.getTool(tool)!.handler(args);
+
+      expect(transactionStateMoved).toEqual([session!.id]);
+    });
+
+    it('says so even when the tool failed — the session still ended up somewhere', async () => {
+      vi.mocked(queries.executeFetchString).mockImplementation(() => {
+        throw new Error('stone went away');
+      });
+
+      const result = await server.getTool('commit')!.handler({});
+
+      expect(result.isError).toBe(true);
+      expect(transactionStateMoved).toEqual([session!.id]);
+    });
+
+    it('stays quiet for a tool that only reads', async () => {
+      await server.getTool('list_classes')!.handler({});
+
+      expect(transactionStateMoved).toEqual([]);
     });
   });
 

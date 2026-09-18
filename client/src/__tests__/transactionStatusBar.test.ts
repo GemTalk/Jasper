@@ -65,6 +65,26 @@ describe('the status bar tooltip', () => {
       'Commit: available',
     );
   });
+
+  // "not needed in this mode" is a claim about the mode, so it must not be made
+  // when the mode — or the transaction state Begin also depends on — is the
+  // thing that could not be read.
+  it.each([
+    ['the mode', session(undefined, false)],
+    ['the transaction state', session('manualBegin', undefined)],
+  ])('does not blame the mode for Begin when %s could not be read', (_what, s) => {
+    const value = transactionStatusTooltip(s).value;
+
+    expect(value).toContain('Begin Transaction: unavailable');
+    expect(value).toContain('could not be read');
+    expect(value).not.toContain('not needed in this mode');
+  });
+
+  it('still says Begin is not needed where the mode genuinely says so', () => {
+    expect(transactionStatusTooltip(session('autoBegin', true)).value).toContain(
+      'Begin Transaction: not needed in this mode',
+    );
+  });
 });
 
 describe('registering the status bar', () => {

@@ -25,33 +25,51 @@ function inlineRank(group: string): number {
   return match ? Number(match[1]) : 0;
 }
 
-// Matched on a FRAGMENT of the `when` clause rather than the whole thing: the
-// session clauses use `viewItem =~ /.../` so a row can carry its own answer about
-// what it can do (see sessionContextValue in loginTreeProvider.ts), and no single
-// literal clause covers them all.
-function inlineItemsFor(viewItemFragment: string): MenuItem[] {
+// Whether a `when` clause fires for a row carrying this context value. Session
+// clauses are `viewItem =~ /.../` now that each row says in its own context value
+// what that session can do (see sessionContextValue in loginTreeProvider.ts), so
+// the clause is EVALUATED rather than matched as text: a substring test passes
+// for any clause that merely fails to contain the literal, which is every clause
+// once one is reworded. Same helper, same reason, as databaseMenuOrder.test.ts.
+function applies(when: string, viewItem: string): boolean {
+  const literal = /viewItem == ([A-Za-z]+)/.exec(when);
+  if (literal) return literal[1] === viewItem;
+  const pattern = /viewItem =~ \/(.+?)\//.exec(when);
+  return pattern ? new RegExp(pattern[1]).test(viewItem) : false;
+}
+
+// The context value each kind of session row carries, from sessionContextValue.
+const AUTO_BEGIN_ROW = 'gemstoneSession.canCommit';
+const MANUAL_BETWEEN_TRANSACTIONS_ROW = 'gemstoneSession.canBegin';
+const TRANSACTIONLESS_ROW = 'gemstoneSession';
+// Not a row any session shows — Begin and Commit are mutually exclusive — but
+// every session clause fires for it, which is what the package.json-hygiene
+// checks below want.
+const EVERY_SESSION_CLAUSE = 'gemstoneSession.canCommit.canBegin';
+
+function inlineItemsFor(viewItem: string): MenuItem[] {
   return itemContext
-    .filter((m) => m.group?.startsWith('inline') && (m.when ?? '').includes(viewItemFragment))
+    .filter((m) => m.group?.startsWith('inline') && applies(m.when ?? '', viewItem))
     .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!));
 }
 
-function inlineOrderFor(viewItemFragment: string): string[] {
-  return inlineItemsFor(viewItemFragment).map((m) => m.command);
+function inlineOrderFor(viewItem: string): string[] {
+  return inlineItemsFor(viewItem).map((m) => m.command);
 }
 
-function inlineRanksFor(viewItemFragment: string): number[] {
-  return inlineItemsFor(viewItemFragment).map((m) => inlineRank(m.group!));
+function inlineRanksFor(viewItem: string): number[] {
+  return inlineItemsFor(viewItem).map((m) => inlineRank(m.group!));
 }
 
 function sessionMenuItemFor(command: string): MenuItem | undefined {
   return itemContext.find(
-    (m) => m.command === command && (m.when ?? '').includes('gemstoneSession'),
+    (m) => m.command === command && applies(m.when ?? '', EVERY_SESSION_CLAUSE),
   );
 }
 
 describe('session row inline button order', () => {
   it('leads with the most-used safe actions and trails with Logout, without the rare backup actions', () => {
-    const order = inlineOrderFor('gemstoneSession');
+    const order = inlineOrderFor(EVERY_SESSION_CLAUSE);
 
     // File In reads a Topaz `.gs` into THIS session and leads the row: it is safe,
     // it is the hardest of these to reach any other way, and the row is what
@@ -86,17 +104,35 @@ describe('session row inline button order', () => {
   // begin. Rather than show a button that fails, each row says in its own
   // contextValue whether it has them — so an autoBegin session (the default) sees
   // exactly the row it always saw, with no Begin on it.
-  it('shows Begin and Commit only on a row whose session can use them', () => {
-    expect(sessionMenuItemFor('gemstone.sessionBegin')?.when).toContain('canBegin');
-    expect(sessionMenuItemFor('gemstone.sessionCommit')?.when).toContain('canCommit');
+  it('gives the autoBegin session the row it always had, with no Begin on it', () => {
+    expect(inlineOrderFor(AUTO_BEGIN_ROW)).toEqual([
+      'gemstone.fileIn',
+      'gemstone.sessionCommit',
+      'gemstone.sessionAbort',
+      'gemstone.showSessionConfiguration',
+      'gemstone.sessionLogout',
+    ]);
   });
 
-  it('keeps Abort on every session row, in every mode', () => {
+  it('swaps Commit for Begin on a manual session between transactions', () => {
+    expect(inlineOrderFor(MANUAL_BETWEEN_TRANSACTIONS_ROW)).toEqual([
+      'gemstone.fileIn',
+      'gemstone.sessionBegin',
+      'gemstone.sessionAbort',
+      'gemstone.showSessionConfiguration',
+      'gemstone.sessionLogout',
+    ]);
+  });
+
+  it('offers neither on a transactionless session, and still offers Abort', () => {
     // Abort is the one action that is always safe and always meaningful: it is
     // the way out of a stale view whatever mode the session is in.
-    const abort = sessionMenuItemFor('gemstone.sessionAbort');
-    expect(abort?.when).not.toContain('canCommit');
-    expect(abort?.when).not.toContain('canBegin');
+    expect(inlineOrderFor(TRANSACTIONLESS_ROW)).toEqual([
+      'gemstone.fileIn',
+      'gemstone.sessionAbort',
+      'gemstone.showSessionConfiguration',
+      'gemstone.sessionLogout',
+    ]);
   });
 
   it('offers the mode switch from the session row’s context menu, not its inline strip', () => {
@@ -110,12 +146,12 @@ describe('session row inline button order', () => {
   // but it reads as a missing button to whoever adds the next one, which is how
   // a button ends up in the wrong place. Removing a button means renumbering
   // the ones after it.
-  it('numbers the row 1..n with no vacated slot', () => {
-    expect(inlineRanksFor('gemstoneSession')).toEqual([1, 2, 3, 4, 5, 6]);
+  it('numbers the declared slots 1..n with no vacated one', () => {
+    expect(inlineRanksFor(EVERY_SESSION_CLAUSE)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {
-    const sessionItems = itemContext.filter((m) => (m.when ?? '').includes('gemstoneSession'));
+    const sessionItems = itemContext.filter((m) => applies(m.when ?? '', EVERY_SESSION_CLAUSE));
 
     const backup = sessionItems.find((m) => m.command === 'gemstone.fullLogicalBackup');
     const restore = sessionItems.find((m) => m.command === 'gemstone.fullLogicalRestore');
@@ -127,12 +163,12 @@ describe('session row inline button order', () => {
 
 describe('login row inline button order', () => {
   it('leads with Login and trails with the destructive Delete', () => {
-    const order = inlineOrderFor('viewItem == gemstoneLogin');
+    const order = inlineOrderFor('gemstoneLogin');
 
     expect(order).toEqual(['gemstone.login', 'gemstone.editLogin', 'gemstone.deleteLogin']);
   });
 
   it('numbers the row 1..n with no vacated slot', () => {
-    expect(inlineRanksFor('viewItem == gemstoneLogin')).toEqual([1, 2, 3]);
+    expect(inlineRanksFor('gemstoneLogin')).toEqual([1, 2, 3]);
   });
 });

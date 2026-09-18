@@ -6,6 +6,11 @@
 // Everything here was checked against live 3.6.2 and 3.7.5 stones — see the
 // comments on `canCommit` and `canBegin`, which record where the observed
 // behaviour differs from the obvious reading of the documentation.
+//
+// `getTransactionMode`, `isInTransaction` and `getGemAutoServiceSigAbort` have no
+// caller in the extension — `getTransactionState` answers for both halves in one
+// round trip. They are the single-fact probes the live-stone suite asks its
+// questions with, and are kept for that.
 import { QueryExecutor } from './types';
 
 /**
@@ -139,11 +144,6 @@ export function getGemAutoServiceSigAbort(execute: QueryExecutor): boolean | und
   return undefined;
 }
 
-/** Start a transaction through Smalltalk. The GCI's `GciTsBegin` is equivalent. */
-export function beginTransaction(execute: QueryExecutor): string {
-  return execute(`System beginTransaction. 'Transaction begun'`);
-}
-
 /**
  * Smalltalk that refreshes the session's view by aborting, but only when the
  * abort would discard nothing the user would miss.
@@ -192,6 +192,12 @@ export const VIEW_REFRESH_CODE = `(System needsCommit
  * answered something unrecognized) leaves Commit enabled: a failed probe is not
  * evidence that a commit would fail, and taking a working button away on no
  * evidence is worse than letting the stone say no.
+ *
+ * What this does NOT answer is whether the session holds uncommitted work. A
+ * session outside a transaction can still have written — GemStone allows the
+ * write and `System needsCommit` reports it; only `commitTransaction` raises
+ * {@link ERR_NOT_IN_TRANSACTION}. `needsCommit` stays the question to ask before
+ * discarding anything.
  */
 export function canCommit(inTransaction: boolean | undefined): boolean {
   return inTransaction !== false;
@@ -214,17 +220,6 @@ export function canBegin(
   inTransaction: boolean | undefined,
 ): boolean {
   return mode === 'manualBegin' && inTransaction === false;
-}
-
-/**
- * Whether logging out should stop to ask about uncommitted work.
- *
- * Only where a commit is possible at all: outside a transaction there is nothing
- * to commit and nothing being discarded, so the prompt would offer a "Commit &
- * Logout" that could only fail. Mirrors Jadeite's `shouldAskToCommitOnLogout`.
- */
-export function shouldPromptOnLogout(inTransaction: boolean | undefined): boolean {
-  return canCommit(inTransaction);
 }
 
 // ── Display ──────────────────────────────────────────────────────────────────

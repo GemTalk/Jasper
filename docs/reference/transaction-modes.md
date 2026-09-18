@@ -33,6 +33,16 @@ canBegin(mode, inTransaction)     // mode === 'manualBegin' && inTransaction ===
 // Abort is always available, in every mode.
 ```
 
+**What 2030 does *not* mean is that nothing was written.** GemStone lets a session
+outside a transaction modify objects exactly as it would inside one — it refuses
+only the commit (the Programming Guide says so under "Reading and Writing Outside
+of Transactions", and `System needsCommit` duly answers `true`). So `canCommit` is
+the wrong question to ask before discarding anything; `System needsCommit` is the
+right one, and Jasper asks it before every abort, mode switch and logout. A
+`manualBegin` session that has written outside a transaction is warned at logout
+like any other — only the dialog's **Commit & Logout** button is dropped, because
+that is the one thing that could only fail.
+
 Under `autoBegin` the session is always inside a transaction, so `canCommit` is
 always true there — which is where this agrees with Jadeite for Dolphin's
 mode-shaped rule (`autoBegin or: [manualBegin and: [inTransaction]]`).
@@ -62,17 +72,29 @@ timer. Jasper does not need one: `GemAutoServiceSigAbort` is a runtime gem
 configuration option that makes the gem service the signal itself whenever it is
 idle waiting for the next GCI command.
 
-Jasper arms it when a session enters `manualBegin`:
+Jasper arms it the moment it sees a session **in** `manualBegin` — not only when
+the user switches modes from inside Jasper. A stone whose
+`STN_GEM_INITIAL_TRANSACTION_MODE` is `manualBegin` hands the session out in that
+mode at login, outside a transaction from its first moment, and another tool
+sharing the session can move it there behind Jasper's back; both are covered
+because the arming hangs off the state *read*, not off the mode *switch*:
 
 ```smalltalk
 System gemConfigurationAt: #GemAutoServiceSigAbort put: true
 ```
 
+It is never disarmed. GemStone raises the auto-service errors only in
+`manualBegin`, and an `autoBegin` session is never outside a transaction for the
+stone to signal, so leaving it armed after a switch back is inert.
+
 The next GCI call then reports **3007** (`ABORT_ERR_GemAutoAbort`), or **3008**
 (`ABORT_ERR_GemAutoLostOt`) for a LostOt. Neither is a failure: the call did not
-run, nothing was discarded, and the session's view moved forward to the newest
-committed state. `explainGciError` in `client/src/gciLibraryError.ts` rewords both
-so they read that way rather than as "a TransactionBacklog occurred".
+run, and the session's view moved forward to the newest committed state.
+`explainGciError` in `client/src/gciLibraryError.ts` rewords both so they read
+that way rather than as "a TransactionBacklog occurred" — and says plainly that
+what the gem serviced was an abort, so any writes the session was holding went
+with it. The same function names **Begin Transaction** when the stone raises 2030,
+which is the failure a `manualBegin` session meets on its first save.
 
 The one caveat is that the option applies only where `System clientIsRemote` is
 true. Jasper logs in through a netldi `gemnetobject` task, which qualifies — the
@@ -117,3 +139,7 @@ the next transaction. Under `transactionless` there is nothing to end.
 - Switching modes **aborts** — GemStone does that as part of switching and there is
   no way to ask it not to — so the confirmation says so, names how much is at
   stake, and on confirm runs the same refresh cascade an abort runs.
+- **Claude's tools count too.** The in-window MCP `commit`, `abort` and
+  `execute_code` tools move the same session the rows are drawn from, so they tell
+  `SessionManager` to re-read the state afterwards. Without that, a commit from
+  Claude leaves a `manualBegin` row offering the one button that now raises 2030.

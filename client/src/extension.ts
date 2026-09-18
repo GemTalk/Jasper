@@ -20,7 +20,6 @@ import {
   canCommit,
   modeDescription,
   modeLabel,
-  shouldPromptOnLogout,
   transactionStateLabel,
 } from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
@@ -271,13 +270,15 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * `undefined` is treated like `true`: a failed probe is not evidence of a clean
  * transaction, so we prompt rather than silently discard.
  *
- * `inTransaction` is the session's transaction state, which decides whether the
- * prompt is worth showing at all: outside a transaction nothing can have been
- * written (GemStone raises 2030 from any attempt), so there is nothing to
- * discard and the prompt's "Commit & Logout" could only fail. A session in
- * manualBegin or transactionless that is sitting outside a transaction —
- * exactly what those modes leave you in — therefore logs straight out. It too
- * is tri-state, and `undefined` again means "prompt".
+ * `inTransaction` decides which BUTTONS the prompt carries, not whether it is
+ * shown. A session outside a transaction can still hold uncommitted work —
+ * GemStone lets you write outside a transaction and `System needsCommit` says so;
+ * it is `commitTransaction` that raises 2030, not the write (verified on 3.6.2,
+ * and see "Reading and Writing Outside of Transactions" in the Programming
+ * Guide). So the warning still fires, because the work is still about to be
+ * discarded; what is dropped is "Commit & Logout", which there could only fail.
+ * It too is tri-state, and `undefined` keeps the button: a failed probe is not
+ * evidence that a commit would fail.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
@@ -285,21 +286,26 @@ export async function confirmLogoutWithUncommittedChanges(
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
   inTransaction?: boolean,
 ): Promise<'proceed' | 'cancel'> {
-  if (!shouldPromptOnLogout(inTransaction)) return 'proceed';
   if (needsCommit === false) return 'proceed';
 
+  const commitIsPossible = canCommit(inTransaction);
   const title =
     needsCommit === true
       ? `Session ${sessionId} has uncommitted changes.`
       : `Session ${sessionId} may have uncommitted changes.`;
-  const detail =
+  const stake =
     needsCommit === true
-      ? 'Logging out discards them. Commit first to keep your work.'
+      ? 'Logging out discards them.'
       : 'Its commit state could not be checked; logging out may discard uncommitted work.';
+  // Outside a transaction the work cannot be saved at all, so say that rather
+  // than "commit first" over a button the dialog is not offering.
+  const detail = commitIsPossible
+    ? `${stake} Commit first to keep your work.`
+    : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
   const choice = await vscode.window.showWarningMessage(
     title,
     { modal: true, detail },
-    'Commit & Logout',
+    ...(commitIsPossible ? (['Commit & Logout'] as const) : []),
     'Logout Anyway',
   );
 
@@ -2309,16 +2315,29 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.sessionCommit', (item: GemStoneSessionItem) =>
-      commitSession(item.activeSession),
+    // These three take the row's session when a row invoked them, and fall back to
+    // the selected one when nothing did. The fallback is not decoration: every
+    // command Jasper declares is in the Command Palette unless a `commandPalette`
+    // entry says otherwise, and from there they arrive with no argument at all.
+    // `gemstone.explorer.commit` used to cover the palette for Commit, but it is
+    // hidden now whenever a commit could not land — which is exactly the state
+    // where someone reaches for "GemStone: Commit" and would have got a
+    // `Cannot read properties of undefined` instead of a session.
+    vscode.commands.registerCommand(
+      'gemstone.sessionCommit',
+      async (item?: GemStoneSessionItem) => {
+        const session = item ? item.activeSession : await sessionManager.resolveSession();
+        if (!session) return;
+        return commitSession(session);
+      },
     ),
 
-    vscode.commands.registerCommand('gemstone.sessionAbort', (item: GemStoneSessionItem) =>
-      abortSession(item.activeSession),
-    ),
+    vscode.commands.registerCommand('gemstone.sessionAbort', async (item?: GemStoneSessionItem) => {
+      const session = item ? item.activeSession : await sessionManager.resolveSession();
+      if (!session) return;
+      return abortSession(session);
+    }),
 
-    // Optional item, unlike its Commit/Abort neighbours: this command is also
-    // reachable from the palette, where no row names a session.
     vscode.commands.registerCommand('gemstone.sessionBegin', async (item?: GemStoneSessionItem) => {
       const session = item ? item.activeSession : await sessionManager.resolveSession();
       if (!session) return;
@@ -3392,6 +3411,7 @@ export function activate(context: vscode.ExtensionContext) {
     const workspacePath = workspaceRoots[0].uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
+      onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
       getSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `${loginLabel(session.login)} (id ${session.id})` : undefined;
@@ -3509,6 +3529,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       httpServer = new McpHttpServer({
         getSession: () => sessionManager.getSelectedSession(),
+        onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
         port: httpPort,
         tls: { cert: tls.cert, key: tls.key },
       });

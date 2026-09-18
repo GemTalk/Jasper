@@ -176,7 +176,9 @@ GemStone gives a session one of three transaction modes, and the mode decides wh
 
 The **status bar** carries the selected session's mode on the left: a filled circle when a commit can land right now, a hollow one when it cannot, an eye for transactionless. Hovering it says what the mode means and what the session can do; **clicking it changes the mode**. It is also **GemStone: Set Transaction Mode** in the Command Palette, and on a session row's context menu.
 
-Changing the mode **aborts the current transaction** — GemStone does that as part of switching — so Jasper asks first and tells you how much is at stake. Entering Manual mode also asks the gem to service the stone's SigAbort on your behalf, so a session left sitting outside a transaction is not forcibly aborted. More detail: [Transaction modes](docs/reference/transaction-modes.md).
+Changing the mode **aborts the current transaction** — GemStone does that as part of switching — so Jasper asks first and tells you how much is at stake. Any session in Manual mode also has the gem service the stone's SigAbort on its behalf — whether you switched it there or the stone handed it out that way at login — so a session left sitting outside a transaction is not forcibly aborted.
+
+Outside a transaction you can still *change* things; GemStone refuses only the commit. So Jasper still warns you at logout about uncommitted work in a session that is between transactions — it just does not offer to commit it, since that could only fail. When the stone does refuse a save with "not inside of a transaction", Jasper names **Begin Transaction** as the way on. More detail: [Transaction modes](docs/reference/transaction-modes.md).
 
 #### Single vs. multiple sessions
 

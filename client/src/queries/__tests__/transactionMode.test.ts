@@ -12,7 +12,6 @@ import {
   modeLabel,
   setGemAutoServiceSigAbort,
   setTransactionMode,
-  shouldPromptOnLogout,
   transactionStateLabel,
   TRANSACTION_MODES,
   VIEW_REFRESH_CODE,
@@ -166,12 +165,6 @@ describe('what the session can do', () => {
   it('does not offer Begin on an unknown mode or unknown transaction state', () => {
     expect(canBegin(undefined, false)).toBe(false);
     expect(canBegin('manualBegin', undefined)).toBe(false);
-  });
-
-  it('prompts on logout only where a commit could have landed', () => {
-    expect(shouldPromptOnLogout(true)).toBe(true);
-    expect(shouldPromptOnLogout(false)).toBe(false);
-    expect(shouldPromptOnLogout(undefined)).toBe(true);
   });
 });
 

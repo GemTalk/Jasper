@@ -449,18 +449,50 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(decision).toBe('proceed');
   });
 
-  // Under manualBegin and transactionless a session spends most of its life
-  // outside a transaction, and outside one nothing can have been written —
-  // GemStone raises 2030 from the attempt. Prompting there would offer a
-  // "Commit & Logout" that could only fail, over work that cannot exist.
-  it('does not prompt for a session that is not in a transaction', async () => {
+  // Outside a transaction a session can still HOLD uncommitted work: GemStone
+  // allows the write and `System needsCommit` reports it — it is
+  // `commitTransaction` that raises 2030. So the warning still has to fire, or
+  // logging out of a manualBegin session discards that work without a word. What
+  // goes away is "Commit & Logout", the one button that could only fail there.
+  it('still warns a session that is not in a transaction, minus the commit button', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
     const commit = vi.fn();
 
     const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit, false);
 
     expect(decision).toBe('proceed');
-    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    const [title, options, ...buttons] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+    expect(title).toContain('has uncommitted changes');
+    expect(buttons).toEqual(['Logout Anyway']);
+    expect(options.detail).toContain('cannot be committed');
     expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('cancels rather than logging out when that warning is dismissed', async () => {
+    // Without a "Commit & Logout" button the dialog has one way forward and one
+    // way out; dismissing it must still be the way out.
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, vi.fn(), false);
+
+    expect(decision).toBe('cancel');
+  });
+
+  it('offers Commit & Logout to a session that is in a transaction', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Commit & Logout' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit, true);
+
+    expect(decision).toBe('proceed');
+    expect(commit).toHaveBeenCalledWith(3);
+    const buttons = vi.mocked(vscode.window.showWarningMessage).mock.calls[0].slice(2);
+    expect(buttons).toEqual(['Commit & Logout', 'Logout Anyway']);
   });
 
   it('prompts as usual for a session that is in a transaction', async () => {
@@ -475,8 +507,8 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(decision).toBe('proceed');
   });
 
-  it('prompts when the transaction state could not be read, as it always did', async () => {
-    // A failed probe is not evidence that there is nothing to lose.
+  it('keeps the commit button when the transaction state could not be read', async () => {
+    // A failed probe is not evidence that a commit would fail.
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Logout Anyway' as unknown as vscode.MessageItem,
     );
@@ -489,6 +521,10 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0].slice(2)).toEqual([
+      'Commit & Logout',
+      'Logout Anyway',
+    ]);
     expect(decision).toBe('proceed');
   });
 });

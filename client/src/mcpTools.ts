@@ -125,6 +125,17 @@ function searchWithEnvFallback<T>(
 export function registerMcpTools(
   rawServer: McpServer,
   getSession: () => ActiveSession | undefined,
+  /**
+   * Told which session may have left (or entered) a transaction, after a tool
+   * that can move it. These tools run in the same window as the tree row, the
+   * status bar and the `gemstone.canCommit` / `gemstone.canBegin` keys, and all
+   * of those are drawn from SessionManager's cached transaction state — nothing
+   * else here would tell it that Claude just committed a manualBegin session out
+   * of its transaction, leaving a row offering the one button that now raises
+   * 2030 and hiding the one that would fix it. Optional so the tool registration
+   * stays testable on its own; defaults to doing nothing.
+   */
+  onTransactionStateMayHaveMoved: (sessionId: number) => void = () => {},
 ): void {
   // Wrap the MCP server so each tool's input shape gets the actionable-error
   // zod error map attached at registration time. Per-schema attachment (not
@@ -164,6 +175,28 @@ export function registerMcpTools(
     };
   }
 
+  /**
+   * `wrap`, for a tool whose Smalltalk can move the session's transaction state:
+   * `commit` and `abort` do it by definition, and `execute_code` runs whatever
+   * the caller wrote, which is free to send `System beginTransaction` or change
+   * the mode outright — the same reason CodeExecutor re-reads the state after a
+   * Display It. The re-read runs whether the tool succeeded or failed: a commit
+   * that was refused still tells us where the session ended up.
+   */
+  function wrapMoving<T extends Record<string, unknown>>(
+    fn: (session: ActiveSession, args: T) => string,
+  ): (args: T) => { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+    const inner = wrap(fn);
+    return (args: T) => {
+      try {
+        return inner(args);
+      } finally {
+        const session = getSession();
+        if (session) onTransactionStateMayHaveMoved(session.id);
+      }
+    };
+  }
+
   // Tools are registered alphabetically.
 
   server.tool(
@@ -171,7 +204,7 @@ export function registerMcpTools(
     "Abort the current transaction on the user's active session, discarding uncommitted changes.",
     {},
     async () =>
-      wrap<Record<string, unknown>>((session) => {
+      wrapMoving<Record<string, unknown>>((session) => {
         return executeString(session, `System abortTransaction. 'Transaction aborted'`);
       })({}),
   );
@@ -192,7 +225,7 @@ export function registerMcpTools(
     "Commit the user's active session transaction, persisting all changes.",
     {},
     async () =>
-      wrap<Record<string, unknown>>((session) => {
+      wrapMoving<Record<string, unknown>>((session) => {
         return executeString(
           session,
           `System commitTransaction
@@ -371,7 +404,7 @@ export function registerMcpTools(
       'Changes are NOT committed automatically.',
     { code: z.string().describe('Smalltalk expression or statement sequence to execute') },
     async (args) =>
-      wrap<typeof args>((session, a) => {
+      wrapMoving<typeof args>((session, a) => {
         // See queries/executeCode.ts. Block-wraps multi-statement bodies and
         // guards against AlmostOutOfStack / AbstractException so a runaway
         // block returns a clean error string instead of taking the gem down.

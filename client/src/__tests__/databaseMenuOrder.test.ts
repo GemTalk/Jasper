@@ -59,10 +59,15 @@ describe('running stone row inline button order', () => {
   });
 
   it('surfaces the online extent backup on the running stone, not on the session row', () => {
+    // Evaluated, not matched as text: a session clause is `viewItem =~ /…/` now
+    // that each row says in its own context value what that session can do, so the
+    // old literal `viewItem == gemstoneSession` matches nothing and this assertion
+    // would pass however the button moved. The value below is the richest a
+    // session row carries, so every session clause fires for it.
     const onSession = itemContext.some(
       (m) =>
         m.command === 'gemstone.onlineExtentBackup' &&
-        (m.when ?? '').includes('viewItem == gemstoneSession'),
+        applies(m.when ?? '', 'gemstoneSession.canCommit.canBegin'),
     );
     const onRunningStone = itemContext.some(
       (m) =>

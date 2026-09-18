@@ -63,10 +63,16 @@ export function transactionStatusTooltip(session: ActiveSession): vscode.Markdow
       ? '- Commit: available\n'
       : '- Commit: unavailable — the session is not in a transaction\n',
   );
+  // Three cases, not two: "not needed in this mode" is a claim about the mode,
+  // and the mode is one of the things that can be the thing we could not read.
+  // The Commit line above handles the same ambiguity by keeping the button and
+  // saying nothing about why.
   md.appendMarkdown(
     canBegin(session.transactionMode, session.inTransaction)
       ? '- Begin Transaction: available\n'
-      : '- Begin Transaction: not needed in this mode\n',
+      : session.transactionMode === undefined || session.inTransaction === undefined
+        ? '- Begin Transaction: unavailable — this session’s transaction state could not be read\n'
+        : '- Begin Transaction: not needed in this mode\n',
   );
   md.appendMarkdown('- Abort: always available\n\n');
   md.appendMarkdown('_Click to change the transaction mode._');

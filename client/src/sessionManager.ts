@@ -10,6 +10,7 @@ import {
   TransactionMode,
   getTransactionState,
   setGemAutoServiceSigAbort,
+  setTransactionMode as applyTransactionMode,
 } from './queries/transactionMode';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough
@@ -386,7 +387,9 @@ export class SessionManager {
     // Read the transaction mode the stone actually handed out rather than assuming
     // the autoBegin default: STN_GEM_INITIAL_TRANSACTION_MODE is per-stone and
     // accepts all three values. Read *after* the abort above, so the answer
-    // describes the state the session is left in.
+    // describes the state the session is left in. A stone that hands out
+    // manualBegin gets the gem's SigAbort servicing armed here too, which is the
+    // whole reason this cannot wait for the user to switch modes by hand.
     this.refreshTransactionState(session.id);
 
     // Auto-select when this is the only session
@@ -488,10 +491,12 @@ export class SessionManager {
    * Re-read the session's transaction mode and in-transaction state from the
    * stone, and announce the result when either changed.
    *
-   * Called wherever the state can have moved: at login, and after every commit,
-   * abort, begin and mode switch. It is not polled — a session's mode only
-   * changes because something asked it to, and a background poll of every open
-   * session would spend a GCI round trip a second to learn nothing.
+   * Called wherever the state can have moved: at login, after every commit, abort,
+   * begin and mode switch, after a Display It (user code is free to commit or
+   * begin), and after the MCP tools that do the same on Claude's behalf. It is not
+   * polled — a session's mode only changes because something asked it to, and a
+   * background poll of every open session would spend a GCI round trip a second to
+   * learn nothing.
    *
    * Best effort by design. A busy or unreachable session leaves the cached state
    * alone rather than blanking it: the last known mode is a better answer for the
@@ -500,6 +505,14 @@ export class SessionManager {
    *
    * Runs the query straight against the GCI rather than through browserQueries,
    * which would make this module depend on the one that depends on it.
+   *
+   * Arms the gem's own SigAbort servicing whenever the read shows the session has
+   * ENTERED `manualBegin` — see {@link armGemAutoServiceSigAbort}. Doing it here
+   * rather than in {@link setTransactionMode} is what covers the case that is not
+   * a Jasper mode switch at all: a stone whose `STN_GEM_INITIAL_TRANSACTION_MODE`
+   * is `manualBegin` hands the session out in that mode at login, and another tool
+   * sharing the session can move it there behind Jasper's back. It costs a round
+   * trip only on the transition, not on every refresh.
    */
   refreshTransactionState(id: number): void {
     const s = this.sessions.get(id);
@@ -511,13 +524,46 @@ export class SessionManager {
         s.gci.executeAndFetchString(s.handle, code),
       );
       if (mode === undefined && inTransaction === undefined) return;
+      const enteredManualBegin = mode === 'manualBegin' && s.transactionMode !== 'manualBegin';
       const changed = s.transactionMode !== mode || s.inTransaction !== inTransaction;
       s.transactionMode = mode;
       s.inTransaction = inTransaction;
+      if (enteredManualBegin) this.armGemAutoServiceSigAbort(s);
       if (changed) this._onDidChangeTransactionState.fire(id);
     } catch (e: unknown) {
       logInfo(
         `[Session ${id}] Could not read the transaction mode: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * Ask the gem to service the stone's SigAbort itself, for a session now in
+   * `manualBegin`.
+   *
+   * A session sitting outside a transaction pins a commit record the stone will
+   * come asking for, and a gem that does not answer within STN_GEM_ABORT_TIMEOUT
+   * (60 seconds by default) is sent ABORT_ERR_LOST_OT_ROOT and then either stopped
+   * or made to reinitialize every one of its object caches. Letting the gem answer
+   * while it is idle waiting for the next GCI command is what keeps that from
+   * happening, and costs no client-side thread.
+   *
+   * Failing to arm it is not fatal — whatever put the session into `manualBegin`
+   * still succeeded, and the session merely goes back to needing the user to abort
+   * promptly — so it is logged rather than raised.
+   *
+   * Never undone, deliberately. GemStone raises the auto-service errors (3007 /
+   * 3008) only in `manualBegin`, and a session in `autoBegin` is never outside a
+   * transaction for the stone to signal in the first place — so leaving the option
+   * armed after a switch back is inert, and disarming it would spend a round trip
+   * to change nothing.
+   */
+  private armGemAutoServiceSigAbort(s: ActiveSession): void {
+    try {
+      setGemAutoServiceSigAbort((code) => s.gci.executeAndFetchString(s.handle, code), true);
+    } catch (e: unknown) {
+      logInfo(
+        `[Session ${s.id}] Could not arm GemAutoServiceSigAbort: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -530,29 +576,16 @@ export class SessionManager {
    * that and getting their agreement first, and own the post-abort refresh of
    * everything showing the old view.
    *
-   * Arms `GemAutoServiceSigAbort` on the way into `manualBegin`: a session left
-   * outside a transaction pins a commit record the stone will come asking for,
-   * and a gem that does not answer within STN_GEM_ABORT_TIMEOUT is forcibly
-   * aborted with every cache reinitialized. Letting the gem service the signal
-   * itself is what keeps that from happening, and costs no client-side thread.
-   * Failing to arm it is not fatal — the mode switch itself succeeded, and the
-   * session merely goes back to needing the user to abort promptly — so it is
-   * logged rather than raised.
+   * The switch itself goes through `queries/transactionMode`'s
+   * {@link applyTransactionMode}, which is the doit the unit and live-stone suites
+   * pin — so the code that ships is the code those tests exercise. The re-read
+   * that follows is what updates the cache, and what arms the gem's own SigAbort
+   * servicing when the session has landed in `manualBegin`.
    */
   setTransactionMode(id: number, mode: TransactionMode): void {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
-    const execute = (code: string) => s.gci.executeAndFetchString(s.handle, code);
-    execute(`System transactionMode: #${mode}. 'transaction mode set'`);
-    if (mode === 'manualBegin') {
-      try {
-        setGemAutoServiceSigAbort(execute, true);
-      } catch (e: unknown) {
-        logInfo(
-          `[Session ${id}] Could not arm GemAutoServiceSigAbort: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    }
+    applyTransactionMode((code) => s.gci.executeAndFetchString(s.handle, code), mode);
     this.refreshTransactionState(id);
   }
 
