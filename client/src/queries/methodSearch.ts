@@ -303,6 +303,16 @@ ${methodSerialization(environmentId)}`;
 // Implementations of `selector` in a class's hierarchy: the full superclass
 // chain (direction 'up') or all subclasses (direction 'down'), on the
 // instance or class side. One round trip; reuses the standard result format.
+//
+// The walk collects with `compiledMethodAt:environmentId:otherwise:`, not with
+// `includesSelector:` plus a bare `compiledMethodAt:`: both of those answer for
+// environment 0 whatever the caller asked for, so an implementor compiled only
+// into a higher environment was invisible in either direction — while the caller
+// still paid for one full walk per environment to re-collect the same
+// environment-0 answer each time. Verified on a live 3.7.5 stone: for a method
+// compiled only into environment 1, `includesSelector:` answers false and a bare
+// `compiledMethodAt:` answers nil, while `environmentId: 1` answers the method —
+// and this query returns it with the environment column set to 1.
 export function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
@@ -318,12 +328,14 @@ export function hierarchyImplementorsOf(
     direction === 'up'
       ? `cur := (${target}) superclass.
 [cur notNil] whileTrue: [
-  (cur includesSelector: #'${sel}') ifTrue: [methods add: (cur compiledMethodAt: #'${sel}')].
+  m := cur compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m].
   cur := cur superclass].`
       : `class allSubclasses do: [:sub | | tgt |
   tgt := ${isMeta ? 'sub class' : 'sub'}.
-  (tgt includesSelector: #'${sel}') ifTrue: [methods add: (tgt compiledMethodAt: #'${sel}')]].`;
-  const code = `| class methods stream limit classDict sl cur |
+  m := tgt compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m]].`;
+  const code = `| class methods stream limit classDict sl cur m |
 class := (System myUserProfile symbolList at: ${dictIndex}) at: #'${escapeString(className)}'.
 methods := OrderedCollection new.
 ${collect}
@@ -339,8 +351,8 @@ ${methodSerialization(environmentId)}`;
 // means. Compare referencesToObject, which takes the first binding of the name anywhere
 // in the symbol list. A dictionary that does not bind the name answers nothing.
 //
-// The environment goes on the ORGANIZER, not just on the serialization: a bare
-// an organizer collects its classes under one environment, so a class
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer collects its classes under one environment, so a class
 // referenced only from a method in another environment would come back unreferenced —
 // and a safe delete would then report that nothing referenced it. Verified on a live
 // stone: with the same method compiled into environments 0 and 1, the bare organizer
@@ -361,14 +373,38 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer gathers its classes under one environment, so a hardwired 0 here
+// answered environment-0 references however high an environment the caller
+// asked about.
+//
+// What that cost the callers sweeping 0..maxEnvironment was NOT repeated scanning —
+// classOrganizerExpr caches per environment key, so every iteration of such a sweep asked
+// for JasperClassOrganizer_0 and hit the cache after the first. It was the same
+// environment-0 answer N times, each pass stamping it with a different environment, and
+// dedupeMethodResults keys on the environment — so the rows did not fold together and the
+// same method appeared once per environment, every copy above 0 opening nothing.
+//
+// Scoping the organizer is the only way to the right answer, but it is a cost, not a
+// saving: a sweep now builds and RETAINS maxEnvironment + 1 organizers in SessionTemps,
+// which is the allocation shape classOrganizer.ts documents as able to reach
+// AlmostOutOfMemoryError and take the gem with it.
+//
+// Compare referencesToClassInDict, which resolves the class by identity through
+// a named dictionary rather than taking the first binding of the name anywhere
+// in the symbol list — and which guards its lookup, as this one now does. An unbound
+// name answers nil, and `referencesToObject: nil` is a real question with a useless
+// answer; the MCP find_references_to tool takes its name from a model, where an
+// invented global is entirely likely.
 export function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
   environmentId: number = 0,
 ): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl |
-methods := (${classOrganizerExpr(0)} referencesToObject:
-  (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')).
+  const code = `| obj methods stream limit classDict sl |
+obj := System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}'.
+obj isNil ifTrue: [^ ''].
+methods := (${classOrganizerExpr(environmentId)} referencesToObject: obj) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
@@ -392,6 +428,12 @@ ${methodSerialization(environmentId)}`;
 //   - an equivalent different spelling — a search for `#not` won't find a method that wrote `#'not'`
 // Accepted deliberately (reviewed on PR #443): both are rare next to the bogus every-sender flood the
 // old query produced. If you are chasing a "missing" literal hit, this filter is the reason.
+//
+// Both organizers take `environmentId`, like referencesToObject: an organizer collects its classes
+// under one environment, so a hardwired 0 would have answered for environment 0 while
+// methodSerialization stamped every row with the environment that was asked for. Verified on a live
+// 3.7.5 stone: a method compiled into environment 1 whose source holds `#sym` and `'text'` is found
+// by both queries at `environmentId: 1` and by neither at 0.
 export function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,
@@ -400,8 +442,8 @@ export function literalSymbolReferences(
   const needle = escapeString(symbolExpr);
   const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
-lit := (${classOrganizerExpr(0)} referencesToLiteral: symLit) at: 1.
-candidates := (${classOrganizerExpr(0)} substringSearch: '${needle}' ignoreCase: false) at: 1.
+lit := (${classOrganizerExpr(environmentId)} referencesToLiteral: symLit) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${needle}' ignoreCase: false) at: 1.
 methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
@@ -412,6 +454,8 @@ ${methodSerialization(environmentId)}`;
 // comment, a selector, a #symbol). We take the source-substring candidates (fast, indexed) and keep
 // only those whose literal frame holds a matching String (excluding Symbols). `text` is the raw
 // content (already unquoted by the caller).
+//
+// The organizer takes `environmentId` for the reason given on literalSymbolReferences.
 export function stringLiteralReferences(
   execute: QueryExecutor,
   text: string,
@@ -426,7 +470,7 @@ export function stringLiteralReferences(
   const code = `| ic needle candidates methods stream limit classDict sl |
 ic := ${ignoreCase}.
 needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
-candidates := (${classOrganizerExpr(0)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
 methods := candidates select: [:m |
   (m literals detect: [:l |
     (l isKindOf: String) and: [l isSymbol not and: [
