@@ -51,7 +51,8 @@ function isTokenChar(ch: string): boolean {
  * The scan runs to the end of the statement, which is the next `.` or `;` *at
  * the top level*. Separators nested inside parentheses or a block belong to an
  * inner expression and are scanned past, since the keyword send continues after
- * the bracket closes.
+ * the bracket closes. String literals, comments, symbol literals and character
+ * literals are all scanned past as data.
  */
 export function expandKeywordParts(
   source: string,
@@ -67,6 +68,16 @@ export function expandKeywordParts(
 
     while (pos < source.length && depth >= 0) {
       const ch = source[pos];
+
+      // A character literal's value is data, never a delimiter: `$[` opens no block, `$'`
+      // no string, `$"` no comment, `$.` ends no statement. Same rule as the Tonel
+      // parser's findMethodEnd and the debugger's maskCommentsAndStrings. It has to come
+      // before the bracket counting rather than merely before the string check, or `$[`
+      // and `$(` still raise the depth and every later keyword is scanned as nested.
+      if (ch === '$') {
+        pos += 2;
+        continue;
+      }
 
       if (ch === '(' || ch === '[' || ch === '{') {
         depth++;

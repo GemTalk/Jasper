@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `$'` or `$[` in your source no longer swallows what comes after it.** Two scanners read a character literal's *value* as though it were a delimiter, and a character literal's value is data — `$[` opens no block, `$'` no string, `$"` no comment, `$.` ends no statement. In a Tonel `.st` file, the parser finds where a method ends by counting brackets, so a method containing `$'` left the count permanently raised and its region ran past its own `]` and on to the end of the file — taking every method below it with it. Those regions are what folding, the workspace symbol index, the code lenses, the breadcrumb and **Outline** lists, `Ctrl+T`, **Go to Definition** and the System Browser's cursor-to-method mapping all read, so all of them went wrong together for the rest of the file, and silently: the methods below simply weren't there. It reads as a flaky outline rather than as a parse error, and there is no squiggle, because nothing fails to parse. The debugger's step-point scan had the identical blind spot on a keyword send: `self copyReplaceAll: $. with: $_` lost `with:` its step point — nothing to hover, number or aim a breakpoint at — since `$.` ended the statement early, and `$[` or `$(` left the rest of the send looking nested. Both now skip the character after a `$`, which is the rule the debugger's own source masker already followed. ([#466](https://github.com/GemTalk/Jasper/issues/466))
+
 ## [1.11.0] - 2026-09-17
 
 ### Added

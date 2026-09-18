@@ -251,6 +251,7 @@ describe('parseTonelDocument', () => {
       const regions = parseTonelDocument(text);
       const methods = regions.filter((r) => r.kind === 'smalltalk-method');
       expect(methods).toHaveLength(2);
+      expect(methods[0].text).toContain('quote');
       expect(methods[1].text).toContain('after');
     });
 
