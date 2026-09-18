@@ -61,7 +61,7 @@
 | ⬜ | **8** — prose sweep + how-to page | |
 | ⬜ | **9** — final gate | |
 
-**Tests so far: 165.** All 165 pass against a rowan3 stone; 111 pass and 54 skip against
+**Tests so far: 226.** All 226 pass against a rowan3 stone; 191 pass and 35 skip against
 the default base-extent stone. Lint, format and compile clean.
 
 **Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
@@ -866,6 +866,77 @@ between the two halves. That is the argument for this test shape.
 **Prose note for Step 8:** `docs/output-channels.md` lists eight channels and does **not**
 include `GemStone File In`, which already exists in `fileTransfer/fileIn.ts`. That doc is
 stale today, before this feature touches it — fix it while we are in there.
+
+## Rowan comparison — critical review against Rowan's own writer
+
+Run on 2026-09-18 against a rowan3 stone, driving **Rowan's own public writer**
+(`Rowan projectTools write writeProjectNamed:`) over a throwaway project and diffing its
+output against ours for the same class. Rowan's SUnit tonel tests
+(`RwProjectTonelReaderWriterTest`, `RwTonelParserTest`, `RwTopazTonelReaderTest`) exist in
+the source tree but are **not loaded in the extent**, so they could not be run; driving
+the writer directly exercises the same code on the same input, which is the point.
+
+It found two real defects. Both had passed every test we had.
+
+### 1. Every method was written TWICE for a Rowan-loaded class
+
+Rowan keys method definitions by the `#selector` property, and its own loaded definitions
+use **Symbols**. We added ours with `newForSelector: sel asString` — a **String**.
+Different keys, so `addInstanceMethodDefinition:` added ours *alongside* Rowan's instead
+of replacing, and `addDefinition:to:`'s duplicate check never fired because the keys
+genuinely differed. `Message` came out with 34 method blocks where the shipped file has
+17.
+
+**Fix:** clear the definition's method dictionaries before populating, so the live class
+is the single source and the result does not depend on how Rowan happens to key them.
+Also pass the selector as a Symbol, matching Rowan's own convention.
+
+### 2. The test helpers could not see it — and would have invented a false one
+
+`methodBlocksOf` answers a **Map** and `declarationsOf` **sorts**: both silently collapse
+a doubled method, so every comparison built on them passed while the file-out was writing
+each method twice. There was no test that could fail.
+
+Worse, the key was taken from the FIRST LINE of a declaration. Rowan wraps long keyword
+declarations across lines, and `Array class` really does define both
+`byteSubclass:…inClassHistory:description:isInvariant:` and
+`byteSubclass:…newVersionOf:description:options:`, whose first lines are identical. So
+the helper both hid real duplicates and reported false ones — 22 files' worth.
+
+**Fix:** a `duplicateDeclarationsOf` oracle that counts rather than collapsing, and a
+declaration key that spans the wrapped lines with whitespace normalised.
+
+### Corrected corpus measurement
+
+The earlier numbers in this document were taken with the flawed key. Re-measured with
+both fixes, across the 649 resolvable corpus classes:
+
+| Property | Result |
+|---|---|
+| Headers byte-identical to Rowan's | **649 / 649** |
+| Files containing a duplicate method | **0** |
+| Files missing or altering a shipped method | **0** |
+| Whole-file byte-identical (extension-free classes) | **200** |
+| Extra methods — the genuine class extensions | 13,400 |
+
+The 13,400 figure survives, and now means what it was always claimed to mean: methods a
+Jasper user sees on the class that Rowan files into other packages' `.extension.st`.
+Previously it was right by accident, with duplicates and extensions both inflating a
+count that was being read with a duplicate-blind key.
+
+### Where we still differ from Rowan, deliberately
+
+- **`#category`.** Rowan writes the **package** name. We have no package, so we write the
+  class category, falling back to the symbol dictionary name. A Jasper file is therefore
+  not drop-in loadable into a Rowan package tree without editing that key.
+- **One file per class, extensions included.** Rowan splits a class's methods across its
+  own `.class.st` and other packages' `.extension.st`. We write them all in the class
+  file, by design — a Jasper user has no notion of a package.
+- **No `package.st` / `properties.st`.** Rowan writes a project tree; we write one file
+  the user names.
+
+None of these is a defect, but all three mean a Jasper `.st` file is **Tonel that Rowan
+can parse, not a Rowan project artifact.** Worth saying plainly in the how-to page.
 
 ## Step 6 — Availability gating ⬜ (the probe itself ✅ done in Step A)
 

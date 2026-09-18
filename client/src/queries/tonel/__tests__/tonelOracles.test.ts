@@ -6,7 +6,13 @@
 // own fixtures — especially `methodBlocksOf`, whose whole job is to be exact.
 import { describe, it, expect } from 'vitest';
 
-import { headerOf, methodBlocksOf, declarationsOf, declarationSequenceOf } from './tonelOracles';
+import {
+  headerOf,
+  methodBlocksOf,
+  declarationsOf,
+  declarationSequenceOf,
+  duplicateDeclarationsOf,
+} from './tonelOracles';
 
 const CLASS_FILE = `"
 A comment.
@@ -88,9 +94,52 @@ describe('methodBlocksOf', () => {
     expect(methodBlocksOf(`Class {\n\t#name : 'Empty'\n}\n`).size).toBe(0);
   });
 
+  it('keeps a declaration that wraps across lines whole', () => {
+    // Rowan wraps long keyword declarations. Two DIFFERENT methods can share a
+    // first line — `Array class` really has two `byteSubclass: aString …` methods
+    // that differ only in their later keywords — so a key taken from line one
+    // alone collides, reporting a false duplicate and hiding a real one.
+    const wrapped =
+      `Class {\n\t#name : 'X'\n}\n` +
+      `\n{ #category : 'a' }\nX class >> big: a\nwith: b\nand: c [\n\t^1\n]\n` +
+      `\n{ #category : 'a' }\nX class >> big: a\nwith: b\nor: c [\n\t^2\n]\n`;
+    expect([...methodBlocksOf(wrapped).keys()]).toEqual([
+      'X class >> big: a with: b and: c',
+      'X class >> big: a with: b or: c',
+    ]);
+    expect(duplicateDeclarationsOf(wrapped)).toEqual([]);
+  });
+
   it('keeps a keyword selector whole', () => {
     const text = `Class {\n\t#name : 'X'\n}\n\n{ #category : 'a' }\nX >> at: k put: v [\n\t^v\n]\n`;
     expect([...methodBlocksOf(text).keys()]).toEqual(['X >> at: k put: v']);
+  });
+});
+
+describe('duplicateDeclarationsOf', () => {
+  it('finds nothing in a well-formed file', () => {
+    expect(duplicateDeclarationsOf(CLASS_FILE)).toEqual([]);
+  });
+
+  it('names a method emitted twice', () => {
+    // The case that was silently passing: every other helper here answers a Map
+    // or a sorted set, so a doubled method looked identical to a single one.
+    const doubled =
+      `Class {\n\t#name : 'X'\n}\n` +
+      `\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n` +
+      `\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n`;
+    expect(duplicateDeclarationsOf(doubled)).toEqual(['X >> m']);
+    // And the proof that the other helpers cannot see it:
+    expect(methodBlocksOf(doubled).size).toBe(1);
+    expect(declarationsOf(doubled).instance).toEqual(['m']);
+  });
+
+  it('distinguishes the two sides', () => {
+    const bothSides =
+      `Class {\n\t#name : 'X'\n}\n` +
+      `\n{ #category : 'a' }\nX class >> m [\n\t^1\n]\n` +
+      `\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n`;
+    expect(duplicateDeclarationsOf(bothSides)).toEqual([]);
   });
 });
 

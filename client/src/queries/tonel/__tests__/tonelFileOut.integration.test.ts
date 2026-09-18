@@ -20,7 +20,13 @@ import { GciLibrary } from '../../../gciLibrary';
 import * as q from '../../../browserQueries';
 import type { ActiveSession } from '../../../sessionManager';
 import { fileOutClassTonel, isTonelFileOutError } from '../fileOutClassTonel';
-import { headerOf, methodBlocksOf, declarationsOf, declarationSequenceOf } from './tonelOracles';
+import {
+  headerOf,
+  methodBlocksOf,
+  declarationsOf,
+  declarationSequenceOf,
+  duplicateDeclarationsOf,
+} from './tonelOracles';
 import { useRowan3Stone } from './useRowan3Stone';
 
 // Reference files are named by PACKAGE, never found by class name alone:
@@ -117,6 +123,13 @@ describe('tonel class file out (integration)', () => {
       for (const [declaration, block] of shipped) {
         expect(ours.get(declaration), `missing or altered: ${declaration}`).toBe(block);
       }
+    });
+
+    it('emits each method exactly once', (ctx) => {
+      rowan3.skipUnlessAvailable(ctx);
+      // Every other comparison here answers a Map or a sorted set and therefore
+      // cannot see a doubled method. This is the only one that can.
+      expect(duplicateDeclarationsOf(fileOut(fixture.className))).toEqual([]);
     });
 
     it('emits the shipped methods in the shipped order', (ctx) => {

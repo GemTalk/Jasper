@@ -71,6 +71,33 @@
 const METHOD_BLOCK = /^\{ #category : '(?:[^']|'')*' \}$/gm;
 
 /**
+ * The full method declaration in a block, as one line.
+ *
+ * It must span LINES, not stop at the first. Rowan writes a long keyword
+ * declaration across several lines, and `Array class` really does define both
+ *
+ *     byteSubclass:classVars:classInstVars:poolDictionaries:inDictionary:
+ *       inClassHistory:description:isInvariant:
+ *     byteSubclass:classVars:classInstVars:poolDictionaries:inDictionary:
+ *       newVersionOf:description:options:
+ *
+ * whose first lines are identical. Keying on the first line alone made those two
+ * distinct methods collide — which reported false duplicates, and worse, let a
+ * genuinely doubled method hide behind a Map entry. Internal whitespace is
+ * collapsed so the key does not depend on how the writer wrapped it.
+ */
+function declarationIn(block: string): string {
+  const afterPragma = block.indexOf('\n');
+  if (afterPragma < 0) return '';
+  // The declaration ends at the ` [` that opens the body. The writer emits
+  // `<< ' [' << methodBody`, so the body may begin on the same line or the next;
+  // either way ` [` is the terminator, and a declaration never contains one.
+  const open = block.indexOf(' [', afterPragma);
+  const text = open < 0 ? block.slice(afterPragma + 1) : block.slice(afterPragma + 1, open);
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Everything before the first method — the comment, if any, and the
  * `Class { … }` / `Extension { … }` block.
  *
@@ -106,12 +133,37 @@ export function methodBlocksOf(tonel: string): Map<string, string> {
 
   for (let i = 0; i < starts.length; i++) {
     const block = tonel.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : tonel.length);
-    // Declaration is the line after the pragma, up to the opening bracket.
-    const lines = block.split('\n');
-    const declaration = (lines[1] ?? '').replace(/\s*\[.*$/, '').trim();
+    const declaration = declarationIn(block);
     if (declaration.length > 0) blocks.set(declaration, block.replace(/\n+$/, '\n'));
   }
   return blocks;
+}
+
+/**
+ * Declarations that appear MORE THAN ONCE — the duplicate oracle.
+ *
+ * This exists because its absence hid a real bug. `methodBlocksOf` answers a Map,
+ * and `declarationsOf` sorts: both silently collapse a file that emits the same
+ * method twice, so every comparison built on them passed while the file-out was
+ * writing each method of a Rowan-loaded class twice over. A Map cannot see a
+ * duplicate; only counting can.
+ */
+export function duplicateDeclarationsOf(tonel: string): string[] {
+  const seen = new Map<string, number>();
+  METHOD_BLOCK.lastIndex = 0;
+  const starts: number[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = METHOD_BLOCK.exec(tonel)) !== null) starts.push(match.index);
+  for (let i = 0; i < starts.length; i++) {
+    const declaration = declarationIn(
+      tonel.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : tonel.length),
+    );
+    if (declaration.length > 0) seen.set(declaration, (seen.get(declaration) ?? 0) + 1);
+  }
+  return [...seen.entries()]
+    .filter(([, n]) => n > 1)
+    .map(([d]) => d)
+    .sort();
 }
 
 /**
