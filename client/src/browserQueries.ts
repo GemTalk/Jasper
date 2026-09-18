@@ -31,6 +31,7 @@ import { getStoredClassComment as sharedGetStoredClassComment } from './queries/
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/tonel/dictionariesContainingClass';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
 import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
@@ -775,6 +776,11 @@ export function getSiblingClassNames(
   dict?: number | string,
 ): string[] {
   return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** Which symbol dictionaries hold a class of this name, in symbol-list order. */
+export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
+  return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
 }
 
 export function fileOutClass(

@@ -51,18 +51,23 @@
 | ✅ | **A** — rowan3 test stone in the harness | done |
 | ✅ | **0** — spike | done; findings in "Verified Smalltalk" |
 | ✅ | **1** — file out one class | done; 4 oracles + churn suite |
-| ⬜ | **2** — widen the oracles (corpus sweep, gap fixtures) | next |
+| ◐ | **2** — widen the oracles | mostly covered by Steps A/1; corpus sweep as a test + 2 gap fixtures outstanding |
 | ➖ | **3** — methods-only file-out | **cut** (see the step for why) |
-| | | **— FILE IN starts here —** |
-| ⬜ | **4** — **file in**, part 1: read Tonel into definitions | |
-| ⬜ | **5** — **file in**, part 2: apply to the image | |
-| ⬜ | **6** — availability gating | probe ✅ done in Step A; context key + command guards outstanding |
+| | | **— FILE IN —** |
+| ✅ | **4** — **file in**, part 1: read Tonel into definitions | done |
+| ✅ | **5** — **file in**, part 2: apply to the image | done; round trip is a fixpoint |
+| ⬜ | **6** — availability gating | **← NEXT**; probe ✅ done in Step A, context key + command guards outstanding |
 | ⬜ | **7** — client wiring (menus, filters, code lens) | |
 | ⬜ | **8** — prose sweep + how-to page | |
 | ⬜ | **9** — final gate | |
 
-**Tests so far: 82.** All 82 pass against a rowan3 stone; 54 pass and 28 skip against the
-default base-extent stone. Lint, format and compile clean.
+**Tests so far: 165.** All 165 pass against a rowan3 stone; 111 pass and 54 skip against
+the default base-extent stone. Lint, format and compile clean.
+
+**Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
+Steps A and 1, and Step 3 was cut, so the order worked so far is
+**A → 0 → 1 → 4 → 5 → (6 next)**, with the remainder of 2 deferred. The numbers are labels,
+not a sequence.
 
 Decisions taken since the plan was first written, each from review feedback, all recorded
 in the step that owns them:
@@ -211,7 +216,10 @@ fixture we could author, and it is the spine of the plan.
 
 ## The tests, written out
 
-**Status:** ✅ written · ⬜ outstanding. Four files below were not in the original
+**Status:** ✅ written · ⬜ outstanding. Entries are identified by FILENAME and are
+deliberately un-numbered: this document already numbers steps (A, 0–9), and a second
+numbered list in the same document reads as the first — "✅ 2." here was taken to mean
+"Step 2 is done". Four files below were not in the original
 inventory — they were added as review feedback exposed gaps (the three-way oracle split,
 method ORDER, and churn). They are marked ➕.
 
@@ -223,7 +231,7 @@ full — file by file, case by case, with the assertion each one makes. Nothing 
 An integration case with no stone fails on connection, which proves nothing — so Step A
 comes first, and its own red case is the capability probe.
 
-### ✅ 1. `client/src/queries/tonel/__tests__/tonelCapability.test.ts` — unit, no stone
+### ✅ `client/src/queries/tonel/__tests__/tonelCapability.test.ts` — unit, no stone
 
 Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decoding.
 
@@ -234,7 +242,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `is false when Rowan does not resolve at all` | base-extent shape → false |
 | `asks no version question` | emitted code contains no `System _version` / version compare — the auto-enable property, pinned as a test |
 
-### ✅ 2. `client/src/queries/tonel/__tests__/tonelFileOutQueries.test.ts` — unit, no stone
+### ✅ `client/src/queries/tonel/__tests__/tonelFileOutQueries.test.ts` — unit, no stone
 
 | Case | Asserts |
 |---|---|
@@ -247,7 +255,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `escapes a class name containing a quote` | `escapeString` applied |
 | `answers a sentinel instead of raising` | `!ERR ` on Error, `!NO_ROWAN` when absent |
 
-### ⬜ 3. `client/src/queries/tonel/__tests__/tonelReadQueries.test.ts` — unit, no stone (**file in**, Step 4)
+### ✅ `client/src/queries/tonel/__tests__/tonelReadQueries.test.ts` — unit, no stone (**file in**, Step 4)
 
 | Case | Asserts |
 |---|---|
@@ -256,7 +264,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `survives source containing a quote, a bracket and a newline` | fixture text round-trips through the escaper |
 | `reports a parse failure as a sentinel` | malformed Tonel → `!ERR ` with the parser's message |
 
-### ⬜ 4. `client/src/queries/tonel/__tests__/tonelWire.test.ts` — unit, pure TS (**file in**, Step 4)
+### ✅ `client/src/queries/tonel/__tests__/tonelWire.test.ts` — unit, pure TS (**file in**, Step 4)
 
 | Case | Asserts |
 |---|---|
@@ -264,7 +272,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `survives method source containing the field delimiter` | the framing choice is actually safe |
 | `rejects a truncated payload` | throws, not silently half-decoded |
 
-### ⬜ 5. `client/src/fileTransfer/__tests__/tonelFileIn.test.ts` — unit, fake session (**file in**, Step 5)
+### ✅ `client/src/fileTransfer/__tests__/tonelFileIn.test.ts` — unit, fake session (**file in**, Step 5)
 
 | Case | Asserts |
 |---|---|
@@ -274,7 +282,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `commits nothing` | no commit query issued |
 | `reports per-line outcomes in FileInOutcome shape` | same report shape as chunk file-in |
 
-### ✅ 6. `client/src/queries/tonel/__tests__/tonelFileOut.integration.test.ts` — rowan3 only
+### ✅ `client/src/queries/tonel/__tests__/tonelFileOut.integration.test.ts` — rowan3 only
 
 | Case | Asserts |
 |---|---|
@@ -285,7 +293,7 @@ Drives a fake `QueryExecutor`; pins the probe's emitted Smalltalk and its decodi
 | `a class Rowan has not loaded emits a real category` | never `#category : nil` |
 | `an unresolvable class reports instead of writing a file` | sentinel surfaces, no file written |
 
-### ⬜ 7. `client/src/queries/tonel/__tests__/tonelCorpus.integration.test.ts` — rowan3, opt-in (Step 2)
+### ⬜ `client/src/queries/tonel/__tests__/tonelCorpus.integration.test.ts` — rowan3, opt-in (Step 2)
 
 Baseline is the spike's measured numbers; the assertion is equality with them.
 
@@ -296,37 +304,37 @@ Baseline is the spike's measured numbers; the assertion is equality with them.
 | `the 200 extension-free classes match whole-file` | whole-file byte equality where it is meaningful |
 | `classes absent from the symbol list are skipped, not failed` | 69 skips reported by name |
 
-### ⬜ 8. `client/src/queries/tonel/__tests__/tonelGaps.integration.test.ts` — rowan3 only (Step 2)
+### ⬜ `client/src/queries/tonel/__tests__/tonelGaps.integration.test.ts` — rowan3 only (Step 2)
 
 The four header keys with **zero** corpus coverage. Hand-built fixtures, one case each:
 `#pools`, `#gs_constraints`, `#traits`, `#classTraits` — each asserted to appear in the
 file out and to survive a round trip.
 
-### ⬜ 9. `client/src/queries/tonel/__tests__/tonelRoundTrip.integration.test.ts` — rowan3 only (**file in**, Step 5)
+### ✅ `client/src/queries/tonel/__tests__/tonelRoundTrip.integration.test.ts` — rowan3 only (**file in**, Step 5)
 
 | Case | Asserts |
 |---|---|
 | `a class survives out and back into a different dictionary` | definition, both selector lists, each method's category and source |
 | `file-in leaves the session dirty, not committed` | transaction state unchanged |
 
-### ⬜ 10. `client/src/__tests__/tonelAvailability.test.ts` — unit (Step 6)
+### ⬜ `client/src/__tests__/tonelAvailability.test.ts` — unit (Step 6)
 
 | Case | Asserts |
 |---|---|
 | `sets gemstone.tonelAvailable from the probe` | context key wiring |
 | `commands refuse when the key is false` | the palette route, which ignores `when` |
 
-### ✅ 11. Shared helper — `client/src/queries/tonel/__tests__/useRowan3Stone.ts`
+### ✅ Shared helper — `client/src/queries/tonel/__tests__/useRowan3Stone.ts`
 
 Not a test. Wraps case 1's probe as a suite-level skip, so the condition is written once
 and every rowan3 suite switches on together the day the capability appears in CI.
 
-### ➕✅ 12. `client/src/queries/tonel/__tests__/tonelCapability.integration.test.ts`
+### ➕✅ `client/src/queries/tonel/__tests__/tonelCapability.integration.test.ts`
 
 The probe against a live stone — the one thing every other rowan3 suite trusts. Added in
 Step A so that step could be red-first like the rest.
 
-### ➕✅ 13. `client/src/queries/tonel/__tests__/tonelOracles.ts` + `tonelOracles.test.ts`
+### ➕✅ `client/src/queries/tonel/__tests__/tonelOracles.ts` + `tonelOracles.test.ts`
 
 The four oracles, and their own tests. Not in the original plan, which said "diff against
 the shipped file" — that turned out to be the wrong test entirely, and the split into
@@ -335,13 +343,13 @@ They are tested because a wrong oracle passes silently and takes every suite it 
 with it — and one was wrong (the header oracle swallowed the blank line before the first
 method).
 
-### ➕✅ 14. `client/src/queries/tonel/__tests__/tonelDiff.ts` + `tonelDiff.test.ts`
+### ➕✅ `client/src/queries/tonel/__tests__/tonelDiff.ts` + `tonelDiff.test.ts`
 
 An LCS line diff for the churn suite. A set difference would report "no change" when
 lines come back REORDERED, which is exactly the churn worth catching — so that case is
 the one test here that earns its keep.
 
-### ➕✅ 15. `client/src/queries/tonel/__tests__/tonelFileOutChurn.integration.test.ts`
+### ➕✅ `client/src/queries/tonel/__tests__/tonelFileOutChurn.integration.test.ts`
 
 **A small change must make a small diff.** Added from review feedback, and it is the
 suite closest to how the feature is actually used: these files live in git. Every other
@@ -647,27 +655,27 @@ class-side method.
   selector-completeness oracle excludes them too, so the contract is stated in one way
   on both sides.
 
-## Step 2 — Widen the oracles ⬜ NEXT
+## Step 2 — Widen the oracles ◐ MOSTLY DONE ELSEWHERE
 
-1. **Corpus sweep**, opt-in via env var (it is ~720 classes and slow): walk
-   `$GEMSTONE/projects/gemstoneBaseImage/rowan/src/**/*.class.st`, file each class out,
-   and apply the three oracles. The spike's numbers are the regression baseline —
-   **649/649 headers, 649/649 method fidelity, 0 missing** — so the assertion is
-   equality with those, not "mostly passes". Report every failure by file; do not stop
-   at the first. Classes that do not resolve in the symbol list (69 in the spike) are
-   reported as skips, not failures.
-1a. **The non-Rowan-loaded class** — the case the corpus cannot reach by construction,
-   and the one a developer actually files out. A scratch class in UserGlobals with
-   methods on both sides: assert the methods are *present* (the spike's blocker,
-   regression-guarded) and that `#category` is never emitted as `nil`.
-2. **Gap fixtures** — the corpus has **zero** coverage of `#pools`, `#gs_constraints`,
-   `#traits`, `#classTraits`. Hand-build one class for each in a scratch dictionary,
-   file out, assert the key appears and round-trips. These are the four places a
-   regression would otherwise ship silently.
-3. **API-shape guard** — one test asserting
-   `RwModificationTonelWriterVisitorV2 new respondsTo: #'_writeClassDefinition:on:'`
-   (and the other three), whose failure message says the private API moved and points
-   at this feature by name.
+**Read this before picking the step up.** Two of the four items below were already
+covered while building Steps A and 1, and a third was cut. Only the corpus sweep is
+genuinely outstanding, and even that has been run once by hand. The step as originally
+written overstates what is left.
+
+| | Item | State |
+|---|---|---|
+| ⬜ | **Corpus sweep as an automated test** | outstanding — the spike ran it by hand (649/649 headers, 649/649 method fidelity, 0 missing), but those numbers live in this document, not in a test that will re-run |
+| ✅ | **The non-Rowan-loaded class** | done in Step 1 — `a class Rowan has not loaded exports all its methods` and `… emits a real category`, both in `tonelFileOut.integration.test.ts` |
+| ◐ | **Gap fixtures** | `#traits` / `#classTraits` **cut** — traits are not a supported feature and their methods are excluded. `#pools` and `#gs_constraints` remain, and the corpus covers neither |
+| ✅ | **API-shape guard** | done in Step A, as the capability probe: `tonelCapability.ts` names every private selector the feature drives, with one unit case per selector so a dropped one fails by name |
+
+So the remaining work is: **(1)** turn the hand-run corpus sweep into an opt-in test that
+asserts equality with the 649/649/0 baseline and reports non-resolving classes (69) as
+skips rather than failures; **(2)** two gap fixtures, for `#pools` and `#gs_constraints`.
+
+Worth weighing against Step 5's fixpoint test before spending time here: that test files
+real base-image classes out *and back in*, so it subsumes much of what a file-out-only
+corpus sweep proves, on the same input.
 
 ## Step 3 — *Cut.* No methods-only Tonel file-out
 
@@ -693,7 +701,7 @@ The read side needs nothing either. `.extension.st` files reach a developer thro
 Rowan project checkout, and **Rowan is not integrated into Jasper** — that workflow does
 not exist for this feature's users. Not a deferred question; simply not in the picture.
 
-## Step 4 — FILE IN, part 1: read Tonel into definitions (TDD) ⬜
+## Step 4 — FILE IN, part 1: read Tonel into definitions (TDD) ✅ DONE
 
 1. **Red (unit)** — `readTonelClass(exec, tonelText)` emits the R1-or-R2 sequence from
    Step 0, escapes the text safely (it contains quotes, brackets and newlines — this is
@@ -710,7 +718,7 @@ idiom (`describeClass.ts`, `getStepPointBundle.ts`) rather than inventing one, a
 choose a framing that survives arbitrary method source. Decoder gets its own pure unit
 test with an encode/decode round trip.
 
-## Step 5 — FILE IN, part 2: apply to the image (TDD) ⬜
+## Step 5 — FILE IN, part 2: apply to the image (TDD) ✅ DONE
 
 The parsed definition is applied with **Jasper's existing compile path**, not Rowan's
 loader: `compileClassDefinition` for the class, then `compileMethod` per method. This
@@ -727,6 +735,59 @@ gives per-method outcome reporting for free, and — matching chunk file-in —
   source.
 - **Green** — `client/src/fileTransfer/tonelFileIn.ts`, reusing the `FileInOutcome`
   shape from `fileTransfer/fileIn.ts` so the report reads the same as a chunk file-in.
+
+### The big one: a round-trip FIXPOINT over real base-image classes
+
+Eric's suggestion, and it is the strongest test available to this feature: the base image
+is hundreds of real classes with every header key, selector shape and source oddity that
+exists — input diversity no hand-written fixture will ever match. It also tests the two
+halves **against each other** rather than each against my fixtures, which is where an
+asymmetry would hide (the writer emitting something the reader cannot parse, or the
+reader quietly normalising something away).
+
+**Constraint that shapes it: never file a base class back onto itself.** Measured on a
+rowan3 stone: **0 of 1127 `Globals` classes answer `canBeWritten`** — `Object`, `String`,
+`Message`, all false. As DataCurator the file-in simply errors. As SystemUser it might
+succeed, and that is worse: file-in is REPLACE, so `removeAllMethods` on `Object` or
+`String` would destroy the running gem before the transaction could abort. The test must
+file in **under a different name, into a scratch dictionary.**
+
+**Shape — a text fixpoint, not a field-by-field comparison:**
+
+```
+t1 = fileOut(C)                      "a real base-image class"
+t1' = rewrite(t1)                    "#name -> JasperRT_<C>, drop #gs_reservedoop"
+       file in t1' to UserGlobals    "creates the copy"
+t2 = fileOut(JasperRT_<C>)
+assert t2 == t1'
+```
+
+Why this rather than comparing definitions and method lists field by field:
+
+- **One string comparison proves everything at once** — superclass, instVars, classVars,
+  classInstVars, type, comment, every method's category, every method's source, AND the
+  method order. A field-by-field check would have to remember to assert each of those,
+  and would silently not cover whatever it forgot.
+- **It reuses the machinery already built** — the file-out path and the four oracles.
+- **There is precedent in this repo**: `rowanExportFixpoint.integration.test.ts` proves
+  Rowan project export the same way, so the shape is familiar to a reviewer.
+
+**Two rewrites are forced, and both are findings worth stating:**
+
+- `#name` — obviously, since the copy cannot shadow the original.
+- `#gs_reservedoop` — a reserved OOP belongs to the original class and cannot be claimed
+  by a copy. So the fixpoint holds *modulo* that key, and the test says so rather than
+  quietly stripping it. (370 of the corpus files carry one.)
+
+**Failures that are NOT our bug, so this is baselined rather than absolute:** methods with
+`<primitive:>` pragmas, references to pool dictionaries or class variables the copy does
+not inherit, and classes whose superclass chain cannot be reproduced. Measure once,
+record the number, and assert against that baseline — exactly as the corpus sweep asserts
+649/649/0 rather than "mostly passes". A class that newly fails is then a real signal.
+
+**Tiering:** a handful of shape-diverse classes in the default run; the full sweep opt-in
+behind an env var, like the corpus sweep, since it is hundreds of classes through two
+round trips each.
 
 ### Decided (Eric) — settled before the code is written
 
@@ -773,6 +834,21 @@ already exist, so each of these is visible to the developer.
 
 6. **Partial failure does not abort the rest.** One method that will not compile is
    reported against its line; the remaining methods still file in.
+
+### What the fixpoint test caught that the unit tests could not
+
+Both were real defects in code whose unit tests were already green:
+
+- **The parser answers methods ALONGSIDE the class definition, not attached to it** —
+  `(defs at: 2) at: 1` is the class side, `at: 2` the instance side. Rowan's own
+  `readClassFile:inPackage:` attaches them in a separate step. Reading the definition's
+  own method dictionaries found nothing, so every file-in produced a class with a correct
+  header and **zero methods**, silently.
+- **The class comment was decoded and then never applied**, so the copy came back
+  comment-less.
+
+Neither is visible to a unit test that mocks the query layer: both live in the seam
+between the two halves. That is the argument for this test shape.
 
 ### Tests these decisions add
 
