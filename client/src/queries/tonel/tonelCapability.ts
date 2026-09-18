@@ -1,0 +1,138 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPPORTED CONFIGURATION — Tonel file out / file in (issue #616)
+//
+//   GemStone 3.7.5 and later, on a **rowan3** extent. Nothing else.
+//
+// "rowan3" means Rowan 3 — the `RowanV3` project, and a stone built from
+// `extent0.rowan3.dbf`. NOT `extent0.rowan.dbf`, which installs the older
+// Rowan. The distinction is load-bearing, not pedantry: both generations ship
+// in the same 3.7.5 tarball, both define a global named `Rowan`, and both
+// define classes named `RwModificationTonelWriterVisitorV2` whose headers carry
+// different key sets. Reading "rowan" as the older one silently drives the
+// wrong API.
+//
+// This is not graceful degradation. The whole feature calls RowanV3 classes
+// that do not exist on a base extent, and the 3.6.x tarballs ship no Rowan
+// extent of either generation — a rowan3 3.6.2 stone is not merely unsupported,
+// it is not constructible from the product. Where the gate fails the commands
+// are HIDDEN, not degraded, and every test for the feature SKIPS.
+//
+// Audience is core developers doing base-code development, not general users.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Why this probe asks about selectors rather than versions
+// --------------------------------------------------------
+// A version check would freeze the feature to the releases we happened to know
+// about when we wrote it, and — worse — would keep the rowan3 test tier dark
+// forever after rowan3 reached CI, because nothing would notice it had. Jasper
+// runs no CI test against a rowan3 stone today, so this tier is developer-run
+// until that changes; gating on the machinery being *present* means the feature
+// and its tests switch themselves on the day rowan3 reaches CI or lands in the
+// base extent, with no edit and nobody remembering to make one.
+//
+// So the probe resolves exactly the classes this feature drives and asks
+// whether they understand exactly the selectors it sends. That doubles as the
+// sharpest available discriminator between rowan3 and the older Rowan, which
+// share the `Rowan` global and several class names.
+//
+// The classes are resolved through `./rowanLookup`, NOT through the session's
+// symbol list directly: on a rowan3 stone the Rowan dictionaries are in
+// SystemUser's symbol list only, so a DataCurator session would see nothing and
+// hide the feature on a stone that supports it. See that file for the measured
+// detail and for every cheaper route that was tried and failed.
+//
+// Several of these are PRIVATE Rowan API (`_write…`). That is deliberate and
+// unavoidable: Rowan's public writer entry points are all project/package
+// modification visitors that write into a package directory on disk, and there
+// is no public single-class entry point on either side. Pinning the private
+// shape here is what turns "Rowan changed under us" from a mysterious runtime
+// failure into a named, hidden command and a skipped test.
+import { QueryExecutor } from '../types';
+import { escapeString, splitLines } from '../util';
+import { ROWAN_LOOKUP_PRELUDE, rowanLookupExpr } from './rowanLookup';
+
+/**
+ * Every class-and-selector pair the Tonel feature actually sends, written as it
+ * reads in Smalltalk: `Receiver>>selector` for a message to an instance,
+ * `Receiver class>>selector` for one to the class itself.
+ *
+ * This list IS the capability contract. Adding a call to Rowan anywhere in the
+ * feature means adding it here, or the gate stops covering the thing it claims
+ * to cover.
+ */
+export const TONEL_CAPABILITIES = [
+  // File out: driving the writer directly, one class at a time.
+  'RwModificationTonelWriterVisitorV2>>_writeClassDefinition:on:',
+  'RwModificationTonelWriterVisitorV2>>_writeClassSideMethodDefinitions:on:',
+  'RwModificationTonelWriterVisitorV2>>_writeInstanceSideMethodDefinitions:on:',
+  // Not optional: `methodSortBlock` lazily reads `currentProjectDefinition
+  // methodSortOrder`, which is nil on a visitor we built ourselves, so the
+  // writer doesNotUnderstand the first time it sorts methods unless we set it.
+  'RwModificationTonelWriterVisitorV2>>methodSortBlock:',
+  // File in: assembling a reader visitor by hand so the parser can be fed a
+  // string, since Rowan's own entry point takes a file path.
+  'RwRepositoryResolvedProjectTonelReaderVisitorV2>>currentProjectDefinition:',
+  'RwTonelParser class>>on:filePath:forReader:',
+  'RwResolvedProjectV2>>addPackageNamed:toComponentNamed:',
+  // Building method definitions from a live class, for the file-out header's
+  // methods (see fileOutClassTonel for why this is always needed).
+  'RwMethodDefinition class>>newForSelector:protocol:source:',
+  'Class>>rwClassDefinitionInSymbolDictionaryNamed:',
+  // Telling a trait's methods from the class's own. Traits are not a supported
+  // Jasper feature and their methods are excluded from a file-out, so losing this
+  // selector must hide the feature rather than silently start exporting them.
+  'GsNMethod>>isFromTrait',
+] as const;
+
+export type TonelCapability = (typeof TONEL_CAPABILITIES)[number];
+
+export interface TonelCapabilityResult {
+  /** Whether every capability is present — the one question callers should ask. */
+  available: boolean;
+  /** Which capabilities are absent, for a diagnostic the user can act on. */
+  missing: string[];
+}
+
+/** Split `Receiver class>>selector` into the global to resolve, whether the
+ *  message goes to the class itself, and the selector. */
+function parse(capability: string): { global: string; isMeta: boolean; selector: string } {
+  const [receiver, selector] = capability.split('>>');
+  const isMeta = receiver.endsWith(' class');
+  return { global: isMeta ? receiver.slice(0, -' class'.length) : receiver, isMeta, selector };
+}
+
+/**
+ * Which parts of the Tonel machinery this session can reach.
+ *
+ * Answers the MISSING capabilities rather than a bare boolean so a refusal can
+ * say what is absent: "this stone has Rowan but not `RwTonelParser`" is a
+ * different problem from "this is a base extent", and a user staring at a
+ * hidden menu deserves to be able to tell them apart.
+ */
+export function tonelCapability(execute: QueryExecutor): TonelCapabilityResult {
+  // `canUnderstand:` on the metaclass answers whether the CLASS responds, which
+  // is what a `Foo class>>bar` capability means; on the class itself it answers
+  // whether its instances do.
+  const probes = TONEL_CAPABILITIES.map((capability) => {
+    const { global, isMeta, selector } = parse(capability);
+    return `probe value: '${escapeString(capability)}' value: ${rowanLookupExpr(global)} value: ${isMeta} value: #'${escapeString(selector)}'.`;
+  }).join('\n');
+
+  const code = `| ws probe rwLookup |
+ws := WriteStream on: String new.
+${ROWAN_LOOKUP_PRELUDE}
+probe := [:label :g :meta :sel | | target |
+  target := g ifNil: [nil] ifNotNil: [:cls | meta ifTrue: [cls class] ifFalse: [cls]].
+  (target notNil and: [target canUnderstand: sel])
+    ifFalse: [ws nextPutAll: label; lf]].
+${probes}
+ws contents`;
+
+  // A blank line is not a missing capability: GCI string answers routinely carry
+  // a trailing newline, and treating that as a name would hide the feature on a
+  // perfectly good stone.
+  const missing = splitLines(execute(code))
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return { available: missing.length === 0, missing };
+}
