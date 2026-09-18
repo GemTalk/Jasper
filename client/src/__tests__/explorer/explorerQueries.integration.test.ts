@@ -165,11 +165,14 @@ describe('explorer queries (integration)', () => {
       expect(categoryOf(WIDGET)).toBe('JasperIt-Alpha');
     });
 
-    // #387 item 11 drives the class row's comment button off this flag, so what
-    // counts as "has a comment" has to be decided against a real class, not a
-    // mocked line of output: `Class>>comment` SYNTHESISES a placeholder when there
-    // is none, and `comment: ''` STORES the empty string rather than dropping the
-    // key. Both are engine behaviours a unit test cannot show.
+    // The class row's comment button is driven off this flag, so what counts as
+    // "has a comment" has to be decided against a real class, not a mocked line of
+    // output. Two engine behaviours a unit test cannot show: `Class>>comment`
+    // SYNTHESISES a placeholder when there is none, and the raw `comment: ''`
+    // message STORES the empty string rather than dropping the key — which is why
+    // setClassComment removes the key itself for an empty comment rather than
+    // sending that message.
+    // ([#387](https://github.com/GemTalk/Jasper/issues/387))
     const commentedOf = (className: string): boolean | undefined =>
       q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === className)
         ?.hasComment;
@@ -192,16 +195,22 @@ describe('explorer queries (integration)', () => {
       expect(commentedOf(WIDGET)).toBe(true);
     });
 
-    it('reports a comment emptied by the editor as uncommented', () => {
+    // Emptying the editor takes the key away, so the class is left exactly as it
+    // was found: `comment` goes back to answering the synthesised placeholder, and
+    // a file-out shows no comment rather than an empty one.
+    it('takes the comment away when the editor is emptied', () => {
       defineClass(WIDGET);
       q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
       q.setClassComment(session(), WIDGET, '', userIndex());
 
-      // The key survives the emptying — a nil test would still answer "commented".
       expect(
-        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) notNil printString`).trim(),
+        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) isNil printString`).trim(),
       ).toBe('true');
       expect(commentedOf(WIDGET)).toBe(false);
+      // Back to the placeholder — which is what an uncommented class answers.
+      expect(exec(`(UserGlobals at: #'${WIDGET}') comment isEmpty printString`).trim()).toBe(
+        'false',
+      );
     });
 
     it('reports a whitespace-only comment as uncommented', () => {
@@ -209,6 +218,14 @@ describe('explorer queries (integration)', () => {
       // What a save can leave behind after the text is deleted (insert-final-newline).
       q.setClassComment(session(), WIDGET, '\n', userIndex());
 
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    // Emptying an already-uncommented class removes a key that was never there.
+    it('does nothing when a class with no comment is saved empty', () => {
+      defineClass(WIDGET);
+
+      expect(q.setClassComment(session(), WIDGET, '', userIndex())).toContain('Comment set:');
       expect(commentedOf(WIDGET)).toBe(false);
     });
   });

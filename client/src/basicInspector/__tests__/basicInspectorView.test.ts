@@ -105,7 +105,13 @@ let view: View;
 
 function setup() {
   document.body.innerHTML =
-    '<div id="strip"></div><div id="ctx" class="ctx-menu"><div class="ctx-item" data-action="inspect"></div></div>';
+    '<div id="strip"></div>' +
+    '<div id="ctx" class="ctx-menu"><div class="ctx-item" data-action="inspect"></div></div>' +
+    // The Meta tab's selector rows have a menu of their own; the panel builds
+    // both, so the harness does too.
+    '<div id="methodCtx" class="ctx-menu">' +
+    '<div class="ctx-item" data-action="browseMethod"></div>' +
+    '</div>';
   posted = [];
   // jsdom implements neither layout nor scrolling; the strip asks for both, and
   // the Meta tab's scroll preservation can only be observed if scrollTop is a
@@ -123,6 +129,7 @@ function setup() {
   view = api().init({
     strip: document.getElementById('strip'),
     ctxMenu: document.getElementById('ctx'),
+    methodCtxMenu: document.getElementById('methodCtx'),
     vscode: { postMessage: (m: Record<string, unknown>) => posted.push(m) },
     pageSize: 100,
     defaultColumnWidth: 340,
@@ -1564,12 +1571,15 @@ describe('the Meta tab', () => {
     expect(subTabs(col)).toEqual(['instanceMethods', 'classMethods', 'definition', 'comment']);
   });
 
-  it('puts superclass, package and oop in the info bar, as the enhanced one does', () => {
+  it('puts superclass, class category and oop in the info bar, as the enhanced one does', () => {
     const col = openMeta();
 
     const bar = col.el.contentPane.querySelector('.meta-info-bar')!.textContent;
     expect(bar).toContain('Superclass: Object');
-    expect(bar).toContain('Package: Kernel');
+    // The value is `cls category`, which the Explorer calls a class category;
+    // labelling it "Package" named a Rowan concept this field has nothing to do with.
+    expect(bar).toContain('Class Category: Kernel');
+    expect(bar).not.toContain('Package');
     expect(bar).toContain('OOP: 100');
   });
 
@@ -1675,6 +1685,113 @@ describe('the Meta tab', () => {
     (col.el.contentPane.querySelector('[data-metatab="classMethods"]') as HTMLElement).click();
 
     expect(scroller(col).scrollTop).toBe(0);
+  });
+
+  // Right-clicking a selector used to fall through to VS Code's own webview menu
+  // — Cut / Copy / Paste, none of which means anything over a selector and none
+  // of which takes you to the method.
+  describe('right-clicking a selector', () => {
+    const methodMenu = () => document.getElementById('methodCtx')!;
+
+    function rightClickMethod(col: Column, index = 0) {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      items(col)[index].dispatchEvent(ev);
+      return ev;
+    }
+
+    it('takes the menu over from the host', () => {
+      const col = openMeta();
+
+      const ev = rightClickMethod(col);
+
+      // preventDefault is what stops Cut/Copy/Paste appearing.
+      expect(ev.defaultPrevented).toBe(true);
+      expect(methodMenu().style.display).toBe('block');
+    });
+
+    it('offers to browse the method, and browses the one clicked', () => {
+      const col = openMeta();
+      rightClickMethod(col, 2); // 'deposit:'
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(sent('browseMethod').at(-1)).toMatchObject({
+        oop: '100',
+        selector: 'deposit:',
+        isMeta: false,
+      });
+    });
+
+    it('browses the class side when the Class Methods sub-tab is showing', () => {
+      const col = openMeta();
+      (col.el.contentPane.querySelector('[data-metatab="classMethods"]') as HTMLElement).click();
+      rightClickMethod(col); // 'new', which exists only on the class side
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(sent('browseMethod').at(-1)).toMatchObject({ selector: 'new', isMeta: true });
+    });
+
+    it('closes the menu once it has acted', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    // Both menus are dismissible the same way, or one can be left stranded on
+    // screen over a column the user has moved on from.
+    it('closes on Escape', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+      expect(methodMenu().style.display).toBe('block');
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    it('closes on a click elsewhere', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+      expect(methodMenu().style.display).toBe('block');
+
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    // The two menus are separate elements; opening one must not leave the other up.
+    it('replaces the row menu rather than showing both', () => {
+      const col = openRoot({ namedSize: 1 });
+      sendRows(0, 'slots', [row()]);
+      col.el.contentPane
+        .querySelector('tr[data-row="0"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      expect(document.getElementById('ctx')!.style.display).toBe('block');
+
+      openTab(col, 'meta');
+      sendMeta(0);
+      rightClickMethod(col);
+
+      expect(methodMenu().style.display).toBe('block');
+      expect(document.getElementById('ctx')!.style.display).toBe('none');
+    });
+
+    // Copy is the point of those two sub-tabs, so the host menu has to survive there.
+    it('leaves the host menu alone over the Definition text', () => {
+      const col = openMeta();
+      (col.el.contentPane.querySelector('[data-metatab="definition"]') as HTMLElement).click();
+
+      const pre = col.el.contentPane.querySelector('.meta-pre')!;
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      pre.dispatchEvent(ev);
+
+      expect(ev.defaultPrevented).toBe(false);
+      expect(methodMenu().style.display).not.toBe('block');
+    });
   });
 });
 

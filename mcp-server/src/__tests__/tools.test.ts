@@ -172,9 +172,16 @@ describe('tools', () => {
         selector: 'printOn:',
       });
 
-      expect(session.executeFetchString).toHaveBeenCalledWith(
-        "(Array compiledMethodAt: #'printOn:') sourceString",
-      );
+      // The doit guards both halves — a class that will not resolve, and a class
+      // that no longer implements the selector — rather than sending
+      // `compiledMethodAt:` to whatever the lookup answers.
+      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
+      // The class is resolved through the symbol list even unscoped: a bare class
+      // name is resolved by the compiler, so an unbound one fails as a CompileError
+      // before the doit runs, which the guard cannot catch.
+      expect(code).toContain("symbolList objectNamed: #'Array'");
+      expect(code).toContain("cls compiledMethodAt: #'printOn:' otherwise: nil");
+      expect(code).toContain('m sourceString');
       expect(result.content[0].text).toBe('printOn: aStream ...');
     });
 
@@ -187,8 +194,8 @@ describe('tools', () => {
         selector: 'new',
       });
 
-      expect(session.executeFetchString).toHaveBeenCalledWith(
-        "(Array class compiledMethodAt: #'new') sourceString",
+      expect(vi.mocked(session.executeFetchString).mock.calls[0][0]).toContain(
+        "cls class compiledMethodAt: #'new'",
       );
     });
 
@@ -202,9 +209,39 @@ describe('tools', () => {
         environmentId: 2,
       });
 
-      expect(session.executeFetchString).toHaveBeenCalledWith(
-        "(Array compiledMethodAt: #'size' environmentId: 2) sourceString",
+      expect(vi.mocked(session.executeFetchString).mock.calls[0][0]).toContain(
+        "compiledMethodAt: #'size' environmentId: 2 otherwise: nil",
       );
+    });
+
+    /**
+     * The query answers '' for a class that will not resolve and for a selector the
+     * class does not implement — the editor wants an empty buffer rather than a
+     * walkback. A tool caller cannot act on that: '' would read as "a method whose
+     * source is empty", which GemStone cannot hold.
+     */
+    it('reports a method that does not exist rather than answering empty', async () => {
+      vi.mocked(session.executeFetchString).mockReturnValue('');
+      const tool = server.getTool('get_method_source')!;
+
+      const result = await tool.handler({
+        className: 'Ghost',
+        isMeta: false,
+        selector: 'balance',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('#balance');
+      expect(result.content[0].text).toContain('Ghost');
+    });
+
+    it('says which side it looked on', async () => {
+      vi.mocked(session.executeFetchString).mockReturnValue('');
+      const tool = server.getTool('get_method_source')!;
+
+      const result = await tool.handler({ className: 'Ghost', isMeta: true, selector: 'new' });
+
+      expect(result.content[0].text).toContain('class-side');
     });
   });
 

@@ -51,11 +51,11 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
   vi.spyOn(ctl.methodProvider, 'refresh').mockImplementation(() => {});
   const categoryReveal = vi.fn().mockResolvedValue(undefined);
   ctl.setViews({
-    dict: { reveal: vi.fn().mockResolvedValue(undefined) },
-    category: { reveal: categoryReveal },
-    klass: { reveal: vi.fn().mockResolvedValue(undefined) },
-    hierarchy: { reveal: vi.fn().mockResolvedValue(undefined) },
-    method: { reveal: vi.fn().mockResolvedValue(undefined) },
+    dict: { reveal: vi.fn().mockResolvedValue(undefined), visible: true },
+    category: { reveal: categoryReveal, visible: true },
+    klass: { reveal: vi.fn().mockResolvedValue(undefined), visible: true },
+    hierarchy: { reveal: vi.fn().mockResolvedValue(undefined), visible: true },
+    method: { reveal: vi.fn().mockResolvedValue(undefined), visible: true },
   } as never);
   // revealClass is the pane cascade; stubbed so these tests assert WHAT the move reveals rather
   // than re-exercising the whole refresh path (covered by its own tests). The stub keeps the one

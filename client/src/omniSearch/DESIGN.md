@@ -409,6 +409,34 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   on what you are hunting for. The chip shows the current algorithm as its own label (no legend
   needed) and cycles on click. The engine owns the live value, exactly as it owns case sensitivity,
   and echoes it on every results message.
+
+  ⚠️ **The chip is global, so a scope that ignores it tells the user something untrue.** Every
+  name-based scope takes it through `rankAndLimit`, and Methods applies it to the selector. **Source**
+  applies it too, but cannot take the name-oriented meanings literally: its target is a whole method
+  body, so `Prefix` means *the match starts at a word boundary* rather than "the body starts with the
+  query", and it is narrowed server-side (`searchMethodSource`) because the rows carry no source text
+  to test on the client and the result cap is server-side. That boundary is a strict `\b` — NOT
+  `omniMatch`'s `isWordStart`, which counts a camelCase hump and so would keep `doFooling` as a hit
+  for `foo`, the mid-word noise the setting exists to remove. `Fuzzy` over Source is letters-in-order **within one
+  identifier** (`ordcol` finds a mention of `OrderedCollection`) rather than across the whole body,
+  which would match nearly anything; constrained that way it means what the chip means everywhere
+  else, applied to the names the body mentions. It is the one mode that cannot ride on
+  `substringSearch:` — a subsequence is not a substring, so the engine scan would never surface the
+  methods it must find — so it walks the symbol list itself, measured at ~315ms over a 16.5k-method
+  image against ~50ms for the engine scan. Affordable only because Source is `explicitOnly`,
+  debounced and gated behind `methodMinQueryLength`. It folds case one character at a time rather
+  than lowercasing each method body: a copy of every body in the image, inside one doit, is the
+  allocation shape `classOrganizer.ts` records as producing `AlmostOutOfMemoryError` (6022).
+
+  ⚠️ **A term that cannot be an identifier falls back to substring** (`effectiveScanMode`). The
+  fuzzy scan advances its needle only across identifier characters and resets at anything else, so
+  `printOn:`, `at:put:` or a phrase like `no such element` would match *no method at all* — silently,
+  which reads as "the text is not in the image" rather than "that mode cannot express this". Nor
+  does stripping the term rescue it: the source token is broken at the colon too, so `atput` cannot
+  span `at:put:`. The per-identifier reading simply does not apply, so those terms run as substring
+  and the chip's help text says so.
+  **Literals still ignores the chip** — that half is #471, and it wants #479's `exact` mode first so
+  that honouring the chip does not cost the scope its precision.
   ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the
   value baked in when the engine was constructed — so switching algorithms did nothing while a
   references list was open. It now reads the engine's live `matchMode`; there is a test pinning it.

@@ -2,7 +2,7 @@
 // every button reaches the action it names, and that the tab redraws itself
 // when ownership changes underneath it. The drawing half is covered in
 // mcpView.test.ts; nothing here renders anything.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -64,8 +64,15 @@ function closeOpenPanel(): void {
   onDispose?.();
 }
 
-beforeEach(() => {
+// The panel is closed after the test that opened it, not before the next one:
+// vitest clears every spy's call history between tests, so by then the
+// onDidDispose handler recorded above would be gone and the singleton would
+// leak into the following test.
+afterEach(() => {
   closeOpenPanel();
+});
+
+beforeEach(() => {
   vi.mocked(vscode.window.createWebviewPanel).mockClear();
   vi.mocked(vscode.env.clipboard.writeText).mockClear();
 });

@@ -145,6 +145,7 @@ type BasicInspectorMessage =
       isClassSide: boolean;
     }
   | { command: 'browseClass'; oop: string }
+  | { command: 'browseMethod'; oop: string; selector: string; isMeta: boolean }
   | { command: 'copyText'; text: string; what: string }
   | { command: 'openSetting'; id: string }
   | { command: 'setTitle'; title: string }
@@ -316,6 +317,9 @@ export class BasicInspector {
           return;
         case 'browseClass':
           this.browseClass(BigInt(msg.oop));
+          return;
+        case 'browseMethod':
+          this.browseMethod(BigInt(msg.oop), msg.selector, msg.isMeta);
           return;
         case 'copyText':
           void vscode.env.clipboard.writeText(msg.text).then(() => {
@@ -720,6 +724,9 @@ export class BasicInspector {
    * class and opens its definition; it is handed the dictionary this session
    * resolved as the class's home, so a name shadowed across dictionaries lands
    * on THIS class rather than on the first of its name.
+   *
+   * {@link browseMethod} is the same gesture one level in — the Meta tab's
+   * selector rows — and lands in the same place, on the selector.
    */
   private browseClass(oop: bigint): void {
     const location = fetchBrowseLocation(this.makeExecutor(), oop);
@@ -734,6 +741,32 @@ export class BasicInspector {
       location.className,
       this.sessionId,
       location.dictName,
+    );
+  }
+
+  /**
+   * Browse one of the Meta tab's selectors — the same Explorer landing as
+   * {@link browseClass}, refined to the method. `findClass`'s fourth argument
+   * cascades the Methods pane to the selector and opens its source, which is
+   * where the debugger's frame Browse already goes.
+   *
+   * `isMeta` is the Meta tab's own Instance/Class Methods sub-tab, so the class
+   * side of a selector that exists on both lands on the class side.
+   */
+  private browseMethod(oop: bigint, selector: string, isMeta: boolean): void {
+    const location = fetchBrowseLocation(this.makeExecutor(), oop);
+    if (!location || !location.dictName) {
+      void vscode.window.showWarningMessage(
+        `Cannot browse #${selector}: failed to locate its class in GemStone.`,
+      );
+      return;
+    }
+    void vscode.commands.executeCommand(
+      'gemstone.explorer.findClass',
+      location.className,
+      this.sessionId,
+      location.dictName,
+      { selector, isMeta },
     );
   }
 
@@ -1052,12 +1085,20 @@ export class BasicInspector {
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-action="browse">Browse Class</div>
   </div>
+  <!-- The Meta tab's selector rows are not table rows, so they get their own
+       menu rather than a mostly-hidden copy of the row menu above. Its one item
+       is also why the rows suppress the host's Cut/Copy/Paste: all three are
+       meaningless over a selector, and none of them takes you to the method. -->
+  <div id="methodCtxMenu" class="ctx-menu">
+    <div class="ctx-item" data-action="browseMethod">Browse Method</div>
+  </div>
   <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">${basicInspectorViewJs}</script>
   <script nonce="${nonce}">
     BasicInspectorView.init({
       strip: document.getElementById('columnStrip'),
       ctxMenu: document.getElementById('rowCtxMenu'),
+      methodCtxMenu: document.getElementById('methodCtxMenu'),
       vscode: acquireVsCodeApi(),
       pageSize: ${PAGE_SIZE},
       defaultColumnWidth: ${DEFAULT_COLUMN_WIDTH},

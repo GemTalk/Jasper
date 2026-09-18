@@ -616,6 +616,24 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     async ({ className, isMeta, selector, environmentId }) => {
       try {
         const result = getMethodSource(exec, className, isMeta, selector, environmentId ?? 0);
+        // '' means there was no such method to read — the query answers it for a
+        // class that will not resolve and for a selector the class does not
+        // implement, because the EDITOR wants an empty buffer rather than a
+        // walkback. A tool caller needs the two told apart: '' would otherwise read
+        // as "a method whose source is empty", which GemStone cannot hold.
+        if (result === '') {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text:
+                  `Error: no ${isMeta ? 'class' : 'instance'}-side method #${selector} on ${className}` +
+                  ' — the class may not exist, or may not implement that selector.',
+              },
+            ],
+            isError: true,
+          };
+        }
         return { content: [{ type: 'text' as const, text: result }] };
       } catch (err) {
         return {
