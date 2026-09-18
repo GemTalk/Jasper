@@ -48,6 +48,16 @@ describe('explaining a GCI error', () => {
     expect(text).toContain(String(ERR_NOT_IN_TRANSACTION));
   });
 
+  // Begin is offered only under manualBegin — canBegin hides it under
+  // transactionless on purpose — so a hint that named it alone would send a
+  // transactionless session after a button that is not on screen.
+  it('names the switch a transactionless session needs, not just Begin', () => {
+    const text = explainGciError(gciError(ERR_NOT_IN_TRANSACTION, 'not inside of a transaction'));
+
+    expect(text).toContain('Transactionless');
+    expect(text).toContain('switch modes');
+  });
+
   it('leaves every other error in the stone’s own words', () => {
     expect(explainGciError(gciError(2318, 'does not understand #foo'))).toBe(
       'does not understand #foo',

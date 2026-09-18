@@ -40,8 +40,9 @@ export function explainGciError(gciError: GciError): string {
   if (gciError.number === ERR_NOT_IN_TRANSACTION) {
     return (
       `${gciError.message} (GemStone error ${ERR_NOT_IN_TRANSACTION}). ` +
-      `This session's transaction mode leaves it outside a transaction — use Begin Transaction ` +
-      `(the session row, or the Command Palette) before making changes you mean to commit.`
+      `This session's transaction mode leaves it outside a transaction. Begin Transaction ` +
+      `starts one — from the session row or the Command Palette in Manual mode; a ` +
+      `Transactionless session has to switch modes first, which the status bar does in one click.`
     );
   }
   return gciError.message;
