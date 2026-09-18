@@ -309,7 +309,10 @@ ${methodSerialization(environmentId)}`;
 // environment 0 whatever the caller asked for, so an implementor compiled only
 // into a higher environment was invisible in either direction — while the caller
 // still paid for one full walk per environment to re-collect the same
-// environment-0 answer each time.
+// environment-0 answer each time. Verified on a live 3.7.5 stone: for a method
+// compiled only into environment 1, `includesSelector:` answers false and a bare
+// `compiledMethodAt:` answers nil, while `environmentId: 1` answers the method —
+// and this query returns it with the environment column set to 1.
 export function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
@@ -409,6 +412,12 @@ ${methodSerialization(environmentId)}`;
 //   - an equivalent different spelling — a search for `#not` won't find a method that wrote `#'not'`
 // Accepted deliberately (reviewed on PR #443): both are rare next to the bogus every-sender flood the
 // old query produced. If you are chasing a "missing" literal hit, this filter is the reason.
+//
+// Both organizers take `environmentId`, like referencesToObject: an organizer collects its classes
+// under one environment, so a hardwired 0 would have answered for environment 0 while
+// methodSerialization stamped every row with the environment that was asked for. Verified on a live
+// 3.7.5 stone: a method compiled into environment 1 whose source holds `#sym` and `'text'` is found
+// by both queries at `environmentId: 1` and by neither at 0.
 export function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,
@@ -417,8 +426,8 @@ export function literalSymbolReferences(
   const needle = escapeString(symbolExpr);
   const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
-lit := (${classOrganizerExpr(0)} referencesToLiteral: symLit) at: 1.
-candidates := (${classOrganizerExpr(0)} substringSearch: '${needle}' ignoreCase: false) at: 1.
+lit := (${classOrganizerExpr(environmentId)} referencesToLiteral: symLit) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${needle}' ignoreCase: false) at: 1.
 methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
@@ -429,6 +438,8 @@ ${methodSerialization(environmentId)}`;
 // comment, a selector, a #symbol). We take the source-substring candidates (fast, indexed) and keep
 // only those whose literal frame holds a matching String (excluding Symbols). `text` is the raw
 // content (already unquoted by the caller).
+//
+// The organizer takes `environmentId` for the reason given on literalSymbolReferences.
 export function stringLiteralReferences(
   execute: QueryExecutor,
   text: string,
@@ -443,7 +454,7 @@ export function stringLiteralReferences(
   const code = `| ic needle candidates methods stream limit classDict sl |
 ic := ${ignoreCase}.
 needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
-candidates := (${classOrganizerExpr(0)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
 methods := candidates select: [:m |
   (m literals detect: [:l |
     (l isKindOf: String) and: [l isSymbol not and: [

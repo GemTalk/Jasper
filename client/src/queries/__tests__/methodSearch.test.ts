@@ -409,6 +409,21 @@ describe('literalSymbolReferences', () => {
     // The old "subtract senders" heuristic is gone — sendersOf: under-reports for some selectors.
     expect(code).not.toContain('sendersOf:');
   });
+
+  it('scopes both organizers to the environment, not just the serialization', () => {
+    // Two organizers in one doit, and a hardwired 0 in either would have collected
+    // environment-0 methods while methodSerialization stamped every row with the
+    // environment the caller asked for — rows labelled with an environment they did
+    // not come from.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    literalSymbolReferences(execute, '#size', 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
+  });
 });
 
 describe('stringLiteralReferences', () => {
@@ -424,6 +439,17 @@ describe('stringLiteralReferences', () => {
     // 'className' / 'rename' / etc.
     expect(code).toContain('= needle');
     expect(code).not.toContain('includesString: needle');
+  });
+
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    stringLiteralReferences(execute, 'no such element', true, 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
   });
 });
 

@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **Method search finds methods compiled into an environment above 0.** **Browse References**, GemStone Search's references pivot, the MCP references tool and the Explorer's **superclass implementors** / **subclass overrides** all sweep every environment up to `gemstone.maxEnvironment` — and every one of them answered for environment 0 however high an environment it was asked about, so a method compiled only into environment 1 or 2 was invisible in all of them, with nothing on the result list to say the answer was partial. Two queries were at fault, and in the same way: the environment has to go on the ClassOrganizer, which gathers its classes under one environment, and on the hierarchy walk, which has to ask `compiledMethodAt:environmentId:otherwise:` rather than `includesSelector:` plus a bare `compiledMethodAt:` — both of those read environment 0 only. The sweeps were also paying for it: N whole-image scans to collect the same environment-0 answer N times. The two literal-search queries behind GemStone Search's **Literals** scope had the identical shape — they accepted an environment, collected from environment 0 anyway, and then stamped every row with the environment that had been asked for — and are fixed with them, before a caller starts sweeping environments there too. Verified on a live 3.7.5 stone: with a method compiled only into environment 1, each query answers it at `environmentId: 1` and answers nothing at 0. ([#475](https://github.com/GemTalk/Jasper/issues/475))
+
 ## [1.11.0] - 2026-09-17
 
 ### Added
