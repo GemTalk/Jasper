@@ -271,7 +271,7 @@ export function modeDescription(mode: TransactionMode | undefined): string {
     case 'manualBegin':
       return 'Commit and abort leave this session outside a transaction; Begin Transaction puts it back in. Nothing can be committed while it is outside one.';
     case 'transactionless':
-      return 'This session is never in a transaction and cannot commit. The cheapest mode for the repository, and the right one for read-only browsing.';
+      return 'This session is never in a transaction and cannot commit. The cheapest mode for the repository — but its view can move at any moment, so what you are looking at may change under you. Good for a session left idle; not for reading something you need to stay still.';
     default:
       return 'This session’s transaction mode could not be read from the stone.';
   }

@@ -15,7 +15,7 @@ pins it so a future release cannot change it quietly.
 | --- | --- | --- |
 | `autoBegin` | A new transaction starts automatically, so the session is always inside one. | It holds a commit record open, which holds back the repository's reclaim. GemStone's default, and what Jasper did unconditionally before this existed. |
 | `manualBegin` | The session is left **outside** a transaction. Begin Transaction puts it back in. | The stone sends a SigAbort. A gem that does not answer within `STN_GEM_ABORT_TIMEOUT` (60 s by default) is forcibly aborted — error 3031, every object cache reinitialized. Jasper arms the gem to answer for itself; see below. |
-| `transactionless` | Never in a transaction. | The gem services any SigAbort itself, unconditionally. The cheapest mode for the repository, and the right one for read-only browsing. |
+| `transactionless` | Never in a transaction. | The gem services any SigAbort itself, unconditionally. The cheapest mode for the repository — and the only one whose snapshot view is updated *automatically, at any time*, so the data it shows can be inconsistent. The manual intends it for idle sessions; treat "good for browsing" with care. |
 
 The mode a session lands in at login is the stone's `STN_GEM_INITIAL_TRANSACTION_MODE`,
 which accepts all three values — so Jasper reads the mode from the server at login
