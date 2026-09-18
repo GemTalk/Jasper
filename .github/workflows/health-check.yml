@@ -99,7 +99,7 @@ jobs:
         # same supply-chain reason as the zizmor(unpinned-uses) actions above.
         run: docker run --rm -v "$(pwd)":/repo --workdir /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color # 1.7.12
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           advanced-security: false
 
@@ -126,6 +126,8 @@ jobs:
         run: npm ci
       - name: Supply-chain config check
         run: npm run lint:supply-chain
+      - name: TypeScript toolchain check
+        run: npm run lint:toolchain
       - name: GCI header version map
         run: npm run lint:gci-headers
       - name: GCI optional-functions registry
@@ -395,7 +397,6 @@ jobs:
         shell: bash
         run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (without server plugin)
-        if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -418,13 +419,40 @@ jobs:
         shell: bash
         run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (with server plugin)
-        if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
           path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
+          if-no-files-found: ignore
+      # A native GCI crash on Windows (SEH exception inside gcits.dll,
+      # e.g. "GciWindowsExceptionFilter called ...") doesn't fail a test —
+      # it kills a vitest fork worker, which vitest only reports as a
+      # generic "[vitest-pool]: Worker forks emitted error" / "Worker
+      # exited unexpectedly", with no indication of what actually crashed.
+      # GemStone's own exception filter already writes the real call stack
+      # to a %TEMP%\GCI*.tmp file when this happens, but nothing captured
+      # it before now — it was silently discarded when the runner was torn
+      # down. Copy it into the workspace first (upload-artifact's `path`
+      # doesn't expand shell/OS env vars like %TEMP%, only its own globs),
+      # then upload only if something's actually there.
+      - name: Collect GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path gci-crash-dumps | Out-Null
+          $dumps = Get-ChildItem "$env:TEMP\GCI*.tmp" -ErrorAction SilentlyContinue
+          Write-Host "Found $($dumps.Count) GCI crash dump(s) in $env:TEMP"
+          if ($dumps) { $dumps | Copy-Item -Destination gci-crash-dumps }
+      - name: Upload GCI crash dumps
+        if: always() && runner.os == 'Windows'
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gci-crash-dumps-${{ matrix.platform }}-${{ matrix.gemstone-version }}
+          path: gci-crash-dumps
           if-no-files-found: ignore
 
   package-check:
@@ -493,11 +521,18 @@ jobs:
   # the build; see summarize-skipped-tests.mjs. Deliberately independent of
   # ci-complete: it's report-only and never fails, so branch protection / the
   # merge queue neither waits for it nor cares about its outcome.
+  #
+  # No `if:` on purpose, so the default applies and this runs only once every
+  # `needs` job has succeeded. The report's claim — "skipped in EVERY suite run"
+  # — is an intersection over the whole matrix, so it means nothing unless the
+  # whole matrix finished: a leg that died contributes a partial report (or
+  # none), and the tests missing from it would be reported as never executed
+  # anywhere. On a red matrix this job is skipped rather than posting a summary
+  # the run can't support. Nothing gates on it, so skipping it blocks nothing.
   report-skips:
     name: Skipped tests report
     timeout-minutes: 1
     needs: [prepare, health-check]
-    if: always()
     runs-on: ubuntu-latest
     # download-artifact needs actions:read to list/fetch artifacts from this
     # run; the top-level contents:read block doesn't cover that

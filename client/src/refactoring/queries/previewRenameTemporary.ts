@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Start a paginated rename-temporary/argument preview (R5). The engine
 // (GsRenameTemporaryRefactoring) is method-local: it parses ONE method, resolves
@@ -91,9 +92,14 @@ export function pageRenameTemporaryPreview(
 // local), WITHOUT committing. A temporary/argument rename is a SINGLE change, so
 // there is nothing to deselect; the engine ignores any deselected set and this
 // always sends an empty one.
-export function applyRenameTemporary(execute: AsyncQueryExecutor, token: string): Promise<string> {
-  const code =
-    `GsRenameTemporaryRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #()`;
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
+export function applyRenameTemporary(
+  execute: AsyncQueryExecutor,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
+  const code = recordedApplyExpr('GsRenameTemporaryRefactoring', token, [], undoLabel);
   return execute(`applyRenameTemporary(${token})`, code);
 }
 

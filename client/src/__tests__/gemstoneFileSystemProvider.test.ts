@@ -17,11 +17,18 @@ vi.mock('../browserQueries', () => ({
   getClassCategory: vi.fn(() => ''),
   classExistsInDictionary: vi.fn(() => false),
   recategorizeClass: vi.fn(),
+  // The class-category recorder's read, taken either side of a definition save so a
+  // category-only change is still undoable (#434).
+  getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassComment: vi.fn(() => 'An ordered collection.'),
+  getStoredClassComment: vi.fn(() => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
-  setClassComment: vi.fn(),
+  // Answers what the real query answers on success — the provider now checks it, because
+  // setClassComment reports an unresolvable class by RETURNING a status string.
+  setClassComment: vi.fn(() => 'Comment set: Array'),
   canClassBeWritten: vi.fn(() => true),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
   // Listing queries used by readDirectory (the breadcrumb drill-down).
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
   getClassNames: vi.fn(() => ['Array', 'OrderedCollection']),
@@ -34,6 +41,20 @@ vi.mock('../browserQueries', () => ({
   ]),
 }));
 
+// The undo recorder's one round trip. Stubbed so a save's snapshot is data the test
+// controls, rather than a live doit (#434).
+vi.mock('../undo/queries/methodSlotQueries', () => ({
+  captureMethodSlots: vi.fn(),
+  applyMethodSlotOps: vi.fn(),
+}));
+vi.mock('../undo/queries/classSlotQueries', () => ({
+  captureClassSlots: vi.fn(() => []),
+  applyClassSlotOps: vi.fn(),
+  forgetStashKeys: vi.fn(),
+  newStashKey: vi.fn(() => 'JasperUndoStash_1'),
+  releaseStashKeys: vi.fn(),
+}));
+
 // Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
 vi.mock('../gciLog', async (orig) => ({
   ...(await orig()),
@@ -42,12 +63,12 @@ vi.mock('../gciLog', async (orig) => ({
 
 import {
   Uri,
+  FileChangeType,
   FilePermission,
   window,
   languages,
   TabInputText,
   TabInputTextDiff,
-  FileChangeType,
 } from '../__mocks__/vscode';
 import { logInfo } from '../gciLog';
 import {
@@ -56,9 +77,12 @@ import {
   buildNewMethodUri,
   buildClassDefinitionUri,
   buildClassCommentUri,
+  isClassCommentUri,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
+  unescapeSelectorSlashes,
+  tabInputUri,
   parseUri,
   parseDirUri,
   parseMethodUri,
@@ -69,6 +93,25 @@ import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { BrowserQueryError } from '../browserQueries';
 import type { ExportManager } from '../exportManager';
+import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { captureClassSlots } from '../undo/queries/classSlotQueries';
+import { peekUndoEntry, popUndoEntry, resetUndoStacks } from '../undo/undoStack';
+
+// `clearAllMocks` clears recorded CALLS without removing an implementation, so a
+// `mockReturnValue` set anywhere in this file stays in force for every test that runs after
+// it — and the file's order is SHUFFLED, so which tests those are changes per seed. Every
+// mock a suite below sets persistently is put back to its factory default here, per test.
+//
+// Not hypothetical, twice over: a leaked capture turned a plain writeFile toast into one
+// carrying an Undo button, and a leaked `compileMethod` made "shows success message after
+// compiling a method" assert `Array>>#at:` against a toast naming `Array>>#total`. Both
+// appear only under some seeds, which is the worst way to find out.
+beforeEach(() => {
+  vi.mocked(captureMethodSlots).mockReset();
+  vi.mocked(captureClassSlots).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  vi.mocked(queries.compileClassDefinition).mockReset();
+});
 
 function makeSession(id = 1, gs_user = 'DataCurator') {
   return { id, gci: {}, handle: {}, login: { label: 'Test', gs_user }, stoneVersion: '3.7.2' };
@@ -460,11 +503,34 @@ describe('GemStoneFileSystemProvider', () => {
       expect(queries.getClassDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
     });
 
-    it('reads a class comment, scoped to the dictionary', () => {
+    /**
+     * The STORED comment, not `cls comment`. For a class with none, `cls comment`
+     * answers GemStone's synthesised "No class-specific documentation for X…"
+     * placeholder — and handing that to an editor makes it editable text, so
+     * Ctrl+Z lands on the boilerplate and saving writes it in as a real comment.
+     */
+    it('reads the comment a class actually stores, scoped to the dictionary', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/comment');
       const content = new TextDecoder().decode(provider.readFile(uri));
       expect(content).toBe('An ordered collection.');
-      expect(queries.getClassComment).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
+      expect(queries.getStoredClassComment).toHaveBeenCalledWith(
+        expect.anything(),
+        'Array',
+        'Globals',
+      );
+      expect(queries.getClassComment).not.toHaveBeenCalled();
+    });
+
+    it('opens empty for a class with no comment of its own', () => {
+      vi.mocked(queries.getStoredClassComment).mockReturnValueOnce('');
+
+      const content = new TextDecoder().decode(
+        provider.readFile(Uri.parse('gemstone://1/Globals/Array/comment')),
+      );
+
+      // Empty means undo can mean "no comment": there is nothing to return to but
+      // nothing.
+      expect(content).toBe('');
     });
 
     it('returns new-class template with dictionary name', () => {
@@ -593,6 +659,57 @@ describe('GemStoneFileSystemProvider', () => {
         'Updated comment',
         9,
       );
+    });
+
+    it('reports a comment save the stone refused, instead of confirming it', () => {
+      vi.mocked(queries.setClassComment).mockReturnValueOnce('Class not found: Array');
+      const uri = Uri.parse('gemstone://1/Globals/Array/comment?dict=9');
+
+      provider.writeFile(uri, encode('Updated comment'), { create: false, overwrite: true });
+
+      expect(window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('was not saved: Class not found: Array'),
+      );
+      expect(window.showInformationMessage).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The Explorer's 📖 button is gated on the class carrying a comment, and a
+     * comment save fires no compile event — so without this the button appeared
+     * only after Refresh GemStone Explorer, and never went away again.
+     */
+    describe('announcing a comment save', () => {
+      const saved = (text: string) => {
+        const seen: unknown[] = [];
+        const sub = provider.onClassCommentSaved((e) => seen.push(e));
+        provider.writeFile(Uri.parse('gemstone://1/Globals/Array/comment?dict=9'), encode(text), {
+          create: false,
+          overwrite: true,
+        });
+        sub.dispose();
+        return seen;
+      };
+
+      it('says the class now has a comment', () => {
+        expect(saved('Updated comment')).toEqual([
+          { sessionId: 1, dictName: 'Globals', className: 'Array', hasComment: true },
+        ]);
+      });
+
+      it('says it no longer does when the editor was emptied', () => {
+        expect(saved('')).toMatchObject([{ className: 'Array', hasComment: false }]);
+      });
+
+      // insert-final-newline can leave one behind after the text is deleted.
+      it('counts a whitespace-only comment as none', () => {
+        expect(saved('\n')).toMatchObject([{ hasComment: false }]);
+      });
+
+      it('says nothing when the stone refused the save', () => {
+        vi.mocked(queries.setClassComment).mockReturnValueOnce('Class not found: Array');
+
+        expect(saved('Updated comment')).toEqual([]);
+      });
     });
 
     it('compiles new-class on save', () => {
@@ -766,6 +883,62 @@ describe('GemStoneFileSystemProvider', () => {
       );
       const firedUri: Uri = listener.mock.calls[0][0].uri;
       expect(firedUri.path).toBe('/UserGlobals/Fnoodle/definition/Fnoodle');
+    });
+
+    it('follows inDictionary: when a definition save moves the class to another dictionary', async () => {
+      // An existing class's definition can move the class: the compile just executes the
+      // source, `inDictionary:` and all. Looking the result up in the URI's dictionary finds
+      // nothing, and `canBeWritten` reads a class it cannot find as NOT writable — so a save
+      // that persisted perfectly well used to warn that it had not.
+      const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition?dict=2');
+      const source = "Object subclass: 'Account2'\n  inDictionary: OtherDict\n  category: 'demo'";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('Account2');
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode(source), { create: false, overwrite: true });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.canClassBeWritten).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account2',
+        'OtherDict',
+      );
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account2',
+        'demo',
+        'OtherDict',
+      );
+      // The URI's SymbolList index still points at the dictionary the tab came from, so
+      // carrying it onto the new dictionary's name would reopen the tab looking in the old one.
+      const firedUri: Uri = listener.mock.calls[0][0].uri;
+      expect(firedUri.path).toBe('/OtherDict/Account2/definition/Account2');
+      expect(firedUri.query).toBe('');
+    });
+
+    it('keeps using the URI dictionary index when the definition leaves the class where it was', async () => {
+      // An index is unambiguous where a name is not — two dictionaries can share a name — so
+      // it stays in charge for every save that does not move the class.
+      const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition?dict=2');
+      const source = "Object subclass: 'Account'\n  inDictionary: UserGlobals\n  category: 'demo'";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('Account');
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode(source), { create: false, overwrite: true });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.canClassBeWritten).toHaveBeenCalledWith(expect.anything(), 'Account', 2);
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account',
+        'demo',
+        2,
+      );
+      const firedUri: Uri = listener.mock.calls[0][0].uri;
+      expect(firedUri.query).toBe('dict=2');
     });
 
     it('refuses a new-class save that would overwrite an existing class in the dictionary', async () => {
@@ -1752,6 +1925,61 @@ describe('buildClassDefinitionUri', () => {
   });
 });
 
+describe('escapeSelectorSlashes / unescapeSelectorSlashes', () => {
+  /**
+   * A binary selector can contain `/`, and a slash in a URI path segment is collapsed by
+   * VS Code's path normalization even when percent-encoded — which silently loses part of the
+   * selector. These two are the round trip that keeps `//` addressable.
+   */
+  it('round-trips a selector containing slashes', () => {
+    for (const selector of ['/', '//', 'at:put:', '+', 'a/b/c', '']) {
+      expect(unescapeSelectorSlashes(escapeSelectorSlashes(selector))).toBe(selector);
+    }
+  });
+
+  it('leaves no raw slash for the path to collapse', () => {
+    expect(escapeSelectorSlashes('//')).not.toContain('/');
+  });
+
+  it('leaves a selector with no slash untouched', () => {
+    expect(escapeSelectorSlashes('at:put:')).toBe('at:put:');
+    expect(unescapeSelectorSlashes('at:put:')).toBe('at:put:');
+  });
+
+  it('turns a literal sentinel back into a slash — which is why the sentinel is what it is', () => {
+    // The encoding is not injective: unescape maps the sentinel to '/' whether it got there by
+    // escaping or was in the selector already. That is only safe because the sentinel is
+    // FRACTION SLASH, which no Smalltalk selector contains. Pinned so a future change to a
+    // more ordinary sentinel character has to confront the round trip it would break.
+    const sentinel = escapeSelectorSlashes('/');
+
+    expect(sentinel).toBe('⁄');
+    expect(unescapeSelectorSlashes(sentinel)).toBe('/');
+  });
+});
+
+describe('tabInputUri', () => {
+  it('answers the document uri of a text tab', () => {
+    const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition');
+
+    expect(tabInputUri({ input: new TabInputText(uri) } as never)).toBe(uri);
+  });
+
+  it('answers the MODIFIED side of a diff tab, which is the editable one', () => {
+    const original = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/x?base=1');
+    const modified = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/x');
+
+    expect(tabInputUri({ input: new TabInputTextDiff(original, modified) } as never)).toBe(
+      modified,
+    );
+  });
+
+  it('answers undefined for a tab kind that has no editable document', () => {
+    expect(tabInputUri({ input: undefined } as never)).toBeUndefined();
+    expect(tabInputUri({ input: { webview: {} } } as never)).toBeUndefined();
+  });
+});
+
 describe('buildClassCommentUri', () => {
   it('places "comment" at path segment 3', () => {
     const uri = buildClassCommentUri(1, 'Globals', 'Array');
@@ -2060,6 +2288,36 @@ describe('parseUri', () => {
     expect(parsed).toMatchObject({ kind: 'comment', className: 'Array' });
   });
 
+  /**
+   * The gate that keeps a comment save out of the method-compile path in
+   * `activate()`'s change handler — where it used to be forwarded as a method
+   * compile, costing a `getClassEnvironments` round trip that redrew the Methods
+   * pane while leaving the Classes pane, the only one whose row changed, alone.
+   * Both comment URI shapes have to be recognised, or the guard half-works.
+   */
+  describe('isClassCommentUri', () => {
+    it('recognises the 5-segment URI the builder actually emits', () => {
+      expect(isClassCommentUri(buildClassCommentUri(1, 'Globals', 'Array'))).toBe(true);
+    });
+
+    it('recognises the legacy 4-segment form', () => {
+      expect(isClassCommentUri(Uri.parse('gemstone://1/Globals/Array/comment'))).toBe(true);
+    });
+
+    it.each([
+      ['a method', 'gemstone://1/Globals/Array/instance/accessing/size'],
+      ['a class definition', 'gemstone://1/Globals/Array/definition'],
+      ['a new-method template', 'gemstone://1/Globals/Array/instance/accessing/new-method'],
+      ['a new-class template', 'gemstone://1/Globals/new-class'],
+    ])('is false for %s', (_what, uri) => {
+      expect(isClassCommentUri(Uri.parse(uri))).toBe(false);
+    });
+
+    it('is false for a document that is not ours at all', () => {
+      expect(isClassCommentUri(Uri.parse('file:///tmp/Array/comment'))).toBe(false);
+    });
+  });
+
   it('recognizes the new-class template and its category', () => {
     const parsed = parseUri(Uri.parse('gemstone://1/UserGlobals/new-class?category=Widgets'));
 
@@ -2110,5 +2368,403 @@ describe('listOpenGemstoneTabs', () => {
     expect(listOpenGemstoneTabs()).toEqual([]);
 
     window.tabGroups.all = [];
+  });
+});
+
+describe('notifyChanged (#434)', () => {
+  /**
+   * An undo recompiles a method straight over GCI, so `writeFile` never runs and VS Code is
+   * never told the resource changed. Without this the editor keeps showing the source the
+   * undo discarded, and the next save writes it straight back.
+   */
+  let provider: GemStoneFileSystemProvider;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+  });
+
+  it('fires onDidChangeFile for every uri it is given', () => {
+    const listener = vi.fn();
+    provider.onDidChangeFile(listener);
+    const a = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/balance');
+    const b = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/total');
+
+    provider.notifyChanged([a, b]);
+
+    expect(listener).toHaveBeenCalledWith([
+      { type: FileChangeType.Changed, uri: a },
+      { type: FileChangeType.Changed, uri: b },
+    ]);
+  });
+
+  it('stays quiet when there is nothing to announce', () => {
+    const listener = vi.fn();
+    provider.onDidChangeFile(listener);
+
+    provider.notifyChanged([]);
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('recording a save for undo (#434)', () => {
+  /**
+   * A save is snapshotted BEFORE it compiles, because that is the only moment the previous
+   * source still exists. What is pinned here is which slots get snapshotted — in particular
+   * the two-slot case, which is the one a reader would not guess: editing an existing
+   * method's MESSAGE PATTERN compiles a new method and leaves the original in place, so
+   * undoing has to take the new one away without disturbing the old.
+   */
+  const session = makeSession();
+  let provider: GemStoneFileSystemProvider;
+
+  const write = (uri: ReturnType<typeof buildMethodUri>, source: string): void =>
+    provider.writeFile(uri, new TextEncoder().encode(source), { create: true, overwrite: true });
+
+  const existingMethodUri = buildMethodUri({
+    kind: 'method',
+    sessionId: 1,
+    dictName: 'Globals',
+    className: 'Array',
+    isMeta: false,
+    category: 'accessing',
+    selector: 'at:',
+    environmentId: 0,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  });
+
+  it('records a Save when the method was already there', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ kind: 'methodEdit', label: 'Save Array>>#at:' });
+  });
+
+  it('records an Add when the method is new', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: false, source: null, category: null },
+    ]);
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> total');
+
+    write(buildNewMethodUri(1, 'Globals', 'Array', false, 'accessing', 0), 'total\n  ^42');
+
+    expect(peekUndoEntry(session.id)).toMatchObject({ label: 'Add Array>>#total' });
+  });
+
+  it('snapshots both selectors when the message pattern changes', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+      { exists: false, source: null, category: null },
+    ]);
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:put:');
+
+    write(existingMethodUri, 'at: i put: v\n  ^v');
+
+    expect(vi.mocked(captureMethodSlots).mock.calls[0][1].map((s) => s.selector)).toEqual([
+      'at:',
+      'at:put:',
+    ]);
+    // The original is left exactly as it was, so reversing has nothing to do there; only
+    // the newly compiled selector is undone.
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ label: 'Add Array>>#at:put:' });
+    expect(entry?.kind === 'methodEdit' && entry.after[0]).toEqual({
+      exists: true,
+      source: 'at: i\n  ^1',
+      category: 'accessing',
+    });
+  });
+
+  it('records nothing when the save changed nothing', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^1');
+
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('puts Undo on the toast that follows the save', () => {
+    // The affordance with no discovery cost: it is where the user is already looking at the
+    // moment they would want it.
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      'Compiled method Array>>#at:',
+      'Undo',
+    );
+  });
+
+  it('leaves the toast plain when nothing was recorded — no dead Undo button', () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith('Compiled method Array>>#at:');
+  });
+
+  it('saves normally when the snapshot fails — undo is never allowed to break an edit', () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(() => write(existingMethodUri, 'at: i\n  ^2')).not.toThrow();
+    expect(queries.compileMethod).toHaveBeenCalled();
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+});
+
+describe('recording a class definition save for revert (#434)', () => {
+  /**
+   * Reverting a class edit is not the same shape as reverting a method edit, and the reason
+   * is a GemStone fact worth stating: re-sending `Object subclass: …` with a changed shape
+   * answers a NEW, EMPTY version — it does not carry the methods forward. So the only
+   * faithful way back is the earlier class OBJECT, which the capture stashes in the stone
+   * before the save. What is pinned here is that the capture happens before the compile, and
+   * that the entry is named for what actually happened.
+   */
+  const session = makeSession();
+  let provider: GemStoneFileSystemProvider;
+
+  const write = (uri: ReturnType<typeof buildClassDefinitionUri>, source: string): void =>
+    provider.writeFile(uri, new TextEncoder().encode(source), { create: true, overwrite: true });
+
+  const definitionUri = buildClassDefinitionUri(1, 'UserGlobals', 'Array');
+  const DEF = "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: 'demo'";
+
+  const boundState = (oop: string) => ({ bound: true, oop, selectors: [] });
+  const unboundState = { bound: false, oop: null, selectors: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Array');
+    vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Array');
+    vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
+    // `clearAllMocks` clears recorded calls but leaves a `mockReturnValueOnce` queue in place,
+    // and a save that records a class edit never consumes the category recorder's second read —
+    // so without this reset one test's leftover listing answers the next one's first read.
+    vi.mocked(queries.getClassesWithCategory).mockReset().mockReturnValue([]);
+  });
+
+  it('stashes the bound version before compiling, not after', () => {
+    // After the compile the earlier version is no longer the bound one, and there is nothing
+    // left to identify it by.
+    const order: string[] = [];
+    vi.mocked(captureClassSlots).mockImplementation((_e, _slots, keys) => {
+      order.push(keys?.[0] ? 'capture-with-stash' : 'capture-plain');
+      return [boundState('1')];
+    });
+    vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
+      order.push('compile');
+      return 'Array';
+    });
+
+    write(definitionUri, DEF);
+
+    expect(order[0]).toBe('capture-with-stash');
+    expect(order[1]).toBe('compile');
+  });
+
+  it('records a redefinition when the save produced a new version', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([boundState('1')])
+      .mockReturnValueOnce([boundState('2')]);
+
+    write(definitionUri, DEF);
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Redefine class Array',
+      stashKeys: ['JasperUndoStash_1'],
+    });
+  });
+
+  it('records nothing when the definition was unchanged', () => {
+    // An identical redefinition answers the SAME class object, so there is no new version
+    // and nothing to revert.
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+
+    write(definitionUri, DEF);
+
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records the refiling when a save changes only the class category', () => {
+    // The class object is the same one either side — an unchanged shape is not re-versioned,
+    // and `category:` is a label rather than a reshape — so the class recording has nothing to
+    // reverse. Without the category recording the save went unrecorded, and Undo went on
+    // offering the change BEFORE it: pressing it on a class you had just recategorized reverted
+    // the creation and took the class away.
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat2', hasComment: false }]);
+
+    write(definitionUri, "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: 'NewCat2'");
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classCategoryEdit',
+      label: 'Move class Array to category NewCat2',
+      changes: [{ className: 'Array', before: 'NewCat', after: 'NewCat2' }],
+    });
+  });
+
+  it('names an emptied category line for what it does', () => {
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: '', hasComment: false }]);
+
+    write(definitionUri, "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: ''");
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classCategoryEdit',
+      label: 'Clear the class category of Array',
+    });
+  });
+
+  it('records one entry, not two, when a save reshapes the class AND refiles it', () => {
+    // The earlier class version carries its own category, so rebinding it puts both back. A
+    // second entry would make the user press Undo twice for one save.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([boundState('1')])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat', hasComment: false }])
+      .mockReturnValueOnce([{ className: 'Array', category: 'NewCat2', hasComment: false }]);
+
+    write(
+      definitionUri,
+      "Object subclass: 'Array'\n  instVarNames: #('a' 'b')\n  category: 'NewCat2'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Redefine class Array',
+    });
+    popUndoEntry(session.id);
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records nothing when a new class lands in a category, since creating it is the change', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([{ className: 'Fresh', category: 'NewCat', hasComment: false }]);
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: 'Fresh'\n  inDictionary: UserGlobals\n  category: 'NewCat'",
+    );
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Fresh',
+    });
+    popUndoEntry(session.id);
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records an Add for a new class, with no earlier version to keep', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.classExistsInDictionary).mockReturnValue(false);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: 'Fresh'\n  inDictionary: UserGlobals\n  category: 'demo'",
+    );
+
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ kind: 'classEdit', label: 'Add class Fresh' });
+    // Nothing was bound, so nothing was stashed — a key resolving to nil would be a lie.
+    expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
+  });
+
+  it('records an Add when a definition save renames the class into a new one', () => {
+    // Editing the name in a class-definition editor does not rename anything — it compiles a
+    // definition for a class that does not exist yet, and the class the tab was opened on is
+    // left exactly as it was. Watching the tab's class would therefore see no change and
+    // record nothing, leaving the class the user just created unrevertible.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Renamed');
+
+    write(definitionUri, "Object subclass: 'Renamed'\n  instVarNames: #('a')\n  category: 'demo'");
+
+    // The slot watched is the class the DEFINITION names, not the URI's.
+    expect(vi.mocked(captureClassSlots).mock.calls[0][1]).toEqual([
+      { dict: 'UserGlobals', className: 'Renamed' },
+    ]);
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Renamed',
+    });
+  });
+
+  it('records the class in the dictionary the definition moved it to', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Moved');
+
+    write(definitionUri, "Object subclass: 'Moved'\n  inDictionary: OtherDict\n  category: 'demo'");
+
+    // Watching UserGlobals would see nothing change there and record nothing at all.
+    expect(vi.mocked(captureClassSlots).mock.calls[0][1]).toEqual([
+      { dict: 'OtherDict', className: 'Moved' },
+    ]);
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Moved',
+      slots: [{ dict: 'OtherDict', className: 'Moved' }],
+    });
+  });
+
+  it('says a renamed-into-existence class was created, not updated', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Renamed');
+
+    write(definitionUri, "Object subclass: 'Renamed'\n  instVarNames: #('a')\n  category: 'demo'");
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith('Class created: Renamed', 'Revert');
+  });
+
+  it('saves normally when the capture fails — revert is never allowed to break a save', () => {
+    vi.mocked(captureClassSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(() => write(definitionUri, DEF)).not.toThrow();
+    expect(queries.compileClassDefinition).toHaveBeenCalled();
+    expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 });

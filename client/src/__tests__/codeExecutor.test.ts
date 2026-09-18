@@ -509,7 +509,7 @@ describe('CodeExecutor', () => {
   // ── Debug It ───────────────────────────────────────────────
   //
   // Debug It runs the selection with the single-step flag so the server breaks
-  // on the FIRST statement, and opens the Enhanced debugger directly on that
+  // on the FIRST statement, and opens the GemStone Debugger directly on that
   // halt. Two things make stepping actually work and must not regress:
   //   1. the single-step flag is OR'd into the exec flags (display/execute must
   //      NOT set it), and
@@ -570,14 +570,14 @@ describe('CodeExecutor', () => {
     });
   });
 
-  // ── Debug It opens the Enhanced debugger directly on a halt ──
+  // ── Debug It opens the GemStone Debugger directly on a halt ──
   //
   // Unlike Execute It (which prompts the user to pick a debugger on an error),
   // Debug It's halt is an intentional first-statement stop, so it opens the
-  // Enhanced debugger straight away — no modal chooser, no DAP, and it must NOT
+  // GemStone Debugger straight away — no modal chooser, no DAP, and it must NOT
   // clear the stack (the panel owns the suspended process).
 
-  describe('debugIt opens the Enhanced debugger on the first-statement halt', () => {
+  describe('debugIt opens the GemStone Debugger on the first-statement halt', () => {
     function debuggableGci() {
       // Non-nil context (≠ OOP_NIL) makes fetchResultOop throw a DebuggableError,
       // exactly as the single-step breakpoint would on the server.
@@ -596,7 +596,7 @@ describe('CodeExecutor', () => {
       setActiveEditor(makeEditor('Array new add: 1; add: 2'));
     }
 
-    it('opens the Enhanced Debugger panel directly, with no completion callback', async () => {
+    it('opens the GemStone Debugger panel directly, with no completion callback', async () => {
       setup();
 
       await executor.debugIt();
@@ -605,7 +605,7 @@ describe('CodeExecutor', () => {
       expect(DebuggerPanel.create).toHaveBeenCalledWith(session, 0x123n, 'Debug It');
     });
 
-    it('does NOT show the debugger chooser prompt or start the DAP debugger', async () => {
+    it('does NOT show the error notifier or start the DAP debugger', async () => {
       setup();
 
       await executor.debugIt();
@@ -614,7 +614,7 @@ describe('CodeExecutor', () => {
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
     });
 
-    it('does NOT clear the stack — the Enhanced debugger owns the suspended process', async () => {
+    it('does NOT clear the stack — the GemStone Debugger owns the suspended process', async () => {
       setup();
 
       await executor.debugIt();
@@ -622,7 +622,7 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsClearStack).not.toHaveBeenCalled();
     });
 
-    it('clears the stack if the Enhanced Debugger panel fails to open', async () => {
+    it('clears the stack if the GemStone Debugger panel fails to open', async () => {
       setup();
       vi.mocked(DebuggerPanel.create).mockImplementationOnce(() => {
         throw new Error('panel boom');
@@ -1370,7 +1370,7 @@ describe('CodeExecutor', () => {
 
       const calls = vi.mocked(vscode.window.showErrorMessage).mock.calls;
       const lastCall = calls[calls.length - 1];
-      expect(lastCall.slice(2)).toEqual(['Enhanced Debug', 'Debug']);
+      expect(lastCall.slice(2)).toEqual(['Debug']);
     });
 
     it('shows a modal dialog when Inspect It raises a DebuggableError', async () => {
@@ -1399,19 +1399,20 @@ describe('CodeExecutor', () => {
 
       const calls = vi.mocked(vscode.window.showErrorMessage).mock.calls;
       const lastCall = calls[calls.length - 1];
-      expect(lastCall.slice(2)).toEqual(['Enhanced Debug', 'Debug']);
+      expect(lastCall.slice(2)).toEqual(['Debug']);
     });
   });
 
-  // ── Reveal the Run and Debug view when debugging starts ────
+  // ── What "Debug" opens ────
   //
-  // After the user clicks "Debug", the debug session attaches but VSCode does
-  // not switch to the Run and Debug view on its own, so the call stack lands
-  // in a hidden view and the session looks like it did nothing. We explicitly
-  // reveal the view via the workbench.view.debug command. Dismissing the
-  // dialog must NOT reveal the view and must clear the stalled GsProcess.
+  // The notifier offers one debugger: the GemStone Debugger panel, which then
+  // owns the suspended GsProcess. The DAP debugger stays registered, but with
+  // nothing to supply its `sessionId`/`gsProcess` attach attributes it is
+  // dormant rather than a second way in -- the notifier was its only caller, and
+  // never starts it now. Dismissing the dialog must open nothing and must clear
+  // the stalled GsProcess.
 
-  describe('reveals the Run and Debug view on Debug', () => {
+  describe('opens the GemStone Debugger on Debug', () => {
     function debuggableGci() {
       return makeGci({
         GciTsNbResult: vi.fn(() => ({
@@ -1439,39 +1440,21 @@ describe('CodeExecutor', () => {
         .mock.calls.some(([cmd]) => cmd === 'workbench.view.debug');
     }
 
-    it('starts debugging and focuses the Run and Debug view when the user clicks Debug', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
-      vi.mocked(vscode.debug.startDebugging).mockResolvedValue(true);
-      setup();
-
-      await executor.executeIt();
-
-      expect(vscode.debug.startDebugging).toHaveBeenCalled();
-      const config = vi.mocked(vscode.debug.startDebugging).mock.calls[0][1] as unknown as {
-        type: string;
-        gsProcess: string;
-        sessionId: number;
-      };
-      expect(config.type).toBe('gemstone');
-      expect(config.sessionId).toBe(session.id);
-      expect(config.gsProcess).toBe(0x123n.toString());
-      expect(revealedView()).toBe(true);
-    });
-
-    it('does not reveal the view or start debugging, and clears the stack, when the dialog is dismissed', async () => {
+    it('does not start debugging, and clears the stack, when the dialog is dismissed', async () => {
       vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
       setup();
 
       await executor.executeIt();
 
+      expect(DebuggerPanel.create).not.toHaveBeenCalled();
       expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
       expect(revealedView()).toBe(false);
       // The stalled GsProcess must be released so it does not linger.
       expect(gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, 0x123n);
     });
 
-    it('opens the Enhanced Debugger panel (and not the DAP debugger) when the user clicks Enhanced Debug', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+    it('opens the GemStone Debugger panel (and not the DAP debugger) when the user clicks Debug', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 
       await executor.executeIt();
@@ -1491,8 +1474,8 @@ describe('CodeExecutor', () => {
       expect(gci.GciTsClearStack).not.toHaveBeenCalled();
     });
 
-    it('passes a completion callback to the Enhanced Debugger for a halted Display It', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+    it('passes a completion callback to the GemStone Debugger for a halted Display It', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
 
       await executor.displayIt();
@@ -1508,7 +1491,7 @@ describe('CodeExecutor', () => {
     });
 
     it('the Display It completion callback renders the result back in the workspace, refocusing the editor', async () => {
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Enhanced Debug' as never);
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Debug' as never);
       setup();
       await executor.displayIt();
 
@@ -1634,7 +1617,6 @@ describe('CodeExecutor', () => {
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining('doesNotUnderstand: #foo'),
         { modal: true },
-        'Enhanced Debug',
         'Debug',
       );
     });

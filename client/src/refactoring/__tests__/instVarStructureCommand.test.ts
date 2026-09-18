@@ -6,6 +6,10 @@ vi.mock('../../browserQueries', () => ({
   pageInstVarStructurePreview: vi.fn(),
   applyInstVarStructure: vi.fn(),
   clearInstVarStructurePreview: vi.fn(),
+  captureClassHistory: vi.fn(),
+  commitHistoryRevert: vi.fn(),
+  discardPendingCapture: vi.fn(),
+  refactoringUndoStatus: vi.fn(() => '{"available":false}'),
 }));
 vi.mock('../instVarStructurePanel', () => ({
   showInstVarStructurePanel: vi.fn(),
@@ -31,6 +35,7 @@ import {
   saveIfDirty,
 } from '../renameAtCursorShared';
 import { moveInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { ActiveSession, SessionManager } from '../../sessionManager';
 
 /**
@@ -70,8 +75,10 @@ const runFlow = (): Promise<boolean> =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetUndoStacks();
   vi.mocked(ensureRbSupport).mockResolvedValue(true);
   vi.mocked(saveIfDirty).mockResolvedValue(true);
+  vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
 });
 
 describe('instance-variable structure command — apply/decline flow', () => {
@@ -161,6 +168,52 @@ describe('instance-variable structure command — apply/decline flow', () => {
 
     expect(await runFlow()).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  it('offers to revert a push up / push down, on the toast and on the undo stack', async () => {
+    // The reshape records its reversal in the STONE. Announcing it with a bare toast left that
+    // record unreachable: no button on the notice, nothing on Jasper's stack, so the status-bar
+    // button and Ctrl+K U both said there was nothing to undo.
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+      JSON.stringify({
+        available: true,
+        label: "Move instance variable 'tailLength'",
+        engine: 'GsInstVarStructureRefactoring',
+        sequence: 4,
+        total: 2,
+      }),
+    );
+
+    expect(await runFlow()).toBe(true);
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('applied 2 change(s)'),
+      'Undo',
+    );
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'refactoring',
+      label: "Move instance variable 'tailLength'",
+      sequence: 4,
+    });
+  });
+
+  it('shows a plain notice when the apply committed, since nothing was recorded', async () => {
+    // A committing apply migrated instances: irreversible, so the capture is discarded and the
+    // stone reports nothing. The notice must not grow a button that promises otherwise.
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult({ committed: true }));
+
+    expect(await runFlow()).toBe(true);
+
+    expect(queries.discardPendingCapture).toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('applied 2 change(s)'),
+    );
+    expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 
   it('reports a committing apply with the migrate note', async () => {

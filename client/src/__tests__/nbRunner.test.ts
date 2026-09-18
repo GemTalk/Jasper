@@ -230,6 +230,55 @@ describe('runNbCall — cancellation', () => {
       vi.useRealTimers();
     }
   });
+
+  // The gap is measured with a monotonic clock, so a wall clock that moves
+  // underneath the gesture must not change the scheduling decision. Only the
+  // forward direction is dangerous: it makes the gap look already served and
+  // sends the hard break on the heels of the soft one, which faults the client.
+  it('withholds the hard break for the full gap even if the wall clock jumps forward', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession([{ result: 0 }]); // always pending → never settles on its own
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unused',
+        {
+          suppressNotification: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
+
+      cancel!(); // first → soft break
+      expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, false);
+
+      // An NTP step or a resumed VM: the wall clock lurches a minute ahead while
+      // no real time passes at all. setSystemTime moves the faked Date and
+      // leaves performance.now where it was, which is precisely that shape.
+      vi.setSystemTime(Date.now() + 60_000);
+
+      cancel!(); // second → hard break, still owed the full gap of *real* time
+
+      await vi.advanceTimersByTimeAsync(BEFORE_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).not.toHaveBeenCalledWith(session.handle, true);
+
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      await vi.advanceTimersByTimeAsync(3000); // let the drain finish
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('runNbCall — notification suppression', () => {

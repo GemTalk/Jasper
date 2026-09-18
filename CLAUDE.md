@@ -47,4 +47,6 @@ Before considering something done, run `npm run lint && npm run format:check && 
 
 Never add `eslint-disable` or change a rule's severity to silence a lint error — fix the underlying code. If a rule genuinely can't be satisfied, add a scoped disable (single line, not file-wide) with a comment explaining why, and flag it to the user before committing. `eslint-comments/require-description` enforces that every disable comment carries a `-- reason`, so an undocumented one fails `npm run lint` outright.
 
+Digging into an unfamiliar area? Project docs are indexed in [docs/README.md](docs/README.md) — check there first.
+
 <!-- Maintainer note (stripped from agent context): Be careful with the edits to this file, anything included here will be auto-loaded in the context for ALL conversations. Keep only the most relevant and non-obvious details that are needed on all conversations. And only details that agents won't typically auto-discover by browsing the code -->

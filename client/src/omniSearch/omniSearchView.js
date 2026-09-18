@@ -575,9 +575,14 @@
     var MATCH_MODES = ['fuzzy', 'substring', 'prefix'];
     var MATCH_MODE_LABEL = { fuzzy: 'Fuzzy', substring: 'Substring', prefix: 'Prefix' };
     var MATCH_MODE_HELP = {
-      fuzzy: 'Fuzzy — letters in order, gaps allowed (oc matches OrderedCollection)',
+      fuzzy:
+        'Fuzzy — letters in order, gaps allowed (oc matches OrderedCollection; in Source, within one identifier)',
       substring: 'Substring — the text must appear as-is, anywhere',
-      prefix: 'Prefix — the name must start with what you typed',
+      // Over Source the target is a whole method body, where "starts with" has no
+      // useful reading, so Prefix means the match starts a token there. Said in one
+      // line because the chip is global and the user cannot see which rule applies.
+      prefix:
+        'Prefix — the name must start with what you typed (in Source: the match starts a word)',
     };
 
     function setMatchMode(mode) {

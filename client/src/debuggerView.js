@@ -353,6 +353,11 @@
     // Outbound commands that make the host do a server round-trip and then post a
     // reply back. Local-only commands (copyText/saveLayout/dump/terminate/etc.) and
     // ops with no webview reply (inspectVariable) are intentionally excluded.
+    //
+    // createDnuMethod is excluded too, and not because it is local: it opens an
+    // editor and then answers with a `banner`, which is deliberately NOT a span
+    // ender (the Cancel path posts one mid-op). A span started here therefore had
+    // nothing to close it, and the spinner ran until the user saved the method.
     const SERVER_BOUND = {
       ready: 1,
       selectFrame: 1,
@@ -365,7 +370,6 @@
       revertVariable: 1,
       runToCursor: 1,
       resume: 1,
-      createDnuMethod: 1,
     };
     let busyTimer = null; // reveal-delay timer; non-null ⇒ a span is pending/shown
     let busyActive = false; // a server request is in flight (timer pending or shown)

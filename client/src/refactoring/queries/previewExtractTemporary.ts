@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Client-side query builders for Extract Temporary (M3). The engine
 // (GsExtractTemporaryRefactoring) is method-local: it parses ONE method, resolves
@@ -87,9 +88,14 @@ export function pageExtractTemporaryPreview(
 
 // Apply a started preview server-side (recompile the one method), WITHOUT committing.
 // A single change, so there is nothing to deselect; always sends an empty set.
-export function applyExtractTemporary(execute: AsyncQueryExecutor, token: string): Promise<string> {
-  const code =
-    `GsExtractTemporaryRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #()`;
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
+export function applyExtractTemporary(
+  execute: AsyncQueryExecutor,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
+  const code = recordedApplyExpr('GsExtractTemporaryRefactoring', token, [], undoLabel);
   return execute(`applyExtractTemporary(${token})`, code);
 }
 
