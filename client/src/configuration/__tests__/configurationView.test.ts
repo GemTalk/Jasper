@@ -193,6 +193,31 @@ describe('rendering the configuration', () => {
     ).toBe(true);
   });
 
+  // An Undo reaches from the header and from Ctrl+Z, so the row it acts on need
+  // not be on screen — and the result banner renders inside that row's group. A
+  // refusal in the stone's own words is no use inside a closed disclosure.
+  it('opens a collapsed group to show a result that landed in it', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    const gem = () =>
+      root.querySelector<HTMLDetailsElement>('details.config-group[data-config-group="gem"]')!;
+    gem().open = false;
+    gem().dispatchEvent(new Event('toggle'));
+
+    sendMessage({
+      command: 'setResult',
+      tone: 'warn',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      message: 'GemConvertArrayBuilder may not be changed after login.',
+    });
+
+    expect(gem().open).toBe(true);
+    expect(gem().querySelector('.config-notice')?.textContent).toContain(
+      'may not be changed after login',
+    );
+  });
+
   it('says why a parameter has no description when system.conf was read', () => {
     const { root } = open();
     sendMessage({ command: 'configuration', config: configPayload() });
@@ -493,6 +518,25 @@ describe('undo and redo from the keyboard', () => {
     host.postMessage.mockClear();
     press('y');
     expect(host.postMessage).toHaveBeenCalledWith({ command: 'redoConfiguration' });
+  });
+
+  // Each press is a blocking set plus a full re-read against a live session, and
+  // the tooltip naming the next change cannot keep up with a key's repeat rate —
+  // so a held Ctrl+Z would unwind the history with none of it having been read.
+  it('ignores a held key, so one long press is not a burst of writes', () => {
+    const { host } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    armed();
+
+    press('z');
+    expect(host.postMessage).toHaveBeenCalledTimes(1);
+
+    host.postMessage.mockClear();
+    press('z', { repeat: true });
+    press('z', { repeat: true });
+    press('z', { repeat: true });
+
+    expect(host.postMessage).not.toHaveBeenCalled();
   });
 
   it('leaves the inline editor its own text undo', () => {

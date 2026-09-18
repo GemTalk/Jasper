@@ -699,6 +699,12 @@ describe('undoing a configuration change', () => {
       from: '0',
       to: '16',
     });
+    // And it is not reported as a parameter that ignored the set: it moved, and
+    // saying "likely read-only at runtime" here is the opposite of the truth.
+    const result = lastPosted<{ tone: string; message: string }>(panel, 'setResult');
+    expect(result!.message).toContain('accepted and adjusted');
+    expect(result!.message).toContain('Undo puts 0 back');
+    expect(result!.message).not.toContain('read-only at runtime');
   });
 
   // The entry the other history gets has to describe the step that actually

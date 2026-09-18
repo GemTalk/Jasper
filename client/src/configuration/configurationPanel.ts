@@ -522,16 +522,28 @@ export class ConfigurationPanel {
       const now = settled ? settled.value : '(unknown)';
       const took = settled !== undefined && configValuesMatch(valueType, value, settled.value);
       const verb = origin === 'set' ? 'Set' : origin === 'undo' ? 'Undid' : 'Redid';
-      this.setResult(
-        scope,
-        key,
-        took ? 'ok' : 'warn',
-        took
-          ? `${verb} ${key} — the session now reports ${now}.`
-          : `${key} was accepted without error, but the session still reports ${now}, not ${value.trim()}. ` +
-              `This parameter is likely read-only at runtime — many settings can only change in the config ` +
-              `file before startup, and stone-level settings need SystemUser.`,
-      );
+      // Three outcomes, not two. A value that landed somewhere OTHER than both
+      // what was asked for and where it started was accepted and adjusted — a
+      // size rounded to a page boundary, a timeout raised to a minimum — and
+      // calling that "read-only at runtime" is the opposite of what happened.
+      // It is also reversible, and now recorded as such, so it gets its own
+      // sentence rather than the one written for a set that did nothing.
+      const adjusted = !took && before !== undefined && !configValuesMatch(valueType, before, now);
+      let message;
+      if (took) {
+        message = `${verb} ${key} — the session now reports ${now}.`;
+      } else if (adjusted) {
+        message =
+          `${key} was accepted and adjusted: you asked for ${value.trim()} and the session now ` +
+          `reports ${now}. The stone stores some values only at a granularity or a minimum of its ` +
+          `own. This is still a change, and Undo puts ${before} back.`;
+      } else {
+        message =
+          `${key} was accepted without error, but the session still reports ${now}, not ${value.trim()}. ` +
+          `This parameter is likely read-only at runtime — many settings can only change in the config ` +
+          `file before startup, and stone-level settings need SystemUser.`;
+      }
+      this.setResult(scope, key, took ? 'ok' : 'warn', message);
       return { took, before, settled: settled?.value };
     } catch (e: unknown) {
       this.setResult(scope, key, 'warn', e instanceof Error ? e.message : String(e));
