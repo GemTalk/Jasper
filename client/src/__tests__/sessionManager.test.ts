@@ -9,7 +9,7 @@ vi.mock('vscode', () => ({
     event = vi.fn();
     dispose = vi.fn();
   },
-  window: { showQuickPick: vi.fn() },
+  window: { showQuickPick: vi.fn(), showInformationMessage: vi.fn() },
   workspace: {
     getConfiguration: vi.fn(() => ({
       get: vi.fn((key: string, defaultValue?: unknown) => configValues[key] ?? defaultValue),
@@ -220,6 +220,169 @@ describe('SessionManager', () => {
     manager.logout(session.id);
     const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
+  });
+
+  // What logging out of the CURRENT session leaves selected decides whether the
+  // palette's Commit and Abort have a session to act in at all, or have to ask.
+  describe('logout hands the selection on', () => {
+    const loginN = (n: number) => {
+      configValues['sessionMode'] = 'multiple';
+      return Array.from({ length: n }, (_, i) =>
+        manager.login({ ...DEFAULT_LOGIN, label: `Session ${i + 1}` }, '/mock/lib'),
+      );
+    };
+
+    it('makes the remaining session current when the last one standing is unambiguous', () => {
+      const [first, second] = loginN(2);
+      manager.selectSession(first.id);
+
+      manager.logout(first.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(second.id);
+    });
+
+    // Three logged in, the MIDDLE one current: promoting the oldest and
+    // promoting "the next one along" give different answers here, which is what
+    // makes this the case worth having. Leaving nothing current would mean every
+    // "act in the current session" command had nothing to act in.
+    it('promotes the oldest remaining session, not the next one along', () => {
+      const [first, second, third] = loginN(3);
+      manager.selectSession(second.id);
+
+      manager.logout(second.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(first.id);
+      expect(manager.getSelectedSession()?.id).not.toBe(third.id);
+    });
+
+    it('promotes by login order when the newest session is the one that goes', () => {
+      const [first, , third] = loginN(3);
+      manager.selectSession(third.id);
+
+      manager.logout(third.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(first.id);
+    });
+
+    it('leaves nothing current when the last session goes', () => {
+      const [only] = loginN(1);
+      manager.logout(only.id);
+
+      expect(manager.getSelectedSession()).toBeUndefined();
+    });
+
+    // `gemstone.hasActiveSession` is what withholds GemStone: Commit and
+    // GemStone: Abort from the Command Palette, and those commands now read the
+    // current session with no picker behind them — so a key left true over a
+    // window with nothing logged in would put back a palette entry that can only
+    // report that there is nothing to commit.
+    const contextCalls = () =>
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.filter(
+          ([cmd, key]) => cmd === 'setContext' && key === 'gemstone.hasActiveSession',
+        );
+
+    // The window has just changed which stone Display It / Execute It / a
+    // notebook cell will run in, and none of those asks first.
+    it('says which session it promoted', () => {
+      const [first, second] = loginN(2);
+      manager.selectSession(second.id);
+
+      manager.logout(second.id);
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining(`Session ${first.id}`),
+      );
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('is now the current session'),
+      );
+    });
+
+    it('says nothing when the session logged out was not the current one', () => {
+      const [first, second] = loginN(3);
+      manager.selectSession(first.id);
+
+      manager.logout(second.id);
+
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    });
+
+    it('turns hasActiveSession off when the last session goes', () => {
+      const [only] = loginN(1);
+      manager.logout(only.id);
+
+      expect(contextCalls().at(-1)?.[2]).toBe(false);
+    });
+
+    it('leaves hasActiveSession on when a session remains to be promoted', () => {
+      const [first] = loginN(3);
+      manager.selectSession(first.id);
+
+      manager.logout(first.id);
+
+      expect(contextCalls().at(-1)?.[2]).toBe(true);
+    });
+
+    it('keeps the current session when a background session is logged out', () => {
+      const [first, second] = loginN(3);
+      manager.selectSession(first.id);
+
+      manager.logout(second.id);
+
+      expect(manager.getSelectedSession()?.id).toBe(first.id);
+    });
+  });
+
+  // The property the palette's Commit and Abort are built on: they read the
+  // current session directly, with no picker behind them, because a window with
+  // any session logged in always HAS a current one. That is held up by two
+  // separate branches in two files (login auto-selects the first; logout
+  // promotes the oldest survivor), so pin the property itself — a later
+  // "deselect", or a crash-cleanup path that drops a session without re-electing
+  // one, would put a QuickPick back in the middle of a Commit.
+  describe('a window with sessions always has a current one', () => {
+    const invariantHolds = () =>
+      manager.getSessions().length === 0 || manager.getSelectedSession() !== undefined;
+
+    it('holds through every order of logging three sessions out', () => {
+      configValues['sessionMode'] = 'multiple';
+      // Each permutation of the logout order, over a fresh set of logins.
+      const orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+      ];
+      for (const order of orders) {
+        const ids = [1, 2, 3].map(
+          (n) => manager.login({ ...DEFAULT_LOGIN, label: `S${n}` }, '/mock/lib').id,
+        );
+        expect(invariantHolds(), 'after logging in').toBe(true);
+        for (const which of order) {
+          manager.logout(ids[which]);
+          expect(invariantHolds(), `after logging out ${ids[which]} of ${ids}`).toBe(true);
+        }
+        expect(manager.getSessions()).toHaveLength(0);
+        expect(manager.getSelectedSession()).toBeUndefined();
+      }
+    });
+
+    it('holds when a session is logged out and another logged in again', () => {
+      configValues['sessionMode'] = 'multiple';
+      const first = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+      const second = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+      manager.logout(first.id);
+      expect(invariantHolds()).toBe(true);
+
+      manager.login({ ...DEFAULT_LOGIN, label: 'Third' }, '/mock/lib');
+      expect(invariantHolds()).toBe(true);
+
+      manager.logout(second.id);
+      expect(invariantHolds()).toBe(true);
+    });
   });
 
   describe('resolveSession', () => {
