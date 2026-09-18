@@ -386,7 +386,30 @@ describe('undo and redo buttons', () => {
 
     expect(btn(root, 'undo').disabled).toBe(true);
     expect(btn(root, 'redo').disabled).toBe(true);
-    expect(btn(root, 'undo').title).toContain('no setting has been changed');
+  });
+
+  // A disabled button is never hit-tested, so a `title` on it is not a tooltip
+  // in any browser — and explaining why the action is not on offer is the whole
+  // reason these are dimmed rather than hidden. The wrapper has to carry it.
+  it('says why it is not on offer somewhere that can actually be hovered', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const disabled = btn(root, 'undo');
+    expect(disabled.disabled).toBe(true);
+    expect(disabled.getAttribute('title')).toBeNull();
+    expect(disabled.parentElement!.getAttribute('title')).toContain('nothing left to undo');
+    // The screen reader is served by the button either way.
+    expect(disabled.getAttribute('aria-label')).toContain('nothing left to undo');
+  });
+
+  // Armed, the button is hoverable itself, so the tooltip belongs on it.
+  it('carries its own tooltip once there is something to undo', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage({ command: 'configHistory', undo: A_CHANGE, redo: null });
+
+    expect(btn(root, 'undo').getAttribute('title')).toContain('set GemHaltOnError back to 0');
   });
 
   it('names the parameter and the value the click would land on', () => {

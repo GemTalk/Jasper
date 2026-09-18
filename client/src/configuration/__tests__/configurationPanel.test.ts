@@ -592,6 +592,29 @@ describe('undoing a configuration change', () => {
       value,
     });
 
+  /**
+   * A harness whose stone ACCEPTS a value and stores a different one — a size
+   * rounded to a page boundary, a timeout clamped to a minimum. `'OK'` comes
+   * back, so nothing was refused; the value simply landed elsewhere.
+   */
+  function clampingHarness(landsOn: (asked: number) => number) {
+    const h = harness([makeSession(1)], {
+      1: {
+        onSet: (code) => {
+          const match = code.match(/put: (\S+?)\./);
+          const asked = match ? Number(match[1]) : 0;
+          h.gciFor(1).state.gemReport = line(
+            'GemHaltOnError',
+            'SmallInteger',
+            String(landsOn(asked)),
+          );
+          return 'OK';
+        },
+      },
+    });
+    return h;
+  }
+
   const history = (panel: MockPanel) => lastPosted<HistoryPost>(panel, 'configHistory');
   const gemValue = (panel: MockPanel) =>
     paramNamed(config(panel).gemParams, 'GemHaltOnError').value;
@@ -643,12 +666,95 @@ describe('undoing a configuration change', () => {
     setHaltOnError(panel, '2');
     setHaltOnError(panel, '3');
 
+    // The button has to NAME the change it is about to make — with a run of them
+    // on the history, offering any other one means the tooltip describes a write
+    // the press will not perform, and that tooltip is the only warning before a
+    // live session is written to.
+    expect(history(panel)!.undo).toMatchObject({ from: '2', to: '3' });
+
     sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('2');
+    expect(history(panel)!.undo).toMatchObject({ from: '1', to: '2' });
     sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('1');
     sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('0');
+    expect(history(panel)!.undo).toBeNull();
+  });
+
+  // A stone is free to accept a value and store a nearby one. That change is
+  // just as much a change, and leaving it with no way back is the one thing the
+  // feature exists to prevent.
+  it('records a change the stone accepted but landed elsewhere', () => {
+    // Anything asked for lands on the next multiple of 16 — 0 stays 0.
+    const h = clampingHarness((asked) => Math.ceil(asked / 16) * 16);
+    const panel = open(h, 1);
+
+    setHaltOnError(panel, '5');
+
+    expect(gemValue(panel)).toBe('16');
+    expect(history(panel)!.undo).toEqual({
+      scope: 'gem',
+      key: 'GemHaltOnError',
+      from: '0',
+      to: '16',
+    });
+  });
+
+  // The entry the other history gets has to describe the step that actually
+  // happened, or the next press meets the staleness check and blames an outside
+  // session for this panel's own partial reversal.
+  it('offers a redo of where an undo actually landed, not where it aimed', () => {
+    // Undoing back to 0 is clamped, and lands on 16 instead.
+    const h = clampingHarness((asked) => (asked === 0 ? 16 : asked));
+    const panel = open(h, 1);
+    setHaltOnError(panel, '32');
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(gemValue(panel)).toBe('16');
+    expect(history(panel)!.undo).toBeNull();
+    expect(history(panel)!.redo).toMatchObject({ from: '16', to: '32' });
+
+    // And that redo has to work from where the value actually is.
+    sendMessage(panel, { command: 'redoConfiguration' });
+    expect(gemValue(panel)).toBe('32');
+    expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('ok');
+  });
+
+  // Once a parameter has moved underneath the panel, every entry for it steps
+  // through values it no longer holds — not just the one on top.
+  it('drops the whole history for a parameter that changed since, not one entry', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    setHaltOnError(panel, '2');
+    setHaltOnError(panel, '5');
+    h.gciFor(1).state.gemReport = line('GemHaltOnError', 'SmallInteger', '9');
+    sendMessage(panel, { command: 'loadConfiguration' });
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
+    // Not the next entry down, which the same check would refuse again.
+    expect(history(panel)!.undo).toBeNull();
+    expect(history(panel)!.redo).toBeNull();
+    expect(gemValue(panel)).toBe('9');
+  });
+
+  // The cap exists so a panel left open all day cannot grow an unbounded
+  // history; what it costs is that the oldest change stops being reversible.
+  it('keeps the newest 50 changes reversible and drops the oldest', () => {
+    const h = trackingHarness();
+    const panel = open(h, 1);
+    // 51 changes — 0 → 1, 1 → 2, … 50 → 51 — so the first step is the one
+    // pushed off the end.
+    for (let i = 1; i <= 51; i += 1) setHaltOnError(panel, String(i));
+
+    for (let i = 0; i < 50; i += 1) sendMessage(panel, { command: 'undoConfiguration' });
+
+    // Wound back to where the OLDEST surviving change started, not to the 0 the
+    // panel first read: that step is gone, and nothing is left to undo.
+    expect(gemValue(panel)).toBe('1');
     expect(history(panel)!.undo).toBeNull();
   });
 

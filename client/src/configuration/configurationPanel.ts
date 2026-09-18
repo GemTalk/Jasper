@@ -147,6 +147,15 @@ function historyEntry(history: ConfigChange[]): ConfigHistoryEntry | null {
   return { scope, key, from, to };
 }
 
+/** A history with every entry for one parameter removed — used when its value
+ *  has moved outside the panel, which invalidates the whole chain for it. */
+function forgetKey(
+  history: ConfigChange[],
+  of: { scope: ConfigScope; key: string },
+): ConfigChange[] {
+  return history.filter((c) => !(c.scope === of.scope && c.key === of.key));
+}
+
 /** How many changes the panel keeps reversible. A cap rather than a single
  *  level: undoing a run of edits one at a time is the case this exists for, and
  *  a bound keeps a long-lived panel's history from growing without limit. */
@@ -363,8 +372,14 @@ export class ConfigurationPanel {
   ): void {
     const outcome = this.applySet(scope, key, valueType, value);
     const { before, settled } = outcome;
+    // Recorded on "the value moved", NOT on `took`. `took` means the session
+    // reports exactly what was asked for, and a stone is free to accept a value
+    // and store a nearby one — a size rounded up to a page boundary, a timeout
+    // clamped to a minimum. Gating on `took` left that change with no way back
+    // at all, which is the one case this feature exists for. A set the stone
+    // ignored and one that asked for the value already there both land on
+    // `before`, and are still excluded, which is what the exclusion was for.
     if (
-      outcome.took &&
       before !== undefined &&
       settled !== undefined &&
       !configValuesMatch(valueType, before, settled)
@@ -411,7 +426,12 @@ export class ConfigurationPanel {
 
     const live = this.lastValueOf(change.scope, change.key);
     if (live !== undefined && !configValuesMatch(change.valueType, expected, live)) {
-      history.pop();
+      // Every entry for this parameter is stale, not just the one pressed: they
+      // are a chain of steps through values it no longer holds. Dropping only
+      // the top left the button offering the next one down, which this same
+      // check would refuse on the next press.
+      this.undoHistory = forgetKey(this.undoHistory, change);
+      this.redoHistory = forgetKey(this.redoHistory, change);
       this.setResult(
         change.scope,
         change.key,
@@ -425,10 +445,28 @@ export class ConfigurationPanel {
     }
 
     const outcome = this.applySet(change.scope, change.key, change.valueType, target, direction);
-    if (outcome.took) {
+    const { before, settled } = outcome;
+    // "It moved" rather than "it obeyed", for the reason `setConfiguration` uses
+    // the same test: a stone that clamps lands somewhere other than `target`,
+    // and that is still a reversal that happened. Leaving the entry in place for
+    // it was worse than not moving it — the value no longer matched the entry's
+    // own `to`, so the NEXT press met the staleness branch below and blamed an
+    // outside session for this panel's own partial undo.
+    const moved =
+      before !== undefined &&
+      settled !== undefined &&
+      !configValuesMatch(change.valueType, before, settled);
+    if (moved) {
       history.pop();
       const other = direction === 'undo' ? this.redoHistory : this.undoHistory;
-      other.push(change);
+      // The step the other direction has to reverse is the one just taken,
+      // `before` → `settled`: the entry unchanged whenever the set landed
+      // exactly, and the honest endpoints when it did not.
+      other.push(
+        direction === 'undo'
+          ? { ...change, from: settled, to: before }
+          : { ...change, from: before, to: settled },
+      );
       if (other.length > HISTORY_LIMIT) other.shift();
     }
     this.postHistory();

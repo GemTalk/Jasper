@@ -238,18 +238,22 @@
     const glyph = dir === 'undo' ? 'discard' : 'redo';
     let tip;
     if (!entry) {
-      tip =
-        dir === 'undo'
-          ? 'Undo — no setting has been changed from this panel yet'
-          : 'Redo — no change has been undone yet';
+      // Not "nothing has been changed yet": everything changed may since have
+      // been undone, which is exactly when Redo is armed and saying so.
+      tip = dir === 'undo' ? 'Undo — nothing left to undo' : 'Redo — nothing to redo';
     } else if (dir === 'undo') {
       tip = `Undo — set ${entry.key} back to ${valueText(entry.from)} (it is ${valueText(entry.to)} now)`;
     } else {
       tip = `Redo — set ${entry.key} to ${valueText(entry.to)} again`;
     }
-    return `<button type="button" class="icon-btn" data-action="${dir}Configuration" title="${esc(tip)}" aria-label="${esc(tip)}"${
-      entry ? '' : ' disabled'
+    const button = `<button type="button" class="icon-btn" data-action="${dir}Configuration" aria-label="${esc(tip)}"${
+      entry ? ` title="${esc(tip)}"` : ' disabled'
     }>${icon(glyph)}</button>`;
+    // A disabled button is not hit-tested, so a `title` on it never becomes a
+    // tooltip — and saying why the action is not on offer is the whole reason
+    // these stay visible instead of being hidden. The wrapper carries it in that
+    // state; `aria-label` on the button serves the screen reader either way.
+    return entry ? button : `<span title="${esc(tip)}">${button}</span>`;
   }
 
   // The panel body: the stone and gem configuration of the session. Values load
@@ -558,6 +562,12 @@
   // nothing, the same as clicking it.
   function onDocumentKeydown(e) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    // Auto-repeat is ignored. In an editor a held Ctrl+Z is a cheap local
+    // rewind; here each tick is a blocking set plus a full re-read against a
+    // live session, and the tooltip naming the next change cannot keep up with
+    // the repeat rate — so a long press would unwind the history without any of
+    // it having been read first.
+    if (e.repeat) return;
     const t = e.target;
     if (t && t.closest && t.closest('input, select, textarea')) return;
     const key = e.key.toLowerCase();
@@ -648,6 +658,13 @@
       configEditing.clear();
       render();
     } else if (msg.command === 'setResult') {
+      // The banner renders inside the row's own group. A hand-typed change is
+      // made with that group open by definition, but Undo reaches from the
+      // header and from Ctrl+Z, so the group may be collapsed — and then the
+      // outcome, a refusal in the stone's own words included, would render
+      // inside a closed disclosure with nothing but a value quietly moving to
+      // show for it.
+      if (msg.scope) configGroupsOpen.set(String(msg.scope), true);
       setSetNotice(
         msg.tone === 'warn' ? 'warn' : 'ok',
         String(msg.message || ''),
