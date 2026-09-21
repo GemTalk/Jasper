@@ -201,7 +201,7 @@ describe('GCI byte and OOP fetch/store (integration)', () => {
 
       expect(err.number).toBe(0);
       expect(result).toBe(2);
-      // First named instVar is 'key' (#myKey), second is 'value' (42)
+      expect(oops[0]).toBe(execute('#myKey'));
       expect(integerAt(oops, 1)).toBe(42n);
     });
   });
