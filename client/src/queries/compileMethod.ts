@@ -16,6 +16,10 @@ import { classLookupExpr, escapeString } from './util';
 // as a timestamped version. Both calls are guarded and skipped when the helper is
 // absent (a session where its install did not run), so this stays a no-op there and
 // never changes the compile's success/error contract or return string.
+//
+// This brackets an EDIT only. A refactoring never reaches this query — the engine
+// applies its whole change set server-side — and records its own versions from
+// GsRefactoringUndo instead (see methodHistoryServer.ts's `recordRefactoredIn:…`).
 export function compileMethod(
   execute: QueryExecutor,
   className: string,

@@ -73,6 +73,10 @@
     // The symbol the current references list is OF (selector / class name), highlighted in a sender's
     // source when a row is expanded inline.
     var refHighlightTerm = '';
+    // The symbol a references PIVOT is showing the senders of, while one is up. The preview pane is
+    // an ordinary source preview in that mode, and the search box still holds whatever was typed to
+    // find the row — so without this the pane would mark the typed text rather than the send.
+    var pivotHighlightTerm = '';
     // Mirrors the host's case-sensitivity so the preview-pane highlight matches how the search did.
     var caseSensitive = false;
     // Set when the NEXT results render should scroll the list back to the top — true for a fresh
@@ -631,6 +635,7 @@
           updateClearVisibility();
           if (typeof msg.placeholder === 'string') inputEl.placeholder = msg.placeholder;
           setBreadcrumb(msg.pivot ? msg.pivotTitle : '', msg.pivot ? msg.pivotHint : '');
+          pivotHighlightTerm = msg.pivot ? msg.pivotTarget || '' : '';
           renderResults(msg);
           setBusy(false);
           break;
@@ -667,6 +672,315 @@
           inputEl.select();
           break;
       }
+    }
+
+    // ── Finding a send in method source ─────────────────────────────────────────
+    //
+    // The references/senders preview marks the symbol the list is references OF. A literal substring
+    // search cannot do that job: a keyword selector is never written as one token (`on:do:` appears as
+    // `on: Error do: [...]`), a one-keyword selector is a substring of a longer one (`at:` inside
+    // `at:put:`), and any selector is a substring of a longer identifier (`printString` inside
+    // `printStringLimitedTo:`). So the source is scanned as Smalltalk rather than as text, and what is
+    // marked is the send site: each keyword part of a keyword send, or the selector token of a unary
+    // or binary send, or the name of a global reference.
+    //
+    // Scanning, not parsing: the tokens plus bracket nesting are enough to group keyword parts into
+    // sends, and a full AST would need the whole vendored parser in the webview. Source that does not
+    // lex cleanly degrades to fewer marks, never to a thrown error or lost text.
+
+    // The characters GemStone allows in a binary selector. `|` and `^` are handled before this set is
+    // consulted — they are overwhelmingly a separator and a return, and treating them as binary
+    // selectors would swallow the block-argument bar and the caret.
+    var BINARY_CHARS = '+-*/\\~<>=&@%,?!';
+
+    function isDigit(c) {
+      return c >= '0' && c <= '9';
+    }
+
+    function isLetter(c) {
+      return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_';
+    }
+
+    function isIdentChar(c) {
+      return isLetter(c) || isDigit(c);
+    }
+
+    /**
+     * Lex `src` into tokens carrying their source offsets. Comments, strings, character literals,
+     * symbols and literal arrays each become ONE token, which is what keeps the selector inside a
+     * comment or a `#at:put:` symbol from being mistaken for a send.
+     *
+     * `keyword` tokens include their trailing colon (`at:`); `:=` is an `assign`, and `:e` a block
+     * argument, so neither is confused with one.
+     */
+    function lexSmalltalk(src) {
+      var tokens = [];
+      var n = src.length;
+      var i = 0;
+      var start;
+      function push(kind, from) {
+        tokens.push({ kind: kind, text: src.slice(from, i), start: from, end: i });
+      }
+      // Consume from `i` to the matching close of a bracket run that opens at `i`, so a literal array
+      // is one token however deeply it nests.
+      function skipBalanced(open, close) {
+        var depth = 0;
+        while (i < n) {
+          var ch = src.charAt(i);
+          if (ch === open) depth++;
+          else if (ch === close) {
+            depth--;
+            i++;
+            if (depth === 0) return;
+            continue;
+          } else if (ch === "'") {
+            i++;
+            while (i < n && !(src.charAt(i) === "'" && src.charAt(i + 1) !== "'")) {
+              i += src.charAt(i) === "'" ? 2 : 1;
+            }
+          }
+          i++;
+        }
+      }
+      while (i < n) {
+        var c = src.charAt(i);
+        if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f') {
+          i++;
+          continue;
+        }
+        start = i;
+        if (c === '"') {
+          // A doubled "" is an escaped quote inside the comment, not the end of it.
+          i++;
+          while (i < n && !(src.charAt(i) === '"' && src.charAt(i + 1) !== '"')) {
+            i += src.charAt(i) === '"' ? 2 : 1;
+          }
+          i++;
+          push('comment', start);
+          continue;
+        }
+        if (c === "'") {
+          i++;
+          while (i < n && !(src.charAt(i) === "'" && src.charAt(i + 1) !== "'")) {
+            i += src.charAt(i) === "'" ? 2 : 1;
+          }
+          i++;
+          push('string', start);
+          continue;
+        }
+        if (c === '$') {
+          i += 2; // $x — the character after $ is the literal, whatever it is
+          push('char', start);
+          continue;
+        }
+        if (c === '#') {
+          var after = src.charAt(i + 1);
+          if (after === '(' || after === '[') {
+            i++;
+            skipBalanced(after, after === '(' ? ')' : ']');
+            push('literalArray', start);
+            continue;
+          }
+          if (after === "'") {
+            i += 2;
+            while (i < n && !(src.charAt(i) === "'" && src.charAt(i + 1) !== "'")) {
+              i += src.charAt(i) === "'" ? 2 : 1;
+            }
+            i++;
+            push('symbol', start);
+            continue;
+          }
+          i++;
+          while (i < n && (isIdentChar(src.charAt(i)) || src.charAt(i) === ':')) i++;
+          while (i < n && BINARY_CHARS.indexOf(src.charAt(i)) >= 0) i++;
+          push('symbol', start);
+          continue;
+        }
+        if (isDigit(c)) {
+          while (i < n && isDigit(src.charAt(i))) i++;
+          if (src.charAt(i) === 'r') {
+            // A radix literal (16rFF) — the digits after `r` may be letters.
+            i++;
+            while (i < n && isIdentChar(src.charAt(i))) i++;
+          }
+          // Only a `.` FOLLOWED BY A DIGIT is a decimal point; otherwise it ends the statement.
+          if (src.charAt(i) === '.' && isDigit(src.charAt(i + 1))) {
+            i++;
+            while (i < n && isDigit(src.charAt(i))) i++;
+          }
+          var suffix = src.charAt(i);
+          if (suffix === 'e' || suffix === 'd' || suffix === 'q' || suffix === 's') {
+            i++;
+            if (src.charAt(i) === '-') i++;
+            while (i < n && isDigit(src.charAt(i))) i++;
+          }
+          push('number', start);
+          continue;
+        }
+        if (isLetter(c)) {
+          while (i < n && isIdentChar(src.charAt(i))) i++;
+          if (src.charAt(i) === ':' && src.charAt(i + 1) !== '=') {
+            i++;
+            push('keyword', start);
+          } else {
+            push('identifier', start);
+          }
+          continue;
+        }
+        if (c === ':') {
+          if (src.charAt(i + 1) === '=') {
+            i += 2;
+            push('assign', start);
+            continue;
+          }
+          i++;
+          while (i < n && isIdentChar(src.charAt(i))) i++;
+          push('blockArg', start);
+          continue;
+        }
+        if (c === '(' || c === '[' || c === '{') {
+          i++;
+          push('open', start);
+          continue;
+        }
+        if (c === ')' || c === ']' || c === '}') {
+          i++;
+          push('close', start);
+          continue;
+        }
+        if (c === '.' || c === ';' || c === '|' || c === '^') {
+          i++;
+          push('separator', start);
+          continue;
+        }
+        if (BINARY_CHARS.indexOf(c) >= 0) {
+          while (i < n && BINARY_CHARS.indexOf(src.charAt(i)) >= 0) i++;
+          push('binary', start);
+          continue;
+        }
+        i++; // an unlexable character is skipped rather than aborting the scan
+        push('unknown', start);
+      }
+      return tokens;
+    }
+
+    /**
+     * How many leading tokens are the method's own PATTERN rather than its body.
+     *
+     * The pattern is a definition, not a send: opening `Dictionary>>at:put:` from a senders list must
+     * not mark `at: key put: value` on the first line as if the method called itself.
+     */
+    function patternLength(tokens) {
+      if (tokens.length === 0) return 0;
+      if (tokens[0].kind === 'keyword') {
+        var i = 0;
+        while (
+          tokens[i] &&
+          tokens[i].kind === 'keyword' &&
+          tokens[i + 1] &&
+          tokens[i + 1].kind === 'identifier'
+        ) {
+          i += 2;
+        }
+        return i;
+      }
+      if (tokens[0].kind === 'binary' && tokens[1] && tokens[1].kind === 'identifier') return 2;
+      if (tokens[0].kind === 'identifier') return 1;
+      return 0;
+    }
+
+    /** Which shape of thing `term` is, so the scan knows what to look for. A GemStone global is
+     *  capitalised and a selector is not, which makes the two tellable apart without the host having
+     *  to say which query produced the term. */
+    function termKind(term) {
+      if (!term) return null;
+      if (term.indexOf(':') >= 0)
+        return /^([A-Za-z_][A-Za-z0-9_]*:)+$/.test(term) ? 'keyword' : null;
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(term)) {
+        return term.charAt(0) >= 'A' && term.charAt(0) <= 'Z' ? 'global' : 'unary';
+      }
+      for (var i = 0; i < term.length; i++) {
+        if (BINARY_CHARS.indexOf(term.charAt(i)) < 0) return null;
+      }
+      return 'binary';
+    }
+
+    /**
+     * The source ranges of every send of `term` in `src`, or null when `term` is not a selector or a
+     * global name (the caller then falls back to the plain substring highlight).
+     *
+     * Keyword sends are found by grouping: the keyword tokens at one bracket depth, uninterrupted by a
+     * statement end or a cascade, ARE one send — `dict at: k put: 1` is a single `at:put:` and so
+     * matches neither `at:` nor `put:` on its own, while `[...] on: Error do: [...]` is `on:do:` even
+     * though its parts sit on different lines.
+     */
+    function sendRanges(src, term) {
+      var kind = termKind(term);
+      if (!kind) return null;
+      var tokens = lexSmalltalk(src);
+      var from = patternLength(tokens);
+      var ranges = [];
+      if (kind === 'keyword') {
+        // One pending run of keyword parts per open bracket, so an inner send never absorbs the parts
+        // of the one it sits inside.
+        var stack = [[]];
+        var flush = function () {
+          var run = stack[stack.length - 1];
+          if (run.length > 0) {
+            var selector = '';
+            for (var r = 0; r < run.length; r++) selector += run[r].text;
+            if (selector === term) {
+              for (var m = 0; m < run.length; m++) ranges.push(run[m]);
+            }
+            stack[stack.length - 1] = [];
+          }
+        };
+        for (var i = from; i < tokens.length; i++) {
+          var t = tokens[i];
+          if (t.kind === 'keyword') stack[stack.length - 1].push(t);
+          else if (t.kind === 'separator' || t.kind === 'assign') flush();
+          else if (t.kind === 'open') {
+            stack.push([]);
+          } else if (t.kind === 'close') {
+            flush();
+            if (stack.length > 1) stack.pop();
+          }
+        }
+        while (stack.length > 0) {
+          flush();
+          stack.pop();
+        }
+        // Runs close out of document order (an inner send finishes before the outer one it sits in),
+        // and the marks have to be laid down left to right.
+        ranges.sort(function (a, b) {
+          return a.start - b.start;
+        });
+        return ranges;
+      }
+      var want = kind === 'binary' ? 'binary' : 'identifier';
+      for (var j = from; j < tokens.length; j++) {
+        if (tokens[j].kind === want && tokens[j].text === term) ranges.push(tokens[j]);
+      }
+      return ranges;
+    }
+
+    /** Fill `container` with `text`, wrapping each {start,end} range in <mark>. Ranges must be sorted
+     *  and non-overlapping. Returns the first mark (for scroll-into-view) or null. */
+    function highlightRanges(container, text, ranges) {
+      var first = null;
+      var pos = 0;
+      for (var i = 0; i < ranges.length; i++) {
+        var r = ranges[i];
+        if (r.start < pos) continue;
+        if (r.start > pos) container.appendChild(doc.createTextNode(text.slice(pos, r.start)));
+        var mark = doc.createElement('mark');
+        mark.textContent = text.slice(r.start, r.end);
+        container.appendChild(mark);
+        if (!first) first = mark;
+        pos = r.end;
+      }
+      if (pos < text.length) container.appendChild(doc.createTextNode(text.slice(pos)));
+      return first;
     }
 
     // Fill `container` with `text`, wrapping every occurrence of `term` in <mark> (built from text
@@ -809,13 +1123,19 @@
       }
     }
 
-    // Fill an expanded row's source (host reply), highlighting the symbol the list is references OF.
+    // Fill an expanded row's source (host reply), marking where the symbol the list is references OF
+    // is actually SENT (or, for a class reference, named) — see sendRanges. A term that is neither a
+    // selector nor a global name falls back to the plain substring highlight, which is still the
+    // right answer for a free-text preview.
     function fillReferenceSource(refId, source) {
       var header = refHeaderFor(refId);
       if (!header) return;
       var src = header.parentNode.querySelector('.preview-ref-src');
+      var text = source || '';
       src.textContent = '';
-      highlightOccurrences(src, source || '', refHighlightTerm, caseSensitive);
+      var ranges = sendRanges(text, refHighlightTerm);
+      if (ranges) highlightRanges(src, text, ranges);
+      else highlightOccurrences(src, text, refHighlightTerm, caseSensitive);
       src.setAttribute('data-loaded', '1');
     }
 
@@ -887,7 +1207,15 @@
       }
       var pre = doc.createElement('pre');
       pre.className = 'preview-src';
-      var firstHit = highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
+      // Two different questions share this pane. An ordinary search asks "where does what I typed
+      // appear", and a literal match is the right answer. A references PIVOT asks "where is this
+      // sent", and the typed text cannot answer it — the box holds the selector as a selector
+      // (`on:do:`), which no source ever spells that way. So while pivoted the pane marks the send,
+      // exactly as an expanded row does in the sticky-list mode (see sendRanges).
+      var firstHit;
+      var pivotRanges = pivotHighlightTerm ? sendRanges(source, pivotHighlightTerm) : null;
+      if (pivotRanges) firstHit = highlightRanges(pre, source, pivotRanges);
+      else firstHit = highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
       previewEl.appendChild(pre);
       previewEl.classList.add('has-content');
       // Bring the first match into view so a Source hit deep in a long method is visible without
@@ -933,6 +1261,7 @@
       setError('');
       setBreadcrumb('', '');
       refHighlightTerm = '';
+      pivotHighlightTerm = '';
       scrollResetPending = true;
       // Scope belongs to the engine, and the replacement engine starts at All — so reflect that rather
       // than leaving the departed session's tab lit.

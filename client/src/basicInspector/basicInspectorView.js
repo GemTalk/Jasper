@@ -819,8 +819,9 @@
    *
    * These are the editor's own bindings — `ctrl+k d` / `e` / `i` for Display,
    * Execute and Inspect It — so the keys that run an expression against the
-   * stone are the same whether you typed it in a Smalltalk file or here against
-   * `self`. The contributed ones cannot serve: all three are `when:
+   * stone are the same whether you typed it in a Smalltalk file, here against
+   * `self`, or in the debugger's evaluate pane, which answers to the same three
+   * (see client/src/evaluateMode.ts). The contributed ones cannot serve: all three are `when:
    * editorTextFocus`, which a focused webview never satisfies, and the commands
    * behind them read the active text editor for their code. So the pane
    * recognises the chord itself, which is what `chordArmed` below is for — and
@@ -1021,7 +1022,23 @@
       return;
     }
     if (ev.key === 'Escape') {
-      disarmChord(col);
+      // Escape empties the box, the way the debugger's evaluate pane and the list filters do —
+      // one evaluate-pane UX, so the key means the same thing in both panels. A half-typed chord
+      // is dropped first, since that is what Escape most immediately cancels.
+      if (col.chordArmed) {
+        disarmChord(col);
+        return;
+      }
+      ev.preventDefault();
+      clearEval(col);
+      return;
+    }
+    // Shift+Enter walks back through the expressions already RUN here (not merely typed), so a
+    // long doit can be brought back and edited rather than retyped. Enter itself stays a newline:
+    // the box is multi-line on purpose.
+    if (ev.key === 'Enter' && ev.shiftKey) {
+      ev.preventDefault();
+      recallPrevious(col);
       return;
     }
     // Ctrl+Enter stays as it was: the one-key way to see a result, for anyone
@@ -1030,6 +1047,27 @@
       ev.preventDefault();
       runEval(col, 'display');
     }
+  }
+
+  /**
+   * Step back through this column's run expressions, stopping at the oldest rather than emptying
+   * the box. `evalHistoryAt` is -1 when not walking, so the first press lands on the most recent.
+   */
+  function recallPrevious(col) {
+    var history = col.evalHistory || [];
+    if (history.length === 0) return;
+    col.evalHistoryAt =
+      col.evalHistoryAt == null || col.evalHistoryAt < 0
+        ? history.length - 1
+        : Math.max(0, col.evalHistoryAt - 1);
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (!input) return;
+    col.evalText = history[col.evalHistoryAt];
+    input.value = col.evalText;
+    showClearWhenTyped(col);
+    var end = input.value.length;
+    input.focus();
+    input.setSelectionRange(end, end);
   }
 
   function armChord(col) {
@@ -1088,6 +1126,8 @@
   function clearEval(col) {
     col.evalText = '';
     col.evalOut = null;
+    col.evalHistoryAt = -1; // clearing is a fresh start, not a step in the walk
+
     renderEval(col);
     var input = col.el.contentPane.querySelector('.eval-input');
     if (input) input.focus();
@@ -1095,6 +1135,12 @@
 
   function runEval(col, mode) {
     if (!col.evalText.trim()) return;
+    // The history is of what reached the stone, so an expression typed and thought better of is
+    // not in it. A repeat of the last one does not get a second entry.
+    var expr = col.evalText;
+    if (!col.evalHistory) col.evalHistory = [];
+    if (col.evalHistory[col.evalHistory.length - 1] !== expr) col.evalHistory.push(expr);
+    col.evalHistoryAt = -1;
     post({
       command: 'evaluate',
       columnId: col.id,

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { evaluatePaneHtml } from './debuggerEvalPane';
+import { EvalMode } from './evaluateMode';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -106,7 +108,7 @@ type DebuggerInbound =
   | { command: 'copyText'; text: string }
   | { command: 'copyFrame'; level: number }
   | { command: 'selectFrame'; level: number }
-  | { command: 'evalInFrame'; level: number; expr: string }
+  | { command: 'evalInFrame'; level: number; expr: string; mode?: EvalMode }
   | { command: 'resume' }
   | { command: 'runToCursor'; level: number }
   | { command: 'terminate' }
@@ -956,13 +958,12 @@ export class DebuggerPanel {
   private static savedInlineValuesPerLine = false;
 
   /**
-   * Whether the eval bar is collapsed to just its header. Remembered across
-   * panels for this window (and webview-side via getState/setState) like the
-   * stack/variables split.
+   * Whether the evaluate pane's tab is unselected (the pane put away). Remembered across panels for
+   * this window (and webview-side via getState/setState) like the stack/variables split.
    *
-   * Starts OPEN: now that the bar is a single row either way — expression on the
-   * left, answer on the right — collapsing buys back one line, not the block it
-   * used to be, so there's no reason to make you open it before you can type.
+   * Starts SELECTED: the pane is one row — expression, buttons, answer — so putting it away buys
+   * back a line rather than the block it used to be, and there is no reason to make you pick the tab
+   * before you can type.
    */
   private static savedEvalCollapsed = false;
 
@@ -1746,7 +1747,7 @@ export class DebuggerPanel {
       }
       case 'evalInFrame': {
         const frame = this.frames.find((f) => f.level === msg.level);
-        void this.evalInFrame(frame?.serverLevel, msg.expr);
+        void this.evalInFrame(frame?.serverLevel, msg.expr, msg.mode ?? 'display');
         return;
       }
       case 'cancelOp': {
@@ -2702,9 +2703,30 @@ export class DebuggerPanel {
     }
   }
 
-  /** Evaluate an expression in the selected frame and post the printString back. */
-  private async evalInFrame(serverLevel: number | undefined, expr: string): Promise<void> {
+  /**
+   * Evaluate an expression in the selected frame, in the mode the pane asked for — the same three
+   * the Inspector's evaluate tab offers, so the buttons and the Ctrl+K chord mean the same thing in
+   * both panels:
+   *
+   *   display  show the printString in the result row (what bare Enter has always done);
+   *   execute  run it for its effect and say so, without printing the answer;
+   *   inspect  open the answer in an Inspector, beside the debugger and tracked with it.
+   *
+   * Inspect takes a different route from the other two: it needs the answer's OOP rather than its
+   * printString, so it goes through the blocking `evaluateInFrameToOop` the variable evaluator
+   * already uses. That loses the cancel affordance, which is the trade for getting a live object —
+   * an expression worth inspecting is one whose value you want, not one you expect to run away.
+   */
+  private async evalInFrame(
+    serverLevel: number | undefined,
+    expr: string,
+    mode: EvalMode = 'display',
+  ): Promise<void> {
     if (serverLevel == null) return;
+    if (mode === 'inspect') {
+      this.inspectInFrame(serverLevel, expr);
+      return;
+    }
     if (this.nbBusy) {
       this.notifyBusy('Evaluate');
       return;
@@ -2745,7 +2767,38 @@ export class DebuggerPanel {
       this.setCancellable(false);
     }
     if (this.disposed) return;
-    this.panel.webview.postMessage({ command: 'evalResult', expr, value, isError });
+    // Execute It is run-for-effect: printing the answer is exactly what it is asking not to do, but
+    // silence would read as "nothing happened", so it acknowledges instead. An ERROR is still shown
+    // in full — that is not the answer, it is the reason there wasn't one.
+    const shown = mode === 'execute' && !isError ? 'Executed.' : value;
+    this.panel.webview.postMessage({ command: 'evalResult', expr, value: shown, isError });
+  }
+
+  /** Inspect It: evaluate in the frame for the answer's OOP and open it through the shared router
+   *  (the Enhanced Inspector where the session has it, the basic one otherwise), exactly as the
+   *  variables pane's own Inspect does — so it opens beside the debugger and closes with it. */
+  private inspectInFrame(serverLevel: number, expr: string): void {
+    if (this.nbBusy) {
+      this.notifyBusy('Inspect It');
+      return;
+    }
+    try {
+      const oop = debug.evaluateInFrameToOop(this.session, this.gsProcess, expr, serverLevel);
+      const inspector = routeInspect(this.session, BigInt(oop), expr);
+      this.openedInspectors.add(inspector);
+      if (!this.disposed) {
+        this.panel.webview.postMessage({ command: 'evalResult', expr, value: '', isError: false });
+      }
+    } catch (e: unknown) {
+      const raw = e instanceof Error ? e.message : String(e);
+      if (this.disposed) return;
+      this.panel.webview.postMessage({
+        command: 'evalResult',
+        expr,
+        value: `Error: ${raw}`,
+        isError: true,
+      });
+    }
   }
 
   /** Tell the webview whether the in-flight busy op can be cancelled (#9). */
@@ -4548,7 +4601,7 @@ export class DebuggerPanel {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     /* Fill the webview column as a flex column so the panes take all available
-       height (more stack frames visible) and the eval bar stays pinned at the
+       height (more stack frames visible) and the evaluate pane stays pinned at the
        bottom — it can never overlap the companion source editor group below. */
     html, body { height: 100%; }
     body {
@@ -4747,7 +4800,7 @@ export class DebuggerPanel {
        The min-height is a FLOOR, not a formality: the panes are the point of the
        panel, so when the column is squeezed (the user drags the source pane up)
        everything else gives up its space first — see the error banner and the
-       eval bar below. Without it the panes are the only flex child that can
+       evaluate pane below. Without it the panes are the only flex child that can
        shrink, so they collapse to nothing and the stack becomes invisible with
        no way to get it back from inside the panel. */
     .main { display: flex; align-items: stretch; --stack-basis: 60%; flex: 1 1 auto; min-height: 5rem; }
@@ -4800,7 +4853,7 @@ export class DebuggerPanel {
     }
     @media (max-height: 340px) {
       /* Down to the essentials: the pane headings go (the two lists are obvious
-         side by side), and the eval bar keeps just its input. */
+         side by side), and the evaluate pane keeps just its box. */
       .pane-title { display: none; }
       .splitter { margin-top: 0; }
       .evalbar { flex: 0 1 auto; }
@@ -4877,24 +4930,30 @@ export class DebuggerPanel {
       flex: 0 0 auto; overflow: hidden;
       display: flex; flex-direction: row; align-items: center; gap: 0.4rem;
     }
-    /* Collapsed: one line that says what it is, and nothing else. Evaluating is
-       occasional; a permanently open input and an empty result strip cost ~40px
-       of every halt, in a panel that is usually short of exactly that. Clicking
-       the row (or "Evaluate in this frame…" on a frame) opens it with the input
-       focused; Escape closes it again. The state is remembered like the two
-       splitter positions, so it opens the way you left it. */
-    .eval-head {
-      flex: 0 0 auto; display: flex; align-items: center; gap: 0.3rem;
-      cursor: pointer; user-select: none; padding: 0.1rem 0;
-      color: var(--vscode-descriptionForeground); font-size: 0.85rem;
+    /* A lower TAB, the shape the Inspector's evaluate pane has: picking it opens the pane, picking
+       it again puts it away. Evaluating is occasional; a permanently open input and an empty result
+       strip cost ~40px of every halt, in a panel that is usually short of exactly that — so the pane
+       is on demand rather than always present, and which way you left it is remembered like the two
+       splitter positions. "Evaluate in this frame…" on a frame selects the tab and focuses the box,
+       so the menu is a way IN rather than a separate place the feature lives; Escape puts it away. */
+    .eval-tabs { flex: 0 0 auto; display: flex; align-items: stretch; }
+    .eval-tab {
+      display: flex; align-items: center; cursor: pointer; user-select: none;
+      padding: 0.15rem 0.6rem; font-size: 0.85rem; border-radius: 3px 3px 0 0;
+      color: var(--vscode-descriptionForeground);
+      border: 1px solid transparent; border-bottom: none;
     }
-    .eval-head:hover { color: var(--vscode-foreground); }
-    .eval-caret { display: inline-block; transition: transform 0.1s ease-in-out; }
-    body:not(.eval-collapsed) .eval-caret { transform: rotate(90deg); }
+    .eval-tab:hover { color: var(--vscode-foreground); }
+    .eval-tab[aria-selected='true'] {
+      color: var(--vscode-foreground);
+      background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+      border-color: var(--vscode-panel-border, transparent);
+      border-bottom: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border, transparent));
+    }
+    .eval-tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     body.eval-collapsed #evalInput,
+    body.eval-collapsed .eval-toolbar,
     body.eval-collapsed .eval-result { display: none; }
-    /* Open, the caret is the whole header — the input beside it says what it is. */
-    body:not(.eval-collapsed) .eval-head-label { display: none; }
     /* The input and its clear button share the row's left half; the button sits
        inside the input's right edge, appearing only once there's something to
        clear — the same affordance the list filters use. */
@@ -4907,14 +4966,27 @@ export class DebuggerPanel {
     }
     .clear-btn:hover { color: var(--vscode-foreground); }
     .evalbar.has-text .clear-btn { visibility: visible; }
-    .evalbar input {
-      flex: 1 1 auto; min-width: 0; box-sizing: border-box; padding-right: 1.4rem;
+    .evalbar textarea {
+      flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+      resize: vertical; min-height: 1.9rem; height: 1.9rem; white-space: pre; overflow-x: auto;
       user-select: text; -webkit-user-select: text;
       font-family: var(--vscode-editor-font-family, monospace);
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
       padding: 0.3rem 1.4rem 0.3rem 0.5rem; border-radius: 2px;
     }
+    /* Display It / Execute It / Inspect It — the Inspector's button set, so the two evaluate panes
+       offer the same three things by the same names. */
+    .eval-toolbar { flex: 0 0 auto; display: flex; gap: 0.25rem; }
+    .eval-toolbar .btn {
+      font-size: 0.78rem; padding: 0.15rem 0.4rem; cursor: pointer; white-space: nowrap;
+      color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+      background: var(--vscode-button-secondaryBackground, transparent);
+      border: 1px solid var(--vscode-panel-border, transparent); border-radius: 2px;
+    }
+    .eval-toolbar .btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+    /* Ctrl+K is half-typed and waiting for its closing key. */
+    .evalbar.chord-armed textarea { outline: 1px solid var(--vscode-focusBorder); }
     /* The answer sits beside the expression, sharing the row half and half. It
        stays on one line: long printStrings scroll sideways, and the full text is
        on the element's tooltip (set when the result arrives). */
@@ -4965,18 +5037,7 @@ export class DebuggerPanel {
       <div class="vars" id="variables"></div>
     </div>
   </div>
-  <div class="evalbar" id="evalbar">
-    <div class="eval-head" id="evalToggle" role="button" tabindex="0"
-         title="Evaluate an expression in the selected frame">
-      <span class="eval-caret" aria-hidden="true">›</span><span class="eval-head-label">Evaluate…</span>
-    </div>
-    <span class="eval-input-wrap">
-      <input id="evalInput" type="text" autocomplete="off" spellcheck="false"
-             placeholder="Evaluate in the selected frame — press Enter">
-      <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
-    </span>
-    <div class="eval-result" id="evalResult"></div>
-  </div>
+  ${evaluatePaneHtml()}
   <div id="ctxmenu" class="ctx-menu" role="menu">
     <div class="ctx-item" id="copyFrameItem" role="menuitem">Copy Frame</div>
     <div class="ctx-item" id="browseFrameItem" role="menuitem" style="display:none;">Browse</div>
@@ -5010,6 +5071,7 @@ export class DebuggerPanel {
       evalToggle: document.getElementById('evalToggle'),
       evalClear: document.getElementById('evalClear'),
       evalbar: document.getElementById('evalbar'),
+      evalToolbar: document.getElementById('evalToolbar'),
       frameEvalItem: document.getElementById('frameEvalItem'),
       maximizeBtn: document.getElementById('maximizeBtn'),
       saveNotice: document.getElementById('saveNotice'),

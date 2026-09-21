@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { evaluatePaneHtml } from '../debuggerEvalPane';
 
 // Evaluate debuggerView.js in jsdom so it registers the global DebuggerView,
 // exactly as the webview does when it injects the file as a <script> tag.
@@ -89,7 +90,8 @@ interface Refs {
   toolbar: HTMLElement;
   runToCursorBtn?: HTMLButtonElement;
   variables: HTMLElement;
-  evalInput: HTMLInputElement;
+  evalInput: HTMLTextAreaElement;
+  evalToolbar?: HTMLElement;
   evalResult: HTMLElement;
   evalToggle?: HTMLElement;
   evalClear?: HTMLElement;
@@ -144,7 +146,7 @@ function setup(
     <div id="error"></div>
     <div id="dnuBar"></div>
     <div class="main"><ul id="stack"></ul><div id="variables"></div></div>
-    <div id="evalbar"><div id="evalToggle">Evaluate…</div><input id="evalInput"><button id="evalClear">✕</button><div id="evalResult"></div></div>
+    ${evaluatePaneHtml()}
     <div id="ctxmenu"><div id="copyFrameItem">Copy Frame</div><div id="browseFrameItem" style="display:none;">Browse</div><div id="homeFrameItem" style="display:none;">Go to home method</div><div id="frameImplItem" style="display:none;">Implement in receiver</div><div id="frameEvalItem">Evaluate in this frame</div></div>
     <div id="varctxmenu"><div id="varInspectItem">Inspect</div></div>
     <div id="busyOverlay" class="busy-overlay" style="display:none;"><div class="busy-box"><div class="busy-spinner"></div><button id="busyCancel" style="display:none;">Cancel</button></div></div>`;
@@ -170,7 +172,8 @@ function setup(
     toolbar: document.getElementById('toolbar')!,
     runToCursorBtn: document.getElementById('runToCursorBtn') as HTMLButtonElement,
     variables: document.getElementById('variables')!,
-    evalInput: document.getElementById('evalInput') as HTMLInputElement,
+    evalInput: document.getElementById('evalInput') as HTMLTextAreaElement,
+    evalToolbar: document.getElementById('evalToolbar')!,
     evalResult: document.getElementById('evalResult')!,
     evalToggle: document.getElementById('evalToggle')!,
     evalClear: document.getElementById('evalClear')!,
@@ -1213,10 +1216,13 @@ describe('DebuggerView.init — eval bar', () => {
     const { refs, vscode } = setup();
     refs.evalInput.value = '  amount * 2  ';
     refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    // Bare Enter is Display It — the pane carries the mode so the host does not have to guess
+    // which of the three the gesture meant (see evaluateMode.ts).
     expect(vscode.postMessage).toHaveBeenCalledWith({
       command: 'evalInFrame',
       level: 1,
       expr: 'amount * 2',
+      mode: 'display',
     });
   });
 
@@ -1620,7 +1626,8 @@ describe('DebuggerView.init — resizable splitter', () => {
       error: document.getElementById('error')!,
       toolbar: document.getElementById('toolbar')!,
       variables: document.getElementById('variables')!,
-      evalInput: document.getElementById('evalInput') as HTMLInputElement,
+      evalInput: document.getElementById('evalInput') as HTMLTextAreaElement,
+      evalToolbar: document.getElementById('evalToolbar')!,
       evalResult: document.getElementById('evalResult')!,
       main,
       splitter: document.getElementById('splitter')!,

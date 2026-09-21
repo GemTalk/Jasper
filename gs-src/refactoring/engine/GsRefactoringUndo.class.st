@@ -185,6 +185,7 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 		ifTrue: [self clear]
 		ifFalse: [
 			[after := self snapshot: slots.
+			 self recordMethodHistoryFrom: before to: after.
 			 undo := self entryFrom: before to: after label: aLabel engine: engineName.
 			 undo isNil
 				ifTrue: [self clear]
@@ -193,6 +194,48 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> recordMethodHistoryFrom: beforeStates to: afterStates [
+	"Add the version this refactoring just compiled to each recompiled method's history.
+
+	 Method history is otherwise bracketed around the CLIENT's compile query only, so a
+	 method changed by a refactoring gained no version and its history silently stopped at
+	 the last hand edit. This is the one place that fixes it for every refactoring at once:
+	 the before/after snapshots taken for the undo entry are exactly the pair history wants,
+	 already narrowed to the method slots the change set touched.
+
+	 Only slots that EXIST afterwards are recorded -- the old selector of a rename is gone,
+	 and a removal is not a version of anything. A slot that did not exist before (the new
+	 selector of a rename) has nothing to seed, so its history starts at the source the
+	 rename compiled.
+
+	 The recorder is JasperMethodHistory, which the Jasper client installs into SessionTemps
+	 at login; it is absent on a session that never ran that bootstrap (a plain topaz login,
+	 say), and this is then a no-op. Guarded and best-effort throughout, exactly like the
+	 undo recording it rides along with: a refactoring must never fail because history could
+	 not be written."
+	| hist env |
+	hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	hist isNil ifTrue: [^self].
+	env := GsRefactoringEnvironment new.
+	1 to: beforeStates size do: [:i |
+		[| b a slot cls target |
+		 b := beforeStates at: i.
+		 a := afterStates at: i.
+		 (a at: 2) ifTrue: [
+			slot := a at: 1.
+			cls := env classNamed: (slot at: 2).
+			cls isNil ifFalse: [
+				target := (slot at: 3) ifTrue: [cls class] ifFalse: [cls].
+				hist
+					recordRefactoredIn: target
+					selector: (slot at: 4) asSymbol
+					oldSource: ((b at: 2) ifTrue: [b at: 3] ifFalse: [nil])
+					newSource: (a at: 3)
+					category: (a at: 4)]]]
+			on: Error do: [:ex | nil]]
 ]
 
 { #category : 'recording' }

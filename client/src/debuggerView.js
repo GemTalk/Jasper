@@ -334,6 +334,7 @@
       evalToggle,
       evalClear,
       evalbar,
+      evalToolbar,
       frameEvalItem,
       main,
       splitter,
@@ -723,22 +724,104 @@
       });
     }
 
-    // Eval-in-frame: Enter evaluates the expression in the selected frame.
-    // Escape clears what you typed, or closes the bar when it's already empty —
-    // the same two-stage Escape the list filters use.
+    // The three things the pane can do with an expression, and the editor's own chord that runs
+    // each — the SAME set and the same keys as the Inspector's evaluate tab, so what you learn in
+    // one panel transfers to the other. See client/src/evaluateMode.ts.
+    const EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
+    let chordArmed = false;
+
+    // Expressions already run here, newest last. Shift+Enter walks back through them, the way a
+    // shell's history does: the box is a place you come back to, and retyping a long doit to change
+    // one keyword is the thing that makes an evaluate pane tedious. What was merely TYPED is not in
+    // here — only what actually reached the stone.
+    const history = [];
+    let historyAt = -1; // -1 = not walking; otherwise an index into `history`
+
+    function rememberExpression(expr) {
+      if (history[history.length - 1] !== expr) history.push(expr);
+      historyAt = -1;
+    }
+
+    /** Step back through the run expressions, stopping at the oldest rather than emptying the box. */
+    function recallPrevious() {
+      if (history.length === 0) return;
+      historyAt = historyAt < 0 ? history.length - 1 : Math.max(0, historyAt - 1);
+      if (!evalInput) return;
+      evalInput.value = history[historyAt];
+      showClearWhenTyped();
+      if (evalInput.setSelectionRange) {
+        const end = evalInput.value.length;
+        evalInput.setSelectionRange(end, end);
+      }
+    }
+
+    /** Run what's in the box, in `mode`. A blank expression is not worth a round trip. */
+    function runEval(mode) {
+      if (!evalInput) return;
+      const expr = evalInput.value.trim();
+      if (!expr) return;
+      rememberExpression(expr);
+      post({ command: 'evalInFrame', level: selectedLevel, expr, mode });
+    }
+
+    function setChordArmed(on) {
+      chordArmed = on;
+      if (evalbar) evalbar.classList.toggle('chord-armed', on);
+    }
+
+    // Eval-in-frame: Enter evaluates the expression in the selected frame (Display It — what it has
+    // always done). Shift+Enter goes back through what you have already run. Escape clears what you
+    // typed, or closes the bar when it's already empty — the same two-stage Escape the list filters
+    // use. Ctrl+K D / E / I is the editor's own chord, handled here for the reason the Inspector
+    // handles it too: the contributed bindings are `when: editorTextFocus`, which a focused webview
+    // never satisfies, so they do not resolve here and cannot collide.
     if (evalInput) {
       evalInput.addEventListener('keydown', (e) => {
+        if (chordArmed) {
+          setChordArmed(false);
+          const mode = EVAL_CHORD[String(e.key).toLowerCase()];
+          if (!mode) return; // not a chord key: disarm and let it be typed
+          e.preventDefault();
+          e.stopPropagation();
+          runEval(mode);
+          return;
+        }
+        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') {
+          e.preventDefault();
+          e.stopPropagation();
+          setChordArmed(true);
+          return;
+        }
         if (e.key === 'Escape') {
+          setChordArmed(false);
           if (evalInput.value) clearEval();
           else setEvalCollapsed(true);
           return;
         }
         if (e.key !== 'Enter') return;
-        const expr = evalInput.value.trim();
-        if (expr) post({ command: 'evalInFrame', level: selectedLevel, expr });
+        if (e.shiftKey) {
+          e.preventDefault();
+          recallPrevious();
+          return;
+        }
+        // Ctrl+Enter and bare Enter both mean "show me the answer"; the box is multi-line, so a
+        // newline needs a modifier-free path that ISN'T Enter — which is what the buttons are for.
+        e.preventDefault();
+        runEval('display');
       });
+      // A chord left half-typed when focus leaves is not still waiting for its second key.
+      evalInput.addEventListener('blur', () => setChordArmed(false));
       // The ✕ shows only when there's something to clear.
       evalInput.addEventListener('input', showClearWhenTyped);
+    }
+
+    // Display It / Execute It / Inspect It.
+    if (evalToolbar) {
+      evalToolbar.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-eval]');
+        if (!btn) return;
+        runEval(btn.dataset.eval);
+      });
     }
 
     /** Show the clear button once the expression box has anything in it. */
@@ -749,6 +832,7 @@
     /** Empty the expression AND its answer — a result outlives the expression it
      *  came from otherwise, which reads as the answer to whatever you type next. */
     function clearEval() {
+      historyAt = -1; // clearing is a fresh start, not a step in the walk
       if (evalInput) {
         evalInput.value = '';
         evalInput.focus();
@@ -774,6 +858,9 @@
     // the two splitter positions.
     function setEvalCollapsed(collapsed, focusInput) {
       document.body.classList.toggle('eval-collapsed', collapsed);
+      // The handle is a tab, so it has to SAY whether it is the selected one — the styling hangs off
+      // aria-selected, and a screen reader has nothing else to go on.
+      if (evalToggle) evalToggle.setAttribute('aria-selected', collapsed ? 'false' : 'true');
       if (!collapsed && focusInput && evalInput) evalInput.focus();
       if (vscode.setState) {
         const state = (vscode.getState ? vscode.getState() : null) || {};

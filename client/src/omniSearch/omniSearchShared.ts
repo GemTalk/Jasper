@@ -107,6 +107,7 @@ export function resultsMessage(
     truncations: view.truncations,
     pivot: view.pivot,
     pivotTitle: view.pivotTitle,
+    pivotTarget: view.pivotTarget,
     pivotHint: view.pivotHint,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
     scopeId: chrome.scopeId,
