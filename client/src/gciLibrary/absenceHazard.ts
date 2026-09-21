@@ -4,9 +4,12 @@ import type { GciAbsenceReason } from './optionalFunctions';
 // renders a hazard. `absentOn` is the one axis whose message is a *phrase*
 // rather than the value, so this module has to restate something the type
 // already knows -- keyed rather than compared, and an unknown key throws.
-// Widening `GciAbsenceReason['absentOn']` without adding a clause here fails
-// the caller (eslint.config.mjs) load, instead of quietly rendering `may be
-// absent ()` with nothing between the parens.
+// Widening `GciAbsenceReason['absentOn']` without adding a clause here throws
+// for whichever caller hits it first. `eslint.config.mjs` calls this while
+// building its rule options, so a missing clause fails `npm run lint` at
+// config-load time; `requireGciCapability` (the test-only caller, in
+// `client/src/gciLibrary/__tests__/`) calls this while a gated test runs, so
+// the same gap fails that test on every matrix cell instead.
 const ABSENT_ON_CLAUSE: Record<string, string> = {
   win32:
     'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
