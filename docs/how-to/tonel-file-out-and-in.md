@@ -1,0 +1,126 @@
+# Filing a class out and in as Tonel
+
+Tonel is the one-class-per-file source format Rowan and Pharo use — a `.st` file
+holding a class's definition, its comment and its methods. Jasper can write one
+and read it back, so a class can go into git, be diffed and reviewed like any
+other source, and come back.
+
+This is **not** the same as the Topaz chunk file out (`.gs` / `.tpz`), which is
+still there and unchanged. The two formats have separate commands, separate save
+and open filters, and separate readers.
+
+## What you need
+
+**GemStone 3.7.5 or later, on a rowan3 extent** — one built from
+`extent0.rowan3.dbf`. Nothing else works, and the commands are hidden where it
+does not.
+
+"rowan3" means Rowan **3**: the `RowanV3` project. Not `extent0.rowan.dbf`, which
+installs the older Rowan. Both ship in the same 3.7.5 tarball and both define a
+global named `Rowan`, so the distinction is easy to miss and does matter — the two
+generations emit different header keys.
+
+The feature calls Rowan classes that simply do not exist on a base extent, and the
+3.6.x tarballs ship no Rowan extent at all, so a rowan3 3.6.x stone cannot be built
+even in principle.
+
+### Why the menu entries are missing
+
+Jasper asks the session whether the Rowan classes it drives are actually reachable
+— not the version number, not the extent's filename. If they are not, the Tonel
+entries are absent rather than present and failing when clicked.
+
+If the entries are missing on a stone you believe is rowan3, run the command from
+the Command Palette anyway: it refuses with an explanation, which tells you whether
+the stone or the session is the problem.
+
+A session as `DataCurator` works. Rowan's classes live in symbol dictionaries that
+are in SystemUser's symbol list and not DataCurator's, and Jasper reaches through to
+them, so you do not need to log in as SystemUser for this.
+
+## Filing a class out
+
+Right-click a class in the Explorer's **Classes** or **Class Hierarchy** pane →
+**File Out Class as Tonel…**, and choose where to save it. The default name is
+`<ClassName>.class.st`, the name Rowan itself uses.
+
+The file carries **every method a Jasper user can see on that class** — including
+ones Rowan would file into another package's `.extension.st`, because a Jasper user
+has no notion of a package. Two methods are left out on purpose:
+
+- methods a **trait** provides, which are not the class's own code (traits are not a
+  supported Jasper feature);
+- methods compiled into a **non-zero environment**, which the chunk file out omits
+  too.
+
+## Filing a class in
+
+Open the `.st` file and click **File In Tonel to GemStone** at the top of the
+editor, or use the Explorer / editor context menu.
+
+Three things worth knowing before you do:
+
+1. **It REPLACES.** The file is taken as the intended state of the class, so a
+   method the image has that the file does not carry is removed. This is the same
+   behaviour as chunk file in.
+2. **It never commits.** The session is left dirty and you decide — commit it to
+   keep the change.
+3. **It asks which symbol dictionary** only when it has to. Tonel carries no
+   dictionary (its `#category` is a *package*, not a SymbolDictionary), so Jasper
+   defaults to the dictionary the class already lives in, and prompts only when the
+   class is in several or is new.
+
+### When something goes wrong
+
+Failures go to the **GemStone File In** output channel — the same one the chunk
+file in uses — one line each, as `ERROR <file>:<line> — <message>`. The toast that
+reports a failure carries a **Show Log** button that opens it.
+
+A method that will not compile does not stop the others; it is reported and the rest
+file in. But a file whose superclass does not resolve creates nothing at all, rather
+than leaving a half-built class behind.
+
+## How a Jasper `.st` file relates to a Rowan one
+
+Jasper writes **Tonel that Rowan can parse, not a Rowan project artifact.** Three
+deliberate differences:
+
+| | Rowan | Jasper |
+|---|---|---|
+| `#category` | the package name | the class category, falling back to the symbol dictionary |
+| Methods from other packages | separate `.extension.st` files | all in the class file |
+| Surrounding files | `package.st`, `properties.st`, a project tree | just the one file you named |
+
+So a Jasper file drops into a Rowan package tree only after editing `#category` and
+splitting out any extension methods. Everything else — the header keys, the method
+blocks, their order — is byte-for-byte what Rowan's own writer produces; that is
+checked against the 720 reference files GemStone ships under
+`$GEMSTONE/projects/gemstoneBaseImage/rowan/src/`.
+
+## Running the tests
+
+The Tonel tests need a rowan3 stone and **skip** on any other, which means a green
+`npm test` against the default test stone says nothing about this feature.
+
+```sh
+npm run test:server:start:rowan3   # 3.7.5 on extent0.rowan3.dbf
+npm test
+```
+
+`test:server:start:rowan3` repoints `client/.env.test` at that stone, so the two
+tiers do not run side by side — start whichever one you are verifying.
+
+### If the stone will not start
+
+GemStone refuses to open an extent on NFS:
+
+```
+reason = File is on NFS, $GEMSTONE/data/extent0.dbf
+```
+
+The harness installs GemStone under the checkout (`client/tmp/gemstone/…`), so this
+happens whenever the checkout itself is on a network filesystem. Either work from a
+checkout on local disk — the simplest fix, and then nothing else is needed — or
+point that install's `data` directory at local storage with a symlink. Note that
+re-extracting the product archive replaces such a symlink with a real directory,
+because the archive ships a `data/` of its own.

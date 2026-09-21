@@ -57,8 +57,8 @@
 | ✅ | **4** — **file in**, part 1: read Tonel into definitions | done |
 | ✅ | **5** — **file in**, part 2: apply to the image | done; round trip is a fixpoint |
 | ✅ | **6** — make it reachable: gate + menus, filters, code lens | done; the feature is usable from the UI |
-| ⬜ | **8** — prose sweep + how-to page | **← NEXT** |
-| ⬜ | **9** — final gate | |
+| ✅ | **8** — prose sweep + how-to page | done; CHANGELOG, how-to, output-channels fix |
+| ⬜ | **9** — final gate | **← NEXT** |
 
 **Tests so far: 257.** All pass against a rowan3 stone. The branch and its stones now
 live entirely on thor (`/thor1/users/ewinger/worktrees/issue616-tonel-fileout`), so the
@@ -66,7 +66,7 @@ NFS symlink workaround is gone. Lint, format and compile clean.
 
 **Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
 Steps A and 1, and Step 3 was cut, so the order worked so far is
-**A → 0 → 1 → 4 → 5 → 6 → (8 next)**, with the remainder of 2 deferred. The numbers are labels,
+**A → 0 → 1 → 4 → 5 → 6 → 8 → (9 next)**, with the remainder of 2 deferred. The numbers are labels,
 not a sequence.
 
 Decisions taken since the plan was first written, each from review feedback, all recorded
@@ -1006,7 +1006,7 @@ Remaining work is to publish its answer and act on it:
 - Check `client/src/languageIds.ts`: its doc-comment already says a Tonel `.st` file is
   deliberately outside `BREAKPOINT_GUTTER_LANGUAGES`. Still true — verify, don't edit.
 
-## Step 8 — Prose sweep (CLAUDE.md rule) ⬜
+## Step 8 — Prose sweep (CLAUDE.md rule) ✅ DONE
 
 Grep for the claims this change falsifies before calling it done:
 `FILE_OUT_FILTERS`, `gemstone-topaz`, `fileformat utf8`, "every route back in",

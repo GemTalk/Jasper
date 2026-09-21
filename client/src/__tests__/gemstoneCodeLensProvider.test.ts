@@ -64,8 +64,13 @@ describe('GemStoneCodeLensProvider', () => {
   });
 
   const isFileIn = (lens: CodeLens) => lens.command?.command === 'gemstone.fileInFile';
+  const isTonelFileIn = (lens: CodeLens) => lens.command?.command === 'gemstone.fileInTonelFile';
   const fileInLenses = (lenses: CodeLens[]) => lenses.filter(isFileIn);
-  const methodLenses = (lenses: CodeLens[]) => lenses.filter((l) => !isFileIn(l));
+  const tonelFileInLenses = (lenses: CodeLens[]) => lenses.filter(isTonelFileIn);
+  // Everything that is not one of the two file-in links, i.e. the senders/
+  // implementors lenses on methods.
+  const methodLenses = (lenses: CodeLens[]) =>
+    lenses.filter((l) => !isFileIn(l) && !isTonelFileIn(l));
 
   // The count is computed off the resolve path (so a spinner can paint first),
   // so resolving twice with the deferred work flushed in between yields the count.
@@ -184,11 +189,47 @@ true
     });
 
     it('stays off a file whose language is not Topaz', () => {
-      // The provider also runs on `.gst`/`.st` files, which File In does not read —
-      // its editor menus name gemstone-topaz, and the lens must match them.
+      // The provider also runs on `.gst`/`.st` files. A `.st` IS readable now —
+      // Tonel file in reads it (issue #616) — but by a different reader, so it gets
+      // its own lens below and must not get this one. Handing a Tonel file to the
+      // Topaz reader fails in a way that reads as a broken file.
       const doc = { ...createMockDocument('run\ntrue\n%'), languageId: 'gemstone-tonel' };
 
       expect(fileInLenses(provider.provideCodeLenses(doc as TextDocument))).toEqual([]);
+    });
+
+    it('offers the Tonel lens on a .st file', () => {
+      const doc = {
+        ...createMockDocument("Class {\n\t#name : 'Widget'\n}\n"),
+        languageId: 'gemstone-tonel',
+      };
+      const lenses = tonelFileInLenses(provider.provideCodeLenses(doc));
+
+      expect(lenses).toHaveLength(1);
+      expect(lenses[0].command?.title).toContain('Tonel');
+    });
+
+    it('keeps the Tonel lens off a Topaz file', () => {
+      // The two formats have different readers; each file gets exactly one link.
+      expect(
+        tonelFileInLenses(provider.provideCodeLenses(createMockDocument('run\ntrue\n%'))),
+      ).toEqual([]);
+    });
+
+    it('keeps the Tonel lens off a gemstone:// method, which is not a file on disk', () => {
+      const doc = {
+        ...createMockDocument('name\n  ^ name', 'gemstone'),
+        languageId: 'gemstone-tonel',
+      };
+
+      expect(tonelFileInLenses(provider.provideCodeLenses(doc as TextDocument))).toEqual([]);
+    });
+
+    it('keeps the Tonel lens off an empty file', () => {
+      // Same rule as the Topaz lens: nothing to file in, so no offer to.
+      const doc = { ...createMockDocument('   \n'), languageId: 'gemstone-tonel' };
+
+      expect(tonelFileInLenses(provider.provideCodeLenses(doc as TextDocument))).toEqual([]);
     });
 
     it('comes back from resolveCodeLens exactly as it went in', () => {
