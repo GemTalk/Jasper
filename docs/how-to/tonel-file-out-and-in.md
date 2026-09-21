@@ -30,9 +30,12 @@ Jasper asks the session whether the Rowan classes it drives are actually reachab
 — not the version number, not the extent's filename. If they are not, the Tonel
 entries are absent rather than present and failing when clicked.
 
-If the entries are missing on a stone you believe is rowan3, run the command from
-the Command Palette anyway: it refuses with an explanation, which tells you whether
-the stone or the session is the problem.
+The file-out and file-in commands are **not in the Command Palette** — they need a
+class or a file to act on, so like every other file out/in command they are reachable
+only from a menu or a code lens. If the Explorer entry is missing on a stone you
+believe is rowan3, open any `.st` file instead and click **File In Tonel to
+GemStone**: that link is deliberately always shown, and the command refuses with an
+explanation, which tells you whether the stone or the session is the problem.
 
 A session as `DataCurator` works. Rowan's classes live in symbol dictionaries that
 are in SystemUser's symbol list and not DataCurator's, and Jasper reaches through to
