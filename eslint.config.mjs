@@ -587,13 +587,16 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         ...HARNESS_SESSION_SELECTORS,
-        // The two routes past a bare property selector, closed as the password
-        // selectors above close them: computed access (`.value`, no `.name`),
-        // and the destructuring bind, which is no `MemberExpression` at all.
-        // `ObjectPattern`-anchored, so a mock *definition* stays legal:
-        // `makeGci({ isAvailable: ... })` in codeExecutor.test.ts.
+        // Call-shaped for the reason the raw-login selector above states: a
+        // `vi.fn()`-mocked binding is legitimately *named* in assertions
+        // (`expect(gci.isAvailable).toHaveBeenCalledWith(...)`), and only a
+        // call hand-rolls a skip. The two routes past it are closed as the
+        // password selectors close them: computed access (`.value`, no
+        // `.name`), and the destructuring bind, which is no `CallExpression`
+        // at all. `ObjectPattern`-anchored, so a mock *definition* stays
+        // legal: `makeGci({ isAvailable: ... })` in codeExecutor.test.ts.
         {
-          selector: `MemberExpression:matches([property.name=${CAPABILITY_CHECK_NAMES}], [property.value=${CAPABILITY_CHECK_NAMES}])`,
+          selector: `CallExpression:matches([callee.property.name=${CAPABILITY_CHECK_NAMES}], [callee.property.value=${CAPABILITY_CHECK_NAMES}])`,
           message: HAND_ROLLED_CAPABILITY_CHECK,
         },
         {
