@@ -43,9 +43,24 @@ npm run test:acceptance:docker  # run them headless in a Linux container (no win
 npm run test:acceptance:report  # open the HTML report / flip through per-step screenshots
 ```
 
+## Criteria of Done
+
 Before considering something done, run `npm run lint && npm run format:check && npm run compile && npm test` — **attempt them directly; a test stone is usually already running.** `npm test` includes an integration test that logs into a live stone; if none is reachable it **fails with a connection error rather than skipping** — that failure is the signal (not a reason to avoid running). Only then start one with `npm run test:server:start` and re-run. `npm run test:server:list` confirms whether a stone is already up.
 
+## Linter rules
+
 Never add `eslint-disable` or change a rule's severity to silence a lint error — fix the underlying code. If a rule genuinely can't be satisfied, add a scoped disable (single line, not file-wide) with a comment explaining why, and flag it to the user before committing. `eslint-comments/require-description` enforces that every disable comment carries a `-- reason`, so an undocumented one fails `npm run lint` outright.
+
+## Comments
+
+Comments explain what the code cannot: a constraint, a non-obvious/counterintuitive detail, a rejected alternative, a failure mode, or why the simpler version is wrong. Before writing one, check it against these tests - if it fails any, cut it:
+
+- Does the next line already say this? Delete it.
+- Does a comment nearby already establish this mechanic? Point at it instead of re-deriving it.
+
+Length is not the signal, density is. A 15-line comment carrying a real invariant is correct; a one-liner paraphrasing an identifier is too long. Never flatten an existing load-bearing explanation to make it shorter.
+
+## Additional information
 
 Digging into an unfamiliar area? Project docs are indexed in [docs/README.md](docs/README.md) — check there first.
 

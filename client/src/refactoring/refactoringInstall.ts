@@ -34,6 +34,7 @@
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString, checkRefactoringSupportAvailable } from '../browserQueries';
 import { compareGemStoneVersions } from '../gemStoneVersion';
+import { normalizeGemStoneVersion } from '../gemStoneVersionParsing';
 import {
   gemCanRead,
   gsStringLiteral,
@@ -207,15 +208,15 @@ function fileInExpr(session: ActiveSession, serverPath: string): string {
 
 /**
  * True when `stoneVersion` is `SERVER_UTF8_FILEIN_MIN_VERSION` (3.7) or later, so
- * `GsFileIn fromPath:on:#serverUtf8File to:` is available. Extracts the leading
- * numeric token from the raw `GciTsVersion` string (which may carry a build
- * suffix) and compares semantically; a missing or unparseable version falls back
- * to the older `fromServerPath:` form, which exists on every supported release.
+ * `GsFileIn fromPath:on:#serverUtf8File to:` is available. `normalizeGemStoneVersion`
+ * extracts the leading numeric token from the raw `GciTsVersion` string (which
+ * may carry a build suffix) and compares semantically; a missing or
+ * unparseable version falls back to the older `fromServerPath:` form, which
+ * exists on every supported release.
  */
 export function supportsServerUtf8FileIn(stoneVersion: string | undefined): boolean {
-  const numeric = stoneVersion?.match(/^\d+\.\d+(\.\d+){0,2}/)?.[0];
-  if (!numeric) return false;
-  const padded = numeric.split('.').length < 3 ? `${numeric}.0` : numeric;
+  const padded = normalizeGemStoneVersion(stoneVersion);
+  if (!padded) return false;
   try {
     return compareGemStoneVersions(padded, `${SERVER_UTF8_FILEIN_MIN_VERSION}.0`) >= 0;
   } catch {

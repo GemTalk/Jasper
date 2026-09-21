@@ -11,6 +11,9 @@ import vitest from '@vitest/eslint-plugin';
 // same module `gciLibrary.ts` does. Keep that file free of non-erasable syntax
 // (`enum`, `namespace`), which would break lint while still compiling.
 import { GCI_OPTIONAL_FUNCTIONS } from './client/src/gciLibrary/optionalFunctions.ts';
+// Same reasoning as the import above: Node strips the types, so this reads
+// the same module the codebase does. Imported as `.ts` on purpose.
+import { absenceHazard } from './client/src/gciLibrary/absenceHazard.ts';
 
 // `vitest/no-restricted-matchers` matches the *whole* modifier chain, and for a
 // plain matcher name it compares by exact equality — so a `toBeTruthy` key does
@@ -69,6 +72,38 @@ const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
 const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
+// Only a raw-wrapper test -- one that exercises the GCI binding layer
+// directly, under client/src/gciLibrary/__tests__/ -- may legitimately skip
+// on a missing symbol. One level up, a missing symbol is a *behavior* (a
+// fallback, a refusal message) that a feature-level test must assert on every
+// version; skipping there hides a missing fallback instead of exercising it.
+const HAND_ROLLED_CAPABILITY_CHECK =
+  'Use requireGciCapability from client/src/gciLibrary/__tests__/, not a hand-rolled isAvailable/supportsNonBlockingLogin check. Only a raw-wrapper test exercising the GCI binding layer directly may skip on a missing symbol -- a feature-level test should assert the fallback instead.';
+const IMPORT_REQUIRE_GCI_CAPABILITY =
+  'A capability check belongs one level down, in client/src/gciLibrary/__tests__/, wrapped in requireGciCapability -- not imported and hand-rolled up here. Only a raw-wrapper test exercising the GCI binding layer directly may skip on a missing symbol; a feature-level test should assert the fallback instead.';
+// The two hand-rolled capability checks the mechanism above replaces. Shared
+// by the selectors below, which differ only in the syntax they read a name
+// with -- the same split as `PASSWORD_NAMES`/`RAW_LOGIN_NAMES`.
+const CAPABILITY_CHECK_NAMES = '/^(isAvailable|supportsNonBlockingLogin)$/';
+
+// Call-shaped for the reason the raw-login selector below states: a
+// `vi.fn()`-mocked binding is legitimately *named* in assertions
+// (`expect(gci.isAvailable).toHaveBeenCalledWith(...)`), and only a call
+// hand-rolls a skip. The two routes past it are closed as the password
+// selectors close them: computed access (`.value`, no `.name`), and the
+// destructuring bind, which is no `CallExpression` at all.
+// `ObjectPattern`-anchored, so a mock *definition* stays legal:
+// `makeGci({ isAvailable: ... })` in codeExecutor.test.ts.
+const CAPABILITY_CHECK_SELECTORS = [
+  {
+    selector: `CallExpression:matches([callee.property.name=${CAPABILITY_CHECK_NAMES}], [callee.property.value=${CAPABILITY_CHECK_NAMES}])`,
+    message: HAND_ROLLED_CAPABILITY_CHECK,
+  },
+  {
+    selector: `ObjectPattern > Property:matches([key.name=${CAPABILITY_CHECK_NAMES}], [key.value=${CAPABILITY_CHECK_NAMES}])`,
+    message: HAND_ROLLED_CAPABILITY_CHECK,
+  },
+];
 
 // A halt offers ONE debugger -- the GemStone Debugger panel. The DAP debugger is
 // still registered (`registerDebugAdapterDescriptorFactory('gemstone', ...)` in
@@ -111,48 +146,12 @@ const TS_EXTENSION_IMPORT = {
 //
 // Background: `docs/explanation/gci-version-compatibility.md`.
 //
-// `addedIn` and `removedIn` interpolate their value, so widening either still
-// renders a hazard. `absentOn` is the one axis whose message is a *phrase*
-// rather than the value, so this config has to restate something the type
-// already knows -- keyed rather than compared, and an unknown key throws.
-// Widening `GciAbsenceReason['absentOn']` without adding a clause here fails
-// the config load, instead of quietly rendering `may be absent ()` with nothing
-// between the parens.
-const ABSENT_ON_CLAUSE = {
-  win32:
-    'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
-};
-
-const absentOnClause = (name, absentOn) => {
-  const clause = ABSENT_ON_CLAUSE[absentOn];
-  if (clause === undefined) {
-    throw new Error(
-      `${name} carries absentOn: '${absentOn}', which eslint.config.mjs has no hazard clause for. ` +
-        'Add one to ABSENT_ON_CLAUSE next to the GciAbsenceReason widening that introduced it.',
-    );
-  }
-  return clause;
-};
-
+// The hazard-message rendering (including both throw-guards: an unknown
+// `absentOn` value, and an entry whose every axis renders nothing) lives in
+// `client/src/gciLibrary/absenceHazard.ts`, so it is shared with anything
+// else that needs to explain why a GCI symbol may be absent.
 const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name, reason]) => {
-  // One clause per axis the registry records, so a two-axis entry
-  // (`GciTsNbLogin_`) names both hazards rather than the first one found.
-  const hazard = [
-    reason.addedIn && `absent before ${reason.addedIn}`,
-    reason.absentOn && absentOnClause(name, reason.absentOn),
-    reason.removedIn && `removed in ${reason.removedIn}`,
-  ]
-    .filter(Boolean)
-    .join('; ');
-  // A new axis on `GciAbsenceReason` that nothing above reads leaves an entry
-  // with no hazard at all. The rule would still fire, but on the message this
-  // rewrite exists to produce -- so fail the load rather than ship the hole.
-  if (hazard === '') {
-    throw new Error(
-      `${name} is gated by ${JSON.stringify(reason)}, no part of which eslint.config.mjs renders. ` +
-        'Add a clause for the new GciAbsenceReason axis to the hazard list above.',
-    );
-  }
+  const hazard = absenceHazard(name, reason);
   const message = `${name} may be absent from the loaded library (${hazard}). Put the cross-version conditional inside client/src/gciLibrary/ and call a helper from there, so this call site doesn't have to know about optionality.`;
   // Gated on the *mention*, not the call shape. The `RAW_LOGIN_NAMES`
   // selectors below are call-shaped because a test legitimately names a mocked
@@ -183,6 +182,111 @@ const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name,
     { selector: `MemberExpression[property.quasis.0.value.raw='${name}']`, message },
   ];
 });
+
+// Shared by both harness-session blocks below, which must exempt the same
+// files, so each restates its whole `ignores` array (see TS_EXTENSION_IMPORT
+// above for why).
+//
+// `client/src/__tests__/gci/**` is being deleted, not fixed -- every file
+// there logs in for itself, so the rule would only collect disables that
+// leave with the files. The other three are the unit tests *of* the bindings,
+// where constructing a `GciLibrary` is the point; all three mock `koffi`, so
+// a call reaches a `vi.fn()` and never a stone -- no session to arm, nothing
+// for this rule to protect. Matched by basename, so moving one keeps its
+// exemption.
+const HARNESS_SESSION_IGNORES = [
+  'client/src/__tests__/gci/**',
+  '**/gciLoginQuiet.test.ts',
+  '**/missingGciFunctions.test.ts',
+  '**/optionalFuncSignature.test.ts',
+];
+
+// Extracted so the capability-confinement block below can restate it: the
+// second block has to carry its own full copy of every selector here, not
+// just the two new ones it adds (see TS_EXTENSION_IMPORT above for why).
+const HARNESS_SESSION_SELECTORS = [
+  { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
+  // `callee.name` reads a bare identifier only, so a namespace import
+  // (`new gciLib.GciLibrary(...)`) walks past it. The three selectors
+  // here close the aliasing routes at their narrowest point -- the
+  // namespaced construction, the renaming import itself, and the
+  // assignment to a local -- rather than banning the import outright,
+  // which would also hit the many tests that name `GciLibrary` purely as
+  // a type annotation and the few that use its statics.
+  { selector: "NewExpression[callee.property.name='GciLibrary']", message: OWN_GCI_LIBRARY },
+  {
+    selector: "ImportSpecifier[imported.name='GciLibrary'][local.name!='GciLibrary']",
+    message: OWN_GCI_LIBRARY,
+  },
+  {
+    selector:
+      "VariableDeclarator:matches([init.name='GciLibrary'], [init.property.name='GciLibrary'])",
+    message: OWN_GCI_LIBRARY,
+  },
+  {
+    // Shaped as a call, not a bare member access: `vi.fn()`-mocked
+    // libraries are *named* in assertions all over the unit tests
+    // (`expect(gci.GciTsLogin).not.toHaveBeenCalled()`), and flagging
+    // those would flag the tests that prove a path does not log in. A
+    // call is the thing that acquires a session. Matched by `.name` and
+    // `.value` both, as the password selectors below are: in
+    // `gci['GciTsLogin'](...)` the property is a `Literal`, which carries
+    // `.value` and no `.name`.
+    selector: `CallExpression:matches([callee.property.name=${RAW_LOGIN_NAMES}], [callee.property.value=${RAW_LOGIN_NAMES}])`,
+    message: RAW_GCI_LOGIN,
+  },
+  {
+    // Keyed on the method and its arity, not the receiver's name: a
+    // receiver-name selector only reads `callee.object.name`, which does
+    // not exist on a `MemberExpression` receiver, so it would miss
+    // `testContext.gciLibrary.login(...)` -- the most natural spelling
+    // inside a `useIntegrationTest` callback -- along with every receiver
+    // not spelled `gci`/`gciLibrary`. Arity is what actually identifies
+    // it: `GciLibrary.login` takes exactly four arguments, while the
+    // logins a test may legitimately call take other counts. Both member and bare
+    // call forms, so pulling `login` out of the library into a local
+    // first does not slip past.
+    selector: "CallExpression[callee.property.name='login'][arguments.length=4]",
+    message: GCI_LIBRARY_LOGIN,
+  },
+  {
+    selector: "CallExpression[callee.name='login'][arguments.length=4]",
+    message: GCI_LIBRARY_LOGIN,
+  },
+  {
+    // The password read off something, for a test that goes to the
+    // environment (or a config object) instead of through the helper. A
+    // property selector, so the receiver is irrelevant -- but a `.name`
+    // one alone matches only a *non-computed* access: in
+    // `process.env['VITE_GEMSTONE_PASSWORD']` the property is a
+    // `Literal`, which carries `.value` and no `.name`, so both are
+    // matched. The other VITE_GEMSTONE_* values stay allowed -- tests
+    // read the gem NRS and library path for reasons that have nothing to
+    // do with logging in.
+    selector: `MemberExpression:matches([property.name=${PASSWORD_NAMES}], [property.value=${PASSWORD_NAMES}])`,
+    message: LOGIN_CREDENTIALS,
+  },
+  {
+    // `const { VITE_GEMSTONE_PASSWORD } = process.env` is not a
+    // `MemberExpression` at all, and destructuring the environment is
+    // ordinary enough in test setup to be the next thing reached for once
+    // the selector above stops the direct read. Anchored on
+    // `ObjectPattern` so it only reads the binding side: the mock-env
+    // object literal in testConnection.test.ts is an `ObjectExpression`
+    // and stays legal.
+    selector: `ObjectPattern > Property:matches([key.name=${PASSWORD_NAMES}], [key.value=${PASSWORD_NAMES}])`,
+    message: LOGIN_CREDENTIALS,
+  },
+  {
+    // The import ban below only sees the module specifier, so a call
+    // that reaches the fork query through a re-export slips past it.
+    // Keyed on a call through a receiver: the direct-import form stays
+    // the import rule's job, and the fork query's own unit test (bare
+    // calls on a mocked executor, no stone) is left alone.
+    selector: 'CallExpression[callee.property.name=/^(canForkGem|forkGemRunning)$/]',
+    message: FORKED_GEM,
+  },
+];
 
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
@@ -328,9 +432,8 @@ export default tseslint.config(
     // Matched by basename, not by path: most client tests live in a nested
     // `__tests__` (client/src/enhancedInspector/__tests__/ and its siblings), which
     // `client/src/__tests__/**` does not cover -- those files were exempt only
-    // because the `**/*.test.ts` block further down configures this same rule, and
-    // flat config *replaces* a rule's options rather than merging them, which
-    // silently dropped these selectors for everything it matched. That left the
+    // because the `**/*.test.ts` block further down configures this same rule
+    // (see TS_EXTENSION_IMPORT above for why that drops these selectors). That left the
     // exclusion true by accident and false for a `__tests__/support/` helper, which
     // is not a `*.test.ts` and so was covered by neither.
     files: ['client/src/**/*.ts'],
@@ -441,9 +544,8 @@ export default tseslint.config(
       '**/__mocks__/**',
       // A test file outside `__tests__/` is exempt too, and has to be listed
       // here to say so: the test-session block below configures
-      // `no-restricted-syntax` for these globs, and flat config *replaces* a
-      // rule's options rather than merging them -- so these selectors are
-      // dropped for such a file whether or not this line exists. Stated
+      // `no-restricted-syntax` for these globs, which drops these selectors
+      // for such a file regardless (see TS_EXTENSION_IMPORT above for why). Stated
       // explicitly rather than left to fall out of block ordering, which is
       // invisible at the call site. Not `**/*.test.tsx`: the `files` above are
       // all `*.ts`, so it could never match.
@@ -458,116 +560,12 @@ export default tseslint.config(
   },
   {
     // Confines every test to the harness's session (see the message constants
-    // above for why).
-    //
-    // Four exemptions, for two different reasons:
-    //
-    // `client/src/__tests__/gci/**` is being deleted, not fixed. Every file
-    // there logs in for itself, so the rule would only collect disables that
-    // leave with the files.
-    //
-    // The other three are the unit tests *of* the bindings themselves, and they
-    // are exempt as whole files because constructing a `GciLibrary` is the whole
-    // point of each: `gciLoginQuiet` calls all four raw wrappers to assert the
-    // quiet bit reaches the native layer, `missingGciFunctions` calls the ones
-    // an older library lacks to assert each throws, and `optionalFuncSignature`
-    // constructs one to prove `optionalFunc` rejects an entry whose signature
-    // declares a different symbol. All three mock `koffi`, so a call reaches a
-    // `vi.fn()` and never a stone -- there is no session to arm, and so nothing
-    // for this rule to protect. Matched by basename rather than path, so moving
-    // any of them keeps its exemption.
+    // above for why). Exemptions are `HARNESS_SESSION_IGNORES` above -- see
+    // that const's comment for why each of the four is there.
     files: ['**/*.test.ts', '**/*.spec.ts', '**/*.test.tsx'],
-    ignores: [
-      'client/src/__tests__/gci/**',
-      '**/gciLoginQuiet.test.ts',
-      '**/missingGciFunctions.test.ts',
-      '**/optionalFuncSignature.test.ts',
-    ],
+    ignores: HARNESS_SESSION_IGNORES,
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
-        // `callee.name` reads a bare identifier only, so a namespace import
-        // (`new gciLib.GciLibrary(...)`) walks past it. The three selectors
-        // here close the aliasing routes at their narrowest point -- the
-        // namespaced construction, the renaming import itself, and the
-        // assignment to a local -- rather than banning the import outright,
-        // which would also hit the many tests that name `GciLibrary` purely as
-        // a type annotation and the few that use its statics.
-        { selector: "NewExpression[callee.property.name='GciLibrary']", message: OWN_GCI_LIBRARY },
-        {
-          selector: "ImportSpecifier[imported.name='GciLibrary'][local.name!='GciLibrary']",
-          message: OWN_GCI_LIBRARY,
-        },
-        {
-          selector:
-            "VariableDeclarator:matches([init.name='GciLibrary'], [init.property.name='GciLibrary'])",
-          message: OWN_GCI_LIBRARY,
-        },
-        {
-          // Shaped as a call, not a bare member access: `vi.fn()`-mocked
-          // libraries are *named* in assertions all over the unit tests
-          // (`expect(gci.GciTsLogin).not.toHaveBeenCalled()`), and flagging
-          // those would flag the tests that prove a path does not log in. A
-          // call is the thing that acquires a session. Matched by `.name` and
-          // `.value` both, as the password selectors below are: in
-          // `gci['GciTsLogin'](...)` the property is a `Literal`, which carries
-          // `.value` and no `.name`.
-          selector: `CallExpression:matches([callee.property.name=${RAW_LOGIN_NAMES}], [callee.property.value=${RAW_LOGIN_NAMES}])`,
-          message: RAW_GCI_LOGIN,
-        },
-        {
-          // Keyed on the method and its arity, not the receiver's name: a
-          // receiver-name selector only reads `callee.object.name`, which does
-          // not exist on a `MemberExpression` receiver, so it would miss
-          // `testContext.gciLibrary.login(...)` -- the most natural spelling
-          // inside a `useIntegrationTest` callback -- along with every receiver
-          // not spelled `gci`/`gciLibrary`. Arity is what actually identifies
-          // it: `GciLibrary.login` takes exactly four arguments, while the
-          // logins a test may legitimately call take other counts. Both member and bare
-          // call forms, so pulling `login` out of the library into a local
-          // first does not slip past.
-          selector: "CallExpression[callee.property.name='login'][arguments.length=4]",
-          message: GCI_LIBRARY_LOGIN,
-        },
-        {
-          selector: "CallExpression[callee.name='login'][arguments.length=4]",
-          message: GCI_LIBRARY_LOGIN,
-        },
-        {
-          // The password read off something, for a test that goes to the
-          // environment (or a config object) instead of through the helper. A
-          // property selector, so the receiver is irrelevant -- but a `.name`
-          // one alone matches only a *non-computed* access: in
-          // `process.env['VITE_GEMSTONE_PASSWORD']` the property is a
-          // `Literal`, which carries `.value` and no `.name`, so both are
-          // matched. The other VITE_GEMSTONE_* values stay allowed -- tests
-          // read the gem NRS and library path for reasons that have nothing to
-          // do with logging in.
-          selector: `MemberExpression:matches([property.name=${PASSWORD_NAMES}], [property.value=${PASSWORD_NAMES}])`,
-          message: LOGIN_CREDENTIALS,
-        },
-        {
-          // `const { VITE_GEMSTONE_PASSWORD } = process.env` is not a
-          // `MemberExpression` at all, and destructuring the environment is
-          // ordinary enough in test setup to be the next thing reached for once
-          // the selector above stops the direct read. Anchored on
-          // `ObjectPattern` so it only reads the binding side: the mock-env
-          // object literal in testConnection.test.ts is an `ObjectExpression`
-          // and stays legal.
-          selector: `ObjectPattern > Property:matches([key.name=${PASSWORD_NAMES}], [key.value=${PASSWORD_NAMES}])`,
-          message: LOGIN_CREDENTIALS,
-        },
-        {
-          // The import ban below only sees the module specifier, so a call
-          // that reaches the fork query through a re-export slips past it.
-          // Keyed on a call through a receiver: the direct-import form stays
-          // the import rule's job, and the fork query's own unit test (bare
-          // calls on a mocked executor, no stone) is left alone.
-          selector: 'CallExpression[callee.property.name=/^(canForkGem|forkGemRunning)$/]',
-          message: FORKED_GEM,
-        },
-      ],
+      'no-restricted-syntax': ['error', ...HARNESS_SESSION_SELECTORS],
       // The typescript-eslint drop-in, for `allowTypeImports`: naming a type
       // from the fork query forks nothing.
       '@typescript-eslint/no-restricted-imports': [
@@ -575,6 +573,77 @@ export default tseslint.config(
         {
           patterns: [
             { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+            TS_EXTENSION_IMPORT,
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Confines the GCI capability-skip mechanism (`requireGciCapability`, and
+    // the `isAvailable`/`supportsNonBlockingLogin` checks it wraps) to
+    // raw-wrapper tests under `client/src/gciLibrary/__tests__/**` -- see the
+    // message constants above for why a feature-level test must not use it.
+    //
+    // This is a separate block layered over the harness-session block above,
+    // rather than the two new selectors/pattern added straight into that
+    // block's arrays, because flat config *replaces* a rule's options per
+    // block (see TS_EXTENSION_IMPORT above for why). Widening that block's own `ignores` to exempt
+    // `gciLibrary/__tests__/**` would have exempted it from the *raw-login*
+    // selectors too, which must keep firing there. So this block restates
+    // (`HARNESS_SESSION_SELECTORS`, plus the same `forkGem`/`.ts`-extension
+    // import patterns) everything the block above configures, adds the two
+    // new selectors and the new import pattern, and its own `ignores` widens
+    // `HARNESS_SESSION_IGNORES` by one entry, only for this concern.
+    files: ['**/*.test.ts', '**/*.spec.ts', '**/*.test.tsx'],
+    ignores: [...HARNESS_SESSION_IGNORES, 'client/src/gciLibrary/__tests__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...HARNESS_SESSION_SELECTORS,
+        ...CAPABILITY_CHECK_SELECTORS,
+      ],
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+            {
+              group: ['**/gciLibrary/__tests__/requireGciCapability'],
+              message: IMPORT_REQUIRE_GCI_CAPABILITY,
+            },
+            TS_EXTENSION_IMPORT,
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The same confinement for test *helpers*: not being test files, they miss
+    // the globs above, and factoring a repeated skip into one is the likeliest
+    // route around the rule. Carries only the capability selectors -- these
+    // helpers are the harness `HARNESS_SESSION_SELECTORS` points every test at,
+    // so those would fire on the legitimate library construction and login in
+    // `useIntegrationTest.ts`, `testConnection.ts` and `testActiveSession.ts`.
+    // `ignores` subtracts the test files back out, so this block never overlaps
+    // the one above (whose options it would otherwise replace, per above).
+    files: ['client/src/**/__tests__/**/*.ts'],
+    ignores: [
+      '**/*.test.ts',
+      '**/*.spec.ts',
+      'client/src/__tests__/gci/**',
+      'client/src/gciLibrary/__tests__/**',
+    ],
+    rules: {
+      'no-restricted-syntax': ['error', ...CAPABILITY_CHECK_SELECTORS],
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/gciLibrary/__tests__/requireGciCapability'],
+              message: IMPORT_REQUIRE_GCI_CAPABILITY,
+            },
             TS_EXTENSION_IMPORT,
           ],
         },
