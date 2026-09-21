@@ -70,14 +70,45 @@ describe('readTonelClass', () => {
     expect(readTonelClass(exec(TONEL_NO_ROWAN), TONEL)).toEqual({
       ok: false,
       error: 'Rowan is not reachable from this session',
+      line: 1,
     });
+  });
+
+  it('reports the line the parse failed on, not line 1', () => {
+    // A parse failure with no line is nearly useless on a 500-line class file: the
+    // developer is told the file is broken and left to find where. Rowan's own
+    // reader enriches the error the same way, from the stream position.
+    const text = `Class {\n\t#name : 'X'\n}\n\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n`;
+    const positionOfLine6 = text.indexOf('X >> m');
+    const result = readTonelClass(
+      exec(`${TONEL_ERROR_PREFIX}${positionOfLine6}\tInvalid class name`),
+      text,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.line).toBe(6);
+    expect(result.error).toBe('Invalid class name');
+  });
+
+  it('falls back to line 1 when the stone reports no position', () => {
+    const result = readTonelClass(exec(`${TONEL_ERROR_PREFIX}\tsomething broke`), TONEL);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.line).toBe(1);
+    expect(result.error).toBe('something broke');
+  });
+
+  it('asks the parser where it stopped', () => {
+    // The position has to come from the stone: only it knows how far the parser got.
+    expect(codeFor()).toContain('position');
   });
 
   it('answers an error sentinel rather than raising', () => {
     expect(codeFor()).toContain('on: Error do:');
-    expect(readTonelClass(exec(`${TONEL_ERROR_PREFIX}near line 3: bad header`), TONEL)).toEqual({
+    expect(readTonelClass(exec(`${TONEL_ERROR_PREFIX}\tbad header`), TONEL)).toEqual({
       ok: false,
-      error: 'near line 3: bad header',
+      error: 'bad header',
+      line: 1,
     });
   });
 
@@ -110,5 +141,6 @@ describe('readTonelClass', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/truncat/i);
+    expect(result.line).toBe(1);
   });
 });

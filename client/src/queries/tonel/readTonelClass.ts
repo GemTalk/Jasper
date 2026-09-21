@@ -45,7 +45,22 @@ export const TONEL_NO_ROWAN = '!NO_ROWAN';
 export const TONEL_ERROR_PREFIX = '!ERR ';
 
 /** What the parse produced, or why it did not. */
-export type TonelReadResult = { ok: true; tonelClass: TonelClass } | { ok: false; error: string };
+export type TonelReadResult =
+  | { ok: true; tonelClass: TonelClass }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * 1-based line the parse stopped on, as an editor shows it.
+       *
+       * A parse failure with no line is nearly useless on a 500-line class file —
+       * the developer is told it is broken and left to find where. Rowan's own
+       * reader enriches its errors the same way; it reads the file back to count
+       * lines, and since we parse from a string we count them here instead.
+       * Falls back to 1 when the stone reports no position.
+       */
+      line: number;
+    };
 
 /**
  * Parse one Tonel class file's text.
@@ -54,7 +69,7 @@ export type TonelReadResult = { ok: true; tonelClass: TonelClass } | { ok: false
  * to report against the file, not an exception to surface as a broken command.
  */
 export function readTonelClass(execute: QueryExecutor, tonelText: string): TonelReadResult {
-  const code = `| rwLookup parserCls projectCls visitorCls proj pkg visitor defs clsDef ws emit names |
+  const code = `| rwLookup parserCls projectCls visitorCls proj pkg visitor defs clsDef ws emit names strm |
 ${ROWAN_LOOKUP_PRELUDE}
 parserCls := ${rowanLookupExpr('RwTonelParser')}.
 projectCls := ${rowanLookupExpr('RwResolvedProjectV2')}.
@@ -74,10 +89,8 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
     currentPackageDefinition: pkg;
     _packageConvention: 'Rowan';
     yourself.
-  defs := parserCls
-    on: (ReadStream on: '${escapeString(tonelText)}')
-    filePath: 'jasper-file-in'
-    forReader: visitor.
+  strm := ReadStream on: '${escapeString(tonelText)}'.
+  defs := parserCls on: strm filePath: 'jasper-file-in' forReader: visitor.
   defs := defs start.
   clsDef := defs at: 1.
   clsDef isNil ifTrue: [^'${TONEL_ERROR_PREFIX}No class definition in this file'].
@@ -123,18 +136,40 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
         , (md protocol ifNil: ['as yet unclassified']) asString , (String with: Character lf)
         , md source asString].
   ws contents ]
-  on: Error do: [:e | ^'${TONEL_ERROR_PREFIX}' , e messageText]`;
+  "Answer where the parser stopped alongside the message: only the stone knows how
+   far it got, and the client turns the offset into a line number."
+  on: Error do: [:e |
+    ^'${TONEL_ERROR_PREFIX}'
+      , (strm ifNil: [''] ifNotNil: [:s | s position printString])
+      , (String with: Character tab)
+      , e messageText]`;
 
   const answer = execute(code);
   if (answer === TONEL_NO_ROWAN) {
-    return { ok: false, error: 'Rowan is not reachable from this session' };
+    return { ok: false, error: 'Rowan is not reachable from this session', line: 1 };
   }
   if (answer.startsWith(TONEL_ERROR_PREFIX)) {
-    return { ok: false, error: answer.slice(TONEL_ERROR_PREFIX.length) };
+    const [offset, ...rest] = answer.slice(TONEL_ERROR_PREFIX.length).split('\t');
+    return { ok: false, error: rest.join('\t'), line: lineAt(tonelText, offset) };
   }
   try {
     return { ok: true, tonelClass: decodeTonelClass(answer) };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: e instanceof Error ? e.message : String(e), line: 1 };
   }
+}
+
+/**
+ * The 1-based line containing `offset` characters into `text`.
+ *
+ * The offset is where the parser STOPPED, which is at or just past the problem —
+ * the same approximation Rowan's own reader makes. Better than no line at all,
+ * which is what the developer got before.
+ */
+function lineAt(text: string, offset: string): number {
+  const at = Number(offset);
+  if (!Number.isInteger(at) || at < 0) return 1;
+  let line = 1;
+  for (let i = 0; i < Math.min(at, text.length); i++) if (text[i] === '\n') line += 1;
+  return line;
 }

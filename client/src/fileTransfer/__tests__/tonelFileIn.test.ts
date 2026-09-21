@@ -10,8 +10,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('fs', () => ({ readFileSync: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals', 'Published']),
+  executeFetchString: vi.fn(() => ''),
+  tonelCapability: vi.fn(() => ({ available: true, missing: [] })),
   compileClassDefinition: vi.fn(() => 'Widget'),
   setClassComment: vi.fn(() => 'ok'),
   compileMethod: vi.fn(() => 'Compiled'),
@@ -23,7 +26,8 @@ vi.mock('../../browserQueries', () => ({
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { applyTonelClass, chooseTonelDictionary } from '../tonelFileIn';
+import * as fs from 'fs';
+import { applyTonelClass, chooseTonelDictionary, fileInTonelFile } from '../tonelFileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -59,6 +63,10 @@ beforeEach(() => {
   vi.mocked(queries.dictionariesContainingClass).mockImplementation((_s, name) =>
     name === 'Widget' ? [] : ['Globals'],
   );
+  // Real VS Code always answers a Thenable from these; the mock defaults to
+  // undefined, which the reporting path awaits.
+  vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+  vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
 });
 
 describe('applyTonelClass — the class definition', () => {
@@ -272,6 +280,44 @@ describe('applyTonelClass — what it must never do', () => {
     const outcome = applyTonelClass(SESSION, widget(), 'UserGlobals');
     expect(outcome.dictionary).toBe('UserGlobals');
     expect(outcome.className).toBe('Widget');
+  });
+});
+
+describe('fileInTonelFile — reporting a parse failure', () => {
+  it('logs the line the parse failed on, not the top of the file', async () => {
+    // What the developer sees in the GemStone File In channel. `…:1` on a 500-line
+    // file says "it is broken, go find it"; the real line says where.
+    const text = `Class {\n\t#name : 'X'\n}\n\n{ #category : 'a' }\nX >> m [\n`;
+    vi.mocked(fs.readFileSync).mockReturnValue(text);
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.executeFetchString).mockReturnValue(
+      `!ERR ${text.indexOf('X >> m')}\tInvalid class name`,
+    );
+
+    const outcome = await fileInTonelFile(SESSION, '/tmp/X.class.st');
+
+    expect(outcome?.errors).toHaveLength(1);
+    expect(outcome?.errors[0].line).toBe(6);
+    expect(outcome?.errors[0].message).toBe('Invalid class name');
+  });
+});
+
+describe('fileInTonelFile — refreshing the Explorer', () => {
+  it('reloads the panes after filing in', async () => {
+    // The panes hold what they last read. A method this file-in REMOVED is the case
+    // that matters: nothing else tells the developer it is gone, so without this the
+    // most destructive thing file-in does is also the least visible.
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals']);
+    vi.mocked(fs.readFileSync).mockReturnValue("Class {\n\t#name : 'Widget'\n}\n");
+    vi.mocked(queries.executeFetchString).mockReturnValue(
+      'NAME\t6\nWidget\nSUPER\t6\nObject\nTYPE\t6\nnormal\n' +
+        'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n',
+    );
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+
+    await fileInTonelFile(SESSION, '/tmp/Widget.class.st');
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
   });
 });
 

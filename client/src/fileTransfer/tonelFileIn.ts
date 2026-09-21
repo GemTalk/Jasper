@@ -259,11 +259,13 @@ export async function fileInTonelFile(
 
   const read = readTonelClass((code) => queries.executeFetchString(session, code), text);
   if (!read.ok) {
+    // read.line is where the parser stopped, so the log entry points at the actual
+    // problem rather than the top of the file.
     return reportTonelFileIn(filePath, {
       className: path.basename(filePath),
       dictionary: '',
       compiled: 0,
-      errors: [{ file: filePath, line: 1, message: read.error }],
+      errors: [{ file: filePath, line: read.line, message: read.error }],
     });
   }
 
@@ -271,7 +273,20 @@ export async function fileInTonelFile(
   // Dismissing the prompt files nothing in — and is not a failure worth logging.
   if (dictionary === undefined) return undefined;
 
-  return reportTonelFileIn(filePath, applyTonelClass(session, read.tonelClass, dictionary));
+  const outcome = applyTonelClass(session, read.tonelClass, dictionary);
+  reportTonelFileIn(filePath, outcome);
+
+  // The panes hold what they last read, so a method this file-in added or REMOVED is
+  // not visible until they reload — and a removal is the one a developer most needs to
+  // see, since nothing else tells them it happened. Best-effort, exactly as the chunk
+  // path does it: the file-in has already happened, so a refresh that cannot run must
+  // not turn a successful file-in into a failed command.
+  try {
+    await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  } catch {
+    // The Explorer isn't registered (or is mid-teardown) — nothing to refresh.
+  }
+  return outcome;
 }
 
 /** Write the outcome to the shared log, then summarise it. */
