@@ -126,13 +126,19 @@ describe('where File In is offered', () => {
 
   it('offers it in the GemStone Explorer, where File Out is', () => {
     // File Out lives on Explorer rows and File In did not live in that view at all, so
-    // the way back in was in another view entirely. A pane button (always visible) and
-    // a dictionary-row entry (where the right-click habit already goes).
-    const title = entriesIn('view/title', EXPLORER);
+    // the way back in was in another view entirely. Now: a button in the Actions &
+    // Navigation toolbar, and a dictionary-row entry (where the right-click habit
+    // already goes).
+    //
+    // NOT a pane title-bar button any more. VS Code renders those only while the pane
+    // is expanded AND hovered, so the button vanished exactly when a collapsed
+    // Dictionaries pane made it most needed — which is the whole reason that toolbar is
+    // a webview. It also reads a file into the SESSION rather than acting on the pane
+    // it sat in, so it belongs beside Commit and Abort. The button itself is asserted
+    // in explorerNavigationView.test.ts, which owns that toolbar.
     const row = entriesIn('view/item/context', EXPLORER);
 
-    expect(title.map((e) => e.when)).toEqual(['view == gemstoneExplorerDicts']);
-    expect(title[0]?.group).toMatch(/^navigation@/);
+    expect(entriesIn('view/title', EXPLORER)).toEqual([]);
     expect(row.map((e) => e.when)).toEqual([
       'view == gemstoneExplorerDicts && viewItem == explorerDict',
     ]);

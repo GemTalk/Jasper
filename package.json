@@ -2623,11 +2623,7 @@
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@7"
         },
-        {
-          "command": "gemstone.explorer.fileIn",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@7"
-        },
+
         {
           "command": "gemstone.explorer.newClassCategory",
           "when": "view == gemstoneExplorerCategories",
