@@ -18,6 +18,6 @@ export function requireGciCapability(
 ): void {
   ctx.skip(
     !gci.isAvailable(name),
-    `${name} is not in this GCI library (${absenceHazard(name, GCI_OPTIONAL_FUNCTIONS[name])})`,
+    `skipping: ${name} is not in this GCI library (${absenceHazard(name, GCI_OPTIONAL_FUNCTIONS[name])})`,
   );
 }
