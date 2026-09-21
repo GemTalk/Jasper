@@ -2740,8 +2740,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Offered on a row in the Testing view. A plain click there deliberately does
-    // not move the Explorer (the two navigations are independent), so this is how
-    // you ask for it.
+    // not move the Explorer (the two navigations are independent, and the activity
+    // bar shows one container at a time, so a click that took the sidebar would
+    // have to be clicked back before the next test), so this is how you ask for
+    // it — and asking brings the Explorer's container up as well as cascading its
+    // panes, the mirror of revealInTestExplorer focusing the Testing view first.
     vscode.commands.registerCommand(
       'gemstone.revealTestInExplorer',
       async (item?: { uri?: vscode.Uri }) => {

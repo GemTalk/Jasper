@@ -604,8 +604,9 @@
           if (typeof msg.referencesInPreview === 'boolean')
             referencesInPreview = msg.referencesInPreview;
           if (typeof msg.keyHint === 'string') referencesKeyHint = msg.keyHint;
-          // Starting values for the two Round-6 controls. `previewPane` arrives ONLY here: after
-          // this the toggle is the webview's own, so results messages must not carry (and undo) it.
+          // Starting values for the preview toggle and the All-scope filter. `previewPane`
+          // arrives ONLY here: after this the toggle is the webview's own, so results
+          // messages must not carry (and undo) it.
           if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
@@ -1295,6 +1296,17 @@
       });
     }
 
+    // Suppress the native Cut/Copy/Paste menu over the results list. A row there is
+    // a place to go, not text to edit, so all three entries are inert on one — and
+    // being the only menu offered, they read as the whole of what a right-click can
+    // do with a result. The PREVIEW pane and the query box keep theirs: the preview
+    // is source you may well want to copy out, and the box is a text field. Same
+    // split the Inspector draws between its Meta tab and its Definition/Comment
+    // sub-tabs, and the same one-liner the Actions & Navigation pane uses.
+    resultsEl.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault();
+    });
+
     doc.defaultView.addEventListener('message', onMessage);
 
     post('ready');
@@ -1310,7 +1322,7 @@
       rowCount: function () {
         return rows.length;
       },
-      // Round-6 controls (#40 preview toggle / #41 All-scope filter).
+      // Preview toggle and All-scope filter.
       setPreviewEnabled: setPreviewEnabled,
       previewEnabled: function () {
         return previewEnabled;

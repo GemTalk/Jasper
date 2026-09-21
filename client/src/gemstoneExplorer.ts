@@ -84,6 +84,7 @@ import {
 import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
 import { getGciLog, logInfo, logWarning } from './gciLog';
+import { focusGemStoneExplorer } from './explorerContainer';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
@@ -269,7 +270,10 @@ interface ExplorerState {
   dictIndex?: number; // 1-based symbolList position
   classCategory?: string; // undefined = show all classes in dict
   className?: string;
-  selectedSelector?: string; // last method opened (kept for reference)
+  // The method row the pane is showing as selected — written by a click in the pane
+  // and by every cascade reveal, because reapplyPaneHighlight rebuilds the highlight
+  // from it when a hidden pane reappears.
+  selectedSelector?: string;
   // Context recorded from the Methods pane so New Method / New Method Category
   // land on the right side/category even without a method currently selected.
   selectedIsMeta?: boolean;
@@ -1024,11 +1028,55 @@ export class ExplorerController {
    * GemStone Explorer does from a Testing view row, where a plain click
    * deliberately navigates nothing. Claims the open first, so the guard that
    * ignores test-item documents lets this one through.
+   *
+   * Shows the Explorer's container before cascading, because this one IS the
+   * user asking to be taken there: revealing into a sidebar still showing the
+   * Testing view scrolls rows nobody can see, which reads as the button having
+   * done nothing. That is the same argument revealInTestExplorer makes for
+   * focusing the Testing view first, going the other way. The plain click is
+   * untouched by this and still navigates nothing.
+   *
+   * The reveal underneath also KEEPS the tree's focus rather than handing it
+   * straight back to the editor (see revealMethodRow): a row selected while its
+   * tree has no focus is drawn in VS Code's inactive-selection colour, so the
+   * method you asked for arrives looking like nothing was landed on.
    */
   async revealDocument(uri: vscode.Uri): Promise<void> {
     this.markAttributedOpen(uri);
-    await this.syncToEditor(uri);
+    await focusGemStoneExplorer();
+    await this.whenMethodPaneVisible();
+    this.revealingOnRequest = true;
+    try {
+      await this.syncToEditor(uri);
+    } finally {
+      this.revealingOnRequest = false;
+    }
   }
+
+  // The container command resolves before the tree views inside it report
+  // `visible`, and a cascade reveal into a view that is not yet visible is
+  // skipped. reapplyPaneHighlight does re-apply it once the pane appears, but only
+  // as a plain select -- it cannot take focus -- so waiting here is what lets the
+  // reveal land as the active selection the user asked to be taken to.
+  //
+  // Bounded, and deliberately not an error when it expires: a Methods pane the
+  // user has collapsed never becomes visible, and this gesture must not hang
+  // waiting for one. The reveal is then skipped exactly as the collapsed-pane
+  // rule intends, and deferred to reapplyPaneHighlight.
+  private async whenMethodPaneVisible(timeoutMs = 400): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.views?.method.visible === false && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  // Raised for the duration of a Reveal in GemStone Explorer, and read by
+  // revealMethodRow. Editor-driven sync hands focus back to the editor the moment
+  // it has scrolled the row into view -- you are working in the editor and the
+  // tree must not steal your cursor. This gesture is the opposite: being taken to
+  // the pane is the whole point, so focus stays there and the row is drawn as the
+  // active selection.
+  private revealingOnRequest = false;
 
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
@@ -1210,6 +1258,16 @@ export class ExplorerController {
   //     dictionary or a class category, or the row the user's own action in that
   //     pane just created, renamed or moved. Being shown the thing is the point,
   //     so these call `view.reveal` directly and are expected to open their pane.
+  //
+  // Showing the Explorer's CONTAINER is a third thing, and belongs to neither
+  // group: `focusGemStoneExplorer` (explorerContainer.ts) brings the activity-bar
+  // container up without expanding anything inside it, so a jump from GemStone
+  // Search, from the Inspector's or the debugger's Browse, or from Reveal in
+  // GemStone Explorer lands somewhere the user can see. That is not the gesture
+  // the rule above forbids: it opens the container, and which of the six panes
+  // are expanded within it stays the user's business. It has to happen BEFORE
+  // the cascade, because a view inside a hidden container is not `visible` and
+  // `revealCascade` would skip every reveal in the jump.
   //
   // A reveal added later belongs to one group or the other; decide which before
   // writing it, rather than defaulting to whichever line is nearer.
@@ -4540,6 +4598,18 @@ export class ExplorerController {
     opts: { focusEditorAfter?: boolean } = {},
   ): Promise<void> {
     this.setMethodSide(isMeta);
+    // Record the selection BEFORE revealing, so a reveal the pane is not visible for
+    // is genuinely deferred rather than lost: reapplyPaneHighlight rebuilds this
+    // highlight from state when the pane reappears, and had nothing to rebuild from
+    // -- only a click in the pane wrote the selector, so a row revealed into a closed
+    // or still-opening pane stayed unselected. Keeping the side in step follows
+    // setMethodSide's rule that a recorded category belongs to the recorded side, so
+    // a flip drops the category rather than pairing it with the wrong one.
+    if (this.state.selectedIsMeta !== isMeta) {
+      this.state.selectedIsMeta = isMeta;
+      this.state.selectedMethodCategory = undefined;
+    }
+    this.state.selectedSelector = info.selector;
     const item = this.methodRowNode(isMeta, info);
     // In this VS Code build focus:false selects the row but never scrolls it into view; only
     // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
@@ -4560,8 +4630,9 @@ export class ExplorerController {
     // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
     // leaving the user's cursor stranded in the tree is the worse outcome. But not when the pane is
     // closed — the reveal was skipped entirely then, so nothing took focus and there is nothing to
-    // hand back.
-    if (takesFocus && this.views?.method.visible) {
+    // hand back — and not for an explicit Reveal in GemStone Explorer, where the user asked to be
+    // put in the pane and handing focus back would leave the row drawn as an inactive selection.
+    if (takesFocus && !this.revealingOnRequest && this.views?.method.visible) {
       try {
         await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
       } catch (e) {
@@ -5072,6 +5143,11 @@ export class ExplorerController {
       if (!picked) return;
       chosen = picked.entry;
     }
+    // A class was resolved, so this jump is going to land: show the Explorer
+    // before cascading. Not earlier — a name that matches nothing warns and
+    // returns, and stealing the sidebar to show the user nothing is worse than
+    // leaving it where it was.
+    await focusGemStoneExplorer();
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
       revealMethod: method,
     });
