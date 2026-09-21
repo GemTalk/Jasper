@@ -58,7 +58,12 @@
 | ✅ | **5** — **file in**, part 2: apply to the image | done; round trip is a fixpoint |
 | ✅ | **6** — make it reachable: gate + menus, filters, code lens | done; the feature is usable from the UI |
 | ✅ | **8** — prose sweep + how-to page | done; CHANGELOG, how-to, output-channels fix |
-| ⬜ | **9** — final gate | **← NEXT** |
+| ◐ | **9** — final gate | manual pass ✅ (29/29 through the real UI); corpus sweep + gap fixtures outstanding |
+
+**Manual verification: 29 of 29 passed** through the real UI on a rowan3 stone — gating,
+file out, file in, replace-not-merge, the dictionary prompt, every error path, and all
+seven file-in routes. Six defects were found this way that the suite could not see; each
+one is now covered by a test.
 
 **Tests so far: 257.** All pass against a rowan3 stone. The branch and its stones now
 live entirely on thor (`/thor1/users/ewinger/worktrees/issue616-tonel-fileout`), so the
