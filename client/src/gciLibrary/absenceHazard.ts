@@ -12,7 +12,7 @@ import type { GciAbsenceReason } from './optionalFunctions';
 // the same gap fails that test on every matrix cell instead.
 const ABSENT_ON_CLAUSE: Record<string, string> = {
   win32:
-    'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
+    'absent from the Windows client library on every `windows-latest` cell and every Windows install',
 };
 
 const absentOnClause = (name: string, absentOn: string): string => {
