@@ -30,11 +30,11 @@ Jasper asks the session whether the Rowan classes it drives are actually reachab
 — not the version number, not the extent's filename. If they are not, the Tonel
 entries are absent rather than present and failing when clicked.
 
-The file-out and file-in commands are **not in the Command Palette** — they need a
-class or a file to act on, so like every other file out/in command they are reachable
-only from a menu or a code lens. If the Explorer entry is missing on a stone you
-believe is rowan3, open any `.st` file instead and click **File In Tonel to
-GemStone**: that link is deliberately always shown, and the command refuses with an
+The file-**out** commands are **not in the Command Palette** — they need a class to act
+on. File **in** is there, as **GemStone: File In…**, because it can ask for a file.
+
+If the file-out entry is missing on a stone you believe is rowan3, file a `.st` file in
+instead: those entries are deliberately never hidden, and the command refuses with an
 explanation, which tells you whether the stone or the session is the problem.
 
 A session as `DataCurator` works. Rowan's classes live in symbol dictionaries that
@@ -62,8 +62,15 @@ has no notion of a package. Two methods are left out on purpose:
 
 ## Filing a class in
 
-Open the `.st` file and click **File In Tonel to GemStone** at the top of the
-editor, or use the Explorer / editor context menu.
+A `.st` file files in from the same places a `.gs` file does, with the same wording —
+you pick a file and Jasper works out which reader it needs:
+
+- the **File In to GemStone** link at the top of the open file;
+- the ⤓ button in the **editor title bar**, or **right-click in the editor**;
+- **right-click the file in VS Code's Explorer** — a mixed selection of `.gs` and `.st`
+  files works, each going to its own reader, and reports once;
+- **GemStone: File In…** in the Command Palette, the ⤓ on a session row, or the
+  Dictionaries pane — all of which open a file dialog offering both formats.
 
 Three things worth knowing before you do:
 

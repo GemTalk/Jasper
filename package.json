@@ -1548,12 +1548,6 @@
         "icon": "$(desktop-download)"
       },
       {
-        "command": "gemstone.fileInTonelFile",
-        "title": "File In Tonel to GemStone",
-        "category": "GemStone",
-        "icon": "$(desktop-download)"
-      },
-      {
         "command": "gemstone.explorer.fileOutDictionary",
         "title": "File Out Dictionary...",
         "category": "GemStone",
@@ -2146,7 +2140,7 @@
       "explorer/context": [
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceExtname == .gs || resourceExtname == .tpz",
+          "when": "resourceExtname == .gs || resourceExtname == .tpz || resourceExtname == .st",
           "group": "gemstone@0"
         }
       ],
@@ -2261,10 +2255,6 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "false"
-        },
-        {
-          "command": "gemstone.fileInTonelFile",
           "when": "false"
         },
         {
@@ -3294,7 +3284,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "navigation@0"
         },
         {
@@ -3376,7 +3366,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "1_gemstone@6"
         }
       ]

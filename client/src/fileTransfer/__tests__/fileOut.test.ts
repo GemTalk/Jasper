@@ -100,17 +100,26 @@ describe('TONEL_FILE_OUT_FILTERS', () => {
     expect(new Set(out)).toEqual(new Set(back));
   });
 
-  it('does not leak .st into the chunk filters', () => {
-    // The chunk path stays chunk-only: a `.gs` file and a `.st` file are read by
-    // different code, and offering both in one dialog would invite filing a Tonel
-    // file into the Topaz reader, which fails in a confusing way.
+  it('keeps .st out of the chunk file-OUT filters', () => {
+    // Writing is where the two must stay apart: a chunk file out produces Topaz, so
+    // offering `.st` there would name a file after a format it does not contain.
     expect(Object.values(FILE_OUT_FILTERS).flat()).not.toContain('st');
-    expect(Object.values(FILE_IN_FILTERS).flat()).not.toContain('st');
+  });
+
+  it('but the file-IN dialog offers both, because the reader is chosen per file', () => {
+    // Reading is different: the user picks a FILE and Jasper works out which reader
+    // it needs, so making them choose the format first would be a question with an
+    // answer already sitting in the filename.
+    const back = Object.values(FILE_IN_FILTERS).flat();
+    expect(back).toContain('gs');
+    expect(back).toContain('st');
   });
 });
 
 describe('FILE_OUT_FILTERS', () => {
   it('offers only extensions File In will take back', () => {
+    // A SUBSET, not an equality: File In also reads `.st`, which the chunk file out
+    // never writes. What must hold is that everything written can be read back.
     // A file-out saved through a filter File In does not list is unreachable from
     // every route the other half of this feature adds — the code lens, the editor
     // title bar and context menu, VS Code's own Explorer menu, and the File In
@@ -122,7 +131,7 @@ describe('FILE_OUT_FILTERS', () => {
       .flat()
       .filter((e) => e !== '*');
 
-    expect(new Set(out)).toEqual(new Set(back));
+    for (const ext of out) expect(back).toContain(ext);
   });
 });
 

@@ -22,10 +22,19 @@ import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
 import { rememberDirectory, rememberedDirectory } from './directory';
+import { fileInTonelUri } from './tonelFileIn';
 
-/** File types the chunk open dialog offers. Topaz writes `.gs`; `.tpz` is the same syntax. */
+/**
+ * File types the open dialog offers.
+ *
+ * Both formats, because the user picks a FILE and Jasper works out which reader it
+ * needs (see {@link fileInOneUri}) — they should not have to know which command
+ * reads which extension. Topaz first, since it is the long-standing default and
+ * what most files on disk are; Tonel second.
+ */
 export const FILE_IN_FILTERS: Record<string, string[]> = {
   'GemStone Files': ['gs', 'tpz'],
+  'Tonel Files': ['st'],
   'All Files': ['*'],
 };
 
@@ -106,6 +115,25 @@ function absorb(into: FileInOutcome, from: FileInOutcome): void {
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** Whether this file is Tonel, and so goes to Rowan's parser rather than the chunk reader. */
+export function isTonelFile(fsPath: string): boolean {
+  return path.extname(fsPath).toLowerCase() === '.st';
+}
+
+/**
+ * File one file in, by whichever reader its type needs.
+ *
+ * The two formats are read by completely different code — a `.gs` chunk by chunk,
+ * a `.st` through Rowan's Tonel parser — but that is Jasper's problem, not the
+ * user's: they pick a file and it goes in. It also means one mixed selection in the
+ * VS Code Explorer works, each file taking its own route, and reports once.
+ */
+async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
+  return isTonelFile(uri.fsPath)
+    ? fileInTonelUri(session, uri.fsPath)
+    : fileInFile(session, uri.fsPath);
+}
 
 /**
  * File one `.gs` file in, following any `input` lines it carries.
@@ -292,7 +320,7 @@ export async function fileInUris(
         // extension host while it goes in — this only keeps a multi-file pick from
         // looking like nothing is happening.
         await new Promise((resolve) => setTimeout(resolve, 0));
-        absorb(total, fileInFile(session, uri.fsPath));
+        absorb(total, await fileInOneUri(session, uri));
         if (total.stopped) break;
       }
     },

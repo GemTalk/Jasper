@@ -11,12 +11,14 @@ vi.mock('../../browserQueries', () => ({
   compileMethod: vi.fn(() => 'Compiled'),
   removeAllMethods: vi.fn(() => 'ok'),
 }));
+vi.mock('../tonelFileIn', () => ({ fileInTonelUri: vi.fn() }));
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { fileInFile, fileInUris, fileInCommand } from '../fileIn';
+import * as tonel from '../tonelFileIn';
 import { SessionManager } from '../../sessionManager';
 import type { ActiveSession } from '../../sessionManager';
 
@@ -546,5 +548,73 @@ describe('the File In command', () => {
     await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+  });
+});
+
+describe('choosing a reader by file type', () => {
+  const manager = {
+    resolveSession: () => Promise.resolve(SESSION),
+  } as unknown as SessionManager;
+
+  it('sends a .st file to the Tonel reader, not the chunk one', async () => {
+    // The whole point of one File In command: the user picks a file, and the
+    // extension decides which reader runs. Handing a Tonel file to the chunk reader
+    // fails in a way that reads as a broken file rather than the wrong command.
+    withFiles({ '/tmp/Widget.class.st': "Class {\n\t#name : 'Widget'\n}\n" });
+    vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
+      executed: 0,
+      compiled: 3,
+      removed: 0,
+      files: 1,
+      ignored: [],
+      askedToCommit: false,
+      skipped: [],
+      errors: [],
+      stopped: false,
+    });
+
+    await fileInUris(manager, [vscode.Uri.file('/tmp/Widget.class.st')], undefined, SESSION);
+
+    expect(tonel.fileInTonelUri).toHaveBeenCalledWith(SESSION, '/tmp/Widget.class.st');
+    expect(queries.fileInChunk).not.toHaveBeenCalled();
+  });
+
+  it('sends a .gs file to the chunk reader', async () => {
+    withFiles({ '/tmp/thing.gs': 'run\ntrue\n%\n' });
+
+    await fileInUris(manager, [vscode.Uri.file('/tmp/thing.gs')], undefined, SESSION);
+
+    expect(tonel.fileInTonelUri).not.toHaveBeenCalled();
+    expect(queries.fileInChunk).toHaveBeenCalled();
+  });
+
+  it('handles a mixed selection, each file by its own reader', async () => {
+    // One user action, so one report — which is why the Tonel path answers the same
+    // outcome shape the chunk path does.
+    withFiles({
+      '/tmp/thing.gs': 'run\ntrue\n%\n',
+      '/tmp/Widget.class.st': "Class {\n\t#name : 'Widget'\n}\n",
+    });
+    vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
+      executed: 0,
+      compiled: 2,
+      removed: 0,
+      files: 1,
+      ignored: [],
+      askedToCommit: false,
+      skipped: [],
+      errors: [],
+      stopped: false,
+    });
+
+    await fileInUris(
+      manager,
+      [vscode.Uri.file('/tmp/thing.gs'), vscode.Uri.file('/tmp/Widget.class.st')],
+      undefined,
+      SESSION,
+    );
+
+    expect(queries.fileInChunk).toHaveBeenCalled();
+    expect(tonel.fileInTonelUri).toHaveBeenCalled();
   });
 });

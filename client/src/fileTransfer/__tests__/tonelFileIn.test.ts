@@ -27,7 +27,7 @@ import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import * as fs from 'fs';
-import { applyTonelClass, chooseTonelDictionary, fileInTonelFile } from '../tonelFileIn';
+import { applyTonelClass, chooseTonelDictionary, fileInTonelUri } from '../tonelFileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -283,8 +283,8 @@ describe('applyTonelClass — what it must never do', () => {
   });
 });
 
-describe('fileInTonelFile — reporting a parse failure', () => {
-  it('logs the line the parse failed on, not the top of the file', async () => {
+describe('fileInTonelUri — reporting a parse failure', () => {
+  it('reports the line the parse failed on, not the top of the file', async () => {
     // What the developer sees in the GemStone File In channel. `…:1` on a 500-line
     // file says "it is broken, go find it"; the real line says where.
     const text = `Class {\n\t#name : 'X'\n}\n\n{ #category : 'a' }\nX >> m [\n`;
@@ -294,30 +294,40 @@ describe('fileInTonelFile — reporting a parse failure', () => {
       `!ERR ${text.indexOf('X >> m')}\tInvalid class name`,
     );
 
-    const outcome = await fileInTonelFile(SESSION, '/tmp/X.class.st');
+    const outcome = await fileInTonelUri(SESSION, '/tmp/X.class.st');
 
-    expect(outcome?.errors).toHaveLength(1);
-    expect(outcome?.errors[0].line).toBe(6);
-    expect(outcome?.errors[0].message).toBe('Invalid class name');
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0].line).toBe(6);
+    expect(outcome.errors[0].message).toBe('Invalid class name');
+    // Counted as a file attempted, so a mixed selection's totals add up.
+    expect(outcome.files).toBe(1);
   });
-});
 
-describe('fileInTonelFile — refreshing the Explorer', () => {
-  it('reloads the panes after filing in', async () => {
-    // The panes hold what they last read. A method this file-in REMOVED is the case
-    // that matters: nothing else tells the developer it is gone, so without this the
-    // most destructive thing file-in does is also the least visible.
+  it('names the FILE in its errors, not the class', async () => {
+    // The log prints `<file>:<line>`, and in a multi-file selection the class name
+    // alone would not say which file the failure came from.
+    const text = `Class {\n\t#name : 'Widget'\n}\n`;
+    vi.mocked(fs.readFileSync).mockReturnValue(text);
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
     vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals']);
-    vi.mocked(fs.readFileSync).mockReturnValue("Class {\n\t#name : 'Widget'\n}\n");
     vi.mocked(queries.executeFetchString).mockReturnValue(
       'NAME\t6\nWidget\nSUPER\t6\nObject\nTYPE\t6\nnormal\n' +
-        'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n',
+        'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n' +
+        'IMETHOD\t18\nm\naccessing\n\t^1\n',
     );
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.compileMethod).mockImplementation(() => {
+      throw new Error('nope');
+    });
 
-    await fileInTonelFile(SESSION, '/tmp/Widget.class.st');
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.class.st');
+    expect(outcome.errors[0].file).toBe('/tmp/Widget.class.st');
+  });
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+  it('records a refusal so the log agrees with the warning', async () => {
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['x'] });
+    const outcome = await fileInTonelUri(SESSION, '/tmp/X.class.st');
+    expect(outcome.errors[0].message).toMatch(/3\.7\.5|rowan3/);
+    expect(outcome.compiled).toBe(0);
   });
 });
 

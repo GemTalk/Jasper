@@ -43,8 +43,7 @@ import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import * as fs from 'fs';
-import * as path from 'path';
-import { fileInChannel, FileInNote } from './fileIn';
+import { FileInNote, FileInOutcome } from './fileIn';
 import { readTonelClass } from '../queries/tonel/readTonelClass';
 import { requireTonelAvailable } from '../tonelAvailability';
 import type { TonelClass } from '../queries/tonel/tonelWire';
@@ -228,104 +227,71 @@ export async function chooseTonelDictionary(
 }
 
 /**
- * File one Tonel `.st` file into the image.
+ * File one Tonel `.st` file in, answering the SAME outcome shape the chunk path
+ * uses so a mixed selection reports once.
  *
- * Reads and parses BEFORE writing anything, so a file that cannot be read cannot
- * half-modify a class.
- *
- * Every failure goes to the shared **GemStone File In** output channel — the same
- * one chunk file in uses, so a developer has one place to look whichever format
- * the file was in — and the toast names the first failure with a button that
- * reveals the log. A toast alone is not enough: it disappears, and the errors a
- * file in produces are exactly the ones worth re-reading.
+ * Reads and parses before writing anything, so a file that cannot be read cannot
+ * half-modify a class. Reports nothing itself — `fileIn.ts` owns the toast and the
+ * log, which is what keeps one place to look whichever format the file was in.
  */
-export async function fileInTonelFile(
+export async function fileInTonelUri(
   session: ActiveSession,
   filePath: string,
-): Promise<TonelApplyOutcome | undefined> {
-  if (!requireTonelAvailable(session)) return undefined;
+): Promise<FileInOutcome> {
+  const outcome = emptyTonelOutcome();
+  outcome.files = 1;
+
+  if (!requireTonelAvailable(session)) {
+    // The guard has already explained itself; record it so the log agrees.
+    outcome.errors.push({
+      file: filePath,
+      line: 1,
+      message: 'Tonel file in needs GemStone 3.7.5 or later on a rowan3 extent',
+    });
+    return outcome;
+  }
 
   let text: string;
   try {
     text = fs.readFileSync(filePath, 'utf8');
   } catch (e) {
-    return reportTonelFileIn(filePath, {
-      className: path.basename(filePath),
-      dictionary: '',
-      compiled: 0,
-      errors: [{ file: filePath, line: 1, message: `Could not read: ${message(e)}` }],
-    });
+    outcome.errors.push({ file: filePath, line: 1, message: `Could not read: ${message(e)}` });
+    return outcome;
   }
 
   const read = readTonelClass((code) => queries.executeFetchString(session, code), text);
   if (!read.ok) {
-    // read.line is where the parser stopped, so the log entry points at the actual
-    // problem rather than the top of the file.
-    return reportTonelFileIn(filePath, {
-      className: path.basename(filePath),
-      dictionary: '',
-      compiled: 0,
-      errors: [{ file: filePath, line: read.line, message: read.error }],
-    });
-  }
-
-  const dictionary = await chooseTonelDictionary(session, read.tonelClass.name);
-  // Dismissing the prompt files nothing in — and is not a failure worth logging.
-  if (dictionary === undefined) return undefined;
-
-  const outcome = applyTonelClass(session, read.tonelClass, dictionary);
-  reportTonelFileIn(filePath, outcome);
-
-  // The panes hold what they last read, so a method this file-in added or REMOVED is
-  // not visible until they reload — and a removal is the one a developer most needs to
-  // see, since nothing else tells them it happened. Best-effort, exactly as the chunk
-  // path does it: the file-in has already happened, so a refresh that cannot run must
-  // not turn a successful file-in into a failed command.
-  try {
-    await vscode.commands.executeCommand('gemstone.explorer.refresh');
-  } catch {
-    // The Explorer isn't registered (or is mid-teardown) — nothing to refresh.
-  }
-  return outcome;
-}
-
-/** Write the outcome to the shared log, then summarise it. */
-function reportTonelFileIn(filePath: string, outcome: TonelApplyOutcome): TonelApplyOutcome {
-  const log = fileInChannel();
-  if (log) {
-    log.appendLine(`Tonel File In: ${filePath}`);
-    log.appendLine(
-      `  ${outcome.className}${outcome.dictionary ? ` into ${outcome.dictionary}` : ''}, ` +
-        `${outcome.compiled} method(s) compiled`,
-    );
-    for (const note of outcome.errors) {
-      log.appendLine(`  ERROR ${note.file}:${note.line} — ${note.message}`);
-    }
-    log.appendLine('');
-  }
-
-  const SHOW_LOG = 'Show Log';
-  const summary =
-    `${outcome.className}${outcome.dictionary ? ` into ${outcome.dictionary}` : ''}, ` +
-    `${outcome.compiled} method(s)`;
-
-  if (outcome.errors.length > 0) {
-    void vscode.window
-      .showErrorMessage(
-        `Tonel file in finished with ${outcome.errors.length} error(s) — ${summary}. ` +
-          `First: ${outcome.errors[0].message}`,
-        SHOW_LOG,
-      )
-      .then((choice) => {
-        if (choice === SHOW_LOG) fileInChannel()?.show(true);
-      });
+    // read.line is where the parser stopped, so the log points at the real problem.
+    outcome.errors.push({ file: filePath, line: read.line, message: read.error });
     return outcome;
   }
 
-  // Said every time, as the chunk path does: a file in that is not committed
-  // disappears at the next abort, and Jasper never commits on the user's behalf.
-  void vscode.window.showInformationMessage(
-    `Filed in ${summary}. Not committed — commit the session to keep it.`,
+  const dictionary = await chooseTonelDictionary(session, read.tonelClass.name);
+  // Dismissing the prompt files nothing in, and is not a failure worth logging.
+  if (dictionary === undefined) return outcome;
+
+  const applied = applyTonelClass(session, read.tonelClass, dictionary);
+  outcome.compiled = applied.compiled;
+  outcome.errors.push(
+    ...applied.errors.map((e) => ({
+      ...e,
+      file: e.file === applied.className ? filePath : e.file,
+    })),
   );
   return outcome;
+}
+
+/** A FileInOutcome with the chunk-only counters left at zero. */
+function emptyTonelOutcome(): FileInOutcome {
+  return {
+    executed: 0,
+    compiled: 0,
+    removed: 0,
+    files: 0,
+    ignored: [],
+    askedToCommit: false,
+    skipped: [],
+    errors: [],
+    stopped: false,
+  };
 }

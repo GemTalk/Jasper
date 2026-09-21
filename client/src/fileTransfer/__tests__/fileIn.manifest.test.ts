@@ -110,17 +110,18 @@ describe('where File In is offered', () => {
     expect(when).toContain('resourceExtname == .tpz');
   });
 
-  it('offers it on an open Topaz file, in the title bar and the editor menu', () => {
+  it('offers it on an open Topaz OR Tonel file, in the title bar and the editor menu', () => {
     const clauses = ['editor/title', 'editor/context'].map(
       (menu) => `${menu}: ${entriesIn(menu, RESOURCE)[0]?.when ?? ''}`,
     );
 
-    // A `gemstone://` method editor is not a file that can be filed in, hence the
-    // scheme term alongside the language one.
-    expect(clauses).toEqual([
-      'editor/title: resourceLangId == gemstone-topaz && resourceScheme == file',
-      'editor/context: resourceLangId == gemstone-topaz && resourceScheme == file',
-    ]);
+    // Both formats, one entry: the command works out which reader the file needs, so
+    // the user picks a file rather than a format (issue #616). A `gemstone://` method
+    // editor is not a file that can be filed in, hence the scheme term alongside.
+    const expected =
+      '(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && ' +
+      'resourceScheme == file';
+    expect(clauses).toEqual([`editor/title: ${expected}`, `editor/context: ${expected}`]);
   });
 
   it('offers it in the GemStone Explorer, where File Out is', () => {
