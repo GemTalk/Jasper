@@ -235,6 +235,38 @@ function emitFeatureDetectedMethod(className, m) {
   ].join('\n');
 }
 
+// Emit a kernel extension method as a doit that compiles it ONLY if the target
+// class does not already DEFINE the selector itself.
+//
+// Why `includesSelector:` and not the `canUnderstand:` of
+// `emitFeatureDetectedMethod`: these extensions come as a family that overrides
+// itself down a hierarchy — `CharacterCollection>>rbStoreOn:` and
+// `Symbol>>rbStoreOn:` are different methods, and `CharacterCollection` files in
+// first. `canUnderstand:` would see the inherited one and silently drop Symbol's
+// override. A backport asks "can anything answer this?"; an extension asks "does
+// THIS class define it?".
+//
+// Why gate them at all: on a rowan3 extent Rowan has already installed this exact
+// family (AST-Kernel-Core is where we vendored them from — byte-identical), and
+// re-filing them would overwrite Rowan's copies with ours. Skipping leaves the
+// stone's own methods alone; on a base extent nothing is present and every one
+// installs, exactly as before.
+function emitPresenceGatedMethod(className, m) {
+  const receiver = m.side === 'class' ? `${className} class` : className;
+  const selector = selectorFromPattern(m.source.split('\n')[0]);
+  return [
+    'doit',
+    `(${receiver} includesSelector: ${gsSymbol(selector)}) ifFalse: [`,
+    `  ${receiver}`,
+    `    compileMethod: ${gsString(m.source)}`,
+    '    dictionaries: System myUserProfile symbolList',
+    `    category: ${gsString(m.category)} ].`,
+    'true.',
+    '%',
+    '',
+  ].join('\n');
+}
+
 // Emit the load manifest: expected persistent classes + per-class defined-method
 // counts, stored into the dedicated dictionary for the loader's post-load
 // completeness check. The counts come from the same Tonel the payload is built
@@ -269,6 +301,7 @@ function main() {
     out = null,
     manifest = null;
   let featureDetect = false;
+  let gateExtensions = false;
   const dirs = [];
   for (let a = 0; a < args.length; a++) {
     if (args[a] === '--dict') dict = args[++a];
@@ -276,12 +309,13 @@ function main() {
     else if (args[a] === '--out') out = args[++a];
     else if (args[a] === '--manifest') manifest = args[++a];
     else if (args[a] === '--feature-detect') featureDetect = true;
+    else if (args[a] === '--gate-extensions') gateExtensions = true;
     else dirs.push(args[a]);
   }
   if ((!out && !manifest) || dirs.length === 0) {
     console.error(
       'usage: tonel-to-gs.js --dict D [--header H] [--feature-detect] ' +
-        '(--out O | --manifest M) <packageDir>...',
+        '[--gate-extensions] (--out O | --manifest M) <packageDir>...',
     );
     process.exit(2);
   }
@@ -318,7 +352,9 @@ function main() {
   parts.push('! Extension methods\n');
   for (const e of extensions)
     for (const m of e.methods) {
-      parts.push(featureDetect ? emitFeatureDetectedMethod(e.name, m) : emitMethod(e.name, m));
+      if (featureDetect) parts.push(emitFeatureDetectedMethod(e.name, m));
+      else if (gateExtensions) parts.push(emitPresenceGatedMethod(e.name, m));
+      else parts.push(emitMethod(e.name, m));
     }
 
   // Topaz file-in does not run class-side `initialize` the way a Pharo image

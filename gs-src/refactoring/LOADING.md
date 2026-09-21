@@ -51,7 +51,7 @@ depends on the ones before it):
 
 | # | Payload | What it is |
 |---|---|---|
-| 1 | `ast-core.gs` | Vendored Refactoring-Browser AST — `RBParser`, `RBParseTreeRewriter`, the `RB*` nodes/tokens/scanner. The engine parses and rewrites source with these. |
+| 1 | `ast-core.gs` | Vendored Refactoring-Browser AST — `RBParser`, `RBParseTreeRewriter`, the `RB*` nodes/tokens/scanner. The engine parses and rewrites source with these. Its kernel extension methods (`rbStoreOn:`, `isValue`, …) are gated on `includesSelector:`, so a stone that already defines them — a rowan3 extent does, from the same AST-Kernel-Core we vendored — keeps its own. |
 | 2 | `compat.gs` | A handful of kernel-method backports the vendored AST needs. Each is installed **only if the target release lacks it** (per-method feature detection), so newer releases get nothing and no real kernel method is ever shadowed. |
 | 3 | `engine.gs` | The `Gs*` engine classes (environment, change-set, rename-instance-variable refactoring). |
 | 4 | `manifest.gs` | The expected class list + per-class method counts, used by the post-load check. |
@@ -63,9 +63,27 @@ The loader itself (`refactoring-loader.gs`) is filed in first by the bootstrap.
 The engine and AST classes are installed into a dedicated symbol dictionary,
 **`GsRefactoring`**, which the loader creates and places at the **end** of the
 installing user's symbol list. This isolates the refactoring code from everything
-else and guarantees it never shadows a base/kernel class or a Rowan `RB*` class.
-The engine resolves its own classes through the whole symbol list, so nothing
-else needs to know where they live.
+else and keeps it from shadowing a base/kernel class or a Rowan `RB*` class in
+normal use. The engine resolves its own classes through the whole symbol list, so
+nothing else needs to know where they live.
+
+**While the payload is loading, the dictionary is moved to the front.** End
+placement is right for normal use but wrong for the file-in: the payload's topaz
+directives name their target class as a bareword (`removeallmethods RBArrayNode`,
+`method: RBArrayNode`, and the superclass in each `subclass:`), and the file-in
+resolves that name through the symbol list. On a **rowan3** extent `RowanKernel`
+binds every one of those names and sits ahead of `GsRefactoring`, so with the
+dictionary at the end each directive lands on *Rowan's* class: our copies come up
+empty while Rowan's are stripped and partially overwritten. Measured on 3.7.5.1,
+`RowanKernel`'s `RBScanner class` fell from 11 methods to 2, losing
+`initializeClassificationTable` — which is why the payload's own `RBScanner
+initialize.` then failed and the load reported `INCOMPLETE`.
+
+`GsRefactoringLoader>>withDictionaryFirstDo:` moves the dictionary to position 1,
+files in all four payloads, and restores the end placement under `#ensure:`, so a
+failed file-in cannot leave it shadowing. Engine methods bind their `RB*`
+references at compile time, so `engine.gs` has to load under the same ordering or
+it binds to Rowan's AST instead of ours.
 
 The loader then shares that **same** `GsRefactoring` dictionary object into every
 user's symbol list (the mechanism `Published`/`Globals` use), so the engine is
