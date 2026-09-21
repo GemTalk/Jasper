@@ -36,10 +36,8 @@ const REMOVED_IN_NEXT_MAJOR_ENTRIES = ALL_ENTRIES.filter(
   ([, reason]) => reason.removedIn === 'nextMajor',
 );
 
-const REMOVED_IN_NEXT_MAJOR_NAMES = new Set(REMOVED_IN_NEXT_MAJOR_ENTRIES.map(([name]) => name));
-
 /** Registry entries this test can check a prediction for: excludes `removedIn`, which names no version. */
-const CHECKABLE_ENTRIES = ALL_ENTRIES.filter(([name]) => !REMOVED_IN_NEXT_MAJOR_NAMES.has(name));
+const CHECKABLE_ENTRIES = ALL_ENTRIES.filter(([, reason]) => reason.removedIn !== 'nextMajor');
 
 const normalizedLibraryVersion = normalizeGemStoneVersion;
 
