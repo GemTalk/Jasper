@@ -46,9 +46,18 @@ interface CodeLensData {
 
 /** Files `gemstone.fileInFile` can act on — the same pair of terms its editor menus
  *  are gated on, so the lens and the title-bar button appear on exactly the files. A
- *  `gemstone://` method is not a file on disk; a `.gst`/`.st` is not Topaz. */
+ *  `gemstone://` method is not a file on disk; a `.st` is Tonel, not Topaz, and has
+ *  its own lens below. */
 function isFileInTarget(document: vscode.TextDocument): boolean {
   return document.uri.scheme === 'file' && document.languageId === 'gemstone-topaz';
+}
+
+/** Files `gemstone.fileInTonelFile` can act on: a `.st` on disk, which
+ *  `languageIds.ts` maps to `gemstone-tonel` (issue #616). Kept separate from
+ *  {@link isFileInTarget} because the two formats have different readers — offering
+ *  the Topaz lens on a Tonel file would hand one format to the other's parser. */
+function isTonelFileInTarget(document: vscode.TextDocument): boolean {
+  return document.uri.scheme === 'file' && document.languageId === 'gemstone-tonel';
 }
 
 /** The "file this in" link, at the very top of the document. Names its own document
@@ -59,6 +68,19 @@ function fileInLens(document: vscode.TextDocument): vscode.CodeLens {
   return new vscode.CodeLens(top, {
     title: '$(desktop-download) File In to GemStone',
     command: 'gemstone.fileInFile',
+    arguments: [document.uri],
+  });
+}
+
+/** The same link for a Tonel file, naming the format so a developer with both kinds
+ *  open can tell which reader will run. Unlike the Topaz lens it is NOT gated on the
+ *  stone supporting Tonel: the command itself refuses and explains, which is more
+ *  use than a lens that silently is not there. */
+function tonelFileInLens(document: vscode.TextDocument): vscode.CodeLens {
+  const top = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+  return new vscode.CodeLens(top, {
+    title: '$(desktop-download) File In Tonel to GemStone',
+    command: 'gemstone.fileInTonelFile',
     arguments: [document.uri],
   });
 }
@@ -127,6 +149,9 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     // jiggle #432 took the senders/implementors lenses off `gemstone://` methods for.
     if (isFileInTarget(document) && text.trim().length > 0) {
       lenses.push(fileInLens(document));
+    }
+    if (isTonelFileInTarget(document) && text.trim().length > 0) {
+      lenses.push(tonelFileInLens(document));
     }
 
     const regions = parseTopazDocument(text);

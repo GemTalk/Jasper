@@ -314,8 +314,14 @@ export async function fileInUris(
 
 let logChannel: vscode.OutputChannel | undefined;
 
-/** The "GemStone File In" output channel, created on first use. */
-function channel(): vscode.OutputChannel | undefined {
+/**
+ * The "GemStone File In" output channel, created on first use.
+ *
+ * Exported because Tonel file in writes here too (issue #616): a developer
+ * looking for why a file-in failed should have ONE place to look, whichever
+ * format the file was in.
+ */
+export function fileInChannel(): vscode.OutputChannel | undefined {
   if (!logChannel && vscode.window.createOutputChannel) {
     logChannel = vscode.window.createOutputChannel('GemStone File In');
   }
@@ -323,7 +329,7 @@ function channel(): vscode.OutputChannel | undefined {
 }
 
 function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
-  const log = channel();
+  const log = fileInChannel();
   if (!log) return;
   log.appendLine(`File In: ${uris.map((u) => u.fsPath).join(', ')}`);
   log.appendLine(
@@ -357,7 +363,7 @@ async function report(outcome: FileInOutcome): Promise<void> {
         `First: ${path.basename(first.file)}:${first.line} ${first.message}`,
       SHOW_LOG,
     );
-    if (choice === SHOW_LOG) channel()?.show(true);
+    if (choice === SHOW_LOG) fileInChannel()?.show(true);
     return;
   }
 
@@ -382,5 +388,5 @@ async function report(outcome: FileInOutcome): Promise<void> {
     `Filed in ${counts}. ${notes.join(' ')}`,
     ...(hasDetail ? [SHOW_LOG] : []),
   );
-  if (choice === SHOW_LOG) channel()?.show(true);
+  if (choice === SHOW_LOG) fileInChannel()?.show(true);
 }

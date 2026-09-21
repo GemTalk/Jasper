@@ -26,6 +26,7 @@ import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { refreshTonelAvailability } from './tonelAvailability';
+import { fileInTonelFile } from './fileTransfer/tonelFileIn';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
@@ -2501,6 +2502,23 @@ export function activate(context: vscode.ExtensionContext) {
     // (no row) the usual "which session?" applies.
     vscode.commands.registerCommand('gemstone.fileIn', async (item?: GemStoneSessionItem) => {
       await fileInCommand(sessionManager, context.globalState, item?.activeSession);
+    }),
+
+    // Tonel file in (issue #616). Reached from the "File In Tonel to GemStone" code
+    // lens on a `.st` file, or from the Explorer/editor context menus. One class per
+    // file, so unlike the chunk command it takes a single URI.
+    vscode.commands.registerCommand('gemstone.fileInTonelFile', async (uri?: vscode.Uri) => {
+      const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!target) {
+        void vscode.window.showWarningMessage('Open a Tonel (.st) file to file in.');
+        return;
+      }
+      const session = sessionManager.getSelectedSession();
+      if (!session) {
+        void vscode.window.showWarningMessage('Connect a GemStone session first.');
+        return;
+      }
+      await fileInTonelFile(session, target.fsPath);
     }),
 
     vscode.commands.registerCommand(

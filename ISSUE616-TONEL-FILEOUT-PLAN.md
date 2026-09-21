@@ -56,16 +56,17 @@
 | | | **— FILE IN —** |
 | ✅ | **4** — **file in**, part 1: read Tonel into definitions | done |
 | ✅ | **5** — **file in**, part 2: apply to the image | done; round trip is a fixpoint |
-| ◐ | **6** — make it reachable: gate + menus, filters, code lens | gate ✅, file-out menu ✅; file-in command + code lens outstanding |
-| ⬜ | **8** — prose sweep + how-to page | |
+| ✅ | **6** — make it reachable: gate + menus, filters, code lens | done; the feature is usable from the UI |
+| ⬜ | **8** — prose sweep + how-to page | **← NEXT** |
 | ⬜ | **9** — final gate | |
 
-**Tests so far: 253.** All 253 pass against a rowan3 stone; 184 pass and 69 skip against
-the default base-extent stone. Lint, format and compile clean.
+**Tests so far: 257.** All pass against a rowan3 stone. The branch and its stones now
+live entirely on thor (`/thor1/users/ewinger/worktrees/issue616-tonel-fileout`), so the
+NFS symlink workaround is gone. Lint, format and compile clean.
 
 **Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
 Steps A and 1, and Step 3 was cut, so the order worked so far is
-**A → 0 → 1 → 4 → 5 → (6 next)**, with the remainder of 2 deferred. The numbers are labels,
+**A → 0 → 1 → 4 → 5 → 6 → (8 next)**, with the remainder of 2 deferred. The numbers are labels,
 not a sequence.
 
 Decisions taken since the plan was first written, each from review feedback, all recorded
@@ -961,7 +962,7 @@ count that was being read with a duplicate-blind key.
 None of these is a defect, but all three mean a Jasper `.st` file is **Tonel that Rowan
 can parse, not a Rowan project artifact.** Worth saying plainly in the how-to page.
 
-## Step 6 — Make it reachable: gate + menus ◐ IN PROGRESS
+## Step 6 — Make it reachable: gate + menus ✅ DONE
 
 **Was two steps (6 gating, 7 wiring) and should never have been.** A `when` clause lives
 ON a menu entry, so the gate cannot be built before the menus it gates — Step 6 alone

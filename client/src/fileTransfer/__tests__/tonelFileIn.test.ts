@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals', 'Published']),
   compileClassDefinition: vi.fn(() => 'Widget'),
   setClassComment: vi.fn(() => 'ok'),
   compileMethod: vi.fn(() => 'Compiled'),
@@ -19,9 +20,10 @@ vi.mock('../../browserQueries', () => ({
   dictionariesContainingClass: vi.fn(() => []),
 }));
 
+import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { applyTonelClass } from '../tonelFileIn';
+import { applyTonelClass, chooseTonelDictionary } from '../tonelFileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -270,5 +272,44 @@ describe('applyTonelClass — what it must never do', () => {
     const outcome = applyTonelClass(SESSION, widget(), 'UserGlobals');
     expect(outcome.dictionary).toBe('UserGlobals');
     expect(outcome.className).toBe('Widget');
+  });
+});
+
+describe('chooseTonelDictionary', () => {
+  // Tonel carries no dictionary — its `#category` is a PACKAGE — so the target has
+  // to come from the image or from the user. Defaulting to where the class already
+  // lives is what makes filing a class back in a one-click operation.
+  it("uses the class's own dictionary without asking", async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['Globals']);
+    await expect(chooseTonelDictionary(SESSION, 'Widget')).resolves.toBe('Globals');
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('asks when the class lives in more than one dictionary', async () => {
+    // A shadowed name must never be resolved by guess: picking the first would
+    // silently write to whichever happens to come first in the symbol list.
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Globals' as never);
+    await expect(chooseTonelDictionary(SESSION, 'Widget')).resolves.toBe('Globals');
+    const offered = vi.mocked(vscode.window.showQuickPick).mock.calls[0][0];
+    expect(offered).toEqual(['UserGlobals', 'Globals']);
+  });
+
+  it('asks from every dictionary when the class is new', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue([]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('UserGlobals' as never);
+    await expect(chooseTonelDictionary(SESSION, 'Widget')).resolves.toBe('UserGlobals');
+    expect(vi.mocked(vscode.window.showQuickPick).mock.calls[0][0]).toEqual([
+      'UserGlobals',
+      'Globals',
+      'Published',
+    ]);
+  });
+
+  it('answers undefined when the user dismisses the prompt', async () => {
+    // Cancelling must file nothing in, not fall back to a default.
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue([]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+    await expect(chooseTonelDictionary(SESSION, 'Widget')).resolves.toBeUndefined();
   });
 });

@@ -39,9 +39,14 @@
 //
 // Nothing here commits. The session is left dirty and the developer decides,
 // exactly as compiling a method from the Explorer does.
+import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
-import type { FileInNote } from './fileIn';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileInChannel, FileInNote } from './fileIn';
+import { readTonelClass } from '../queries/tonel/readTonelClass';
+import { requireTonelAvailable } from '../tonelAvailability';
 import type { TonelClass } from '../queries/tonel/tonelWire';
 
 /** What applying one Tonel class did. */
@@ -187,5 +192,125 @@ export function applyTonelClass(
     }
   }
 
+  return outcome;
+}
+
+/**
+ * Which symbol dictionary to file this class into.
+ *
+ * Tonel carries no dictionary — its `#category` is a PACKAGE, not a
+ * SymbolDictionary — so the target has to come from the image or from the user.
+ *
+ *   * already in exactly one dictionary → use it, no prompt. This is what makes
+ *     filing a class back where it came from a one-click operation.
+ *   * in several → ASK. A shadowed name resolved by guess would silently write to
+ *     whichever dictionary happens to come first in the symbol list.
+ *   * nowhere yet (a new class) → ask, offering every dictionary.
+ *
+ * Answers undefined when the user dismisses the prompt, which must file nothing in
+ * rather than fall back to a default.
+ */
+export async function chooseTonelDictionary(
+  session: ActiveSession,
+  className: string,
+): Promise<string | undefined> {
+  const existing = queries.dictionariesContainingClass(session, className);
+  if (existing.length === 1) return existing[0];
+
+  const choices = existing.length > 1 ? existing : queries.getDictionaryNames(session);
+  return vscode.window.showQuickPick(choices, {
+    title: `File in ${className}`,
+    placeHolder:
+      existing.length > 1
+        ? `${className} is in ${existing.length} dictionaries — choose one`
+        : `Choose the symbol dictionary for ${className}`,
+  });
+}
+
+/**
+ * File one Tonel `.st` file into the image.
+ *
+ * Reads and parses BEFORE writing anything, so a file that cannot be read cannot
+ * half-modify a class.
+ *
+ * Every failure goes to the shared **GemStone File In** output channel — the same
+ * one chunk file in uses, so a developer has one place to look whichever format
+ * the file was in — and the toast names the first failure with a button that
+ * reveals the log. A toast alone is not enough: it disappears, and the errors a
+ * file in produces are exactly the ones worth re-reading.
+ */
+export async function fileInTonelFile(
+  session: ActiveSession,
+  filePath: string,
+): Promise<TonelApplyOutcome | undefined> {
+  if (!requireTonelAvailable(session)) return undefined;
+
+  let text: string;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch (e) {
+    return reportTonelFileIn(filePath, {
+      className: path.basename(filePath),
+      dictionary: '',
+      compiled: 0,
+      errors: [{ file: filePath, line: 1, message: `Could not read: ${message(e)}` }],
+    });
+  }
+
+  const read = readTonelClass((code) => queries.executeFetchString(session, code), text);
+  if (!read.ok) {
+    return reportTonelFileIn(filePath, {
+      className: path.basename(filePath),
+      dictionary: '',
+      compiled: 0,
+      errors: [{ file: filePath, line: 1, message: read.error }],
+    });
+  }
+
+  const dictionary = await chooseTonelDictionary(session, read.tonelClass.name);
+  // Dismissing the prompt files nothing in — and is not a failure worth logging.
+  if (dictionary === undefined) return undefined;
+
+  return reportTonelFileIn(filePath, applyTonelClass(session, read.tonelClass, dictionary));
+}
+
+/** Write the outcome to the shared log, then summarise it. */
+function reportTonelFileIn(filePath: string, outcome: TonelApplyOutcome): TonelApplyOutcome {
+  const log = fileInChannel();
+  if (log) {
+    log.appendLine(`Tonel File In: ${filePath}`);
+    log.appendLine(
+      `  ${outcome.className}${outcome.dictionary ? ` into ${outcome.dictionary}` : ''}, ` +
+        `${outcome.compiled} method(s) compiled`,
+    );
+    for (const note of outcome.errors) {
+      log.appendLine(`  ERROR ${note.file}:${note.line} — ${note.message}`);
+    }
+    log.appendLine('');
+  }
+
+  const SHOW_LOG = 'Show Log';
+  const summary =
+    `${outcome.className}${outcome.dictionary ? ` into ${outcome.dictionary}` : ''}, ` +
+    `${outcome.compiled} method(s)`;
+
+  if (outcome.errors.length > 0) {
+    void vscode.window
+      .showErrorMessage(
+        `Tonel file in finished with ${outcome.errors.length} error(s) — ${summary}. ` +
+          `First: ${outcome.errors[0].message}`,
+        SHOW_LOG,
+      )
+      .then((choice) => {
+        if (choice === SHOW_LOG) fileInChannel()?.show(true);
+      });
+    return outcome;
+  }
+
+  // Said every time, as the chunk path does: a file in that is not committed
+  // disappears at the next abort, and Jasper never commits on the user's behalf.
+  void vscode.window.showInformationMessage(
+    `Filed in ${summary}. Not committed — commit the session to keep it.`,
+  );
   return outcome;
 }

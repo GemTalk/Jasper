@@ -1548,6 +1548,12 @@
         "icon": "$(desktop-download)"
       },
       {
+        "command": "gemstone.fileInTonelFile",
+        "title": "File In Tonel to GemStone",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
         "command": "gemstone.explorer.fileOutDictionary",
         "title": "File Out Dictionary...",
         "category": "GemStone",
@@ -2255,6 +2261,10 @@
         },
         {
           "command": "gemstone.fileInFile",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.fileInTonelFile",
           "when": "false"
         },
         {
