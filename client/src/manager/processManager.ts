@@ -136,8 +136,11 @@ export function parseGslist(output: string): GemStoneProcess[] {
     // Status can be one word ("OK", "frozen", "killed", "exists", "unknown(EPERM)")
     // or two ("exe deleted"). We anchor on the version, which always starts with a digit,
     // so the non-greedy first capture absorbs the status without eating into version.
+    // After the leading digit the version is any run of non-space: pre-releases spell
+    // themselves "4.0.0.a2" or "4.0.0-a3", and a digits-and-dots pattern would reject
+    // the whole row rather than the version, making a running server look stopped.
     const match = line.match(
-      /^\s*(\S+(?: \S+)?)\s+(\d[\d.]*)\s+\S+\s+(\d+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(Stone|Netldi)\s+(.+)$/i,
+      /^\s*(\S+(?: \S+)?)\s+(\d\S*)\s+\S+\s+(\d+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(Stone|Netldi)\s+(.+)$/i,
     );
     if (!match) continue;
     const typeLower = match[6].toLowerCase();

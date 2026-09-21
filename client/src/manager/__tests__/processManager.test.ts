@@ -391,6 +391,20 @@ describe('ProcessManager', () => {
       expect(procs[0].responding).toBe(false);
     });
 
+    it('keeps a pre-release version rather than dropping the whole row', () => {
+      // A build identifies itself as "4.0.0.a2" or "4.0.0-a3" while the install
+      // it came from is registered as 4.0.0. A digits-and-dots version pattern
+      // matched neither, so the row vanished and a running server read as stopped.
+      for (const version of ['4.0.0.a2', '4.0.0-a3']) {
+        const line = `OK           ${version}  jfoster      10923 50377 May 24 07:06 Netldi      ldi40`;
+        const procs = parseGslist(line);
+        expect(procs).toHaveLength(1);
+        expect(procs[0].version).toBe(version);
+        expect(procs[0].name).toBe('ldi40');
+        expect(procs[0].port).toBe(50377);
+      }
+    });
+
     it('skips the header row and separator line', () => {
       const onlyHeaders = [
         'Status        Version    Owner       Pid   Port   Started     Type       Name',
