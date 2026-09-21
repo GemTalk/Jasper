@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { SelectorResolver } from './gemstoneDefinitionProvider';
+import { dedupeMethodResults } from './queries/methodSearch';
 import * as queries from './browserQueries';
 
 export class GemStoneHoverProvider implements vscode.HoverProvider {
@@ -55,23 +56,39 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     }
 
     if (selector) {
-      const env = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
+      // `gemstone.maxEnvironment` is a CEILING, not a selection — sweep 0..max and fold, the
+      // same shape as the two commands these links fire and as the senders/implementors
+      // CodeLens. Passing it straight through as the environment id asked about that one
+      // environment instead, and almost nothing is compiled above 0, so with the setting raised
+      // both counts came back 0 for EVERY selector — and a hover with nothing to report returns
+      // null, which reads as the senders/implementors line having been removed.
+      const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
       // A thrown query (busy session, browser/RB plugin absent) must not reject
       // the whole hover — that silently shows nothing. Degrade to no implementors,
       // mirroring the sendersOf guard below.
-      let results: ReturnType<typeof queries.implementorsOf>;
+      let results: queries.MethodSearchResult[];
       try {
-        results = queries.implementorsOf(session, selector, env);
+        const found: queries.MethodSearchResult[] = [];
+        for (let env = 0; env <= maxEnv; env++) {
+          found.push(...queries.implementorsOf(session, selector, env));
+        }
+        results = dedupeMethodResults(found);
       } catch {
         results = [];
       }
 
       // Senders count (cached — sendersOf is costly and a hover fires easily).
-      const sKey = `${selector}|${session.id}|${env}`;
+      const sKey = `${selector}|${session.id}|${maxEnv}`;
       let sendersCount = this.sendersCountCache.get(sKey);
       if (sendersCount === undefined) {
         try {
-          sendersCount = queries.sendersOf(session, selector, env).length;
+          // Summed, not folded: a sweep stamps each row with the environment it was found
+          // in, so no row from one environment can duplicate a row from another, and this
+          // has to agree with the senders/implementors CodeLens, which sums the same way.
+          sendersCount = 0;
+          for (let env = 0; env <= maxEnv; env++) {
+            sendersCount += queries.sendersOf(session, selector, env).length;
+          }
         } catch {
           sendersCount = 0;
         }
