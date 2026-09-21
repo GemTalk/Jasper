@@ -161,6 +161,18 @@ describe('declarationSequenceOf', () => {
   it('finds nothing in a file with no methods', () => {
     expect(declarationSequenceOf(`Class {\n\t#name : 'Empty'\n}\n`)).toEqual([]);
   });
+
+  it('lists a doubled method twice, rather than collapsing it', () => {
+    // It must count BLOCKS, not distinct names: a caller comparing this length
+    // against the image's selector count is relying on that, and reading the keys
+    // of the (Map-backed) methodBlocksOf would hide the very thing we check for.
+    const doubled =
+      `Class {\n\t#name : 'X'\n}\n` +
+      `\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n` +
+      `\n{ #category : 'a' }\nX >> m [\n\t^1\n]\n`;
+    expect(declarationSequenceOf(doubled)).toEqual(['X >> m', 'X >> m']);
+    expect(methodBlocksOf(doubled).size).toBe(1);
+  });
 });
 
 describe('declarationsOf', () => {

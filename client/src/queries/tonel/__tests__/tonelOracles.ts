@@ -167,13 +167,28 @@ export function duplicateDeclarationsOf(tonel: string): string[] {
 }
 
 /**
- * Every method declaration in FILE order — the method-order oracle.
+ * Every method declaration in FILE order, ONE ENTRY PER BLOCK — the method-order
+ * oracle.
  *
- * Deliberately unsorted and un-keyed, unlike the other two, because it is the
- * only one that can observe the writer emitting methods in a different order.
+ * Deliberately unsorted, and deliberately NOT the keys of {@link methodBlocksOf}:
+ * that is a Map, so reading its keys would collapse a doubled method and make
+ * this blind to duplication in exactly the way the rest of these helpers were.
+ * A caller comparing this against the image's selector count depends on it
+ * counting blocks, not distinct names.
  */
 export function declarationSequenceOf(tonel: string): string[] {
-  return [...methodBlocksOf(tonel).keys()];
+  const out: string[] = [];
+  METHOD_BLOCK.lastIndex = 0;
+  const starts: number[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = METHOD_BLOCK.exec(tonel)) !== null) starts.push(match.index);
+  for (let i = 0; i < starts.length; i++) {
+    const declaration = declarationIn(
+      tonel.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : tonel.length),
+    );
+    if (declaration.length > 0) out.push(declaration);
+  }
+  return out;
 }
 
 /** Selector names in a Tonel file, split by side — the selector-completeness oracle. */

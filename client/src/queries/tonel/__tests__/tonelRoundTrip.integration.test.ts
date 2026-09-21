@@ -33,7 +33,7 @@ import type { ActiveSession } from '../../../sessionManager';
 import { fileOutClassTonel, isTonelFileOutError } from '../fileOutClassTonel';
 import { readTonelClass } from '../readTonelClass';
 import { applyTonelClass } from '../../../fileTransfer/tonelFileIn';
-import { declarationSequenceOf } from './tonelOracles';
+import { declarationSequenceOf, duplicateDeclarationsOf } from './tonelOracles';
 import { useRowan3Stone } from './useRowan3Stone';
 
 const SOURCE = 'JasperRoundTripSource';
@@ -80,6 +80,11 @@ describe('tonel round trip (integration)', () => {
   const fileOut = (className: string): string => {
     const tonel = fileOutClassTonel(exec, className);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
+    // Checked on EVERY file-out in this suite, not as a separate case. A doubled
+    // method is invisible to every other comparison here — both the fixpoint and
+    // the declaration-sequence check would pass with duplicates on both sides —
+    // so the guard has to sit where the file is produced.
+    expect(duplicateDeclarationsOf(tonel), `duplicate methods in ${className}`).toEqual([]);
     return tonel;
   };
 

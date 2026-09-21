@@ -61,7 +61,7 @@
 | ⬜ | **8** — prose sweep + how-to page | |
 | ⬜ | **9** — final gate | |
 
-**Tests so far: 226.** All 226 pass against a rowan3 stone; 191 pass and 35 skip against
+**Tests so far: 241.** All 241 pass against a rowan3 stone; 194 pass and 47 skip against
 the default base-extent stone. Lint, format and compile clean.
 
 **Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
@@ -905,6 +905,30 @@ the helper both hid real duplicates and reported false ones — 22 files' worth.
 
 **Fix:** a `duplicateDeclarationsOf` oracle that counts rather than collapsing, and a
 declaration key that spans the wrapped lines with whitespace normalised.
+
+### Duplicate coverage, after review
+
+The first fix added the oracle and three spot checks. That was too thin for a defect
+that shipped and hid, so the check now sits everywhere a Tonel file is produced or
+consumed:
+
+| Where | What |
+|---|---|
+| `tonelFileOut.integration` | per-fixture, plus a sweep over `Array`, `Behavior`, `Class`, `Object`, `System`, `CharacterCollection` — hundreds of methods each, and wrapped declarations |
+| `tonelRoundTrip.integration` | inside the shared `fileOut` helper, so **every** file-out in the suite is checked |
+| `tonelFileOutChurn.integration` | same, so before/after every mutation |
+| `tonelWire` (decode) | a class defining one selector twice on a side is **rejected**, so a malformed or hand-edited file cannot reach file in, where REPLACE means the last one silently wins |
+| `tonelOracles` | `declarationSequenceOf` now counts BLOCKS, not Map keys |
+
+**Verified by reintroducing the defect**: with the old code restored, 10 cases fail. The
+three original fixtures caught it only because they happen to be Rowan-loaded; `Array`,
+`Object`, `System` and `CharacterCollection` are not, so they never duplicated — which is
+why three small fixtures were never going to be enough.
+
+That last point is the lesson worth keeping: `declarationSequenceOf` was reading the keys
+of a Map, so the count check added in the same pass *also* could not see duplicates until
+it was made to count blocks. A helper built on a Map is duplicate-blind by construction,
+and every helper here was.
 
 ### Corrected corpus measurement
 

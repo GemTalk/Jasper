@@ -86,6 +86,33 @@ describe('decodeTonelClass', () => {
     expect(() => decodeTonelClass(corrupted)).toThrow(/truncat|length|incomplete/i);
   });
 
+  it('rejects the same method appearing twice', () => {
+    // A class cannot define one selector twice on a side, so a file that carries
+    // it twice is malformed. It must not reach file in, where REPLACE means the
+    // last one silently wins and the developer never learns the file was wrong.
+    // This also backstops the file-out bug that shipped duplicates for days.
+    const doubled = {
+      ...widget,
+      methods: [
+        { isMeta: false, selector: 'size', category: 'accessing', source: 'size\n\t^size' },
+        { isMeta: false, selector: 'size', category: 'accessing', source: 'size\n\t^0' },
+      ],
+    };
+    expect(() => decodeTonelClass(encodeTonelClassForTest(doubled))).toThrow(/twice|duplicate/i);
+  });
+
+  it('allows the same selector on both sides', () => {
+    // `Foo >> name` and `Foo class >> name` are different methods.
+    const bothSides = {
+      ...widget,
+      methods: [
+        { isMeta: false, selector: 'name', category: 'accessing', source: 'name\n\t^1' },
+        { isMeta: true, selector: 'name', category: 'accessing', source: 'name\n\t^2' },
+      ],
+    };
+    expect(decodeTonelClass(encodeTonelClassForTest(bothSides))).toEqual(bothSides);
+  });
+
   it('rejects an unknown record kind rather than ignoring it', () => {
     // Silently skipping an unrecognised record is how a future field gets dropped
     // on the floor and nobody notices until data is missing.

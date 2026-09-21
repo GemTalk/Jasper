@@ -22,7 +22,7 @@ import { GciLibrary } from '../../../gciLibrary';
 import * as q from '../../../browserQueries';
 import type { ActiveSession } from '../../../sessionManager';
 import { fileOutClassTonel, isTonelFileOutError } from '../fileOutClassTonel';
-import { declarationSequenceOf, headerOf } from './tonelOracles';
+import { declarationSequenceOf, duplicateDeclarationsOf, headerOf } from './tonelOracles';
 import { diffLines, added, removed, meaningful } from './tonelDiff';
 import { useRowan3Stone } from './useRowan3Stone';
 
@@ -75,6 +75,10 @@ describe('tonel file out churn (integration)', () => {
   const fileOut = (): string => {
     const tonel = fileOutClassTonel(exec, CLASS);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
+    // Every file-out in this suite, before and after each mutation: a change that
+    // started doubling methods would otherwise show up only as a large diff, and
+    // the reshape case legitimately produces one of those.
+    expect(duplicateDeclarationsOf(tonel)).toEqual([]);
     return tonel;
   };
 

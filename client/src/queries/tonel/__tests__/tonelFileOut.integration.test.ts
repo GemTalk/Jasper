@@ -164,6 +164,37 @@ describe('tonel class file out (integration)', () => {
     });
   });
 
+  // The classes where the duplication bug was worst, and where a declaration key
+  // taken from one line collides: `Array class` alone defines two
+  // `byteSubclass: aString …` methods that differ only in later keywords. Each of
+  // these has hundreds of methods and many wrapped declarations.
+  //
+  // This is the case that would have caught the shipped bug. The three
+  // shape-fixtures above have neither hundreds of methods nor wrapped
+  // declarations, so they missed it; checking three small classes was not enough
+  // for a defect that doubled every method of every Rowan-loaded class.
+  describe.each(['Array', 'Behavior', 'Class', 'Object', 'System', 'CharacterCollection'])(
+    '%s',
+    (className) => {
+      it('emits each method exactly once', (ctx) => {
+        rowan3.skipUnlessAvailable(ctx);
+        const tonel = fileOutClassTonel(exec, className);
+        expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
+        expect(duplicateDeclarationsOf(tonel)).toEqual([]);
+      });
+
+      it('matches the image selector for selector', (ctx) => {
+        rowan3.skipUnlessAvailable(ctx);
+        // Counting, not set comparison: the point is that the number of method
+        // blocks equals the number of selectors, which a duplicate breaks and a
+        // Map-keyed comparison cannot see.
+        const tonel = fileOutClassTonel(exec, className);
+        const image = imageSelectors(className);
+        expect(declarationSequenceOf(tonel).length).toBe(image.instance.length + image.meta.length);
+      });
+    },
+  );
+
   it('reports a class that does not resolve instead of writing a file', (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     const answer = fileOutClassTonel(exec, 'JasperNoSuchClassAnywhere');

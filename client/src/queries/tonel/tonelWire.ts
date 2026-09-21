@@ -183,6 +183,20 @@ export function decodeTonelClass(wire: string): TonelClass {
         break;
     }
   }
+
+  // A class cannot define one selector twice on a side. A file that carries it
+  // twice is malformed, and must not reach file in: REPLACE means the last one
+  // silently wins, so the developer would never learn the file was wrong. This
+  // also backstops the file-out — it shipped duplicates for days because every
+  // comparison in the test suite collapsed them.
+  const seen = new Set<string>();
+  for (const m of result.methods) {
+    const key = `${m.isMeta ? 'class' : 'instance'}:${m.selector}`;
+    if (seen.has(key)) {
+      throw new Error(`${result.name} defines ${m.isMeta ? 'class-side ' : ''}${m.selector} twice`);
+    }
+    seen.add(key);
+  }
   return result;
 }
 
