@@ -32,19 +32,15 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     if (selector) {
-      // `gemstone.maxEnvironment` is a CEILING, not a selection — sweep 0..max and fold, the
-      // same shape as the gemstone.implementorsOfSelector command and the senders/implementors
-      // CodeLens. Passing it straight through as the environment id asked about that one
-      // environment instead, and almost nothing is compiled above 0, so with the setting raised
-      // this answered no implementors for EVERY selector and Go to Definition did nothing.
+      // `gemstone.maxEnvironment` is a CEILING, not a selection: sweep and fold. Same rule and
+      // same failure as GemStoneHoverProvider — see the comment there.
       const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
       const all: queries.MethodSearchResult[] = [];
       for (let env = 0; env <= maxEnv; env++) {
         all.push(...queries.implementorsOf(session, selector, env));
       }
-      // Each row carries the environment it was found in, so spread it into the URI rather than
-      // rebuilding one by hand: an implementor above environment 0 otherwise opens the
-      // environment-0 method of the same name, or nothing.
+      // Spread the row in: it carries the environment it was found in, and without that an
+      // implementor above environment 0 opens the environment-0 method of the same name.
       return dedupeMethodResults(all).map(
         (r) =>
           new vscode.Location(
