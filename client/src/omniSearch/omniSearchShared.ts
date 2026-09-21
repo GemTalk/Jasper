@@ -328,9 +328,12 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
        case toggle, that appears (filled/accent) whenever the panel is showing references or senders --
        so it is obvious you are in a references view -- and clicking it exits back to the normal search.
        Shown/hidden via an INLINE style the view sets, never via a stylesheet display:none. */
+    /* Sits INSIDE the field, at its right edge, so the typing area gives up the room rather than the
+       toolbar growing a sixth chip. The margin keeps it off the field's own border. */
     #refindicator {
       flex: 0 0 auto;
-      padding: 5px 9px;
+      margin: 3px 4px 3px 0;
+      padding: 3px 8px;
       border: 1px solid var(--vscode-button-background);
       border-radius: 4px;
       background: var(--vscode-button-background);
@@ -339,8 +342,20 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       font-family: inherit;
       font-size: 0.85em;
       white-space: nowrap;
+      /* It APPEARS mid-session, in a bar the eye has already stopped scanning, so it arrives with a
+         short scale-up rather than simply being there on the next paint. Honour a reduced-motion
+         preference by showing it outright. */
+      animation: refindicator-pop 140ms ease-out;
     }
     #refindicator:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+    @keyframes refindicator-pop {
+      from { transform: scale(0.7); opacity: 0; }
+      60%  { transform: scale(1.06); opacity: 1; }
+      to   { transform: scale(1); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #refindicator { animation: none; }
+    }
     /* "Not searched here: Source - Literals - Class Categories" under the field while the All scope is
        active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
        is indistinguishable from "not in the image". No display rule here on purpose: the
@@ -599,6 +614,12 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     <div id="searchbar">
       <div id="field">
         <input id="query" type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="GemStone Search">
+        <!-- Inside the field, not out with the toolbar chips: it is the one control here that says
+             what MODE you are in rather than what the next search will do, and at the end of that row
+             it read as a sixth toggle nobody noticed arriving. In the field it takes its space from
+             the typing area, which is the point — the field visibly shrinks when references are up,
+             and the button lands near the ↗ that was just clicked on a row. -->
+        <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
       <!-- The tooltip names the case this button exists for. A class, global or
@@ -615,7 +636,6 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <div id="scopeFilterMenu" role="menu" hidden></div>
       </span>
       <button id="matchMode" title="Match algorithm" aria-label="Match algorithm">Fuzzy</button>
-      <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
       ${pinButton}
     </div>
     <div id="scopehint" style="display:none"></div>

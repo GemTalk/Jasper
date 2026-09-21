@@ -173,6 +173,14 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    preview pane, leaving the results list in place; set it `false` for the classic pivot that replaces
    the whole list (backed out with ← / Esc).
 
+   The `#refindicator` chip that says you are in that mode — and leaves it when clicked — lives
+   **inside the search field**, at its right edge before the ✕. It used to sit at the end of the
+   toolbar row, where it was a sixth chip among five that all describe what the NEXT search will do;
+   it is the only one that describes the mode you are already in, and there it went unnoticed. In the
+   field it takes its room from the typing area, so the field visibly narrows while references are
+   up, and it sits near the row ↗ that was just clicked. It arrives with a short scale-up
+   (`refindicator-pop`, dropped under `prefers-reduced-motion`) because it appears mid-session in a
+   bar the eye has already stopped scanning.
 
 6b. **The expanded source marks the SEND, not the characters.** A reference row expands to show its
    source, and what is marked in it is where the searched symbol is actually sent. A literal
