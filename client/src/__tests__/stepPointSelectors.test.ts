@@ -170,6 +170,33 @@ describe('expandKeywordParts', () => {
     expect(texts).not.toContain('bar:');
   });
 
+  it('does not read a character literal as a delimiter', () => {
+    // `$[` is not a block, `$'` is not a string, `$"` is not a comment and `$.` does not
+    // end the statement — the character after a $ is data. Without the $ case the depth,
+    // the string scan or the statement scan ran away and `with:` lost its step point:
+    // nothing to hover, number or aim a breakpoint at.
+    for (const arg of ['$[', '$(', '$)', "$'", '$"', '$.', '$;', '$a']) {
+      const source = `self copyReplaceAll: ${arg} with: $x.`;
+      const infos: StepPointSelectorInfo[] = [
+        { stepPoint: 1, selectorOffset: 5, selectorLength: 15, selectorText: 'copyReplaceAll:' },
+      ];
+      const texts = expandKeywordParts(source, infos).map((e) => e.selectorText);
+      expect(texts, `argument ${arg}`).toContain('with:');
+    }
+  });
+
+  it('still reads a real delimiter after a character literal', () => {
+    // Only the ONE character after the $ is skipped, so the `.` here still ends the
+    // statement and `bar:` belongs to the next one.
+    const source = 'self foo: $a. self bar: 2';
+    const infos: StepPointSelectorInfo[] = [
+      { stepPoint: 1, selectorOffset: 5, selectorLength: 4, selectorText: 'foo:' },
+    ];
+    const texts = expandKeywordParts(source, infos).map((e) => e.selectorText);
+    expect(texts).toContain('foo:');
+    expect(texts).not.toContain('bar:');
+  });
+
   it('stops at period', () => {
     const source = 'self foo: 1. self bar: 2';
     const infos: StepPointSelectorInfo[] = [

@@ -6,6 +6,7 @@ import { ActiveSession } from './sessionManager';
 import * as debug from './debugQueries';
 import * as pins from './exportSetPins';
 import * as queries from './browserQueries';
+import { skipLiteral } from './smalltalkScan';
 import { drainTranscript } from './transcriptSink';
 import { SMALLTALK_LANGUAGE } from './languageIds';
 import { appendTranscriptOutput } from './transcriptChannel';
@@ -426,39 +427,22 @@ export function shortenInlineValue(value: string, maxLen = 40): string {
  */
 export function maskCommentsAndStrings(text: string): string {
   const out = text.split('');
-  const blank = (k: number): void => {
-    if (text[k] !== '\n') out[k] = ' ';
-  };
   let i = 0;
   while (i < text.length) {
-    const c = text[i];
-    if (c === '$') {
-      i += 2;
-      continue;
-    } // character literal: `$x`, `$"`, `$'`
-    if (c === '"' || c === "'") {
-      // comment or string
-      const quote = c;
-      blank(i);
+    const span = skipLiteral(text, i);
+    if (!span) {
       i++;
-      while (i < text.length) {
-        if (text[i] === quote) {
-          if (text[i + 1] === quote) {
-            blank(i);
-            blank(i + 1);
-            i += 2;
-            continue;
-          } // escaped
-          blank(i);
-          i++;
-          break; // closing delimiter
-        }
-        blank(i);
-        i++;
-      }
       continue;
     }
-    i++;
+    // A character literal is code, not quoted text, so `$'` and `$"` stay
+    // standing; only a string or comment is blanked, delimiters and all.
+    if (span.kind !== 'character') {
+      for (let k = i; k < span.end; k++) {
+        // Newlines survive, so masking never changes line numbering.
+        if (text[k] !== '\n') out[k] = ' ';
+      }
+    }
+    i = span.end;
   }
   return out.join('');
 }
