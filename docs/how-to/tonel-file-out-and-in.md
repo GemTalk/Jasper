@@ -41,8 +41,12 @@ them, so you do not need to log in as SystemUser for this.
 ## Filing a class out
 
 Right-click a class in the Explorer's **Classes** or **Class Hierarchy** pane →
-**File Out Class as Tonel…**, and choose where to save it. The default name is
+**File Out Class (.st)…**, and choose where to save it. The default name is
 `<ClassName>.class.st`, the name Rowan itself uses.
+
+The entry above it, **File Out Class (.gs)…**, is the Topaz chunk file out. The two
+are named by the extension they produce, which is the distinction that matters when
+you are about to pick a filename.
 
 The file carries **every method a Jasper user can see on that class** — including
 ones Rowan would file into another package's `.extension.st`, because a Jasper user

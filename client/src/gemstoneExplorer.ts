@@ -6878,7 +6878,7 @@ export class ExplorerController {
     if (!requireTonelAvailable(session)) return;
     const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
     await this.runFileOut({
-      title: `File Out ${node.className} as Tonel`,
+      title: `File Out ${node.className} (.st)`,
       defaultFileName: `${sanitizeFileNameStem(node.className)}.class.st`,
       label: `${node.className} (Tonel)`,
       filters: TONEL_FILE_OUT_FILTERS,

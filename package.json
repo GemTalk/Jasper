@@ -1567,13 +1567,13 @@
       },
       {
         "command": "gemstone.explorer.fileOutClass",
-        "title": "File Out Class...",
+        "title": "File Out Class (.gs)...",
         "category": "GemStone",
         "icon": "$(export)"
       },
       {
         "command": "gemstone.explorer.fileOutClassTonel",
-        "title": "File Out Class as Tonel...",
+        "title": "File Out Class (.st)...",
         "category": "GemStone",
         "icon": "$(export)"
       },
