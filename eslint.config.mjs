@@ -86,6 +86,25 @@ const IMPORT_REQUIRE_GCI_CAPABILITY =
 // with -- the same split as `PASSWORD_NAMES`/`RAW_LOGIN_NAMES`.
 const CAPABILITY_CHECK_NAMES = '/^(isAvailable|supportsNonBlockingLogin)$/';
 
+// Call-shaped for the reason the raw-login selector below states: a
+// `vi.fn()`-mocked binding is legitimately *named* in assertions
+// (`expect(gci.isAvailable).toHaveBeenCalledWith(...)`), and only a call
+// hand-rolls a skip. The two routes past it are closed as the password
+// selectors close them: computed access (`.value`, no `.name`), and the
+// destructuring bind, which is no `CallExpression` at all.
+// `ObjectPattern`-anchored, so a mock *definition* stays legal:
+// `makeGci({ isAvailable: ... })` in codeExecutor.test.ts.
+const CAPABILITY_CHECK_SELECTORS = [
+  {
+    selector: `CallExpression:matches([callee.property.name=${CAPABILITY_CHECK_NAMES}], [callee.property.value=${CAPABILITY_CHECK_NAMES}])`,
+    message: HAND_ROLLED_CAPABILITY_CHECK,
+  },
+  {
+    selector: `ObjectPattern > Property:matches([key.name=${CAPABILITY_CHECK_NAMES}], [key.value=${CAPABILITY_CHECK_NAMES}])`,
+    message: HAND_ROLLED_CAPABILITY_CHECK,
+  },
+];
+
 // A halt offers ONE debugger -- the GemStone Debugger panel. The DAP debugger is
 // still registered (`registerDebugAdapterDescriptorFactory('gemstone', ...)` in
 // extension.ts, plus the `gemstone` entry under contributes.debuggers), but
@@ -587,28 +606,45 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         ...HARNESS_SESSION_SELECTORS,
-        // Call-shaped for the reason the raw-login selector above states: a
-        // `vi.fn()`-mocked binding is legitimately *named* in assertions
-        // (`expect(gci.isAvailable).toHaveBeenCalledWith(...)`), and only a
-        // call hand-rolls a skip. The two routes past it are closed as the
-        // password selectors close them: computed access (`.value`, no
-        // `.name`), and the destructuring bind, which is no `CallExpression`
-        // at all. `ObjectPattern`-anchored, so a mock *definition* stays
-        // legal: `makeGci({ isAvailable: ... })` in codeExecutor.test.ts.
-        {
-          selector: `CallExpression:matches([callee.property.name=${CAPABILITY_CHECK_NAMES}], [callee.property.value=${CAPABILITY_CHECK_NAMES}])`,
-          message: HAND_ROLLED_CAPABILITY_CHECK,
-        },
-        {
-          selector: `ObjectPattern > Property:matches([key.name=${CAPABILITY_CHECK_NAMES}], [key.value=${CAPABILITY_CHECK_NAMES}])`,
-          message: HAND_ROLLED_CAPABILITY_CHECK,
-        },
+        ...CAPABILITY_CHECK_SELECTORS,
       ],
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {
           patterns: [
             { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+            {
+              group: ['**/gciLibrary/__tests__/requireGciCapability'],
+              message: IMPORT_REQUIRE_GCI_CAPABILITY,
+            },
+            TS_EXTENSION_IMPORT,
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The same confinement for test *helpers*: not being test files, they miss
+    // the globs above, and factoring a repeated skip into one is the likeliest
+    // route around the rule. Carries only the capability selectors -- these
+    // helpers are the harness `HARNESS_SESSION_SELECTORS` points every test at,
+    // so those would fire on the legitimate library construction and login in
+    // `useIntegrationTest.ts`, `testConnection.ts` and `testActiveSession.ts`.
+    // `ignores` subtracts the test files back out, so this block never overlaps
+    // the one above (whose options it would otherwise replace, per above).
+    files: ['client/src/**/__tests__/**/*.ts'],
+    ignores: [
+      '**/*.test.ts',
+      '**/*.spec.ts',
+      'client/src/__tests__/gci/**',
+      'client/src/gciLibrary/__tests__/**',
+    ],
+    rules: {
+      'no-restricted-syntax': ['error', ...CAPABILITY_CHECK_SELECTORS],
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
             {
               group: ['**/gciLibrary/__tests__/requireGciCapability'],
               message: IMPORT_REQUIRE_GCI_CAPABILITY,
