@@ -372,6 +372,37 @@ describe('onMethodCompiled event subscription (functional)', () => {
   });
 });
 
+// A Commit or Abort that says nothing looks exactly like one that never ran —
+// and both are reachable from the Command Palette, where there is no row
+// highlighting to show anything happened.
+describe('announceSessionAction', () => {
+  const DESCRIPTION = 'Session 3 — DataCurator on gs64stone (localhost)';
+
+  it.each(['Commit', 'Abort'] as const)('pops a success toast after a %s', (action) => {
+    extension.announceSessionAction(action, DESCRIPTION, { success: true });
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      `${DESCRIPTION}: ${action} succeeded.`,
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['Commit', 'Abort'] as const)(
+    'reports a failed %s as an error, not a success',
+    (action) => {
+      extension.announceSessionAction(action, DESCRIPTION, {
+        success: false,
+        reason: 'Session not found',
+      });
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        `${DESCRIPTION}: ${action} failed — Session not found`,
+      );
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('confirmLogoutWithUncommittedChanges', () => {
   beforeEach(() => {
     vi.mocked(vscode.window.showWarningMessage).mockReset();
@@ -381,7 +412,12 @@ describe('confirmLogoutWithUncommittedChanges', () => {
   it('proceeds without prompting when the transaction is clean', async () => {
     const commit = vi.fn();
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, false, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      false,
+      commit,
+    );
 
     expect(decision).toBe('proceed');
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
@@ -394,7 +430,12 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
     const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
 
     expect(commit).toHaveBeenCalledWith(3);
     expect(decision).toBe('proceed');
@@ -409,10 +450,20 @@ describe('confirmLogoutWithUncommittedChanges', () => {
       err: { number: 4001, message: 'no privilege' },
     }));
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
 
     expect(decision).toBe('cancel');
-    expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+    // Which stone the commit that just failed was headed for: a slot number on
+    // its own does not say, and this is the message that decides whether the
+    // user logs out over unsaved work.
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Session 3 — DataCurator on gs64stone (localhost): Commit failed'),
+    );
   });
 
   it('proceeds without committing when the user chooses to log out anyway', async () => {
@@ -421,7 +472,12 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
     const commit = vi.fn();
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
 
     expect(decision).toBe('proceed');
     expect(commit).not.toHaveBeenCalled();
@@ -431,7 +487,12 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const commit = vi.fn();
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, true, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
 
     expect(decision).toBe('cancel');
     expect(commit).not.toHaveBeenCalled();
@@ -443,10 +504,82 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
     const commit = vi.fn();
 
-    const decision = await extension.confirmLogoutWithUncommittedChanges(3, undefined, commit);
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      undefined,
+      commit,
+    );
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
     expect(decision).toBe('proceed');
+  });
+});
+
+describe('sessionActionConfirmation', () => {
+  const LABEL = 'DataCurator on gs64stone (localhost)';
+
+  // A session row, the Databases panel and the Explorer title bar all name the
+  // session by where the click landed, so they only interrupt for a loss.
+  it('puts up nothing when the caller named the session and nothing is at stake', () => {
+    expect(
+      extension.sessionActionConfirmation({
+        action: 'Commit',
+        sessionId: 3,
+        sessionLabel: LABEL,
+        warning: null,
+        ask: false,
+      }),
+    ).toBeNull();
+  });
+
+  // The Command Palette invokes with no argument and acts in the current
+  // session — which the palette does not show — so it says which one.
+  it.each(['Commit', 'Abort'] as const)('asks which session a palette %s will act on', (action) => {
+    expect(
+      extension.sessionActionConfirmation({
+        action,
+        sessionId: 3,
+        sessionLabel: LABEL,
+        warning: null,
+        ask: true,
+      }),
+    ).toEqual({
+      message: `${action} session 3?`,
+      detail: LABEL,
+      confirmLabel: action,
+    });
+  });
+
+  it('keeps the warning under the session it belongs to', () => {
+    expect(
+      extension.sessionActionConfirmation({
+        action: 'Abort',
+        sessionId: 7,
+        sessionLabel: LABEL,
+        warning: 'This discards this session’s uncommitted changes.',
+        ask: true,
+      }),
+    ).toEqual({
+      message: 'Abort session 7?',
+      detail: `${LABEL}\n\nThis discards this session’s uncommitted changes.`,
+      confirmLabel: 'Abort Anyway',
+    });
+  });
+
+  // A row's Abort still warns, and still names the session while doing it.
+  it('warns without being asked to, when the caller named the session', () => {
+    const confirmation = extension.sessionActionConfirmation({
+      action: 'Abort',
+      sessionId: 7,
+      sessionLabel: LABEL,
+      warning: 'This discards this session’s uncommitted changes.',
+      ask: false,
+    });
+
+    expect(confirmation?.message).toBe('Abort session 7?');
+    expect(confirmation?.detail).toContain(LABEL);
+    expect(confirmation?.confirmLabel).toBe('Abort Anyway');
   });
 });
 

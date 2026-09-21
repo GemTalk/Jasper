@@ -204,7 +204,9 @@ const ASCII_PRINTABLE = /^[\x20-\x7e]*$/;
 export class ConfigValueError extends Error {}
 
 /**
- * The Smalltalk literal for a typed value the user typed into the editor.
+ * The Smalltalk literal for a typed configuration value — one the user typed
+ * into the editor, or one an Undo is putting back, which is a value the SESSION
+ * reported rather than anything typed here.
  * Throws {@link ConfigValueError} when the text cannot be a value of that type,
  * so a bad integer or an unknown kind never reaches the gem as malformed code.
  */
@@ -222,8 +224,8 @@ export function configValueLiteral(type: ConfigValueType, value: string): string
       return v;
     }
     case 'string':
-      // The one place a user's own characters are spliced into emitted Smalltalk,
-      // so it is also the one place the module's ASCII-only rule has to be
+      // Where characters from outside this module are spliced into emitted
+      // Smalltalk, so it is also where the module's ASCII-only rule has to be
       // enforced rather than assumed: on 3.6.x a non-ASCII character in a doit
       // trips the ComStrmSetCursor bug, and the failure that comes back says
       // nothing about what was typed. Refusing here turns a smart quote pasted
