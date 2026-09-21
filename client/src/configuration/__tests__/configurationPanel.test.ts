@@ -615,9 +615,44 @@ describe('undoing a configuration change', () => {
     return h;
   }
 
+  /**
+   * A harness whose STONE report tracks what was set, logged in as SystemUser
+   * so the stone does not refuse it. Every other harness here drives a gem key;
+   * the panel looks its "before" up in whichever report the scope names, and a
+   * stone change read out of the gem's report would find no such key at all.
+   */
+  function stoneTrackingHarness() {
+    const h = harness([makeSession(1)], {
+      1: {
+        isSystemUser: true,
+        onSet: (code) => {
+          const match = code.match(/put: (\S+?)\./);
+          h.gciFor(1).state.stoneReport = line(
+            'StnGemTimeout',
+            'SmallInteger',
+            match ? match[1] : '0',
+          );
+          return 'OK';
+        },
+      },
+    });
+    return h;
+  }
+
+  const setStnGemTimeout = (panel: MockPanel, value: string) =>
+    sendMessage(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value,
+    });
+
   const history = (panel: MockPanel) => lastPosted<HistoryPost>(panel, 'configHistory');
   const gemValue = (panel: MockPanel) =>
     paramNamed(config(panel).gemParams, 'GemHaltOnError').value;
+  const stoneValue = (panel: MockPanel) =>
+    paramNamed(config(panel).stoneParams, 'StnGemTimeout').value;
 
   it('offers nothing to undo until something has been changed', () => {
     const h = trackingHarness();
@@ -657,6 +692,40 @@ describe('undoing a configuration change', () => {
     expect(gemValue(panel)).toBe('2');
     expect(history(panel)!.undo).toMatchObject({ key: 'GemHaltOnError', from: '0', to: '2' });
     expect(history(panel)!.redo).toBeNull();
+  });
+
+  it('puts a stone setting back, looking its value up in the stone report', () => {
+    // The scope decides which of the two reports the panel's last-read value
+    // comes out of. Reading a stone key from the gem report finds nothing, and
+    // "nothing" is indistinguishable from a change that did not move: the entry
+    // would never be recorded, and an Undo would have nothing to offer.
+    const h = stoneTrackingHarness();
+    const panel = open(h, 1);
+
+    setStnGemTimeout(panel, '90');
+
+    expect(history(panel)!.undo).toEqual({
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      from: '60',
+      to: '90',
+    });
+
+    sendMessage(panel, { command: 'undoConfiguration' });
+
+    expect(stoneValue(panel)).toBe('60');
+    expect(history(panel)!.undo).toBeNull();
+    expect(history(panel)!.redo).toEqual({
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      from: '60',
+      to: '90',
+    });
+
+    sendMessage(panel, { command: 'redoConfiguration' });
+
+    expect(stoneValue(panel)).toBe('90');
+    expect(history(panel)!.undo).toMatchObject({ scope: 'stone', key: 'StnGemTimeout' });
   });
 
   it('unwinds a run of changes one at a time, newest first', () => {

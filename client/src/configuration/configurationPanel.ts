@@ -156,6 +156,35 @@ function forgetKey(
   return history.filter((c) => !(c.scope === of.scope && c.key === of.key));
 }
 
+/**
+ * The step a set actually took, or undefined when it took none.
+ *
+ * This is the one rule both histories are kept by: a change is recorded, and a
+ * reversal is moved between the two histories, on "the value MOVED" — never on
+ * `took`. `took` means the session reports exactly what was asked for, and a
+ * stone is free to accept a value and store a nearby one: a size rounded up to
+ * a page boundary, a timeout clamped to a minimum. Gating on `took` left such a
+ * change with no way back at all, which is the one case this feature exists
+ * for, and left a partial undo's entry in place describing a step that had not
+ * happened. A set the stone ignored and one that asked for the value already
+ * there both land back on `before` and are still excluded, which is what the
+ * exclusion was for.
+ *
+ * Answering with the endpoints rather than a bare yes keeps the caller honest:
+ * what goes on the history is the step that HAPPENED, `before` → `after`, which
+ * is the entry unchanged whenever the set landed exactly and the true endpoints
+ * when it did not.
+ */
+function stepTaken(
+  valueType: ConfigValueType,
+  before: string | undefined,
+  after: string | undefined,
+): { from: string; to: string } | undefined {
+  if (before === undefined || after === undefined) return undefined;
+  if (configValuesMatch(valueType, before, after)) return undefined;
+  return { from: before, to: after };
+}
+
 /** How many changes the panel keeps reversible. A cap rather than a single
  *  level: undoing a run of edits one at a time is the case this exists for, and
  *  a bound keeps a long-lived panel's history from growing without limit. */
@@ -372,19 +401,11 @@ export class ConfigurationPanel {
   ): void {
     const outcome = this.applySet(scope, key, valueType, value);
     const { before, settled } = outcome;
-    // Recorded on "the value moved", NOT on `took`. `took` means the session
-    // reports exactly what was asked for, and a stone is free to accept a value
-    // and store a nearby one — a size rounded up to a page boundary, a timeout
-    // clamped to a minimum. Gating on `took` left that change with no way back
-    // at all, which is the one case this feature exists for. A set the stone
-    // ignored and one that asked for the value already there both land on
-    // `before`, and are still excluded, which is what the exclusion was for.
-    if (
-      before !== undefined &&
-      settled !== undefined &&
-      !configValuesMatch(valueType, before, settled)
-    ) {
-      this.undoHistory.push({ scope, key, valueType, from: before, to: settled });
+    // Recorded on the step the set actually took, NOT on `took` — see
+    // {@link stepTaken} for why, and for what that still excludes.
+    const step = stepTaken(valueType, before, settled);
+    if (step) {
+      this.undoHistory.push({ scope, key, valueType, ...step });
       if (this.undoHistory.length > HISTORY_LIMIT) this.undoHistory.shift();
       this.redoHistory = [];
     }
@@ -446,26 +467,21 @@ export class ConfigurationPanel {
 
     const outcome = this.applySet(change.scope, change.key, change.valueType, target, direction);
     const { before, settled } = outcome;
-    // "It moved" rather than "it obeyed", for the reason `setConfiguration` uses
-    // the same test: a stone that clamps lands somewhere other than `target`,
-    // and that is still a reversal that happened. Leaving the entry in place for
-    // it was worse than not moving it — the value no longer matched the entry's
-    // own `to`, so the NEXT press met the staleness branch below and blamed an
-    // outside session for this panel's own partial undo.
-    const moved =
-      before !== undefined &&
-      settled !== undefined &&
-      !configValuesMatch(change.valueType, before, settled);
-    if (moved) {
+    // "It moved" rather than "it obeyed", by the same rule a hand-typed change
+    // is recorded under — see {@link stepTaken}. A stone that clamps lands
+    // somewhere other than `target`, and that is still a reversal that happened.
+    // Leaving the entry in place for it was worse than not moving it: the value
+    // no longer matched the entry's own `to`, so the NEXT press met the
+    // staleness branch above and blamed an outside session for this panel's own
+    // partial undo.
+    const step = stepTaken(change.valueType, before, settled);
+    if (step) {
       history.pop();
       const other = direction === 'undo' ? this.redoHistory : this.undoHistory;
-      // The step the other direction has to reverse is the one just taken,
-      // `before` → `settled`: the entry unchanged whenever the set landed
-      // exactly, and the honest endpoints when it did not.
+      // What the other direction has to reverse is the step just taken, read
+      // back to front for an undo.
       other.push(
-        direction === 'undo'
-          ? { ...change, from: settled, to: before }
-          : { ...change, from: before, to: settled },
+        direction === 'undo' ? { ...change, from: step.to, to: step.from } : { ...change, ...step },
       );
       if (other.length > HISTORY_LIMIT) other.shift();
     }
