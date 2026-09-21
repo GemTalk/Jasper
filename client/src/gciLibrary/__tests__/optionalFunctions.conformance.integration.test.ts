@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { compareGemStoneVersions } from '../../gemStoneVersion';
+import { normalizeGemStoneVersion } from '../../gemStoneVersionParsing';
 import {
   GCI_OPTIONAL_FUNCTIONS,
   type GciAbsenceReason,
@@ -40,17 +41,7 @@ const REMOVED_IN_NEXT_MAJOR_NAMES = new Set(REMOVED_IN_NEXT_MAJOR_ENTRIES.map(([
 /** Registry entries this test can check a prediction for: excludes `removedIn`, which names no version. */
 const CHECKABLE_ENTRIES = ALL_ENTRIES.filter(([name]) => !REMOVED_IN_NEXT_MAJOR_NAMES.has(name));
 
-/**
- * Extracts and pads the leading numeric version from a `GciTsVersion` string
- * the same way `supportsEnhancedInspector` (enhancedInspectorInstall.ts) does,
- * so it compares cleanly with `compareGemStoneVersions` instead of throwing on
- * a trailing build/description suffix (e.g. "3.7.5 build ...").
- */
-function normalizedLibraryVersion(rawVersion: string): string | undefined {
-  const numeric = rawVersion.match(/^\d+\.\d+(\.\d+){0,2}/)?.[0];
-  if (!numeric) return undefined;
-  return numeric.split('.').length < 3 ? `${numeric}.0` : numeric;
-}
+const normalizedLibraryVersion = normalizeGemStoneVersion;
 
 /**
  * Predicts availability from `reason`'s `addedIn`/`absentOn` axes -- shared
