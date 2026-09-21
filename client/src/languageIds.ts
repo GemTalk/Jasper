@@ -123,3 +123,25 @@ export function gemstoneDocumentLanguage(uri: vscode.Uri): string {
   if (kind === 'comment') return CLASS_COMMENT_LANGUAGE;
   return isMethodSourceUri(uri) ? METHOD_LANGUAGE : SMALLTALK_LANGUAGE;
 }
+
+/**
+ * The documents the GCI-backed Definition, Hover and Completion providers are
+ * registered for — editors holding GemStone source that a live session can be
+ * asked about.
+ *
+ * Exported so the senders/implementors counts have something to assert against.
+ * Those counts must be served for a `gemstone://` method editor, and whichever
+ * surface serves them must sweep environments 0..`gemstone.maxEnvironment`
+ * rather than query the ceiling alone. They have moved once already — from the
+ * CodeLens, which swept, into the hover, which did not — and the move left the
+ * method editor with counts that were always empty for anyone who had raised the
+ * setting. See countSurfaces.test.ts, which pins both halves of that rule.
+ */
+export const GCI_PROVIDER_SELECTORS: vscode.DocumentFilter[] = [
+  { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+  { scheme: 'gemstone', language: METHOD_LANGUAGE },
+  { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: 'gemstone-topaz' },
+  { scheme: 'file', language: 'gemstone-tonel' },
+];

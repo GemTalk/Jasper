@@ -114,7 +114,12 @@ import {
   isMethodEditorUri,
   isClassCommentUri,
 } from './gemstoneFileSystemProvider';
-import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
+import {
+  GCI_PROVIDER_SELECTORS,
+  METHOD_LANGUAGE,
+  SMALLTALK_LANGUAGE,
+  gemstoneDocumentLanguage,
+} from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
@@ -1017,14 +1022,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
-  const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
-    { scheme: 'gemstone', language: METHOD_LANGUAGE },
-    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
+  const providerSelectors = GCI_PROVIDER_SELECTORS;
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
