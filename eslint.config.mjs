@@ -183,14 +183,9 @@ const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name,
   ];
 });
 
-// Extracted so the capability-confinement block below can restate it: flat
-// config *replaces* a rule's options per block rather than merging them
-// across blocks that share a rule name over overlapping globs, so the second
-// block has to carry its own full copy of every selector here, not just the
-// two new ones it adds.
 // Shared by both harness-session blocks below, which must exempt the same
-// files: flat config replaces a rule's options per block rather than merging
-// them, so each restates its whole `ignores` array.
+// files, so each restates its whole `ignores` array (see TS_EXTENSION_IMPORT
+// above for why).
 //
 // `client/src/__tests__/gci/**` is being deleted, not fixed -- every file
 // there logs in for itself, so the rule would only collect disables that
@@ -206,6 +201,9 @@ const HARNESS_SESSION_IGNORES = [
   '**/optionalFuncSignature.test.ts',
 ];
 
+// Extracted so the capability-confinement block below can restate it: the
+// second block has to carry its own full copy of every selector here, not
+// just the two new ones it adds (see TS_EXTENSION_IMPORT above for why).
 const HARNESS_SESSION_SELECTORS = [
   { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
   // `callee.name` reads a bare identifier only, so a namespace import
@@ -434,9 +432,8 @@ export default tseslint.config(
     // Matched by basename, not by path: most client tests live in a nested
     // `__tests__` (client/src/enhancedInspector/__tests__/ and its siblings), which
     // `client/src/__tests__/**` does not cover -- those files were exempt only
-    // because the `**/*.test.ts` block further down configures this same rule, and
-    // flat config *replaces* a rule's options rather than merging them, which
-    // silently dropped these selectors for everything it matched. That left the
+    // because the `**/*.test.ts` block further down configures this same rule
+    // (see TS_EXTENSION_IMPORT above for why that drops these selectors). That left the
     // exclusion true by accident and false for a `__tests__/support/` helper, which
     // is not a `*.test.ts` and so was covered by neither.
     files: ['client/src/**/*.ts'],
@@ -547,9 +544,8 @@ export default tseslint.config(
       '**/__mocks__/**',
       // A test file outside `__tests__/` is exempt too, and has to be listed
       // here to say so: the test-session block below configures
-      // `no-restricted-syntax` for these globs, and flat config *replaces* a
-      // rule's options rather than merging them -- so these selectors are
-      // dropped for such a file whether or not this line exists. Stated
+      // `no-restricted-syntax` for these globs, which drops these selectors
+      // for such a file regardless (see TS_EXTENSION_IMPORT above for why). Stated
       // explicitly rather than left to fall out of block ordering, which is
       // invisible at the call site. Not `**/*.test.tsx`: the `files` above are
       // all `*.ts`, so it could never match.
@@ -592,8 +588,7 @@ export default tseslint.config(
     // This is a separate block layered over the harness-session block above,
     // rather than the two new selectors/pattern added straight into that
     // block's arrays, because flat config *replaces* a rule's options per
-    // block instead of merging across blocks that share a rule name over
-    // overlapping globs. Widening that block's own `ignores` to exempt
+    // block (see TS_EXTENSION_IMPORT above for why). Widening that block's own `ignores` to exempt
     // `gciLibrary/__tests__/**` would have exempted it from the *raw-login*
     // selectors too, which must keep firing there. So this block restates
     // (`HARNESS_SESSION_SELECTORS`, plus the same `forkGem`/`.ts`-extension
