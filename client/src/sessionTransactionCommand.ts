@@ -63,7 +63,7 @@ export async function sessionTransactionCommand(
 
   // The current session, with no picker behind it. While any session is logged
   // in there is always a current one — login selects the first, and logging out
-  // of the current session hands the selection to the oldest that remains — so
+  // of the current session hands the selection to the one worked in before it — so
   // the only way to arrive here empty is with nothing logged in at all, which
   // the palette's `gemstone.hasActiveSession` clause already withholds these
   // commands for. (`resolveSession` would put up a QuickPick in the middle of a
