@@ -312,7 +312,10 @@ ${methodSerialization(environmentId)}`;
 // environment-0 answer each time. Verified on a live 3.7.5 stone: for a method
 // compiled only into environment 1, `includesSelector:` answers false and a bare
 // `compiledMethodAt:` answers nil, while `environmentId: 1` answers the method —
-// and this query returns it with the environment column set to 1.
+// and this query returns it with the environment column set to 1. A unit test can
+// only pin the spelling of that send, so the engine's half of it is guarded on a live
+// stone by `methodSearch.integration.test.ts`, which implements one selector across
+// three environments in a four-deep chain and walks it in both directions.
 export function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
