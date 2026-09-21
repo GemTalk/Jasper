@@ -4773,6 +4773,12 @@ export class ExplorerController {
   // send would reach once this implementation is gone, which is what makes removing an
   // override harmless. Best-effort: a failure here answers undefined, which only means the
   // caller falls back to the full sender scan.
+  //
+  // No environment is passed, so this reads environment 0 — deliberately, and not merely
+  // inherited from the query's default. The pane deletes the environment-0 method
+  // (EXPLORER_METHOD_ENVIRONMENT), and a send compiled in one environment resolves in that
+  // environment, so environment 0 is the question being asked. The caller documents what an
+  // under-report costs here: a question, never a wrong silent delete.
   private superclassImplementorOf(
     session: ActiveSession,
     className: string,
