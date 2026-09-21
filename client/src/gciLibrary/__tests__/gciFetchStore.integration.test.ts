@@ -292,6 +292,8 @@ describe('GCI byte and OOP fetch/store (integration)', () => {
     });
 
     it('returns 0 when removing OOPs not present in the NSC', () => {
+      // No requireGciCapability: GciTsRemoveOopsFromNsc is in all vendored headers, so it's
+      // not in the optional-functions registry.
       const bag = execute('IdentityBag new');
       const string = gci.GciTsNewString(session, 'not-in-bag').result;
 
