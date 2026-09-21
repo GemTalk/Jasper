@@ -56,12 +56,11 @@
 | | | **— FILE IN —** |
 | ✅ | **4** — **file in**, part 1: read Tonel into definitions | done |
 | ✅ | **5** — **file in**, part 2: apply to the image | done; round trip is a fixpoint |
-| ⬜ | **6** — availability gating | **← NEXT**; probe ✅ done in Step A, context key + command guards outstanding |
-| ⬜ | **7** — client wiring (menus, filters, code lens) | |
+| ◐ | **6** — make it reachable: gate + menus, filters, code lens | gate ✅, file-out menu ✅; file-in command + code lens outstanding |
 | ⬜ | **8** — prose sweep + how-to page | |
 | ⬜ | **9** — final gate | |
 
-**Tests so far: 241.** All 241 pass against a rowan3 stone; 194 pass and 47 skip against
+**Tests so far: 253.** All 253 pass against a rowan3 stone; 184 pass and 69 skip against
 the default base-extent stone. Lint, format and compile clean.
 
 **Steps are not being done in numeric order.** Step 2 turned out to be mostly covered by
@@ -962,39 +961,32 @@ count that was being read with a duplicate-blind key.
 None of these is a defect, but all three mean a Jasper `.st` file is **Tonel that Rowan
 can parse, not a Rowan project artifact.** Worth saying plainly in the how-to page.
 
-## Step 6 — Availability gating ⬜ (the probe itself ✅ done in Step A)
+## Step 6 — Make it reachable: gate + menus ◐ IN PROGRESS
 
-**One question, asked of the session itself: is the machinery this feature drives
-present here?** Not the version, not the extent's filename, not `Rowan` resolving —
-all three are proxies, and the first two are the proxies that would stop these tests
-from ever switching themselves on.
+**Was two steps (6 gating, 7 wiring) and should never have been.** A `when` clause lives
+ON a menu entry, so the gate cannot be built before the menus it gates — Step 6 alone
+would have produced a context key nothing reads and nothing to demonstrate. One step.
 
-The probe resolves the classes we actually send messages to and checks they respond to
-the selectors we actually send:
+### The gate
 
-- `RwModificationTonelWriterVisitorV2` → `_writeClassDefinition:on:`,
-  `_writeClassSideMethodDefinitions:on:`, `_writeInstanceSideMethodDefinitions:on:`,
-  `methodSortBlock:`
-- `RwRepositoryResolvedProjectTonelReaderVisitorV2` (plus whatever R1/R2 settles on)
-- `Class >> rwClassDefinitionInSymbolDictionaryNamed:`
+The probe is already built and tested (Step A): it asks the session whether the classes
+and selectors this feature drives are actually present — not the version, not the extent
+filename, not whether `Rowan` resolves, all of which are proxies that would stop the
+feature ever switching itself on when rowan3 reaches CI or the base extent.
 
-This answers Eric's point directly: it is true on a rowan3 stone, false on a base
-extent, and it becomes true **by itself** the day rowan3 reaches CI or lands in
-`extent0.dbf` — no version table to update, no annual reminder. It also happens to be
-the sharpest available discriminator between rowan3 and the older Rowan, which share
-the `Rowan` global and several class *names*.
+3.7.5 stays the documented support floor, not a runtime check: no 3.6.x tarball can
+produce a stone where the probe passes.
 
-3.7.5 stays the **documented support floor** in the docs and the issue. It is not a
-runtime condition — it needs no check, because no 3.6.x tarball can produce a stone
-where the probe passes.
+Remaining work is to publish its answer and act on it:
 
-Set context key `gemstone.tonelAvailable` from the probe on connect. Unit-test the
-predicate: all selectors present → true; any one missing → false (drive it with a fake
-executor, one test per selector, so a future Rowan that drops any single one is caught
-by name). Menus `when`-clause on the key; each command guards at runtime too, because
-the palette ignores `when`.
+1. Set context key `gemstone.tonelAvailable` from the probe on session connect.
+2. `when`-clause every Tonel menu entry on that key.
+3. Guard each command at runtime as well — the command palette ignores `when`.
+4. Tests in `client/src/__tests__/tonelAvailability.test.ts`: key set true/false from the
+   probe; commands refuse when the key is false.
 
-## Step 7 — Client wiring ⬜
+### The wiring
+
 
 - `client/src/fileTransfer/fileOut.ts` — add `TONEL_FILE_OUT_FILTERS` (`st`).
   **`FILE_OUT_FILTERS`'s doc-comment currently explains that `.st` is excluded because

@@ -32,6 +32,11 @@ import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClass
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
 import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/tonel/dictionariesContainingClass';
+import {
+  tonelCapability as sharedTonelCapability,
+  TonelCapabilityResult,
+} from './queries/tonel/tonelCapability';
+import { fileOutClassTonel as sharedFileOutClassTonel } from './queries/tonel/fileOutClassTonel';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
 import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
@@ -776,6 +781,20 @@ export function getSiblingClassNames(
   dict?: number | string,
 ): string[] {
   return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** One class as Tonel source, or a sentinel (see `isTonelFileOutError`). */
+export function fileOutClassTonel(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** Which parts of the Tonel machinery this session can reach. */
+export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
+  return sharedTonelCapability(defaultQueryExecutorUsing(session));
 }
 
 /** Which symbol dictionaries hold a class of this name, in symbol-list order. */

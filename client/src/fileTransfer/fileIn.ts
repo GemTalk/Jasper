@@ -23,9 +23,22 @@ import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
 import { rememberDirectory, rememberedDirectory } from './directory';
 
-/** File types the open dialog offers. Topaz writes `.gs`; `.tpz` is the same syntax. */
+/** File types the chunk open dialog offers. Topaz writes `.gs`; `.tpz` is the same syntax. */
 export const FILE_IN_FILTERS: Record<string, string[]> = {
   'GemStone Files': ['gs', 'tpz'],
+  'All Files': ['*'],
+};
+
+/**
+ * File types the TONEL open dialog offers (issue #616).
+ *
+ * Kept apart from {@link FILE_IN_FILTERS} because the two formats are read by
+ * different code: a `.st` file goes through Rowan's Tonel parser, a `.gs` file
+ * through the chunk reader. Offering both in one dialog would invite handing one
+ * format to the other's reader.
+ */
+export const TONEL_FILE_IN_FILTERS: Record<string, string[]> = {
+  'Tonel Files': ['st'],
   'All Files': ['*'],
 };
 

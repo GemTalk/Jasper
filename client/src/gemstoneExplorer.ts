@@ -61,9 +61,17 @@ import { categoryChildNodes, categoryParentPath, categoryMatches } from './explo
 import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
-import { composeFileOut, fileOutFileName, saveFileOut } from './fileTransfer/fileOut';
+import {
+  TONEL_FILE_OUT_FILTERS,
+  composeFileOut,
+  fileOutFileName,
+  sanitizeFileNameStem,
+  saveFileOut,
+} from './fileTransfer/fileOut';
 import { fileInCommand } from './fileTransfer/fileIn';
 import { isClassNotFound } from './queries/fileOutClass';
+import { isTonelFileOutError } from './queries/tonel/fileOutClassTonel';
+import { requireTonelAvailable } from './tonelAvailability';
 import {
   RenamePreview,
   RenameApplyResult,
@@ -6853,6 +6861,35 @@ export class ExplorerController {
     });
   }
 
+  /**
+   * File out one class as TONEL — Rowan's one-class-per-file format — for putting
+   * base code in git (issue #616).
+   *
+   * Hidden on a stone without the Rowan machinery; the runtime guard covers the
+   * command-palette route, which ignores the menu's `when` clause.
+   *
+   * The file carries the class definition, its comment and every method a Jasper
+   * user can see, including the ones Rowan would file into another package's
+   * `.extension.st`. See `queries/tonel/fileOutClassTonel.ts`.
+   */
+  async fileOutClassAsTonel(node: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    if (!requireTonelAvailable(session)) return;
+    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    await this.runFileOut({
+      title: `File Out ${node.className} as Tonel`,
+      defaultFileName: `${sanitizeFileNameStem(node.className)}.class.st`,
+      label: `${node.className} (Tonel)`,
+      filters: TONEL_FILE_OUT_FILTERS,
+      build: () => {
+        const tonel = queries.fileOutClassTonel(session, node.className, dict);
+        if (isTonelFileOutError(tonel)) throw new Error(tonel);
+        return tonel;
+      },
+    });
+  }
+
   /** One class's file-out body, turning `fileOutClass`'s not-found sentinel into a
    *  raise — the caller is writing a file, and a `.gs` whose whole contents are
    *  "Class not found: X" is worse than a reported failure. */
@@ -8793,6 +8830,11 @@ export function registerGemStoneExplorer(
     }),
     vscode.commands.registerCommand('gemstone.explorer.fileOutClass', (node?: unknown) => {
       if (node instanceof ClassItem || node instanceof HierarchyItem) void ctl.fileOutClass(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutClassTonel', (node?: unknown) => {
+      if (node instanceof ClassItem || node instanceof HierarchyItem) {
+        void ctl.fileOutClassAsTonel(node);
+      }
     }),
     vscode.commands.registerCommand('gemstone.explorer.fileOutProtocol', (node?: unknown) => {
       if (node instanceof MethodCategoryItem) void ctl.fileOutMethodCategory(node);

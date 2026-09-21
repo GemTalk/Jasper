@@ -1566,6 +1566,12 @@
         "icon": "$(export)"
       },
       {
+        "command": "gemstone.explorer.fileOutClassTonel",
+        "title": "File Out Class as Tonel...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
         "command": "gemstone.explorer.fileOutProtocol",
         "title": "File Out Method Category...",
         "category": "GemStone",
@@ -2264,6 +2270,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.fileOutProtocol",
           "when": "false"
         },
@@ -2746,9 +2756,19 @@
           "group": "4_fileout@0"
         },
         {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClasses && gemstone.tonelAvailable && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_fileout@1"
+        },
+        {
           "command": "gemstone.explorer.fileOutClass",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass/",
           "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClassHierarchy && gemstone.tonelAvailable && viewItem =~ /^explorerHierClass/",
+          "group": "4_fileout@1"
         },
         {
           "command": "gemstone.explorer.fileOutProtocol",

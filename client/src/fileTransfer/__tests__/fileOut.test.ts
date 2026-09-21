@@ -16,8 +16,9 @@ import {
   sanitizeFileNameStem,
   saveFileOut,
   FILE_OUT_FILTERS,
+  TONEL_FILE_OUT_FILTERS,
 } from '../fileOut';
-import { FILE_IN_FILTERS } from '../fileIn';
+import { FILE_IN_FILTERS, TONEL_FILE_IN_FILTERS } from '../fileIn';
 import { LAST_DIRECTORY_KEY } from '../directory';
 
 describe('sanitizeFileNameStem', () => {
@@ -76,6 +77,37 @@ describe('composeFileOut', () => {
  * a rooted literal like `/out/A.gs` has none and matches `path.normalize` as-is.
  */
 const at = (p: string): string => vscode.Uri.file(p).fsPath;
+
+describe('TONEL_FILE_OUT_FILTERS', () => {
+  it('offers .st, and only .st', () => {
+    // Tonel's own extension. The chunk filters deliberately exclude it, so the
+    // two formats cannot be confused in the save dialog.
+    const out = Object.values(TONEL_FILE_OUT_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    expect(out).toEqual(['st']);
+  });
+
+  it('is what Tonel File In takes back', () => {
+    // Same invariant the chunk pair has: a file saved through a filter the
+    // matching File In does not list would be unreachable from every route back.
+    const out = Object.values(TONEL_FILE_OUT_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    const back = Object.values(TONEL_FILE_IN_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    expect(new Set(out)).toEqual(new Set(back));
+  });
+
+  it('does not leak .st into the chunk filters', () => {
+    // The chunk path stays chunk-only: a `.gs` file and a `.st` file are read by
+    // different code, and offering both in one dialog would invite filing a Tonel
+    // file into the Topaz reader, which fails in a confusing way.
+    expect(Object.values(FILE_OUT_FILTERS).flat()).not.toContain('st');
+    expect(Object.values(FILE_IN_FILTERS).flat()).not.toContain('st');
+  });
+});
 
 describe('FILE_OUT_FILTERS', () => {
   it('offers only extensions File In will take back', () => {

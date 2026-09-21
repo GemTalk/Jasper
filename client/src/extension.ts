@@ -25,6 +25,7 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
+import { refreshTonelAvailability } from './tonelAvailability';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
@@ -1310,6 +1311,17 @@ export function activate(context: vscode.ExtensionContext) {
     sessionManager.onDidChangeSelection(() => updateRefactoringSupportContext()),
   );
   updateRefactoringSupportContext();
+
+  // Drive `gemstone.tonelAvailable` the same way (issue #616). Unlike the two
+  // above it is not a latch the user can install: it asks the stone whether the
+  // Rowan classes the feature drives are reachable, so switching to a base-extent
+  // session hides the Tonel entries and switching back shows them again.
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() =>
+      refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined),
+    ),
+  );
+  refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined);
 
   // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
   // switching sessions switches which undo (if any) is on offer.
