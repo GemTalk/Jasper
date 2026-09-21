@@ -490,5 +490,7 @@ Every pure module is unit-tested: the matcher/ranker (`omniMatch`, via providers
 (`omniEngine`), config, actions, and references. Query providers test the generated Smalltalk + result
 parsing against a mocked `QueryExecutor` (the `methodSearch.test.ts` pattern). The webview DOM
 (`omniSearchView.js`) is jsdom-tested. `omniSettings.test.ts` guards the contributed `ui` enum (exactly
-`panel` + `spotter`); `keybindings.test.ts` covers the trigger. A live-stone integration test
-(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query.
+`panel` + `spotter`); `keybindings.test.ts` covers the trigger. Live-stone integration tests
+(`queries/__tests__/methodSearch.integration.test.ts`) cover the Literals symbol query and the
+hierarchy-implementors walk — the two places where the generated Smalltalk compiles and runs but the
+engine API underneath it can still mean something other than what the query assumed.
