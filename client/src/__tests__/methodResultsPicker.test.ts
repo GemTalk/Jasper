@@ -21,6 +21,10 @@ import type { MethodSearchResult } from '../queries/methodSearch';
  * and opened one of these" (they have moved on — abandon the deletion) from "the user closed
  * the list" (still deciding — ask again). Everything downstream of the pick is mocked; what
  * is under test is the routing and the answer.
+ *
+ * A list of exactly one skips the picker entirely and is covered in
+ * methodResultsSingleResult.test.ts. Nothing here may use a one-row list as a fixture: it
+ * would take that shortcut and assert nothing about the picker it names.
  */
 
 const quickPick = vscode.window.showQuickPick as ReturnType<typeof vi.fn>;
@@ -84,7 +88,7 @@ describe('showing a result list', () => {
   it('carries the category and dictionary so the picker can filter on them', async () => {
     quickPick.mockResolvedValue(undefined);
 
-    await showMethodResults(1, [result()], 'Senders');
+    await showMethodResults(1, [result(), result({ className: 'Ledger' })], 'Senders');
 
     const items = quickPick.mock.calls[0][0] as { description: string; detail: string }[];
     expect(items[0].description).toBe('accessing');
@@ -97,19 +101,24 @@ describe('showing a result list', () => {
   it('counts the results in the prompt', async () => {
     quickPick.mockResolvedValue(undefined);
 
-    await showMethodResults(1, [result()], 'Senders');
+    await showMethodResults(1, [result(), result({ className: 'Ledger' })], 'Senders');
 
     const options = quickPick.mock.calls[0][1] as { placeHolder: string };
-    expect(options.placeHolder).toBe('1 method found');
+    expect(options.placeHolder).toBe('2 methods found');
   });
 });
 
 describe('choosing a result', () => {
+  // Every list here holds two, because a list of one is opened outright and never
+  // reaches the picker -- a one-row fixture would assert the shortcut while claiming
+  // to be about the choice.
+  const other = result({ className: 'Ledger', selector: 'total' });
+
   it('navigates an open System Browser to it', async () => {
     const chosen = result();
     quickPick.mockResolvedValue({ result: chosen });
 
-    await showMethodResults(7, [chosen], 'Senders');
+    await showMethodResults(7, [chosen, other], 'Senders');
 
     expect(navigateTo).toHaveBeenCalledWith(7, chosen);
     expect(executeCommand).not.toHaveBeenCalled();
@@ -120,7 +129,7 @@ describe('choosing a result', () => {
     navigateTo.mockReturnValue(false);
     quickPick.mockResolvedValue({ result: chosen });
 
-    await showMethodResults(7, [chosen], 'Senders');
+    await showMethodResults(7, [chosen, other], 'Senders');
 
     expect(buildMethodUri).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'method', sessionId: 7, selector: 'balance' }),
@@ -135,7 +144,7 @@ describe('choosing a result', () => {
     navigateTo.mockReturnValue(false);
     quickPick.mockResolvedValue({ result: chosen });
 
-    await showMethodResults(7, [chosen], 'Senders');
+    await showMethodResults(7, [chosen, other], 'Senders');
 
     expect(buildMethodUri).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 2 }));
   });
@@ -143,15 +152,17 @@ describe('choosing a result', () => {
   it('reports that something was opened', async () => {
     quickPick.mockResolvedValue({ result: result() });
 
-    expect(await showMethodResults(1, [result()], 'Senders')).toBe(true);
+    expect(await showMethodResults(1, [result(), other], 'Senders')).toBe(true);
   });
 });
 
 describe('closing the list without choosing', () => {
+  const other = result({ className: 'Ledger', selector: 'total' });
+
   it('opens nothing', async () => {
     quickPick.mockResolvedValue(undefined);
 
-    await showMethodResults(1, [result()], 'Senders');
+    await showMethodResults(1, [result(), other], 'Senders');
 
     expect(navigateTo).not.toHaveBeenCalled();
     expect(executeCommand).not.toHaveBeenCalled();
@@ -160,6 +171,6 @@ describe('closing the list without choosing', () => {
   it('reports that nothing was opened, which is what keeps a caller asking', async () => {
     quickPick.mockResolvedValue(undefined);
 
-    expect(await showMethodResults(1, [result()], 'Senders')).toBe(false);
+    expect(await showMethodResults(1, [result(), other], 'Senders')).toBe(false);
   });
 });
