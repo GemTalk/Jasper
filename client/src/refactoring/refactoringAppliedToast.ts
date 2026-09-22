@@ -33,6 +33,7 @@ import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactorin
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
+import { REFACTORING_APPLIED_COMMAND } from './refactoringAppliedEvent';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
  *  message (the quiet default the in-editor refactorings use) or a toast (what the
@@ -50,6 +51,17 @@ export function notifyRefactoringApplied(
   message: string,
   plainNotice: PlainNoticeStyle = 'statusBar',
 ): void {
+  // An open method-history panel refreshes itself after a Save, and must do the same after a
+  // refactoring — a method changed either way, and having to close and reopen the panel to see the
+  // new version is the kind of inconsistency that makes the history look unreliable. This is the one
+  // place every refactoring passes through, so it is the one place that has to say so. Fired before
+  // the notice because the panel should be right by the time the toast is read, and swallowed if no
+  // Explorer is registered (nothing is listening, and a refactoring must not fail over a redraw).
+  if (session) {
+    void Promise.resolve(
+      vscode.commands.executeCommand(REFACTORING_APPLIED_COMMAND, session.id),
+    ).then(undefined, () => undefined);
+  }
   void (async () => {
     const status = checkRefactoringUndoAvailable(session);
     if (!status.available || !session) {
