@@ -474,8 +474,12 @@ export function announceSessionAction(
   // never set one.
   void Promise.resolve(vscode.window.showErrorMessage(message, SHOW_CONFLICTS)).then((choice) => {
     if (choice !== SHOW_CONFLICTS) return;
-    logWarning(`${sessionDescription}: ${action} ${result.verb ?? 'failed'}.\n${details}`);
+    // Show BEFORE appending. The channel holds routine GCI traffic, so opening it
+    // first and writing second is what puts the report on screen: VS Code scrolls
+    // the Output view on new content, and there is no command to scroll it after
+    // the fact — only a toggle that would risk turning the user's auto-scroll off.
     getGciLog().show(true);
+    logWarning(`${sessionDescription}: ${action} ${result.verb ?? 'failed'}.\n${details}`);
   });
 }
 

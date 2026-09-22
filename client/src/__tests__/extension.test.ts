@@ -472,6 +472,23 @@ describe('announceSessionAction', () => {
       expect(channel.show).toHaveBeenCalled();
     });
 
+    // The channel is full of routine GCI traffic, so the report has to land at
+    // the bottom of a view that is already open. An append is what scrolls the
+    // Output view, and there is no command to scroll it afterwards — so the show
+    // must come first, or the user opens the channel wherever they last left it.
+    it('opens the channel before writing, so the report is what you land on', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(
+        extension.SHOW_CONFLICTS as unknown as vscode.MessageItem,
+      );
+
+      announce();
+      await flushMicrotasks();
+
+      expect(channel.show.mock.invocationCallOrder[0]).toBeLessThan(
+        channel.appendLine.mock.invocationCallOrder[0],
+      );
+    });
+
     it('writes nothing when the toast is dismissed', async () => {
       announce();
       await flushMicrotasks();
