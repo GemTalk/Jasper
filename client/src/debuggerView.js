@@ -737,6 +737,10 @@
     const history = [];
     let historyAt = -1; // -1 = not walking; otherwise an index into `history`
     let draft = ''; // what was in the box when the walk started, to come back to
+    // The result row doubles as the status line, so a status message borrows it and hands it back.
+    const STATUS_MS = 1600; // matches the Inspector's chord-hint flash
+    let statusTimer = null;
+    let lastAnswer = null; // {value, isError} — what the row returns to
 
     function rememberExpression(expr) {
       if (history[history.length - 1] !== expr) history.push(expr);
@@ -817,12 +821,36 @@
       return `Earlier ${history.length - historyAt} of ${history.length} \u00b7 ${mod}+\u2193 for your draft`;
     }
 
-    /** A transient answer that is not a result, in the row the answers use. */
+    /**
+     * Say something that is NOT a result, in the row the results use — "Oldest expression", "Back to
+     * what you were typing".
+     *
+     * Transient, and it puts the answer back. The result row is this pane's only status surface, so
+     * these messages have to borrow it; writing into it permanently meant walking to the end of the
+     * history threw away the answer you were looking at, which is a steep price for a navigation
+     * message. It also matches the Inspector, whose equivalent flashes in its chord-hint line and
+     * then restores it — same words, same duration, same return to rest.
+     */
     function setEvalStatus(text) {
       if (!evalResult) return;
+      if (statusTimer) clearTimeout(statusTimer);
       evalResult.textContent = text;
       evalResult.title = '';
       evalResult.classList.remove('error');
+      statusTimer = setTimeout(() => {
+        statusTimer = null;
+        showAnswer(lastAnswer);
+      }, STATUS_MS);
+    }
+
+    /** Put an answer (or the absence of one) in the result row, and remember it as what the row
+     *  goes back to after a status message. */
+    function showAnswer(answer) {
+      if (!evalResult) return;
+      lastAnswer = answer;
+      evalResult.textContent = answer ? answer.value : '';
+      evalResult.title = answer ? answer.value : '';
+      evalResult.classList.toggle('error', !!(answer && answer.isError));
     }
 
     /** Run what's in the box, in `mode`. A blank expression is not worth a round trip. */
@@ -921,11 +949,11 @@
         evalInput.value = '';
         evalInput.focus();
       }
-      if (evalResult) {
-        evalResult.textContent = '';
-        evalResult.title = '';
-        evalResult.classList.remove('error');
+      if (statusTimer) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
       }
+      showAnswer(null);
       showClearWhenTyped();
     }
 
@@ -1100,14 +1128,14 @@
         if (error) error.textContent = msg.text || '';
         if (dnuBar) dnuBar.innerHTML = '';
       } else if (msg.command === 'evalResult') {
-        if (evalResult) {
-          const value = msg.value != null ? msg.value : '';
-          evalResult.textContent = value;
-          // The answer shares one row with the expression, so a long printString
-          // scrolls sideways — the tooltip is how you read the whole of it.
-          evalResult.title = value;
-          evalResult.classList.toggle('error', !!msg.isError);
+        // The answer shares one row with the expression, so a long printString scrolls sideways —
+        // the tooltip is how you read the whole of it. It goes through showAnswer so the row knows
+        // what to return to after a status message borrows it.
+        if (statusTimer) {
+          clearTimeout(statusTimer);
+          statusTimer = null;
         }
+        showAnswer({ value: msg.value != null ? msg.value : '', isError: !!msg.isError });
       } else if (msg.command === 'savedNotice') {
         // #11: show the dumped file's path beside the buttons with a Copy-path
         // glyph, then auto-dismiss after 5s (forever was annoying once you're

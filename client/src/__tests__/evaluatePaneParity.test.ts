@@ -24,7 +24,7 @@
  * missing from both. They are all here rather than only the reported direction, because "one UX"
  * has to settle each of them and a fix aimed at only the debugger would leave the rest.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { evaluatePaneHtml } from '../debuggerEvalPane';
@@ -563,6 +563,60 @@ describe('going back to a previous expression', () => {
     pane.older();
 
     expect(pane.input.value).toBe('was run');
+  });
+});
+
+describe('a status message is transient, and gives the row back', () => {
+  /**
+   * Both panes borrow a surface to say things that are not results — "Oldest expression", "Back to
+   * what you were typing". Both must give it back: the Inspector's chord-hint line returns to the
+   * chord legend, and the debugger's result row returns to the ANSWER, which it was otherwise
+   * destroying — walking to the end of the history threw away the printString you were reading,
+   * which is a steep price for a navigation message.
+   */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(PANES)('%s shows the message straight away', (_name, open) => {
+    const pane = open();
+    pane.type('only');
+    pane.click('display');
+
+    pane.older();
+    pane.older();
+
+    expect(pane.status()).toMatch(/Oldest expression/);
+  });
+
+  it.each(PANES)('%s returns to rest after the message', (_name, open) => {
+    vi.useFakeTimers();
+    const pane = open();
+    pane.type('only');
+    pane.click('display');
+    pane.answer('42');
+    pane.older();
+    pane.older();
+    expect(pane.status()).toMatch(/Oldest expression/);
+
+    vi.advanceTimersByTime(2000);
+
+    expect(pane.status()).not.toMatch(/Oldest expression/);
+  });
+
+  it('the debugger gets its answer back rather than losing it', () => {
+    vi.useFakeTimers();
+    const pane = debuggerPane();
+    pane.type('1 + 1');
+    pane.click('display');
+    pane.answer('2');
+    expect(pane.status()).toBe('2');
+
+    pane.older();
+    pane.older();
+    vi.advanceTimersByTime(2000);
+
+    expect(pane.status()).toBe('2');
   });
 });
 
