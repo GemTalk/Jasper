@@ -556,14 +556,22 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
   });
 
-  // A commit the stone REFUSED leaves no error behind, so this used to read
-  // "Commit failed — error 0" at exactly the moment the user is deciding whether
-  // to log out over work that is still sitting there uncommitted.
-  it('says the commit was refused, not that it failed with no error', async () => {
+  // A commit the stone REFUSED used to read as a bare TransactionError here — at
+  // exactly the moment the user is deciding whether to log out over work that is
+  // still sitting there uncommitted.
+  it('says the commit was refused, not that it failed with a TransactionError', async () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
     );
-    const commit = vi.fn(() => ({ success: false, err: { number: 0, message: '' } }));
+    const commit = vi.fn(() => ({
+      success: false,
+      err: {
+        number: 2738,
+        message:
+          'a TransactionError occurred (error 2738), reason:commitConflicts, commit conflicts',
+        reason: 'commitConflicts',
+      },
+    }));
 
     const decision = await extension.confirmLogoutWithUncommittedChanges(
       3,
@@ -577,7 +585,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(message).toContain('Commit refused');
     expect(message).toContain('another session committed a change this transaction also made');
     expect(message).toContain('Not logging out.');
-    expect(message).not.toContain('error 0');
+    expect(message).not.toContain('TransactionError');
   });
 
   it('proceeds without committing when the user chooses to log out anyway', async () => {

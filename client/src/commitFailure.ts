@@ -1,17 +1,21 @@
 // What to say when a commit does not land.
 //
 // GemStone draws a line Jasper did not: a commit can be REFUSED because another
-// session got there first, or it can FAIL with an error. GemBuilder for C 3.7
-// spells out how to tell them apart, in the `GciCommit` example itself —
-// `GciErr` answering false after a false commit means "commit failed due to
-// transaction conflicts":
+// session got there first, or it can FAIL with an error.
 //
-//     if ( ! GciCommit()) {
-//       if (GciErr(&errInfo)) { ...error... } else { ...conflict... }
-//     }
+// How the refusal arrives depends on which commit call made it. GemBuilder for C
+// documents the old `GciCommit` as answering false with NO error set —
+// `if (!GciCommit()) { if (GciErr(&errInfo)) {error} else {conflict} }`. The
+// thread-safe `GciTsCommit` does not behave that way: on a live 3.7.5 stone a
+// conflicting commit comes back as `ERR_TransactionError` (2738, gcierr.ht) with
+// the reason `commitConflicts`. Both shapes are treated as refusals here, since
+// the matrix spans releases and both are documented or observed behaviour.
 //
-// `GciTsCommit` is the same call ("implemented in client library as message
-// send" — gcits.hf), so the same rule reads its result.
+// The reason is matched rather than the number: 2738 is the whole TransactionError
+// family, so the number alone would swallow real errors, and `commitConflicts` is
+// a Smalltalk symbol rather than prose — the English around it is free to be
+// reworded release to release, which is why the message is only consulted when the
+// struct's own `reason` field is empty.
 import { ReportedGciError, explainGciError } from './gciLibraryError';
 import {
   TransactionConflicts,
@@ -20,16 +24,23 @@ import {
   hasConflictDetail,
 } from './queries/transactionConflicts';
 
+/** The reason GemStone gives a TransactionError raised by conflicting commits. */
+export const COMMIT_CONFLICTS_REASON = 'commitConflicts';
+
 /**
  * Whether a `GciTsCommit` that answered false was refused over a concurrency
  * conflict rather than having errored.
  *
- * No error number is the signal, exactly as `GciErr` reports it. `err` itself may
- * be an unfilled out-struct — the GCI need not touch it when there is nothing to
- * report — so a missing `number` counts the same as a zero one.
+ * An unfilled out-struct counts as a refusal: the GCI need not touch it when
+ * there is nothing to report, so a missing `number` reads the same as a zero one.
  */
 export function isCommitConflict(err: ReportedGciError | undefined): boolean {
-  return !err?.number;
+  if (!err?.number) return true;
+  const reason = err.reason?.trim();
+  // The struct's own field wins when it has one; only fall back to the message,
+  // which carries the same token inside the stone's sentence about it.
+  if (reason) return reason === COMMIT_CONFLICTS_REASON;
+  return (err.message ?? '').includes(COMMIT_CONFLICTS_REASON);
 }
 
 export interface CommitFailure {

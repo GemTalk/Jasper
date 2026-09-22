@@ -110,8 +110,13 @@ remote client, and that 3007/3008 are classified as a refreshed view.
 
 ## A commit the stone refuses
 
-A commit can fail two ways, and GemStone reports them differently. GemBuilder for
-C's own `GciCommit` example draws the line:
+A commit can fail two ways, and GemStone reports them differently: an error, or a
+**refusal** — another session committed over an object this transaction touched.
+`isCommitConflict` in `client/src/commitFailure.ts` tells them apart, and it has
+two shapes to recognize because the two commit calls do not agree.
+
+GemBuilder for C documents the older `GciCommit` as answering false with **no
+error set**:
 
 ```c
 if ( ! GciCommit()) {
@@ -119,11 +124,22 @@ if ( ! GciCommit()) {
 }
 ```
 
-No error number means the commit was **refused** — another session committed over
-an object this transaction touched. `GciTsCommit` is the same call ("implemented
-in client library as message send", `gcits.hf`), so `isCommitConflict` in
-`client/src/commitFailure.ts` reads it the same way: `err.number` of 0, or an
-out-struct the GCI never filled in, is a refusal.
+`GciTsCommit` — the call Jasper actually makes — does **not** behave that way.
+Verified against a live 3.7.5 stone with two sessions colliding on one
+`UserGlobals` entry, a refusal arrives as:
+
+```
+number  2738   (ERR_TransactionError, vendor/gci-headers/*/gcierr.ht)
+reason  commitConflicts
+message a TransactionError occurred (error 2738), reason:commitConflicts, commit conflicts
+```
+
+Both shapes count as refusals. The **reason** is what is matched, not the number:
+2738 is the whole TransactionError family, so gating on it would call every
+TransactionError somebody else's fault — `commitDisallowed` among them. And
+`commitConflicts` is a Smalltalk symbol rather than prose, so it survives the
+rewording the manual warns the surrounding English is subject to. The message is
+consulted only when the struct's own `reason` field comes back empty.
 
 That distinction is the whole reason the wording differs. A refusal is not a
 malfunction, and repeating it cannot work — "You must abort the transaction in
@@ -155,7 +171,9 @@ A genuine refusal cannot be reproduced in the integration suite: it needs a seco
 session to really commit, and the harness arms GemStone's commit guard on every
 session it opens. What the live suite does cover is that the doit compiles and
 parses on each stone in the matrix, and that a *guarded* commit — which leaves
-error 2249 — is classified as an error rather than a conflict.
+error 2249 — is classified as an error rather than a conflict. The refusal shape
+itself came from a by-hand run of two Jasper windows on one stone, which is also
+how the next release's shape should be checked.
 
 ## Refreshing a view without losing anything
 

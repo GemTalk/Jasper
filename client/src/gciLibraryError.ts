@@ -1,11 +1,14 @@
 import { GciError } from './gciLibrary';
 
 /**
- * The fields an error's wording is read from. Narrower than {@link GciError} so a
- * caller holding only what a GCI call reported — the logout flow is handed a
- * `commit` callback, not a session — can still word its failure the same way.
+ * The fields an error's wording and classification are read from. Narrower than
+ * {@link GciError} so a caller holding only what a GCI call reported — the logout
+ * flow is handed a `commit` callback, not a session — can still word its failure
+ * the same way. `reason` is optional for those callers; it is the structured
+ * counterpart to the message, and a commit refusal is told apart by it.
  */
-export type ReportedGciError = Pick<GciError, 'number' | 'message'>;
+export type ReportedGciError = Pick<GciError, 'number' | 'message'> &
+  Partial<Pick<GciError, 'reason'>>;
 import {
   ERR_GEM_AUTO_ABORT,
   ERR_GEM_AUTO_LOST_OT,
