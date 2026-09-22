@@ -247,50 +247,50 @@ describe('method history across a refactoring (integration)', () => {
     });
   });
 
-  // ── the two compile paths install different kinds of string, on purpose ───
+  // ── whatever kind of string each compile path installs ────────────────────
 
   /**
-   * These pin the DIAGNOSIS, not a wanted change: the two paths really do install different string
-   * classes, and that is left alone.
+   * These pin the INVARIANT, not either stone's answer.
    *
-   * Making the engine promote its source to Unicode would touch every engine compile — class rename,
-   * split, extract, all of them — to satisfy one comparison, and the engine already assumes the kinds
-   * can differ (GsRefactoringUndo>>source:matches: exists for exactly this pair, and says so). The fix
-   * is therefore in the COMPARISON: JasperMethodHistory compares sources character by character, so
-   * any mismatch of kind is safe, not just this one. These tests exist so the difference is not
-   * mistaken for the bug and "fixed" at the compile end later.
+   * The bug this fix came from is a 3.6.x one: there a method Jasper compiled answers a `Unicode7`
+   * from #sourceString while one the engine recompiled answers a byte `String`, and comparing those
+   * two with `=` RAISES ArgumentError 2718 rather than answering false — so a method a refactoring
+   * had touched could not have its history opened at all. On 3.7.x both paths answer `String` and
+   * the mismatch never arises.
+   *
+   * Which is why the fix is in the COMPARISON — character by character, so no pair of kinds can
+   * raise — and why these tests must not name a class. An earlier draft asserted `Unicode7`
+   * outright; it passed on the 3.6.2 stone it was written against and failed on 3.7.5 in CI, having
+   * pinned one release's implementation detail as though it were the requirement.
    */
   describe('the kind of string each compile path installs', () => {
-    it('is Unicode7 for a method Jasper compiled', (ctx) => {
+    it('is a string class on both sides of a refactoring, whichever the stone uses', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
       installMethodHistory(session());
       defineFixture();
 
-      expect(sourceKind('caller')).toBe('Unicode7');
+      const handEdited = sourceKind('caller');
+      await renameMovePoint(`rmhit-kind-${CLS}`);
+      const engineCompiled = sourceKind('caller');
+
+      // Unicode7 and Unicode16 on 3.6.x, String on 3.7.x — the point is only that both are strings
+      // and neither is asserted to be a particular one.
+      expect(handEdited).toMatch(/^(String|Unicode\d*)$/);
+      expect(engineCompiled).toMatch(/^(String|Unicode\d*)$/);
     });
 
-    it('is a byte String for a method the refactoring engine recompiled', async (ctx) => {
+    it('does not decide whether the history can be read', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
       installMethodHistory(session());
       defineFixture();
 
-      await renameMovePoint(`rmhit-kind-sender-${CLS}`);
-
-      expect(sourceKind('caller')).toBe('String');
-    });
-
-    it('differs between the two paths for the same class', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
-
+      // `local` goes through the engine, `caller` does not, so on a stone where the two paths
+      // disagree this is one class holding both kinds at once — the case that used to raise.
       await renameLocalTemp(`rmhit-kind-temp-${CLS}`);
 
-      // `local` went through the engine, `caller` did not — one class, two kinds, and the history of
-      // both still opens. That is the invariant the fix actually rests on.
-      expect([sourceKind('local'), sourceKind('caller')]).toEqual(['String', 'Unicode7']);
       expect(() => historyOf('local')).not.toThrow();
       expect(() => historyOf('caller')).not.toThrow();
+      expect(recorded('local').length).toBeGreaterThanOrEqual(1);
     });
   });
 
