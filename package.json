@@ -2242,12 +2242,20 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.commit",
+          "command": "gemstone.sessionCommit",
           "when": "gemstone.hasActiveSession"
         },
         {
-          "command": "gemstone.explorer.abort",
+          "command": "gemstone.sessionAbort",
           "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.commit",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "false"
         },
         {
           "command": "gemstone.explorer.removeDictionary",
@@ -3580,7 +3588,7 @@
     "publish:ovsx": "ovsx publish"
   },
   "devDependencies": {
-    "@eslint-community/eslint-plugin-eslint-comments": "^4.8.0",
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/node": "~22.15",
@@ -3595,9 +3603,9 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
     "jsdom": "^30.0.1",
-    "lefthook": "^2.1.12",
+    "lefthook": "^2.1.14",
     "lockfile-lint": "^5.0.1",
-    "ovsx": "^1.1.1",
+    "ovsx": "^1.2.0",
     "playwright-bdd": "^9.2.1",
     "prettier": "^3.9.6",
     "tsx": "^4.23.13",
@@ -3621,6 +3629,6 @@
     "fsevents": false,
     "esbuild@0.28.2": true,
     "koffi@2.16.3": true,
-    "lefthook@2.1.12": true
+    "lefthook": false
   }
 }

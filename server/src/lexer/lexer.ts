@@ -1,5 +1,30 @@
 import { Token, TokenType, SourcePosition, createPosition, createRange } from './tokens';
 
+/**
+ * The server's Smalltalk tokenizer, and the server's only scanner — anything here
+ * that needs to walk source past its strings, comments and character literals
+ * goes through this rather than rolling its own loop.
+ *
+ * ── Keeping this in step with the client ──────────────────────────────────
+ * The client has a scanner of its own, `client/src/smalltalkScan.ts`, and it must
+ * agree with this one about where a quoted span begins and ends. It cannot import
+ * this file: `client/tsconfig.json` and `server/tsconfig.json` each pin `rootDir`
+ * to their own `src`, so sharing code would take a third workspace and a build
+ * change.
+ *
+ * What holds the two together instead is `test-fixtures/smalltalkLiteralCorpus.json`.
+ * It declares where every string, comment and character literal in a set of tricky
+ * snippets begins and ends, and both sides assert against it:
+ *
+ *   server/src/lexer/__tests__/literalCorpusAgreement.test.ts
+ *   client/src/__tests__/smalltalkScan.test.ts
+ *
+ * So: teaching this lexer a new Smalltalk quirk means adding the case to that
+ * corpus, which will fail the client's test until `skipLiteral` learns it too (and
+ * the other way round). Do not fix one side alone, and do not add the case to only
+ * one of the two test files — the corpus is the shared contract.
+ */
+
 const SELECTOR_CHARS = new Set([
   '+',
   '-',
@@ -33,10 +58,18 @@ export class Lexer {
   private col: number;
   private length: number;
 
-  constructor(source: string) {
+  /**
+   * `startOffset` and `startLine` let a caller lex a tail of `source` without
+   * slicing it first — the Tonel parser walks method after method through one
+   * document, and copying the remaining text for each would be quadratic.
+   * Offsets and line numbers in the tokens stay absolute to `source`, so they
+   * can be used against the whole document. `startOffset` must sit at the start
+   * of `startLine` for the line numbers to mean anything.
+   */
+  constructor(source: string, startOffset = 0, startLine = 0) {
     this.source = source;
-    this.pos = 0;
-    this.line = 0;
+    this.pos = startOffset;
+    this.line = startLine;
     this.col = 0;
     this.length = source.length;
   }
@@ -144,11 +177,21 @@ export class Lexer {
     const start = this.currentPosition();
     const startPos = this.pos;
     this.advance(); // skip opening "
-    while (this.pos < this.length && this.source[this.pos] !== '"') {
+    // A comment escapes its own delimiter by doubling it, the same way a string
+    // does, so `""` inside one is an embedded quote rather than the close. The
+    // class comments under gs-src/refactoring/ rely on this — RBBlockNode's says
+    // it `represents a block ""[...]""`. An empty comment is still written `""`:
+    // at the second quote there is no third one following, so it closes.
+    while (this.pos < this.length) {
+      if (this.source[this.pos] === '"') {
+        this.advance();
+        if (this.pos < this.length && this.source[this.pos] === '"') {
+          this.advance();
+          continue;
+        }
+        break;
+      }
       this.advance();
-    }
-    if (this.pos < this.length) {
-      this.advance(); // skip closing "
     }
     return this.makeToken(TokenType.Comment, this.source.slice(startPos, this.pos), start);
   }
