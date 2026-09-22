@@ -13,6 +13,7 @@ import {
   BreakpointNode,
   classLabel,
   groupBreakpoints,
+  ruleDescription,
 } from '../breakpointTreeProvider';
 import { SessionManager } from '../sessionManager';
 import { BreakpointManager } from '../breakpointManager';
@@ -47,6 +48,32 @@ describe('classLabel', () => {
 
   it('labels a classless breakpoint as executed code', () => {
     expect(classLabel('', false)).toBe('(executed code)');
+  });
+});
+
+describe('ruleDescription', () => {
+  const TRIGGER = { uri: 'gemstone://1/Globals/Array/instance/accessing/size', stepPoint: 4 };
+
+  it('says nothing for a breakpoint with no rule at all', () => {
+    expect(ruleDescription(undefined)).toBe('');
+    expect(ruleDescription({})).toBe('');
+  });
+
+  it('names the breakpoint a triggered one is waiting for', () => {
+    expect(ruleDescription({ triggeredBy: TRIGGER })).toBe(' \u00b7 after Array>>size @4');
+  });
+
+  it('puts the trigger ahead of the condition', () => {
+    // The trigger is why the row will not stop yet, which outranks the terms of
+    // a stop it is not eligible for.
+    expect(ruleDescription({ triggeredBy: TRIGGER, condition: 'x > 1' })).toBe(
+      ' \u00b7 after Array>>size @4 \u00b7 if x > 1',
+    );
+  });
+
+  it('still describes a plain condition and a logpoint', () => {
+    expect(ruleDescription({ condition: 'x > 1' })).toBe(' \u00b7 if x > 1');
+    expect(ruleDescription({ logMessage: 'hi' })).toBe(' \u00b7 logs');
   });
 });
 

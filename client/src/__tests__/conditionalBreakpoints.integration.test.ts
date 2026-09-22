@@ -537,6 +537,294 @@ describe('conditional breakpoints (integration)', () => {
     expect(outcome).toEqual({ kind: 'stopped', skipped: 0 });
     release(process);
   });
+
+  // ── Triggered breakpoints ──────────────────────────────────────────────
+  //
+  // A triggered breakpoint is disarmed until the breakpoint that arms it has
+  // been reached. GemStone has no such notion, so the arming lives in an Array
+  // the decider block closes over — which means these tests are the only place
+  // that proves a *stateful* decider survives being performed once per hit, and
+  // that the arm lands before anything downstream can be reached.
+
+  /** Both loop step points of `countTo:`, armed in the gem, plus the process. */
+  const haltInCountTo = (n: number): { loopStep: number; returnStep: number; process: bigint } => {
+    const loopStep = stepPointAt('countTo:', 'total := total + i');
+    const returnStep = stepPointAt('countTo:', '^ total');
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', loopStep, 0);
+    queries.setBreakAtStepPoint(session(), TEST_CLASS, false, 'countTo:', returnStep, 0);
+    const { err } = exec(
+      `${TEST_CLASS} new countTo: ${n}`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    expect(err.number).toBe(6005);
+    return { loopStep, returnStep, process: BigInt(err.context) };
+  };
+
+  it('passes over a triggered breakpoint until its trigger has been reached', async () => {
+    // The loop breakpoint is reached first and on every iteration, but it waits
+    // on `^ total`, which is reached only once at the end. So it must never stop
+    // and the run must complete: the whole feature in one run.
+    fixture();
+    const { loopStep, returnStep, process } = haltInCountTo(20);
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      // 1: the loop, armed only by 2 — which it can never reach first.
+      { methodExpr, stepPoint: loopStep, triggeredBy: 2 },
+      // 2: the return, a logpoint so it arms without ending the run.
+      { methodExpr, stepPoint: returnStep, logMessage: logMessageExpression('done') },
+    ]);
+
+    expect(outcome.kind).toBe('completed');
+    // 20 loop hits passed over for being disarmed, plus the trigger's own hit:
+    // `skipped` counts every resume, and a logpoint resumes too.
+    expect(outcome.skipped).toBe(21);
+  });
+
+  it('stops at a triggered breakpoint once its trigger has been reached', async () => {
+    // The mirror of the test above: with the trigger EARLIER in the run, the
+    // triggered breakpoint must arm and then stop. `limit:` runs before the
+    // loop, so the arm lands before the first loop hit.
+    fixture();
+    const live = session();
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `armThenCount: n\n  | total |\n  self limit: n.\n  total := 0.\n` +
+        `  1 to: n do: [:i |\n    total := total + i ].\n  ^ total`,
+    );
+
+    // The trigger is a send in the SAME method, ahead of the loop: a step point
+    // whose ordering against the loop is plain from the source.
+    const armStep = stepPointAt('armThenCount:', 'self limit: n');
+    const loopStep = stepPointAt('armThenCount:', 'total := total + i');
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', armStep, 0);
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', loopStep, 0);
+
+    const { err } = exec(
+      `${TEST_CLASS} new armThenCount: 20`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    expect(err.number).toBe(6005);
+    const process = BigInt(err.context);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      // 1: the trigger, a logpoint so it arms without ending the run itself.
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: armStep,
+        logMessage: logMessageExpression('armed'),
+      },
+      // 2: waits on 1, and stops the moment it is reached afterwards.
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: loopStep,
+        triggeredBy: 1,
+      },
+    ]);
+
+    expect(outcome.kind).toBe('stopped');
+    // One resume only — the trigger's own, which logged and carried on. The loop
+    // then stopped on its FIRST hit, which is what says the arm had already
+    // landed rather than arriving some iterations later.
+    expect(outcome.skipped).toBe(1);
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
+    release(process);
+  });
+
+  it('arms on the trigger even when the trigger goes on to stop the run', async () => {
+    // The arm is recorded BEFORE the decision to stop, so a trigger that is an
+    // ordinary stopping breakpoint still arms what waits on it. Proven by
+    // resuming the same suspended process through a second pass of the loop:
+    // the arm has to have survived the stop.
+    fixture();
+    const live = session();
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `armThenCount: n\n  | total |\n  self limit: n.\n  total := 0.\n` +
+        `  1 to: n do: [:i |\n    total := total + i ].\n  ^ total`,
+    );
+    // The trigger is a send in the SAME method, ahead of the loop: a step point
+    // whose ordering against the loop is plain from the source.
+    const armStep = stepPointAt('armThenCount:', 'self limit: n');
+    const loopStep = stepPointAt('armThenCount:', 'total := total + i');
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', armStep, 0);
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', loopStep, 0);
+
+    const { err } = exec(
+      `${TEST_CLASS} new armThenCount: 20`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    const process = BigInt(err.context);
+
+    const specs: BreakpointRule[] = [
+      // 1: a plain stopping breakpoint that is also a trigger.
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: armStep,
+      },
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: loopStep,
+        triggeredBy: 1,
+      },
+    ];
+
+    // First pass: the process is already parked on the trigger, so the decider
+    // arms 2 and then stops at 1 as any plain breakpoint would.
+    const first = await applyBreakpointRules(session(), process, specs);
+    expect(first).toEqual({ kind: 'stopped', skipped: 0 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(armStep);
+    release(process);
+  });
+
+  it('keeps a disarmed breakpoint from stopping while OTHER breakpoints still do', async () => {
+    // A trigger must not disarm the rest of the run. The loop waits on something
+    // never reached; `^ total` is plain and has to stop exactly as it would with
+    // no triggers in play at all.
+    fixture();
+    const { loopStep, returnStep, process } = haltInCountTo(20);
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      // 1: waits on 3, which this run never reaches.
+      { methodExpr, stepPoint: loopStep, triggeredBy: 3 },
+      // 2: plain, and must still stop.
+      { methodExpr, stepPoint: returnStep },
+      // 3: a step point that is never reached in this run.
+      { methodExpr: compiledMethodExpr(TEST_CLASS, false, 'limit:', 0), stepPoint: 1 },
+    ]);
+
+    expect(outcome).toEqual({ kind: 'stopped', skipped: 20 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(returnStep);
+    release(process);
+  });
+
+  it('honours a triggered breakpoint\u2019s own condition as well as its trigger', async () => {
+    // Both gates, in the right order: armed first, then the condition. The
+    // breakpoint is armed from the first hit but must still skip until `i >= 15`.
+    fixture();
+    const live = session();
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `armThenCount: n\n  | total |\n  self limit: n.\n  total := 0.\n` +
+        `  1 to: n do: [:i |\n    total := total + i ].\n  ^ total`,
+    );
+    // The trigger is a send in the SAME method, ahead of the loop: a step point
+    // whose ordering against the loop is plain from the source.
+    const armStep = stepPointAt('armThenCount:', 'self limit: n');
+    const loopStep = stepPointAt('armThenCount:', 'total := total + i');
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', armStep, 0);
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', loopStep, 0);
+
+    const { err } = exec(
+      `${TEST_CLASS} new armThenCount: 20`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    const process = BigInt(err.context);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: armStep,
+        logMessage: logMessageExpression('armed'),
+      },
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: loopStep,
+        triggeredBy: 1,
+        condition: 'i >= 15',
+      },
+    ]);
+
+    expect(outcome.kind).toBe('stopped');
+    // The trigger's own resume, then 14 loop hits passed over for `i >= 15`
+    // being false. Both gates, in order: armed from the first hit, and still
+    // skipped until the condition held.
+    expect(outcome.skipped).toBe(15);
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
+    // The value that proves it: stopped at i = 15 exactly, not at the first hit
+    // after arming (which would mean the condition was ignored) and not later.
+    expect(debugQueries.evaluateInFrame(session(), process, 'i', 1)).toBe('15');
+    release(process);
+  });
+
+  it('never arms from a hit the disarmed breakpoint was itself passed over on', async () => {
+    // A chain: 2 waits on 1, and 1 waits on something never reached. Passing
+    // over 1 must NOT arm 2 — a breakpoint that was skipped was not "reached"
+    // in the sense that matters, and treating it as one would make a chain
+    // collapse the moment its first link was stepped past.
+    fixture();
+    const { loopStep, returnStep, process } = haltInCountTo(20);
+    const methodExpr = compiledMethodExpr(TEST_CLASS, false, 'countTo:', 0);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      // 1: the loop, waiting on 3 which is never reached.
+      { methodExpr, stepPoint: loopStep, triggeredBy: 3 },
+      // 2: the return, waiting on 1 — which is only ever passed over.
+      { methodExpr, stepPoint: returnStep, triggeredBy: 1 },
+      { methodExpr: compiledMethodExpr(TEST_CLASS, false, 'limit:', 0), stepPoint: 1 },
+    ]);
+
+    // Nothing ever stops, so the run completes: 20 loop hits and the return.
+    expect(outcome.kind).toBe('completed');
+    expect(outcome.skipped).toBe(21);
+  });
+
+  it('arms every breakpoint waiting on the same trigger', async () => {
+    // One trigger, two dependents — the decider sweeps its whole spec array on
+    // an arm rather than stopping at the first match.
+    fixture();
+    const live = session();
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `armThenCount: n\n  | total |\n  self limit: n.\n  total := 0.\n` +
+        `  1 to: n do: [:i |\n    total := total + i ].\n  ^ total`,
+    );
+    // The trigger is a send in the SAME method, ahead of the loop: a step point
+    // whose ordering against the loop is plain from the source.
+    const armStep = stepPointAt('armThenCount:', 'self limit: n');
+    const loopStep = stepPointAt('armThenCount:', 'total := total + i');
+    const returnStep = stepPointAt('armThenCount:', '^ total');
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', armStep, 0);
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', loopStep, 0);
+    queries.setBreakAtStepPoint(live, TEST_CLASS, false, 'armThenCount:', returnStep, 0);
+
+    const { err } = exec(
+      `${TEST_CLASS} new armThenCount: 20`,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+    );
+    const process = BigInt(err.context);
+    const method = compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0);
+
+    const outcome = await applyBreakpointRules(session(), process, [
+      {
+        methodExpr: compiledMethodExpr(TEST_CLASS, false, 'armThenCount:', 0),
+        stepPoint: armStep,
+        logMessage: logMessageExpression('armed'),
+      },
+      // Both wait on 1. The loop is reached first, so it is the one that stops —
+      // which is only true if the single arm armed both.
+      { methodExpr: method, stepPoint: loopStep, triggeredBy: 1 },
+      { methodExpr: method, stepPoint: returnStep, triggeredBy: 1 },
+    ]);
+
+    // Only the trigger's own resume: the loop stopped on its first hit.
+    expect(outcome).toEqual({ kind: 'stopped', skipped: 1 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loopStep);
+    release(process);
+  });
 });
 
 /**
@@ -654,6 +942,104 @@ describe('the manager and the gem, together (integration)', () => {
       kind: 'stopped',
       skipped: 149,
     });
+
+    try {
+      debugQueries.clearStack(session(), process);
+    } catch {
+      /* already finished */
+    }
+    debug.breakpoints = [];
+  });
+
+  it('carries a trigger set on the manager all the way to the gem', async () => {
+    // The whole seam for triggers, which no unit test can reach: two real VS
+    // Code breakpoints, a trigger recorded on the manager, specs built from
+    // them, and the gem honouring the arming. A trigger index that is right in
+    // the manager but wrong by the time the decider indexes its array looks
+    // exactly like no trigger at all — the breakpoint just stops early.
+    const live = session();
+    queries.compileClassDefinition(
+      live,
+      `Object subclass: '${TEST_CLASS}'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals
+  options: #()`,
+    );
+    queries.compileMethod(
+      live,
+      TEST_CLASS,
+      false,
+      'test',
+      `${SELECTOR} n\n  | total |\n  total := 0.\n  1 to: n do: [:i |\n` +
+        `    total := total + i ].\n  ^ total`,
+    );
+
+    const uri = buildMethodUri({
+      kind: 'method',
+      sessionId: live.id,
+      dictName: 'UserGlobals',
+      className: TEST_CLASS,
+      isMeta: false,
+      category: 'test',
+      selector: SELECTOR,
+      environmentId: 0,
+    });
+
+    const source = queries.getMethodSource(live, TEST_CLASS, false, SELECTOR, 0);
+    const lineOf = (needle: string): number =>
+      source.slice(0, source.indexOf(needle)).split('\n').length - 1;
+
+    // Two gutter clicks: the loop body, and the `^ total` that follows it.
+    debug.breakpoints = [
+      new SourceBreakpoint(new Location(uri, new Position(lineOf('total := total + i'), 0)), true),
+      new SourceBreakpoint(new Location(uri, new Position(lineOf('^ total'), 0)), true),
+    ];
+
+    const manager = makeManager();
+    manager.applyToUri(live, uri);
+    const applied = manager.appliedFor(uri);
+    expect(applied).toHaveLength(2);
+
+    const loop = applied.find((a) => a.line === lineOf('total := total + i') + 1)!;
+    const ret = applied.find((a) => a.line === lineOf('^ total') + 1)!;
+    expect(loop.stepPoint).not.toBe(ret.stepPoint);
+
+    // The loop waits for `^ total`, which the loop can never reach first.
+    manager.setTrigger(uri, loop.stepPoint, { uri: uri.toString(), stepPoint: ret.stepPoint });
+
+    const specs = manager.breakpointRulesFor(live);
+    // Both ends earn a spec, even though neither carries a condition.
+    expect(specs).toHaveLength(2);
+    const loopSpec = specs.find((sp) => sp.stepPoint === loop.stepPoint)!;
+    const retSpec = specs.find((sp) => sp.stepPoint === ret.stepPoint)!;
+    expect(retSpec.triggeredBy).toBeUndefined();
+    expect(specs[loopSpec.triggeredBy! - 1]).toBe(retSpec);
+
+    const { err } = gci.GciTsExecute(
+      handle,
+      `${TEST_CLASS} new ${SELECTOR} 20`,
+      gci.utf8ClassOop(handle),
+      OOP_ILLEGAL,
+      OOP_NIL,
+      GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+      0,
+    );
+    expect(err.number).toBe(6005);
+    const process = BigInt(err.context);
+    // It stopped at the LOOP first, disarmed — the gem has no idea about
+    // triggers, so this is exactly the stop the decider has to pass over.
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(loop.stepPoint);
+
+    const outcome = await applyBreakpointRules(session(), process, specs);
+
+    // Twenty disarmed loop hits passed over, then `^ total` stopped as the plain
+    // breakpoint it is. The loop never stops, because its trigger only fires at
+    // the very end of the run.
+    expect(outcome).toEqual({ kind: 'stopped', skipped: 20 });
+    expect(debugQueries.getStepPoint(session(), process, 1)).toBe(ret.stepPoint);
 
     try {
       debugQueries.clearStack(session(), process);

@@ -5,6 +5,8 @@ import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { BreakpointManager } from './breakpointManager';
 import { loginLabel } from './loginTypes';
+import { methodSourceRef } from './languageIds';
+import { methodLabel } from './methodResultsPicker';
 
 /**
  * The session heading, a class (or metaclass) heading under it, or one
@@ -29,12 +31,31 @@ const MAX_ROW_CONDITION = 40;
  * and a row is one line, and what the reader needs from the row is which *kind*
  * of breakpoint this is. The message is in the tooltip.
  */
-export function ruleDescription(rule?: { condition?: string; logMessage?: string }): string {
+export function ruleDescription(rule?: {
+  condition?: string;
+  logMessage?: string;
+  triggeredBy?: { uri: string; stepPoint: number };
+}): string {
   if (!rule) return '';
   const parts: string[] = [];
+  // The trigger comes first: it is the reason the breakpoint is not going to
+  // stop yet, which outranks the terms of a stop it is not eligible for.
+  if (rule.triggeredBy) parts.push(`after ${elide(triggerLabel(rule.triggeredBy))}`);
   if (rule.condition !== undefined) parts.push(`if ${elide(rule.condition)}`);
   if (rule.logMessage !== undefined) parts.push('logs');
   return parts.length === 0 ? '' : ` \u00b7 ${parts.join(' \u00b7 ')}`;
+}
+
+/**
+ * How a trigger reads on the row that waits for it — `Account>>deposit: @4`.
+ *
+ * Falls back to the step point alone when the URI no longer parses as a method,
+ * which is what a row shows for the moment between a method being recompiled and
+ * the trigger being swept: "after @4" is thin, but it is not wrong.
+ */
+function triggerLabel(ref: { uri: string; stepPoint: number }): string {
+  const method = methodSourceRef(vscode.Uri.parse(ref.uri));
+  return method ? `${methodLabel(method)} @${ref.stepPoint}` : `@${ref.stepPoint}`;
 }
 
 function elide(text: string): string {
@@ -309,7 +330,11 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
 
 function breakpointTooltip(
   bp: GemStoneBreakpoint,
-  rule?: { condition?: string; logMessage?: string },
+  rule?: {
+    condition?: string;
+    logMessage?: string;
+    triggeredBy?: { uri: string; stepPoint: number };
+  },
 ): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   const where =
@@ -329,6 +354,12 @@ function breakpointTooltip(
     md.appendMarkdown(
       `\n\nWrites to the **GemStone Logpoints** panel in Output, without stopping:` +
         `\n\n\`\`\`\n${rule.logMessage}\n\`\`\``,
+    );
+  }
+  if (rule?.triggeredBy) {
+    md.appendMarkdown(
+      `\n\nArmed only once **${triggerLabel(rule.triggeredBy)}** has been reached. ` +
+        'Until then it is passed over. Arming starts over on each run.',
     );
   }
   if (bp.dictName) md.appendMarkdown(`\n\nDictionary: ${bp.dictName}`);
@@ -359,6 +390,27 @@ export async function editBreakpointCondition(
   const editor = vscode.window.activeTextEditor;
   if (!editor) return;
   await breakpoints.editConditionAtStepPoint(editor.document.uri, bp.stepPoint);
+}
+
+/**
+ * Ask which breakpoint has to be reached before this row's one stops.
+ *
+ * Reveals first for the same reason editing a condition does: the answer is
+ * about this method's code, and a picker over a file you cannot see is a guess.
+ */
+export async function editBreakpointTrigger(
+  sessionManager: SessionManager,
+  breakpoints: BreakpointManager,
+  node?: BreakpointNode,
+): Promise<void> {
+  if (node?.kind !== 'breakpoint') return;
+  const bp = node.bp;
+  if (bp.selector === '' || bp.className === '') return;
+
+  await revealBreakpoint(sessionManager, node);
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  await breakpoints.editTriggerAtStepPoint(editor.document.uri, bp.stepPoint);
 }
 
 export async function revealBreakpoint(

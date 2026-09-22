@@ -10,8 +10,9 @@ import { escapeString } from './queries/util';
 import { logError } from './gciLog';
 
 /**
- * The rule a breakpoint carries: stop only when a condition holds, write a line
- * to the log and carry on, or both.
+ * The rule a breakpoint carries: stop only when a condition holds, stop only
+ * once another breakpoint has been reached, write a line to the log and carry
+ * on, or any combination of those.
  *
  * **A condition cannot be applied before the stop.** A GemStone method
  * breakpoint always unwinds to the client as error 6005 with the suspended
@@ -82,6 +83,16 @@ export interface BreakpointRule {
    * spending a round trip to turn an expression back into a class and selector.
    */
   label?: string;
+  /**
+   * The 1-based index, in this same spec array, of the breakpoint that has to be
+   * reached before this one is allowed to stop. Undefined on a breakpoint that
+   * is armed from the start, which is almost all of them.
+   *
+   * An index rather than a method-and-step-point pair because the decider works
+   * in indices already: the arming state is one Array parallel to the specs, so
+   * a trigger firing is a single at:put: rather than another lookup.
+   */
+  triggeredBy?: number;
 }
 
 /** What came of running a suspended process past its false conditions. */
@@ -239,6 +250,16 @@ const DECIDER_KEY = 'JasperConditionalBreakpointDecider';
  * conditional one is being skipped, and what lets several conditional
  * breakpoints be armed at once with each judged on its own condition.
  *
+ * **Triggers are an Array of flags the block closes over**, parallel to the
+ * specs: a breakpoint waiting on another starts false and is skipped like a
+ * false condition until the breakpoint it names is reached. Because the block is
+ * compiled once per run and performed per hit, that Array survives every hit of
+ * the run at no cost — arming is one `at:put:`, not a round trip — and the arm
+ * necessarily happens before anything downstream can be reached, since both the
+ * trigger and the thing it arms are judged in the same gem in execution order.
+ * The flags start over on the next run, which is the same lifetime the decider
+ * itself has.
+ *
  * The receiver a condition is evaluated against comes from the breakpoint's
  * **home** frame, not the frame that stopped. For a breakpoint inside a
  * non-inlined block the stopped frame's receiver is the `ExecBlock` itself, so
@@ -260,13 +281,23 @@ export function deciderSource(specs: BreakpointRule[]): string {
         `specs add: (Array with: ([ ${spec.methodExpr} ] on: Error do: [:ex | nil ]) ` +
         `with: ${spec.stepPoint} ` +
         `with: ${spec.condition === undefined ? 'nil' : literal(spec.condition)} ` +
-        `with: ${spec.logMessage === undefined ? 'nil' : literal(spec.logMessage)}).`,
+        `with: ${spec.logMessage === undefined ? 'nil' : literal(spec.logMessage)} ` +
+        // The fifth slot is the trigger's index, 0 for "armed from the start".
+        // `Array with:` takes five on both 3.6.2 and 3.7 — checked against a
+        // live 3.6.2 stone, and the integration tests run on both.
+        `with: ${spec.triggeredBy ?? 0}).`,
     )
     .join('\n');
 
-  return `| specs decider |
+  // A breakpoint waiting on a trigger starts disarmed; every other one starts
+  // armed, which is what keeps an ordinary breakpoint's path through the decider
+  // exactly what it was.
+  const armedInit = specs.map((spec) => (spec.triggeredBy === undefined ? 'true' : 'false'));
+
+  return `| specs armed decider |
 specs := Array new.
 ${specLines}
+armed := Array withAll: #(${armedInit.join(' ')}).
 decider := [:p | | answerArray fc frameMethod home sp spec idx rcvr found lvl depth names dict sl answer |
   answerArray := nil.
   idx := 0.
@@ -284,7 +315,12 @@ decider := [:p | | answerArray fc frameMethod home sp spec idx rcvr found lvl de
       (idx = 0 and: [ (((specs at: k) at: 1) == home) and: [ ((specs at: k) at: 2) = sp ] ])
         ifTrue: [ idx := k ] ].
     spec := idx = 0 ifTrue: [ nil ] ifFalse: [ specs at: idx ].
-    spec isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ] ].
+    spec isNil ifTrue: [ answerArray := Array with: ${DECISION.Stop} with: nil ].
+    "A breakpoint still waiting on its trigger is skipped exactly as a false
+     condition is. It arms nothing on the way past, either: it was reached, but
+     it is not a stop the developer has asked for yet."
+    (answerArray isNil and: [ (armed at: idx) not ])
+      ifTrue: [ answerArray := Array with: ${DECISION.Go} with: nil ] ].
   answerArray isNil ifTrue: [
     rcvr := fc at: 10.
     frameMethod isMethodForBlock ifTrue: [
@@ -323,7 +359,15 @@ decider := [:p | | answerArray fc frameMethod home sp spec idx rcvr found lvl de
                                         ([ answer printString ] on: Error do: [:ex | answer class name asString ]),
                                         ', not true or false') ]
           ifTrue: [ answer ifFalse: [ answerArray := Array with: ${DECISION.Go} with: nil ] ] ] ].
-    "Here the rule applies: no condition, or one that held."
+    "Here the rule applies: no condition, or one that held, so this breakpoint
+     counts as reached and anything waiting on it is armed from now on. Done
+     before deciding what to do about this stop, so a trigger that goes on to
+     stop the run has still armed its dependents by the time it does.
+     Kept to ASCII: every byte of this source is compiled in the gem, and the
+     comment is part of it."
+    answerArray isNil ifTrue: [
+      1 to: specs size do: [:k |
+        (((specs at: k) at: 5) = idx) ifTrue: [ armed at: k put: true ] ] ].
     answerArray isNil ifTrue: [
       (spec at: 4)
         ifNil: [ answerArray := Array with: ${DECISION.Stop} with: nil ]

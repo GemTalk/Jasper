@@ -285,7 +285,7 @@
           "gemstone.breakpoints.showConditionInEditor": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Write a conditional breakpoint's condition at the end of its line in GemStone method source, as a dimmed annotation (never as text in the method). Turn it off if a permanently visible label is distracting: the gutter still shows VS Code's conditional-breakpoint icon, hovering the step point still reports the condition in full, and the **GemStone Breakpoints** view still shows it on the row."
+          "markdownDescription": "Write what a breakpoint is waiting for \u2014 its condition, and the breakpoint that has to be reached before it stops \u2014 at the end of its line in GemStone method source, as a dimmed annotation (never as text in the method). Turn it off if a permanently visible label is distracting: the gutter still shows VS Code's conditional-breakpoint icon, hovering the step point still reports the condition in full, and the **GemStone Breakpoints** view still shows the condition and the trigger on the row."
         },
         "gemstone.stepPoints.display": {
             "type": "string",
@@ -1275,6 +1275,18 @@
         "icon": "$(debug-breakpoint-conditional)"
       },
       {
+        "command": "gemstone.breakpoints.editTriggerAtCursor",
+        "title": "Edit Breakpoint Trigger at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unverified)"
+      },
+      {
+        "command": "gemstone.breakpoints.editTrigger",
+        "title": "Break Only After\u2026",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unverified)"
+      },
+      {
         "command": "gemstone.breakpoints.showLogpointOutput",
         "title": "Show Logpoint Output",
         "category": "GemStone",
@@ -2192,6 +2204,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.breakpoints.editTrigger",
+          "when": "false"
+        },
+        {
           "command": "gemstone.breakpoints.reveal",
           "when": "false"
         },
@@ -2728,6 +2744,11 @@
           "command": "gemstone.breakpoints.editCondition",
           "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.breakpoints.editTrigger",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.breakpoints.remove",
@@ -3387,6 +3408,11 @@
           "command": "gemstone.breakpoints.editConditionAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.editTriggerAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
+          "group": "3_gemstoneBreakpoints@4"
         },
         {
           "command": "gemstone.breakpoints.clearMethod",

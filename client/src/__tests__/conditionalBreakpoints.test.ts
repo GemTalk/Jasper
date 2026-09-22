@@ -51,6 +51,51 @@ describe('deciderSource', () => {
     expect(source).toContain("with: 9 with: 'each isNil'");
   });
 
+  it('marks a breakpoint with no trigger as armed from the start', () => {
+    const source = deciderSource([spec({ condition: 'i > 5' })]);
+    // Slot 5 is the trigger index; 0 means "waits for nothing".
+    expect(source).toContain("with: 'i > 5' with: nil with: 0");
+    expect(source).toContain('armed := Array withAll: #(true).');
+  });
+
+  it('starts a triggered breakpoint disarmed, pointing at its trigger', () => {
+    const source = deciderSource([
+      spec({ stepPoint: 3 }),
+      spec({ stepPoint: 9, condition: undefined, triggeredBy: 1 }),
+    ]);
+    // The second spec waits on the first, and only the first starts armed.
+    expect(source).toContain('with: 9 with: nil with: nil with: 1');
+    expect(source).toContain('armed := Array withAll: #(true false).');
+  });
+
+  it('skips a disarmed breakpoint instead of stopping at it', () => {
+    // The Go branch guarded on `armed`, which is what makes a triggered
+    // breakpoint pass over rather than stop while it waits.
+    const source = deciderSource([spec({ triggeredBy: 1 })]);
+    expect(source).toContain('(armed at: idx) not');
+  });
+
+  it('arms every spec that names the one just reached', () => {
+    // A sweep of the whole array, not a single at:put:, so one trigger can arm
+    // several breakpoints at once.
+    const source = deciderSource([spec()]);
+    expect(source).toContain('(((specs at: k) at: 5) = idx) ifTrue: [ armed at: k put: true ]');
+  });
+
+  it('keeps the generated source ASCII', () => {
+    // Non-ASCII in this source reaches GemStone's compiler through the GCI's
+    // UTF-8 path and breaks its cursor arithmetic outright — "ComStrmSetCursor:
+    // new cursor out of range", reported as a CompileError on a doit that reads
+    // perfectly well. A stray em dash in a COMMENT is enough to take the whole
+    // feature down, so the bar is the whole string, comments included.
+    const source = deciderSource([
+      spec({ stepPoint: 3, condition: 'i > 5' }),
+      spec({ stepPoint: 9, logMessage: "'x'", triggeredBy: 1 }),
+    ]);
+    const offending = [...source].filter((c) => c.charCodeAt(0) > 127);
+    expect(offending).toEqual([]);
+  });
+
   it("doubles a quote in the developer's condition", () => {
     // Otherwise `name = 'ada'` would close the literal early and the doit would
     // fail to compile — reported as if the breakpoint itself were broken.

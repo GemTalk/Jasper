@@ -368,6 +368,29 @@ the thing it was set in goes away:
   recompiled to make any of this work, and nothing is written to the repository. A
   breakpoint reached while skipping still stops if *it* has no condition, and an
   error raised by your code while skipping opens the debugger on the error
+- **Triggered breakpoints — stop here, but only once that has happened.** Tell a
+  breakpoint to stay out of the way until another one has been reached:
+  **Break Only After…** on a row in the **GemStone Breakpoints** view, or
+  **Edit Breakpoint Trigger at Cursor** from the editor's right-click menu. Both
+  offer every other breakpoint in the session. Until the trigger is reached the
+  breakpoint is passed over; afterwards it stops as usual, and its own condition
+  (if it has one) still has to hold. The line says `Break after Account>>deposit: @4`
+  so a breakpoint that is deliberately not stopping cannot be mistaken for a
+  broken one, and the Breakpoints row says it too.
+
+  Arming lasts for **one run** and starts over on the next. A trigger that goes on
+  to stop the run arms what waits on it first, and a *logpoint* makes a good
+  trigger because it arms without stopping. Several breakpoints can wait on the
+  same one. The arming costs nothing per hit: it rides along in the same judgement
+  that already handles conditions, so it is a flag flipped in the gem rather than
+  another round trip.
+
+  This is not VS Code's own *Add Triggered Breakpoint* — that menu item belongs to
+  VS Code's debug UI and records the relationship somewhere no extension can read,
+  and it arms only inside a live debug session, which a Jasper run does not have.
+  It stays in the gutter menu because it is hung off the same contribution that
+  gives Jasper a breakpoint gutter at all; use the two commands above instead.
+
 - **Logpoints — print without stopping, and without editing the method.** Right-click
   the gutter → *Add Logpoint…* and type a message. Every time the breakpoint is
   reached, the message is written to the **GemStone Logpoints** panel in Output

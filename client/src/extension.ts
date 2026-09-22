@@ -149,6 +149,7 @@ import {
   BreakpointTreeProvider,
   BreakpointNode,
   editBreakpointCondition,
+  editBreakpointTrigger,
   revealBreakpoint,
 } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
@@ -3133,6 +3134,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (editor) void breakpointManager.editConditionAtCursor(editor);
     }),
 
+    vscode.commands.registerCommand('gemstone.breakpoints.editTriggerAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) void breakpointManager.editTriggerAtCursor(editor);
+    }),
+
     // The step-point commands take their target from the click that fired them —
     // an inlay hint number or a hover link — rather than from the caret, so they
     // act on the step point the developer actually pointed at.
@@ -3190,6 +3196,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.breakpoints.editCondition', (node?: BreakpointNode) =>
       editBreakpointCondition(sessionManager, breakpointManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.editTrigger', (node?: BreakpointNode) =>
+      editBreakpointTrigger(sessionManager, breakpointManager, node),
     ),
 
     vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {

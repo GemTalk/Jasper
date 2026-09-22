@@ -43,7 +43,7 @@ import {
 import type * as vscodeApi from 'vscode';
 import * as vscode from 'vscode';
 import { __resetConfig } from '../__mocks__/vscode';
-import { BreakpointManager, conditionLabel } from '../breakpointManager';
+import { BreakpointManager, conditionLabel, triggerLabelFor } from '../breakpointManager';
 import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../languageIds';
 import { SessionManager } from '../sessionManager';
 import { StepPointModel, buildLineStarts } from '../stepPointModel';
@@ -1026,6 +1026,28 @@ describe('BreakpointManager', () => {
       });
     });
 
+    describe('triggerLabelFor', () => {
+      const TRIGGER = { uri: 'gemstone://1/Globals/Array/instance/accessing/size', stepPoint: 4 };
+
+      it('names the breakpoint that has to be reached first', () => {
+        expect(triggerLabelFor(TRIGGER, undefined)).toBe('Break after Array>>size @4');
+      });
+
+      it('leads with the trigger and keeps the condition as a clause', () => {
+        // `Break after …, Break if …` would repeat the verb, and the trigger has
+        // to come first: it is why the breakpoint will be passed over at all.
+        expect(triggerLabelFor(TRIGGER, conditionLabel('each > 900'))).toBe(
+          'Break after Array>>size @4, if each > 900',
+        );
+      });
+
+      it('falls back to the step point when the URI is not a method', () => {
+        expect(triggerLabelFor({ uri: 'file:///tmp/x.st', stepPoint: 7 }, undefined)).toBe(
+          'Break after step point 7',
+        );
+      });
+    });
+
     describe('the condition drawn beside the code', () => {
       /**
        * An editor over the fixture source that records what was decorated.
@@ -1182,6 +1204,278 @@ describe('BreakpointManager', () => {
           typeof manager.breakpointRulesFor
         >[0];
         expect(manager.breakpointRulesFor(other)).toEqual([]);
+      });
+    });
+
+    describe('triggers', () => {
+      // A second method, so a trigger can point across methods the way the
+      // picker offers it — and so a renumbering bug cannot hide behind both
+      // ends being the same record.
+      const OTHER_METHOD = 'gemstone://1/Globals/Array/instance/accessing/size';
+
+      /** Arm `METHOD_URI` and `OTHER_METHOD`, each with one breakpoint. */
+      const twoMethods = (manager: ReturnType<typeof makeManager>) => {
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 2, enabled: true }]);
+        mockGetMethodSource.mockReturnValue('foo\n^1');
+        mockGetSourceOffsets.mockReturnValue([1, 5]);
+        manager.applyToUri(session(), Uri.parse(OTHER_METHOD), [{ line: 2, enabled: true }]);
+      };
+
+      it('answers no rules at all while nothing is triggered', () => {
+        // The ordinary case stays free: two plain breakpoints, no decider.
+        const manager = makeManager();
+        twoMethods(manager);
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
+      it('gives a plain triggered breakpoint and its plain trigger a spec each', () => {
+        // Both ends earn a spec purely by being in a trigger relationship: a
+        // step point no spec claims answers Stop, so leaving either out would
+        // mean the triggered one stopped on its first hit, or the trigger armed
+        // nothing.
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+
+        const rules = manager.breakpointRulesFor(session());
+        expect(rules).toHaveLength(2);
+        const triggered = rules.find((r) => r.label === 'Array>>at:');
+        const trigger = rules.find((r) => r.label === 'Array>>size');
+        expect(trigger?.triggeredBy).toBeUndefined();
+        // 1-based, and pointing at the trigger's position in this same array.
+        expect(triggered?.triggeredBy).toBe(rules.indexOf(trigger!) + 1);
+      });
+
+      it('records the trigger on the applied breakpoint', () => {
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+        expect(manager.appliedFor(Uri.parse(METHOD_URI))[0].triggeredBy).toEqual({
+          uri: OTHER_METHOD,
+          stepPoint: 2,
+        });
+        expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toEqual({
+          uri: OTHER_METHOD,
+          stepPoint: 2,
+        });
+      });
+
+      it('renumbers a trigger index past a breakpoint that earns no spec', () => {
+        // The regression this guards: specs are pruned to the ones the gem needs,
+        // so a trigger's index has to be translated into the pruned array. A
+        // third, plain, untriggered breakpoint sits between the two ends and must
+        // NOT shift the index that reaches the decider.
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true },
+          { line: 1, enabled: true },
+        ]);
+        mockGetMethodSource.mockReturnValue('foo\n^1');
+        mockGetSourceOffsets.mockReturnValue([1, 5]);
+        manager.applyToUri(session(), Uri.parse(OTHER_METHOD), [{ line: 2, enabled: true }]);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+
+        const rules = manager.breakpointRulesFor(session());
+        // Only the two ends of the relationship, not the bystander.
+        expect(rules).toHaveLength(2);
+        const triggered = rules.find((r) => r.triggeredBy !== undefined)!;
+        // The index resolves, inside this array, to the breakpoint in the other
+        // method — which is the whole point of renumbering.
+        expect(rules[triggered.triggeredBy! - 1].label).toBe('Array>>size');
+      });
+
+      it('drops a trigger that names a disabled breakpoint', () => {
+        // A disabled breakpoint is never reached, so honouring it would leave
+        // the dependent disarmed for the whole run with nothing saying why.
+        // Better to arm it than to silently never stop.
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 2, enabled: true }]);
+        mockGetMethodSource.mockReturnValue('foo\n^1');
+        mockGetSourceOffsets.mockReturnValue([1, 5]);
+        manager.applyToUri(session(), Uri.parse(OTHER_METHOD), [{ line: 2, enabled: false }]);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
+      it('drops a trigger that names a step point with no breakpoint left', () => {
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 99 });
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
+      it('keeps the condition on a breakpoint that also waits for a trigger', () => {
+        const manager = makeManager();
+        manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+          { line: 2, enabled: true, condition: 'index > 3' },
+        ]);
+        mockGetMethodSource.mockReturnValue('foo\n^1');
+        mockGetSourceOffsets.mockReturnValue([1, 5]);
+        manager.applyToUri(session(), Uri.parse(OTHER_METHOD), [{ line: 2, enabled: true }]);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+
+        const rules = manager.breakpointRulesFor(session());
+        const triggered = rules.find((r) => r.label === 'Array>>at:')!;
+        expect(triggered.condition).toBe('index > 3');
+        expect(triggered.triggeredBy).toBeDefined();
+      });
+
+      it('clearing a trigger puts the breakpoint back to stopping every time', () => {
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, undefined);
+
+        expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toBeUndefined();
+        expect(manager.breakpointRulesFor(session())).toEqual([]);
+      });
+
+      it('forgets a trigger when the triggered method is recompiled', () => {
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+        manager.invalidateForUri(Uri.parse(METHOD_URI));
+        expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toBeUndefined();
+      });
+
+      it('forgets a trigger when the TRIGGERING method is recompiled', () => {
+        // The other direction, and the one easy to miss: the dependent survives
+        // the recompile, and a trigger left pointing at a method whose step
+        // points have been renumbered would disarm it against the wrong code.
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+        manager.invalidateForUri(Uri.parse(OTHER_METHOD));
+        expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toBeUndefined();
+      });
+
+      describe('the picker', () => {
+        const THIRD = 'gemstone://1/Globals/Array/instance/accessing/first';
+
+        /** Arm three methods, one breakpoint each, and answer their URIs. */
+        const threeMethods = (manager: ReturnType<typeof makeManager>) => {
+          manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 2, enabled: true }]);
+          mockGetMethodSource.mockReturnValue('foo\n^1');
+          mockGetSourceOffsets.mockReturnValue([1, 5]);
+          manager.applyToUri(session(), Uri.parse(OTHER_METHOD), [{ line: 2, enabled: true }]);
+          manager.applyToUri(session(), Uri.parse(THIRD), [{ line: 2, enabled: true }]);
+        };
+
+        /** The labels the picker offered, minus the "always armed" escape. */
+        const offered = (): string[] => {
+          const items = vi.mocked(window.showQuickPick).mock.calls[0][0] as {
+            label: string;
+          }[];
+          return items.map((i) => i.label).filter((l) => l !== 'Always armed');
+        };
+
+        beforeEach(() => {
+          vi.mocked(window.showQuickPick).mockReset();
+          vi.mocked(window.showInformationMessage).mockClear();
+        });
+
+        it('offers every other breakpoint in the session', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+          vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+          expect(offered()).toEqual(['Array>>size @2', 'Array>>first @2']);
+        });
+
+        it('leaves out the breakpoint being edited', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+          vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+
+          await manager.editTriggerAtStepPoint(Uri.parse(OTHER_METHOD), 2);
+
+          expect(offered()).not.toContain('Array>>size @2');
+        });
+
+        it('leaves out a breakpoint that already waits on this one', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+          // size waits on at:, so at: cannot be made to wait on size.
+          manager.setTrigger(Uri.parse(OTHER_METHOD), 2, { uri: METHOD_URI, stepPoint: 2 });
+          vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+          expect(offered()).toEqual(['Array>>first @2']);
+        });
+
+        it('leaves out a breakpoint that waits on this one through a chain', async () => {
+          // first → size → at:. Offering either as at:'s trigger would close a
+          // ring in which nothing is ever reached and nothing ever says so.
+          const manager = makeManager();
+          threeMethods(manager);
+          manager.setTrigger(Uri.parse(OTHER_METHOD), 2, { uri: METHOD_URI, stepPoint: 2 });
+          manager.setTrigger(Uri.parse(THIRD), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+          vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+          // Nothing left to offer, so it says so rather than showing an empty list.
+          expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
+          expect(vi.mocked(window.showInformationMessage)).toHaveBeenCalled();
+        });
+
+        it('refuses a step point with no breakpoint on it', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 99);
+
+          expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
+          expect(vi.mocked(window.showInformationMessage)).toHaveBeenCalledWith(
+            expect.stringContaining('no breakpoint at step point 99'),
+          );
+        });
+
+        it('records what was picked, and clears on "Always armed"', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+
+          vi.mocked(window.showQuickPick).mockResolvedValue({
+            label: 'Array>>size @2',
+            ref: { uri: OTHER_METHOD, stepPoint: 2 },
+          });
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+          expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toEqual({
+            uri: OTHER_METHOD,
+            stepPoint: 2,
+          });
+
+          // The escape hatch carries no ref, which is what clears the trigger.
+          vi.mocked(window.showQuickPick).mockResolvedValue({ label: 'Always armed' });
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+          expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toBeUndefined();
+        });
+
+        it('changes nothing when the picker is cancelled', async () => {
+          const manager = makeManager();
+          threeMethods(manager);
+          manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+
+          vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+          await manager.editTriggerAtStepPoint(Uri.parse(METHOD_URI), 2);
+
+          expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toEqual({
+            uri: OTHER_METHOD,
+            stepPoint: 2,
+          });
+        });
+      });
+
+      it('forgets every trigger when the session logs out', () => {
+        const manager = makeManager();
+        twoMethods(manager);
+        manager.setTrigger(Uri.parse(METHOD_URI), 2, { uri: OTHER_METHOD, stepPoint: 2 });
+        manager.clearAllForSession(1);
+        expect(manager.triggerFor(Uri.parse(METHOD_URI), 2)).toBeUndefined();
       });
     });
 
