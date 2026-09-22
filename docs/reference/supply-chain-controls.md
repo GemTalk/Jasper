@@ -32,7 +32,7 @@ Read root `package.json`'s `allowScripts` for the exact pinned versions — not 
 | `esbuild` | allow | bundler; `postinstall` links the platform binary |
 | `koffi` | allow | production native dep; ships the GCI FFI binding |
 | `@vscode/vsce-sign` | allow | needed by `vsce package`/`publish` |
-| `lefthook` | allow | opt-in git hooks |
+| `lefthook` | deny | its `postinstall` only runs `lefthook install`, which would install the git hooks for everyone on every install and break their opt-in contract (`npm run hooks:install`); the binary itself comes from the per-platform optional deps, so nothing else is lost |
 | `keytar` | allow | optional dep of `@vscode/vsce`, backing its keychain storage of the publish PAT; the version-pinned approval already blocks the worm vector, so there's no reason to deny it and lose that path |
 | `fsevents` | deny | prebuilt binary, optional and macOS-only; it's still in the lockfile on Linux (`fsevents@2.3.3` and a nested `playwright/fsevents@2.3.2`), just inert there — worst case of denial is chokidar polling in `npm run watch`. That inertness is exactly why the deny entry can't be dropped as cleanup: on npm 11.17.0 an unreviewed (rather than denied) inert package still hard-fails `ESTRICTALLOWSCRIPTS` for a script that would never run |
 

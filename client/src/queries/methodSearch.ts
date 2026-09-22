@@ -98,15 +98,177 @@ export function parseMethodSearchResults(raw: string): MethodSearchResult[] {
   return results;
 }
 
+/**
+ * Smalltalk that narrows an already-found set of methods to those whose source
+ * contains `term` starting at a WORD BOUNDARY — the character before the match is
+ * neither alphanumeric nor `_`, or the match is at the very start.
+ *
+ * `ClassOrganizer>>substringSearch:ignoreCase:` is the only full-text scan the
+ * engine offers and it matches anywhere, so the boundary test is a second pass
+ * over what it found. It runs HERE rather than on the client because the rows
+ * shipped back carry no source text to test — only class, selector, category and
+ * environment — and because the `METHOD_SEARCH_RESULT_LIMIT` cut is server-side:
+ * filtering first means the cap applies to boundary hits rather than truncating
+ * the substring hits before the narrower ones are reached.
+ *
+ * Deliberately NOT the `isWordStart` rule that `omniMatch` uses for names, which
+ * counts a camelCase hump as a word start. That would keep `doFooling` as a hit
+ * for `foo`, which is precisely the mid-word noise this exists to remove. A name
+ * is read as words; a method body is read as tokens.
+ *
+ * The needle is folded HERE, by GemStone, not by JavaScript. Folding the term with
+ * `String.prototype.toLowerCase` and comparing it against a source folded with
+ * `asLowercase` puts two different Unicode case-folding implementations on the two
+ * sides of the same comparison; where they disagree (dotted/dotless I, ß) the
+ * filter would silently drop methods `substringSearch:` had legitimately matched.
+ * Both sides now fold the same way, so the only case rule in play is the stone's.
+ *
+ * `indexOfSubCollection:startingAt:` rather than `includesSubstring:`, which 3.6.2
+ * does not implement. Generated source stays ASCII apart from the user's own term,
+ * which `substringSearch:` already embeds (the ComStrmSetCursor note).
+ */
+/**
+ * How a Source scan decides what counts as a hit. Named for what the SCAN does,
+ * not for the chip that chooses it — GemStone Search owns the mapping from its
+ * Fuzzy/Substring/Prefix chip onto these, and this module stays stone-facing.
+ */
+export type SourceScanMode = 'substring' | 'wordStart' | 'fuzzyToken';
+
+/**
+ * Smalltalk for a per-IDENTIFIER subsequence scan: a hit is a method with some
+ * token whose characters contain the needle's in order (`ordcol` finds a mention
+ * of `OrderedCollection`).
+ *
+ * Per token, not per method body, and that is the whole design. A subsequence
+ * across a 370-character method matches very nearly anything, which is why the
+ * naive reading of "fuzzy over source" is useless. Constraining it to a single
+ * identifier makes it mean what the chip means everywhere else — fuzzy over a
+ * NAME — applied to the names the body mentions.
+ *
+ * This one cannot ride on `substringSearch:` the way the other two modes do: a
+ * subsequence is not a substring, so the engine scan would never surface the
+ * methods this is meant to find (`oc` matches `OrderedCollection`, which contains
+ * no literal "oc"). It therefore walks the symbol list itself. Measured at ~315ms
+ * over a 16.5k-method image versus ~50ms for the engine scan — affordable only
+ * because Source is `explicitOnly`, debounced, and gated behind
+ * `methodMinQueryLength`, never part of the default fan-out.
+ *
+ * Both sides fold through `asLowercase` when case is ignored, so the only case
+ * rule in play is the stone's. ASCII-only apart from the user's term.
+ */
+function fuzzyTokenScan(term: string, ignoreCase: boolean): string {
+  // The NEEDLE is folded once — it is a handful of characters. The SOURCE is folded
+  // one character at a time at the point of comparison, rather than `m sourceString
+  // asLowercase`, which allocated a fresh lowercased copy of every method body in the
+  // image inside a single doit. `classOrganizer.ts` documents that allocation shape
+  // producing AlmostOutOfMemoryError (6022), after which every other operation in the
+  // session reports a broken connection instead of its own error — a failure that
+  // surfaces far from its cause. Per-character folding costs nothing and allocates
+  // nothing.
+  const foldNeedle = ignoreCase ? ' asLowercase' : '';
+  const foldChar = ignoreCase ? 'ch asLowercase' : 'ch';
+  return `needle := '${escapeString(term)}'${foldNeedle}.
+methods := Array new.
+needle isEmpty ifFalse: [
+  | seen |
+  seen := IdentitySet new.
+  System myUserProfile symbolList do: [:d |
+    d keysAndValuesDo: [:k :v |
+      v isBehavior ifTrue: [seen add: v; add: v class]]].
+  seen do: [:cls |
+    [cls selectors do: [:sel |
+      | m src ni matched |
+      m := cls compiledMethodAt: sel otherwise: nil.
+      m ifNotNil: [
+        src := [m sourceString] on: Error do: [:e | ''].
+        ni := 1.
+        matched := false.
+        1 to: src size do: [:i |
+          matched ifFalse: [
+            | ch |
+            ch := src at: i.
+            (ch isAlphaNumeric or: [ch = $_])
+              ifTrue: [
+                ${foldChar} = (needle at: ni) ifTrue: [
+                  ni := ni + 1.
+                  ni > needle size ifTrue: [matched := true]]]
+              ifFalse: [ni := 1]]].
+        matched ifTrue: [methods add: m]]]]
+      on: Error do: [:e | nil]]].`;
+}
+
+function wordBoundaryFilter(term: string, ignoreCase: boolean): string {
+  const fold = ignoreCase ? ' asLowercase' : '';
+  return `needle := '${escapeString(term)}'${fold}.
+methods := methods select: [:m |
+  | src idx ok prev |
+  src := [m sourceString${fold}] on: Error do: [:e | ''].
+  ok := false.
+  idx := src indexOfSubCollection: needle startingAt: 1.
+  [ok not and: [idx > 0]] whileTrue: [
+    prev := idx = 1 ifTrue: [nil] ifFalse: [src at: idx - 1].
+    (prev isNil or: [(prev isAlphaNumeric or: [prev = $_]) not])
+      ifTrue: [ok := true]
+      ifFalse: [idx := src indexOfSubCollection: needle startingAt: idx + 1]].
+  ok].`;
+}
+
+/**
+ * Methods whose SOURCE matches `term`, under one of three scan modes.
+ *
+ * `substring` is the engine's own `ClassOrganizer>>substringSearch:ignoreCase:` —
+ * the term anywhere in the body. `wordStart` runs that scan and then keeps only
+ * the methods where the match begins a token. `fuzzyToken` cannot use the engine
+ * scan at all (a subsequence is not a substring) and walks the symbol list itself.
+ *
+ * The modes exist because GemStone Search's match chip is a single global control,
+ * and a scope that ignores it states something untrue. Its name-oriented meanings
+ * do not transfer literally to a method body — "the target starts with the query"
+ * is meaningless for 370 characters of source — so each is given the reading that
+ * is useful there. GemStone Search owns that mapping; see `sourceProvider`.
+ */
+/**
+ * A term fuzzy-token matching can actually answer: one identifier's worth of characters.
+ *
+ * The fuzzy scan advances its needle only while walking identifier characters and resets
+ * at anything else, so a term carrying a `:`, a space or punctuation can never match ANY
+ * method — `printOn:`, `at:put:` or a phrase like `no such element` come back silently
+ * empty, where substring finds them. Silent is the worst shape: the reader concludes the
+ * text is not in the image.
+ *
+ * Stripping the offending characters does not rescue it, because the SOURCE token is
+ * broken at the colon too — `atput` cannot span `at:put:` any more than `at:put:` can.
+ * The per-identifier reading simply does not apply to a term that is not an identifier,
+ * so such a term runs as a substring instead. Fuzzy still means fuzzy everywhere it can.
+ */
+const IDENTIFIER_ONLY = /^[A-Za-z0-9_]+$/;
+
+/** The scan a term will really run under, after the fallback above. Exported so the UI can
+ *  say which mode answered rather than leaving a silently-downgraded search unexplained. */
+export function effectiveScanMode(term: string, mode: SourceScanMode): SourceScanMode {
+  return mode === 'fuzzyToken' && !IDENTIFIER_ONLY.test(term) ? 'substring' : mode;
+}
+
 export function searchMethodSource(
   execute: QueryExecutor,
   term: string,
   ignoreCase: boolean,
+  requestedMode: SourceScanMode = 'substring',
 ): MethodSearchResult[] {
-  const code = `| results methods stream limit classDict sl |
-results := ${classOrganizerExpr(0)}
+  const mode = effectiveScanMode(term, requestedMode);
+  const needsNeedle = mode !== 'substring';
+  const engineScan = `results := ${classOrganizerExpr(0)}
   substringSearch: '${escapeString(term)}' ignoreCase: ${ignoreCase}.
-methods := results at: 1.
+methods := results at: 1.`;
+  const scan =
+    mode === 'fuzzyToken'
+      ? fuzzyTokenScan(term, ignoreCase)
+      : mode === 'wordStart'
+        ? `${engineScan}\n${wordBoundaryFilter(term, ignoreCase)}`
+        : engineScan;
+
+  const code = `| results methods stream limit classDict sl${needsNeedle ? ' needle' : ''} |
+${scan}
 ${methodSerialization(0)}`;
 
   return parseMethodSearchResults(execute(code));
@@ -141,6 +303,19 @@ ${methodSerialization(environmentId)}`;
 // Implementations of `selector` in a class's hierarchy: the full superclass
 // chain (direction 'up') or all subclasses (direction 'down'), on the
 // instance or class side. One round trip; reuses the standard result format.
+//
+// The walk collects with `compiledMethodAt:environmentId:otherwise:`, not with
+// `includesSelector:` plus a bare `compiledMethodAt:`: both of those answer for
+// environment 0 whatever the caller asked for, so an implementor compiled only
+// into a higher environment was invisible in either direction — while the caller
+// still paid for one full walk per environment to re-collect the same
+// environment-0 answer each time. Verified on a live 3.7.5 stone: for a method
+// compiled only into environment 1, `includesSelector:` answers false and a bare
+// `compiledMethodAt:` answers nil, while `environmentId: 1` answers the method —
+// and this query returns it with the environment column set to 1. A unit test can
+// only pin the spelling of that send, so the engine's half of it is guarded on a live
+// stone by `methodSearch.integration.test.ts`, which implements one selector across
+// three environments in a four-deep chain and walks it in both directions.
 export function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
@@ -156,12 +331,14 @@ export function hierarchyImplementorsOf(
     direction === 'up'
       ? `cur := (${target}) superclass.
 [cur notNil] whileTrue: [
-  (cur includesSelector: #'${sel}') ifTrue: [methods add: (cur compiledMethodAt: #'${sel}')].
+  m := cur compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m].
   cur := cur superclass].`
       : `class allSubclasses do: [:sub | | tgt |
   tgt := ${isMeta ? 'sub class' : 'sub'}.
-  (tgt includesSelector: #'${sel}') ifTrue: [methods add: (tgt compiledMethodAt: #'${sel}')]].`;
-  const code = `| class methods stream limit classDict sl cur |
+  m := tgt compiledMethodAt: #'${sel}' environmentId: ${environmentId} otherwise: nil.
+  m ifNotNil: [methods add: m]].`;
+  const code = `| class methods stream limit classDict sl cur m |
 class := (System myUserProfile symbolList at: ${dictIndex}) at: #'${escapeString(className)}'.
 methods := OrderedCollection new.
 ${collect}
@@ -177,8 +354,8 @@ ${methodSerialization(environmentId)}`;
 // means. Compare referencesToObject, which takes the first binding of the name anywhere
 // in the symbol list. A dictionary that does not bind the name answers nothing.
 //
-// The environment goes on the ORGANIZER, not just on the serialization: a bare
-// an organizer collects its classes under one environment, so a class
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer collects its classes under one environment, so a class
 // referenced only from a method in another environment would come back unreferenced —
 // and a safe delete would then report that nothing referenced it. Verified on a live
 // stone: with the same method compiled into environments 0 and 1, the bare organizer
@@ -199,14 +376,38 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
+// The environment goes on the ORGANIZER, not just on the serialization: an
+// organizer gathers its classes under one environment, so a hardwired 0 here
+// answered environment-0 references however high an environment the caller
+// asked about.
+//
+// What that cost the callers sweeping 0..maxEnvironment was NOT repeated scanning —
+// classOrganizerExpr caches per environment key, so every iteration of such a sweep asked
+// for JasperClassOrganizer_0 and hit the cache after the first. It was the same
+// environment-0 answer N times, each pass stamping it with a different environment, and
+// dedupeMethodResults keys on the environment — so the rows did not fold together and the
+// same method appeared once per environment, every copy above 0 opening nothing.
+//
+// Scoping the organizer is the only way to the right answer, but it is a cost, not a
+// saving: a sweep now builds and RETAINS maxEnvironment + 1 organizers in SessionTemps,
+// which is the allocation shape classOrganizer.ts documents as able to reach
+// AlmostOutOfMemoryError and take the gem with it.
+//
+// Compare referencesToClassInDict, which resolves the class by identity through
+// a named dictionary rather than taking the first binding of the name anywhere
+// in the symbol list — and which guards its lookup, as this one now does. An unbound
+// name answers nil, and `referencesToObject: nil` is a real question with a useless
+// answer; the MCP find_references_to tool takes its name from a model, where an
+// invented global is entirely likely.
 export function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
   environmentId: number = 0,
 ): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl |
-methods := (${classOrganizerExpr(0)} referencesToObject:
-  (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')).
+  const code = `| obj methods stream limit classDict sl |
+obj := System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}'.
+obj isNil ifTrue: [^ ''].
+methods := (${classOrganizerExpr(environmentId)} referencesToObject: obj) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
@@ -230,6 +431,12 @@ ${methodSerialization(environmentId)}`;
 //   - an equivalent different spelling — a search for `#not` won't find a method that wrote `#'not'`
 // Accepted deliberately (reviewed on PR #443): both are rare next to the bogus every-sender flood the
 // old query produced. If you are chasing a "missing" literal hit, this filter is the reason.
+//
+// Both organizers take `environmentId`, like referencesToObject: an organizer collects its classes
+// under one environment, so a hardwired 0 would have answered for environment 0 while
+// methodSerialization stamped every row with the environment that was asked for. Verified on a live
+// 3.7.5 stone: a method compiled into environment 1 whose source holds `#sym` and `'text'` is found
+// by both queries at `environmentId: 1` and by neither at 0.
 export function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,
@@ -238,8 +445,8 @@ export function literalSymbolReferences(
   const needle = escapeString(symbolExpr);
   const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
-lit := (${classOrganizerExpr(0)} referencesToLiteral: symLit) at: 1.
-candidates := (${classOrganizerExpr(0)} substringSearch: '${needle}' ignoreCase: false) at: 1.
+lit := (${classOrganizerExpr(environmentId)} referencesToLiteral: symLit) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${needle}' ignoreCase: false) at: 1.
 methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
@@ -250,6 +457,8 @@ ${methodSerialization(environmentId)}`;
 // comment, a selector, a #symbol). We take the source-substring candidates (fast, indexed) and keep
 // only those whose literal frame holds a matching String (excluding Symbols). `text` is the raw
 // content (already unquoted by the caller).
+//
+// The organizer takes `environmentId` for the reason given on literalSymbolReferences.
 export function stringLiteralReferences(
   execute: QueryExecutor,
   text: string,
@@ -264,7 +473,7 @@ export function stringLiteralReferences(
   const code = `| ic needle candidates methods stream limit classDict sl |
 ic := ${ignoreCase}.
 needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
-candidates := (${classOrganizerExpr(0)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
+candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${esc}' ignoreCase: ic) at: 1.
 methods := candidates select: [:m |
   (m literals detect: [:l |
     (l isKindOf: String) and: [l isSymbol not and: [

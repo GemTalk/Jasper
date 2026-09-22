@@ -1546,7 +1546,9 @@ describe('CodeExecutor', () => {
     });
 
     it('falls back to GciTsSocket + native poll when GciTsNbPoll is absent (3.6.2)', async () => {
-      (gci.isAvailable as Mock).mockImplementation((name: string) => name !== 'GciTsNbPoll');
+      const gci = makeGci({ isAvailable: (name: string) => name !== 'GciTsNbPoll' });
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session), NO_CONDITIONS);
 
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);
@@ -1563,11 +1565,15 @@ describe('CodeExecutor', () => {
     });
 
     it('reports an error when the session socket cannot be obtained on 3.6.2', async () => {
-      (gci.isAvailable as Mock).mockImplementation((name: string) => name !== 'GciTsNbPoll');
-      (gci.GciTsSocket as Mock).mockReturnValue({
-        fd: -1,
-        err: { number: 4100, message: 'no socket' },
+      const gci = makeGci({
+        isAvailable: (name: string) => name !== 'GciTsNbPoll',
+        GciTsSocket: vi.fn(() => ({
+          fd: -1,
+          err: { number: 4100, message: 'no socket' },
+        })),
       });
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session), NO_CONDITIONS);
 
       const editor = makeEditor('3 + 4');
       setActiveEditor(editor);

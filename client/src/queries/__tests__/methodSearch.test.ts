@@ -10,6 +10,7 @@ import {
   stringLiteralReferences,
   hierarchyImplementorsOf,
   dedupeMethodResults,
+  effectiveScanMode,
   type MethodSearchResult,
 } from '../methodSearch';
 import { getClassHierarchy } from '../getClassHierarchy';
@@ -17,6 +18,165 @@ import { getSiblingClassNames } from '../../refactoring/queries/getSiblingClassN
 import { getClassDescendantNames } from '../../refactoring/queries/getClassDescendantNames';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
+
+/**
+ * GemStone Search's Prefix chip, over method source. "The target starts with the
+ * query" has no useful meaning for a whole method body, so Prefix narrows to
+ * matches that START A TOKEN — the fix for `foo` returning `barfoo` and
+ * `doFooling`. The narrowing is Smalltalk because the rows carry no source text
+ * to test on the client, and because the result cap is server-side.
+ */
+/**
+ * Fuzzy over Source is per-identifier, so a term that cannot BE an identifier has no
+ * reading there — and the scan does not degrade gracefully, it matches nothing at all,
+ * silently. These pin the fallback that keeps such a term answerable.
+ */
+describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
+  const codeFor = (term: string, mode: Parameters<typeof searchMethodSource>[3]): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, true, mode);
+    return execute.mock.calls[0][0];
+  };
+
+  it('keeps fuzzy for a plain identifier', () => {
+    expect(effectiveScanMode('ordcol', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(effectiveScanMode('order_col9', 'fuzzyToken')).toBe('fuzzyToken');
+    expect(codeFor('ordcol', 'fuzzyToken')).toContain('isAlphaNumeric');
+  });
+
+  it.each([
+    ['a keyword selector', 'at:put:'],
+    ['a unary selector with a colon', 'printOn:'],
+    ['a phrase', 'no such element'],
+    ['punctuation', 'foo-bar'],
+  ])('runs %s as substring instead of matching nothing', (_label, term) => {
+    expect(effectiveScanMode(term, 'fuzzyToken')).toBe('substring');
+    const code = codeFor(term, 'fuzzyToken');
+    // The engine's substring scan, not the per-identifier walk.
+    expect(code).toContain('substringSearch:');
+    expect(code).not.toContain('isAlphaNumeric');
+  });
+
+  it('leaves the other two chip positions alone', () => {
+    expect(effectiveScanMode('at:put:', 'substring')).toBe('substring');
+    expect(effectiveScanMode('at:put:', 'wordStart')).toBe('wordStart');
+  });
+});
+
+/**
+ * A lowercased copy of every method body in the image, built inside one doit, is the
+ * allocation shape classOrganizer.ts records as producing AlmostOutOfMemoryError (6022).
+ * The needle is folded once; the source is folded one character at a time.
+ */
+describe('fuzzy Source folds case without copying method bodies', () => {
+  const codeFor = (ignoreCase: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, 'ordcol', ignoreCase, 'fuzzyToken');
+    return execute.mock.calls[0][0];
+  };
+
+  it('never lowercases the whole source', () => {
+    const code = codeFor(true);
+    expect(code).toContain('m sourceString]');
+    expect(code).not.toContain('m sourceString asLowercase');
+  });
+
+  it('folds the needle once and each source character at comparison', () => {
+    const code = codeFor(true);
+    expect(code).toContain("needle := 'ordcol' asLowercase");
+    expect(code).toContain('ch asLowercase = (needle at: ni)');
+  });
+
+  it('folds nothing when the search is case-sensitive', () => {
+    const code = codeFor(false);
+    expect(code).not.toContain('asLowercase');
+    expect(code).toContain('ch = (needle at: ni)');
+  });
+});
+
+describe('searchMethodSource word-boundary narrowing', () => {
+  const codeFor = (term: string, ignoreCase: boolean, narrowed: boolean): string => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    searchMethodSource(execute, term, ignoreCase, narrowed ? 'wordStart' : 'substring');
+    return execute.mock.calls[0][0];
+  };
+
+  it('adds no filter by default, so Substring and Fuzzy scan as before', () => {
+    const code = codeFor('foo', true, false);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).not.toContain('indexOfSubCollection');
+    expect(code).not.toContain('select:');
+  });
+
+  it('filters on the character before the match when asked', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).toContain("substringSearch: 'foo'");
+    expect(code).toContain('methods := methods select:');
+    // A word character before the match disqualifies it; anything else starts a token.
+    expect(code).toContain('prev isAlphaNumeric');
+    expect(code).toContain('prev = $_');
+  });
+
+  // The camelCase hump that `omniMatch.isWordStart` counts as a word start is
+  // deliberately NOT honoured here: it would keep `doFooling` as a hit for `foo`.
+  it('tests only the preceding character, not a camelCase hump', () => {
+    expect(codeFor('foo', true, true)).not.toContain('isUppercase');
+  });
+
+  /**
+   * Both sides of the comparison are folded by the STONE. Folding the needle with
+   * JavaScript's `toLowerCase` and the source with `asLowercase` would put two
+   * different Unicode case-folding implementations either side of the same test,
+   * and where they disagree the filter drops methods the scan legitimately matched.
+   */
+  it('folds the needle in Smalltalk, not in JavaScript, when case is ignored', () => {
+    const code = codeFor('Foo', true, true);
+
+    // The term reaches the stone as typed, and is folded there.
+    expect(code).toContain("needle := 'Foo' asLowercase");
+    expect(code).toContain('m sourceString asLowercase');
+    // A JS-folded needle would have been embedded already lowercased.
+    expect(code).not.toContain("needle := 'foo'");
+  });
+
+  it('compares as typed when case is significant', () => {
+    const code = codeFor('Foo', false, true);
+    expect(code).toContain("needle := 'Foo'");
+    expect(code).not.toContain('asLowercase');
+  });
+
+  // Bound once rather than inlined at both search sites, so the two can never drift.
+  it('binds the needle once and reuses it', () => {
+    const code = codeFor('Foo', true, true);
+    expect(code.match(/indexOfSubCollection: needle/g)).toHaveLength(2);
+    expect(code.match(/needle :=/g)).toHaveLength(1);
+    expect(code).toContain('classDict sl needle |');
+  });
+
+  // The temp is only declared when the filter is actually emitted.
+  it('does not declare the needle when not narrowing', () => {
+    expect(codeFor('Foo', true, false)).not.toContain('needle');
+  });
+
+  // The filter runs before methodSerialization, so METHOD_SEARCH_RESULT_LIMIT caps
+  // boundary hits rather than truncating substring hits before they are reached.
+  it('narrows before the result cap is applied', () => {
+    const code = codeFor('foo', true, true);
+    expect(code.indexOf('methods := methods select:')).toBeLessThan(code.indexOf('limit :='));
+  });
+
+  it('escapes a term carrying a quote', () => {
+    expect(codeFor("it's", true, true)).toContain("needle := 'it''s'");
+  });
+
+  // 3.6.2 does not implement includesSubstring:, and non-ASCII in generated source
+  // trips ComStrmSetCursor.
+  it('stays on 3.6.2-safe, ASCII-only primitives', () => {
+    const code = codeFor('foo', true, true);
+    expect(code).not.toContain('includesSubstring:');
+    expect([...code].every((ch) => ch.charCodeAt(0) < 128)).toBe(true);
+  });
+});
 
 describe('environment on a result row', () => {
   it('reads the environment column when the scan reports one', () => {
@@ -132,6 +292,47 @@ describe('referencesToObject', () => {
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
   });
+
+  it('answers nothing for a name the symbol list does not bind', () => {
+    // objectNamed: answers nil for an unbound name, and `referencesToObject: nil` is a
+    // real question with a useless answer — references to nil, reported as though they
+    // were references to the global. The MCP find_references_to tool takes its name from
+    // a model, so an invented global is an ordinary input, not an edge case.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'NoSuchGlobal');
+
+    expect(execute.mock.calls[0][0]).toContain("obj isNil ifTrue: [^ '']");
+  });
+
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    // The organizer gathers its classes under one environment, so a hardwired 0 here
+    // answered environment-0 references however high an environment the caller asked
+    // about. A sweep did not pay for a scan per environment — the organizer is cached
+    // per environment key, so every pass hit the same cached one — it collected the
+    // same environment-0 answer N times under N different environment stamps, which
+    // dedupeMethodResults keys on and so could not fold together.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'MyGlobal', 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
+  });
+
+  it('normalizes the organizer result to an Array before indexing it', () => {
+    // methodSerialization indexes `methods` with `at: i`, so the collection
+    // referencesToObject: answers has to be an Array first.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToObject(execute, 'MyGlobal');
+
+    // Anchored to the send under test, so an `asArray` elsewhere in the doit cannot
+    // satisfy it.
+    expect(execute.mock.calls[0][0]).toMatch(/referencesToObject: obj\) asArray/);
+  });
 });
 
 describe('referencesToClassInDict', () => {
@@ -224,6 +425,21 @@ describe('literalSymbolReferences', () => {
     // The old "subtract senders" heuristic is gone — sendersOf: under-reports for some selectors.
     expect(code).not.toContain('sendersOf:');
   });
+
+  it('scopes both organizers to the environment, not just the serialization', () => {
+    // Two organizers in one doit, and a hardwired 0 in either would have collected
+    // environment-0 methods while methodSerialization stamped every row with the
+    // environment the caller asked for — rows labelled with an environment they did
+    // not come from.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    literalSymbolReferences(execute, '#size', 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
+  });
 });
 
 describe('stringLiteralReferences', () => {
@@ -239,6 +455,17 @@ describe('stringLiteralReferences', () => {
     // 'className' / 'rename' / etc.
     expect(code).toContain('= needle');
     expect(code).not.toContain('includesString: needle');
+  });
+
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    stringLiteralReferences(execute, 'no such element', true, 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer newForEnvironment: 2');
+    expect(code).toContain('JasperClassOrganizer_2');
+    expect(code).not.toContain('JasperClassOrganizer_0');
   });
 });
 
@@ -260,7 +487,7 @@ describe('hierarchyImplementorsOf', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('superclass');
     expect(code).toContain('[cur notNil] whileTrue:');
-    expect(code).toContain("includesSelector: #'at:'");
+    expect(code).toContain("compiledMethodAt: #'at:' environmentId: 0 otherwise: nil");
     expect(code).not.toContain('allSubclasses');
   });
 
@@ -269,7 +496,7 @@ describe('hierarchyImplementorsOf', () => {
     hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('allSubclasses do:');
-    expect(code).toContain("includesSelector: #'at:'");
+    expect(code).toContain("compiledMethodAt: #'at:' environmentId: 0 otherwise: nil");
     expect(code).not.toContain('whileTrue:');
   });
 
@@ -302,6 +529,23 @@ describe('hierarchyImplementorsOf', () => {
     expect(code).toContain('symbolList at: 7');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain("#'o''clock'");
+  });
+
+  it('collects in the environment it was given, in both directions', () => {
+    // `includesSelector:` and a bare `compiledMethodAt:` both answer for environment 0
+    // whatever the caller asked, so an implementor compiled only into a higher
+    // environment was invisible — and the caller's sweep over 0..maxEnvironment did N
+    // full walks to re-collect the same environment-0 answer each time.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up', 2);
+    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down', 2);
+
+    for (const [code] of execute.mock.calls) {
+      expect(code).toContain("compiledMethodAt: #'at:' environmentId: 2 otherwise: nil");
+      expect(code).not.toContain('includesSelector:');
+      expect(code).toContain('categoryOfSelector: each selector environmentId: 2');
+    }
   });
 
   it('parses returned rows into MethodSearchResult', () => {

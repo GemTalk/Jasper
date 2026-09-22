@@ -16,8 +16,9 @@
  * Exposed as the global `BasicInspectorView`.
  */
 (function () {
-  var strip, ctxMenu, vscode, PAGE_SIZE, Columns;
+  var strip, ctxMenu, methodCtxMenu, vscode, PAGE_SIZE, Columns;
   var ctxTarget = null; // { columnId, oop, label, value, kind, index, keyOop, editable }
+  var methodCtxTarget = null; // { oop, selector, isMeta } — the Meta tab's selector rows
 
   // ── Small helpers ─────────────────────────
 
@@ -679,14 +680,20 @@
   /**
    * The Meta tab, laid out as the Enhanced Inspector lays its own out, so the
    * two do not present the same facts in two different shapes: the class name,
-   * an info bar carrying superclass, package and OOP, and then a sub-tab bar
+   * an info bar carrying superclass, class category and OOP, and then a sub-tab bar
    * over the one thing you asked to see.
    *
    * Definition and Comment are sub-tabs there rather than sections stacked
    * above the selectors, which is what this used to be — and stacking them cost
    * the selector list its screen: a class with a real comment pushed every
-   * method below the fold. Category is the "Package" field of the info bar, not
-   * a section, for the same reason.
+   * method below the fold. The class category is the "Class Category" field of
+   * the info bar, not a section, for the same reason. It is `cls category` — the
+   * thing the Explorer's Class Categories pane lists — and NOT a Rowan package,
+   * which is what calling it "Package" claimed.
+   *
+   * A selector row opens its source on a click and offers Browse Method on a
+   * right-click (see showMethodCtxMenu); the browse lands in the GemStone
+   * Explorer, where the debugger's Browse and this panel's Browse Class go.
    */
   function renderMeta(col, pane, meta) {
     if (!meta) {
@@ -703,7 +710,7 @@
       '</div>' +
       '<div class="meta-info-bar">' +
       metaFact('Superclass', meta.superclassName) +
-      metaFact('Package', meta.category) +
+      metaFact('Class Category', meta.category) +
       metaFact('OOP', col.oop) +
       '</div>' +
       '<div class="meta-sub-bar">';
@@ -1143,6 +1150,43 @@
     ctxTarget = null;
   }
 
+  /**
+   * The Meta tab's selector rows get their own one-item menu. They are
+   * `.method-item` divs, not `tr[data-row]`, so without this they fell through
+   * to VS Code's own webview menu — Cut / Copy / Paste, all three meaningless
+   * over a selector and none of them a way to reach the method.
+   *
+   * Deliberately NOT suppressed panel-wide: the Definition and Comment sub-tabs
+   * render selectable <pre> text, and Copy is exactly what is wanted there.
+   */
+  function showMethodCtxMenu(x, y, target) {
+    methodCtxTarget = target;
+    methodCtxMenu.style.display = 'block';
+    var w = methodCtxMenu.offsetWidth || 120;
+    var h = methodCtxMenu.offsetHeight || 30;
+    methodCtxMenu.style.left = Math.max(0, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    methodCtxMenu.style.top = Math.max(0, Math.min(y, window.innerHeight - h - 4)) + 'px';
+  }
+
+  function hideMethodCtxMenu() {
+    methodCtxMenu.style.display = 'none';
+    methodCtxTarget = null;
+  }
+
+  function runMethodCtxAction(action) {
+    var t = methodCtxTarget;
+    hideMethodCtxMenu();
+    if (!t) return;
+    if (action === 'browseMethod') {
+      post({
+        command: 'browseMethod',
+        oop: t.oop,
+        selector: t.selector,
+        isMeta: t.isMeta,
+      });
+    }
+  }
+
   function runCtxAction(action) {
     var t = ctxTarget;
     hideCtxMenu();
@@ -1290,12 +1334,31 @@
 
     strip.addEventListener('contextmenu', function (ev) {
       var col = Columns.columnOf(ev.target);
+      if (!col) return;
+      // Two kinds of right-clickable row, checked in order. Anything else (the
+      // Definition/Comment <pre>s, blank space) falls through to the host menu
+      // on purpose, because Copy is useful there.
+      var methodEl = ev.target.closest ? ev.target.closest('.method-item') : null;
+      if (methodEl) {
+        ev.preventDefault();
+        Columns.focus(col);
+        hideCtxMenu();
+        showMethodCtxMenu(ev.clientX, ev.clientY, {
+          oop: col.oop,
+          selector: methodEl.dataset.selector,
+          // The sub-tab the list is drawn from, the same test metaSourceKey makes:
+          // a selector on both sides must browse to the side being looked at.
+          isMeta: col.metaSubTab === 'classMethods',
+        });
+        return;
+      }
       var tr = ev.target.closest ? ev.target.closest('tr[data-row]') : null;
-      if (!col || !tr) return;
+      if (!tr) return;
       var target = rowContext(col, Number(tr.dataset.row));
       if (!target) return;
       ev.preventDefault();
       Columns.focus(col);
+      hideMethodCtxMenu();
       showCtxMenu(ev.clientX, ev.clientY, target);
     });
 
@@ -1304,16 +1367,23 @@
       if (item) runCtxAction(item.dataset.action);
     });
 
+    methodCtxMenu.addEventListener('click', function (ev) {
+      var item = ev.target.closest('[data-action]');
+      if (item) runMethodCtxAction(item.dataset.action);
+    });
+
     document.addEventListener('click', function (ev) {
       if (!ctxMenu.contains(ev.target)) hideCtxMenu();
+      if (!methodCtxMenu.contains(ev.target)) hideMethodCtxMenu();
     });
 
     // Enter dives in place — the Jadeite idiom, kept distinct from the
-    // double-click that opens a new column. Escape closes the row menu, so it
-    // can be dismissed without clicking somewhere that means something else.
+    // double-click that opens a new column. Escape closes either context menu,
+    // so one can be dismissed without clicking somewhere that means something else.
     document.addEventListener('keydown', function (ev) {
       if (ev.key === 'Escape') {
         hideCtxMenu();
+        hideMethodCtxMenu();
         return;
       }
       if (ev.key !== 'Enter') return;
@@ -1454,6 +1524,7 @@
     slotSort = 'name';
     strip = opts.strip;
     ctxMenu = opts.ctxMenu;
+    methodCtxMenu = opts.methodCtxMenu;
     vscode = opts.vscode;
     PAGE_SIZE = opts.pageSize;
 

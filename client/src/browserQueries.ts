@@ -27,6 +27,7 @@ import {
   classExistsInDictionary as sharedClassExistsInDictionary,
 } from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
+import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
@@ -247,6 +248,7 @@ import {
   searchMethodSource as sharedSearchMethodSource,
   sendersOf as sharedSendersOf,
   MethodSearchResult,
+  SourceScanMode,
 } from './queries/methodSearch';
 import { methodsAccessingInstVar as sharedMethodsAccessingInstVar } from './refactoring/queries/methodsAccessingInstVar';
 import { methodsAccessingClassVar as sharedMethodsAccessingClassVar } from './refactoring/queries/methodsAccessingClassVar';
@@ -729,6 +731,14 @@ export function getClassComment(
   dict?: number | string,
 ): string {
   return sharedGetClassComment(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getStoredClassComment(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function canClassBeWritten(
@@ -2133,8 +2143,13 @@ export function getStepPointSelectorRanges(
   );
 }
 
-export function searchMethodSource(session: ActiveSession, term: string, ignoreCase: boolean) {
-  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase);
+export function searchMethodSource(
+  session: ActiveSession,
+  term: string,
+  ignoreCase: boolean,
+  mode: SourceScanMode = 'substring',
+) {
+  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
 }
 
 export function sendersOf(session: ActiveSession, selector: string, environmentId: number = 0) {

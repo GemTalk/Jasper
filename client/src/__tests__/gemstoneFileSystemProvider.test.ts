@@ -21,6 +21,7 @@ vi.mock('../browserQueries', () => ({
   // category-only change is still undoable (#434).
   getClassesWithCategory: vi.fn(() => [] as unknown[]),
   getClassComment: vi.fn(() => 'An ordered collection.'),
+  getStoredClassComment: vi.fn(() => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
   // Answers what the real query answers on success — the provider now checks it, because
@@ -76,6 +77,7 @@ import {
   buildNewMethodUri,
   buildClassDefinitionUri,
   buildClassCommentUri,
+  isClassCommentUri,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
@@ -501,11 +503,34 @@ describe('GemStoneFileSystemProvider', () => {
       expect(queries.getClassDefinition).toHaveBeenCalledWith(expect.anything(), 'Array', 9);
     });
 
-    it('reads a class comment, scoped to the dictionary', () => {
+    /**
+     * The STORED comment, not `cls comment`. For a class with none, `cls comment`
+     * answers GemStone's synthesised "No class-specific documentation for X…"
+     * placeholder — and handing that to an editor makes it editable text, so
+     * Ctrl+Z lands on the boilerplate and saving writes it in as a real comment.
+     */
+    it('reads the comment a class actually stores, scoped to the dictionary', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/comment');
       const content = new TextDecoder().decode(provider.readFile(uri));
       expect(content).toBe('An ordered collection.');
-      expect(queries.getClassComment).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
+      expect(queries.getStoredClassComment).toHaveBeenCalledWith(
+        expect.anything(),
+        'Array',
+        'Globals',
+      );
+      expect(queries.getClassComment).not.toHaveBeenCalled();
+    });
+
+    it('opens empty for a class with no comment of its own', () => {
+      vi.mocked(queries.getStoredClassComment).mockReturnValueOnce('');
+
+      const content = new TextDecoder().decode(
+        provider.readFile(Uri.parse('gemstone://1/Globals/Array/comment')),
+      );
+
+      // Empty means undo can mean "no comment": there is nothing to return to but
+      // nothing.
+      expect(content).toBe('');
     });
 
     it('returns new-class template with dictionary name', () => {
@@ -646,6 +671,45 @@ describe('GemStoneFileSystemProvider', () => {
         expect.stringContaining('was not saved: Class not found: Array'),
       );
       expect(window.showInformationMessage).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The Explorer's 📖 button is gated on the class carrying a comment, and a
+     * comment save fires no compile event — so without this the button appeared
+     * only after Refresh GemStone Explorer, and never went away again.
+     */
+    describe('announcing a comment save', () => {
+      const saved = (text: string) => {
+        const seen: unknown[] = [];
+        const sub = provider.onClassCommentSaved((e) => seen.push(e));
+        provider.writeFile(Uri.parse('gemstone://1/Globals/Array/comment?dict=9'), encode(text), {
+          create: false,
+          overwrite: true,
+        });
+        sub.dispose();
+        return seen;
+      };
+
+      it('says the class now has a comment', () => {
+        expect(saved('Updated comment')).toEqual([
+          { sessionId: 1, dictName: 'Globals', className: 'Array', hasComment: true },
+        ]);
+      });
+
+      it('says it no longer does when the editor was emptied', () => {
+        expect(saved('')).toMatchObject([{ className: 'Array', hasComment: false }]);
+      });
+
+      // insert-final-newline can leave one behind after the text is deleted.
+      it('counts a whitespace-only comment as none', () => {
+        expect(saved('\n')).toMatchObject([{ hasComment: false }]);
+      });
+
+      it('says nothing when the stone refused the save', () => {
+        vi.mocked(queries.setClassComment).mockReturnValueOnce('Class not found: Array');
+
+        expect(saved('Updated comment')).toEqual([]);
+      });
     });
 
     it('compiles new-class on save', () => {
@@ -2222,6 +2286,36 @@ describe('parseUri', () => {
     const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/comment/Array%20comment'));
 
     expect(parsed).toMatchObject({ kind: 'comment', className: 'Array' });
+  });
+
+  /**
+   * The gate that keeps a comment save out of the method-compile path in
+   * `activate()`'s change handler — where it used to be forwarded as a method
+   * compile, costing a `getClassEnvironments` round trip that redrew the Methods
+   * pane while leaving the Classes pane, the only one whose row changed, alone.
+   * Both comment URI shapes have to be recognised, or the guard half-works.
+   */
+  describe('isClassCommentUri', () => {
+    it('recognises the 5-segment URI the builder actually emits', () => {
+      expect(isClassCommentUri(buildClassCommentUri(1, 'Globals', 'Array'))).toBe(true);
+    });
+
+    it('recognises the legacy 4-segment form', () => {
+      expect(isClassCommentUri(Uri.parse('gemstone://1/Globals/Array/comment'))).toBe(true);
+    });
+
+    it.each([
+      ['a method', 'gemstone://1/Globals/Array/instance/accessing/size'],
+      ['a class definition', 'gemstone://1/Globals/Array/definition'],
+      ['a new-method template', 'gemstone://1/Globals/Array/instance/accessing/new-method'],
+      ['a new-class template', 'gemstone://1/Globals/new-class'],
+    ])('is false for %s', (_what, uri) => {
+      expect(isClassCommentUri(Uri.parse(uri))).toBe(false);
+    });
+
+    it('is false for a document that is not ours at all', () => {
+      expect(isClassCommentUri(Uri.parse('file:///tmp/Array/comment'))).toBe(false);
+    });
   });
 
   it('recognizes the new-class template and its category', () => {

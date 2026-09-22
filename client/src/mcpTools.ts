@@ -500,13 +500,29 @@ export function registerMcpTools(
     },
     async (args) =>
       wrap<typeof args>((session, a) => {
-        return queries.getMethodSource(
+        const source = queries.getMethodSource(
           session,
           a.className,
           a.isMeta,
           a.selector,
           a.environmentId ?? 0,
         );
+        // The query answers '' for a class that will not resolve and for a selector
+        // the class does not implement, because the EDITOR wants an empty buffer
+        // rather than a walkback. A tool caller needs the two told apart: '' would
+        // otherwise read as "a method whose source is empty", which is not a thing
+        // GemStone can hold. Say so instead.
+        if (source === '') {
+          throw new Error(
+            // Lower-case `no` deliberately: `wrap` renders a throw as `Error: <message>`,
+            // so this reads `Error: no class-side method …` — byte-identical to the
+            // mcp-server twin's text. A caller must not be able to tell which server
+            // answered from the wording.
+            `no ${a.isMeta ? 'class' : 'instance'}-side method #${a.selector} on ${a.className}` +
+              ' — the class may not exist, or may not implement that selector.',
+          );
+        }
+        return source;
       })(args),
   );
 
