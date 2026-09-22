@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import {
   CONFLICT_OBJECT_LIMIT,
+  CONFLICT_PRINT_STRING_LIMIT,
   conflictReason,
   conflictReport,
   conflictSummary,
@@ -18,8 +19,8 @@ const raw = (...lines: string[]) => lines.join('\n') + '\n';
 const WRITE_WRITE = raw(
   line('R', 'failure'),
   line('K', 'Write-Write', '2'),
-  line('O', '12200193', 'SymbolDictionary'),
-  line('O', '12200449', 'Account'),
+  line('O', '12086785', 'SymbolDictionary', "aSymbolDictionary( name: #'UserGlobals' )"),
+  line('O', '12200449', 'Account', 'an Account'),
 );
 
 describe('parseTransactionConflicts', () => {
@@ -31,8 +32,12 @@ describe('parseTransactionConflicts', () => {
           key: 'Write-Write',
           total: 2,
           objects: [
-            { oop: '12200193', className: 'SymbolDictionary' },
-            { oop: '12200449', className: 'Account' },
+            {
+              oop: '12086785',
+              className: 'SymbolDictionary',
+              printString: "aSymbolDictionary( name: #'UserGlobals' )",
+            },
+            { oop: '12200449', className: 'Account', printString: 'an Account' },
           ],
         },
       ],
@@ -83,6 +88,20 @@ describe('parseTransactionConflicts', () => {
     expect(parseTransactionConflicts('')).toEqual({ commitResult: undefined, categories: [] });
   });
 
+  it('leaves printString off an object whose printOn: gave nothing back', () => {
+    const parsed = parseTransactionConflicts(
+      raw(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account', '')),
+    );
+    expect(parsed.categories[0].objects[0]).toEqual({ oop: '12200449', className: 'Account' });
+  });
+
+  it('keeps a printString that contains tabs', () => {
+    const parsed = parseTransactionConflicts(
+      raw(line('K', 'Write-Write', '1'), line('O', '1', 'Account', 'a\tb')),
+    );
+    expect(parsed.categories[0].objects[0].printString).toBe('a\tb');
+  });
+
   // Table 9.1's #'Synchronized-Commit' is "details of the synchronized commit
   // failure", not an Array, so the doit renders it as text instead.
   it('carries a non-collection value through as text', () => {
@@ -129,15 +148,27 @@ describe('transactionConflicts', () => {
     expect(result.categories[0].key).toBe('Write-Write');
   });
 
-  // Not a style point: `printString` on a conflicting object runs application
-  // code inside the doit, on the very objects two sessions are fighting over.
-  it('sends the conflicting objects nothing but asOop and class name', () => {
+  it('asks for the oop, the class and an abbreviated printString', () => {
     const execute = vi.fn((_code: string) => WRITE_WRITE);
     transactionConflicts(execute);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('each asOop printString');
     expect(code).toContain('each class name asString');
-    expect(code).not.toContain('each printString');
+    expect(code).toContain('each printString');
+  });
+
+  // printString runs application code on objects two sessions are fighting over.
+  // A raise must cost that one object its printString, not cost the report.
+  it('guards each printString so one bad printOn: cannot lose the report', () => {
+    const execute = vi.fn((_code: string) => WRITE_WRITE);
+    transactionConflicts(execute);
+    expect(execute.mock.calls[0][0]).toContain('on: Error do:');
+  });
+
+  it('cuts each printString down in the gem rather than on the way back', () => {
+    const execute = vi.fn((_code: string) => WRITE_WRITE);
+    transactionConflicts(execute);
+    expect(execute.mock.calls[0][0]).toContain(`t size > ${CONFLICT_PRINT_STRING_LIMIT}`);
   });
 
   // §9.2: "If you save a reference to the conflict set, be sure to clear this
@@ -252,22 +283,48 @@ describe('hasConflictDetail', () => {
 });
 
 describe('conflictReport', () => {
-  it('lists every kind with its objects', () => {
+  it('lists every kind with its objects, in aligned columns', () => {
     expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toBe(
       [
         'commitResult: failure — the commit conflicted with another session',
+        'Inspect one in a workspace: Object _objectForOop: 12086785',
         '',
         'Write-Write — 2 objects',
-        '  12200193  SymbolDictionary',
-        '  12200449  Account',
+        "  12086785  SymbolDictionary  aSymbolDictionary( name: #'UserGlobals' )",
+        '  12200449  Account           an Account',
       ].join('\n'),
     );
   });
 
-  // The OOP is the point of the report: it is what the user takes to the
-  // Inspector to see which object the other session wrote.
-  it('keeps the OOP beside the class name', () => {
-    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toContain('12200449  Account');
+  // The whole point of bringing printStrings back: you can tell which object the
+  // other session wrote without leaving the log.
+  it('shows what each conflicting object is', () => {
+    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toContain(
+      "aSymbolDictionary( name: #'UserGlobals' )",
+    );
+  });
+
+  // Named over a real oop from this very report, so it is something to paste
+  // rather than a template to fill in.
+  it('names the expression that opens one of these in a live session', () => {
+    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toContain(
+      'Object _objectForOop: 12086785',
+    );
+  });
+
+  it('offers no such line when the stone named no objects', () => {
+    expect(conflictReport(parseTransactionConflicts(raw(line('R', 'failure'))))).not.toContain(
+      '_objectForOop',
+    );
+  });
+
+  it('still lists an object whose printString did not come back', () => {
+    const report = conflictReport(
+      parseTransactionConflicts(
+        raw(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account')),
+      ),
+    );
+    expect(report.split('\n').at(-1)).toBe('  12200449  Account');
   });
 
   it('says how many objects it did not list', () => {

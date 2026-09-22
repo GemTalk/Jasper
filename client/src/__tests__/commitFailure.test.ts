@@ -34,9 +34,12 @@ const REFUSED = gciError(
 );
 
 const WRITE_WRITE = parseTransactionConflicts(
-  ['R\tfailure', 'K\tWrite-Write\t2', 'O\t12200193\tSymbolDictionary', 'O\t12200449\tAccount'].join(
-    '\n',
-  ),
+  [
+    'R\tfailure',
+    'K\tWrite-Write\t2',
+    "O\t12086785\tSymbolDictionary\taSymbolDictionary( name: #'UserGlobals' )",
+    'O\t12200449\tAccount\tan Account',
+  ].join('\n'),
 );
 
 describe('isCommitConflict', () => {
@@ -111,8 +114,15 @@ describe('commitFailureMessage, on a commit the stone refused', () => {
 
   it('carries the conflicting objects as details for the output channel', () => {
     const details = commitFailureMessage(REFUSED, WRITE_WRITE).details;
-    expect(details).toContain('12200193  SymbolDictionary');
-    expect(details).toContain('12200449  Account');
+    expect(details).toContain('12086785  SymbolDictionary');
+    expect(details).toContain('12200449  Account  ');
+  });
+
+  // The toast stays one line; what the objects ARE belongs in the channel.
+  it('keeps the printStrings out of the toast and in the details', () => {
+    const failure = commitFailureMessage(REFUSED, WRITE_WRITE);
+    expect(failure.reason).not.toContain('UserGlobals');
+    expect(failure.details).toContain("aSymbolDictionary( name: #'UserGlobals' )");
   });
 
   // The conflict set is a second round trip and can fail on its own (busy

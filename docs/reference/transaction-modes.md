@@ -156,16 +156,25 @@ constraints shape that query:
 - **Read it before anything else touches the transaction.** "Conflict sets are
   cleared at the beginning of a commit or abort and thus can be examined until the
   next commit, continue, or abort."
-- **Send the conflicting objects nothing but `asOop` and `class name`.**
-  `printString` would run application code inside the doit, on the objects two
-  sessions are fighting over.
+- **Guard every `printString`.** Each object comes back as its oop, its class and
+  an abbreviated `printString` — `aSymbolDictionary( name: #'UserGlobals' )` tells
+  you which object the other session wrote without leaving the log. That runs
+  application code inside the doit, on the objects two sessions are fighting over,
+  so a raise costs that one object its `printString` rather than costing the
+  report, the string is cut to `CONFLICT_PRINT_STRING_LIMIT` in the gem, and
+  separators are flattened so one object cannot spill across the line format. The
+  cost that remains is time, on an object whose `printOn:` walks a large
+  collection — the same bargain `getGlobalsForDictionary` makes, and only ever
+  paid on a commit that has already been refused.
 - **Drop the reference before answering.** "If you save a reference to the
   conflict set, be sure to clear this reference to avoid making the conflict set
   persistent."
 
 Only the first `CONFLICT_OBJECT_LIMIT` objects per kind come back; a conflict on
 an indexed collection can name thousands, and the stone's own count is reported
-either way.
+either way. The report names `Object _objectForOop:` over the first oop it lists,
+so the full object is one paste away in a workspace when the abbreviation is not
+enough.
 
 A genuine refusal cannot be reproduced in the integration suite: it needs a second
 session to really commit, and the harness arms GemStone's commit guard on every
@@ -208,8 +217,9 @@ the next transaction. Under `transactionless` there is nothing to end.
   stake, and on confirm runs the same refresh cascade an abort runs.
 - **A refused Commit names what collided** — `Commit refused — Write-Write on 2
   objects. Abort for a fresh view, then try again.` — with **Show Conflicts** on
-  the toast, which writes every conflicting object's OOP and class to the
-  **GemStone GCI** output channel. The MCP `commit` tool answers with the same
+  the toast, which writes each conflicting object's oop, class and abbreviated
+  `printString` to the **GemStone GCI** output channel, in aligned columns, over a
+  pasteable `Object _objectForOop:`. The MCP `commit` tool answers with the same
   wording and the same list, through the same shared query.
 - **Claude's tools count too.** The in-window MCP `commit`, `abort` and
   `execute_code` tools move the same session the rows are drawn from, so they tell

@@ -18,10 +18,28 @@ import { QueryExecutor } from './types';
  */
 export const CONFLICT_OBJECT_LIMIT = 25;
 
+/**
+ * How much of each conflicting object's `printString` to bring back. Enough to
+ * recognize the object at a glance; the report names the expression that shows
+ * the whole of it in a live session.
+ */
+export const CONFLICT_PRINT_STRING_LIMIT = 100;
+
+/** The workspace expression that turns an OOP in the report back into its object. */
+export function objectForOopExpression(oop: string): string {
+  return `Object _objectForOop: ${oop}`;
+}
+
 export interface ConflictingObject {
-  /** `asOop printString` — enough to inspect the object. */
+  /** `asOop printString` — what `Object _objectForOop:` takes. */
   oop: string;
   className: string;
+  /**
+   * `printString`, abbreviated to {@link CONFLICT_PRINT_STRING_LIMIT}, or
+   * undefined when the object had none to give (its `printOn:` raised, or the
+   * stone answered an empty string).
+   */
+  printString?: string;
 }
 
 export interface ConflictCategory {
@@ -71,9 +89,14 @@ export function describeCommitResult(commitResult: string | undefined): string |
 // object count, O = one conflicting object under the K above it, T = a non-Array
 // value rendered as text.
 //
-// Only `asOop` and `class name` are sent to the conflicting objects. `printString`
-// would run application code — inside a doit, on objects that are by definition
-// being fought over by two sessions.
+// `printString` runs application code, inside a doit, on objects two sessions are
+// fighting over — so it is guarded the way `getGlobalsForDictionary` guards its
+// own: a raise degrades that one object to its oop and class rather than losing
+// the report, the result is cut to CONFLICT_PRINT_STRING_LIMIT, and separators are
+// flattened so one object cannot spill across the line format. What it can still
+// cost is time, on an object whose printOn: walks a large collection; that is the
+// same bargain every printString in this codebase makes, and it is only ever paid
+// on a commit that has already been refused.
 const CONFLICTS_CODE = `| conflicts stream |
 conflicts := System transactionConflicts.
 stream := WriteStream on: Unicode7 new.
@@ -88,10 +111,17 @@ conflicts keysAndValuesDo: [:key :value |
           nextPutAll: value size printString; lf.
         value do: [:each |
           shown := shown + 1.
-          shown <= ${CONFLICT_OBJECT_LIMIT} ifTrue: [
+          shown <= ${CONFLICT_OBJECT_LIMIT} ifTrue: [ | ps |
+            ps := [ | t |
+              t := each printString.
+              t size > ${CONFLICT_PRINT_STRING_LIMIT}
+                ifTrue: [t := (t copyFrom: 1 to: ${CONFLICT_PRINT_STRING_LIMIT}), '...'].
+              t collect: [:c | c isSeparator ifTrue: [$ ] ifFalse: [c]]]
+                on: Error do: [:ex | ''].
             stream nextPutAll: 'O'; tab;
               nextPutAll: each asOop printString; tab;
-              nextPutAll: each class name asString; lf]]]
+              nextPutAll: each class name asString; tab;
+              nextPutAll: ps; lf]]]
       ifFalse: [ | txt |
         txt := [value printString] on: Error do: [:ex | '<printString failed>'].
         txt := txt collect: [:c | c isSeparator ifTrue: [$ ] ifFalse: [c]].
@@ -130,7 +160,13 @@ export function parseTransactionConflicts(raw: string): TransactionConflicts {
         objects: [],
       });
     } else if (tag === 'O' && last) {
-      last.objects.push({ oop: rest[0] ?? '', className: rest[1] ?? '' });
+      // Rejoined from field 3 on: an abbreviated printString may hold tabs.
+      const printString = rest.slice(2).join('\t').trim();
+      last.objects.push({
+        oop: rest[0] ?? '',
+        className: rest[1] ?? '',
+        ...(printString ? { printString } : {}),
+      });
     } else if (tag === 'T' && last) {
       // Rejoined rather than `rest[0]`: a rendered value may contain tabs.
       last.text = rest.join('\t');
@@ -197,6 +233,13 @@ export function hasConflictDetail(conflicts: TransactionConflicts): boolean {
 /**
  * The full conflict set, for the output channel — every kind, and every object
  * the stone named up to {@link CONFLICT_OBJECT_LIMIT}.
+ *
+ * Each object is one line: its oop, its class, and as much of its `printString`
+ * as came back — enough to recognize `aSymbolDictionary( name: #'UserGlobals' )`
+ * without leaving the log. The oop and class columns are padded to a common
+ * width, because the point of the block is being able to run an eye down it.
+ * `Object _objectForOop:` is named once, over the first oop in the report, so it
+ * is both the instruction and something to paste.
  */
 export function conflictReport(conflicts: TransactionConflicts): string {
   const lines: string[] = [];
@@ -204,6 +247,14 @@ export function conflictReport(conflicts: TransactionConflicts): string {
   if (conflicts.commitResult) {
     lines.push(`commitResult: ${conflicts.commitResult}${gloss ? ` — ${gloss}` : ''}`);
   }
+
+  const named = conflicts.categories.flatMap((c) => c.objects);
+  if (named.length > 0) {
+    lines.push(`Inspect one in a workspace: ${objectForOopExpression(named[0].oop)}`);
+  }
+  const oopWidth = Math.max(0, ...named.map((o) => o.oop.length));
+  const classWidth = Math.max(0, ...named.map((o) => o.className.length));
+
   for (const category of conflicts.categories) {
     lines.push('');
     if (category.text) {
@@ -212,7 +263,9 @@ export function conflictReport(conflicts: TransactionConflicts): string {
     }
     lines.push(`${category.key} — ${objectCount(category.total)}`);
     for (const object of category.objects) {
-      lines.push(`  ${object.oop}  ${object.className}`);
+      const columns = [object.oop.padEnd(oopWidth), object.className.padEnd(classWidth)];
+      if (object.printString) columns.push(object.printString);
+      lines.push(`  ${columns.join('  ').trimEnd()}`);
     }
     const withheld = category.total - category.objects.length;
     if (withheld > 0) lines.push(`  … and ${objectCount(withheld)} not listed`);
