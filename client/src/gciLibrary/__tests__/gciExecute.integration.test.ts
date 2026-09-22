@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { requireGciCapability } from './requireGciCapability';
 
 /**
  * The GCI's two ways of running code on the stone: GciTsExecute (compile and
@@ -224,6 +225,51 @@ describe('GCI execute and perform (integration)', () => {
 
       expect(err.number).toBe(0);
       expect(data).toBe('Hello World');
+    });
+  });
+
+  describe('GciTsPerformFetchOops', () => {
+    it('fetches instVars of the result of a perform', (ctx) => {
+      requireGciCapability('GciTsPerformFetchOops', ctx, gci);
+
+      const oop10 = gci.GciTsI64ToOop(session, 10n).result;
+      const oop20 = gci.GciTsI64ToOop(session, 20n).result;
+      const oop30 = gci.GciTsI64ToOop(session, 30n).result;
+
+      // Use PerformFetchOops to send with:with:with: and get the elements back
+      const { result, oops, err } = gci.GciTsPerformFetchOops(
+        session,
+        classOop('Array'),
+        'with:with:with:',
+        [oop10, oop20, oop30],
+        10,
+      );
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(3);
+      expect(oops).toHaveLength(3);
+      expect(oops.map((oop) => gci.GciTsOopToI64(session, oop).value)).toEqual([10n, 20n, 30n]);
+    });
+
+    it('fetches with maxResultSize smaller than actual size', (ctx) => {
+      requireGciCapability('GciTsPerformFetchOops', ctx, gci);
+
+      const oop1 = gci.GciTsI64ToOop(session, 1n).result;
+      const oop2 = gci.GciTsI64ToOop(session, 2n).result;
+      const oop3 = gci.GciTsI64ToOop(session, 3n).result;
+
+      // Only request 2 OOPs max
+      const { result, oops, err } = gci.GciTsPerformFetchOops(
+        session,
+        classOop('Array'),
+        'with:with:with:',
+        [oop1, oop2, oop3],
+        2,
+      );
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(2);
+      expect(oops).toHaveLength(2);
     });
   });
 });
