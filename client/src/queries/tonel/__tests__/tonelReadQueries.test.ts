@@ -9,7 +9,12 @@
 // least constrained thing this feature ever sends to the stone.
 import { describe, it, expect, vi } from 'vitest';
 
-import { readTonelClass, TONEL_NO_ROWAN, TONEL_ERROR_PREFIX } from '../readTonelClass';
+import {
+  readTonelClass,
+  TONEL_NO_ROWAN,
+  TONEL_ERROR_PREFIX,
+  MAX_TONEL_CHARACTERS,
+} from '../readTonelClass';
 
 const TONEL = `Class {\n\t#name : 'Widget'\n}\n`;
 
@@ -154,5 +159,27 @@ describe('readTonelClass', () => {
     const code = codeOf(e);
     const wide = [...code].filter((c) => c.charCodeAt(0) > 127);
     expect(wide).toEqual([]);
+  });
+});
+
+describe('readTonelClass — the size guard', () => {
+  it('refuses a file past the limit without sending anything to the stone', () => {
+    // Measured: a ~5 MB file exhausts the gem's temporary object memory and KILLS
+    // the session. A refusal against the file is the only acceptable outcome, and
+    // it has to happen before the doit is built.
+    const execute = vi.fn(() => '');
+    const huge = 'x'.repeat(MAX_TONEL_CHARACTERS + 1);
+
+    const result = readTonelClass(execute, huge);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.error).toMatch(/limit|memory/i);
+  });
+
+  it('sends a file at exactly the limit', () => {
+    const execute = vi.fn(() => '!ERR 0\tstub');
+    readTonelClass(execute, 'x'.repeat(MAX_TONEL_CHARACTERS));
+    expect(execute).toHaveBeenCalled();
   });
 });

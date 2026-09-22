@@ -852,8 +852,9 @@ export function removeAllMethods(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
 }
 
 export function describeClass(

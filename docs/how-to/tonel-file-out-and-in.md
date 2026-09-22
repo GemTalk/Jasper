@@ -62,10 +62,12 @@ has no notion of a package. Two methods are left out on purpose:
 
 ## Filing a class in
 
-A `.st` file files in from the same places a `.gs` file does, with the same wording —
-you pick a file and Jasper works out which reader it needs:
+A `.st` file files in from the same places a `.gs` file does, through the same command —
+you pick a file and Jasper works out which reader it needs. The link at the top of the
+file names the format, so with both kinds open you can see which reader will run:
 
-- the **File In to GemStone** link at the top of the open file;
+- the **File In Tonel to GemStone** link at the top of an open `.st` file (a `.gs` file
+  says **File In to GemStone**);
 - the ⤓ button in the **editor title bar**, or **right-click in the editor**;
 - **right-click the file in VS Code's Explorer** — a mixed selection of `.gs` and `.st`
   files works, each going to its own reader, and reports once;
@@ -101,15 +103,48 @@ deliberate differences:
 
 | | Rowan | Jasper |
 |---|---|---|
-| `#category` | the package name | the class category, falling back to the symbol dictionary |
+| `#category` | the package name | the same package name for a Rowan-loaded class; for a class Rowan has not loaded, its class category, falling back to the symbol dictionary |
 | Methods from other packages | separate `.extension.st` files | all in the class file |
 | Surrounding files | `package.st`, `properties.st`, a project tree | just the one file you named |
 
-So a Jasper file drops into a Rowan package tree only after editing `#category` and
-splitting out any extension methods. Everything else — the header keys, the method
+`#category` is worth being precise about: for every class in the base image — which is
+what this feature is for — Rowan has loaded it, and Jasper writes the **package name**,
+exactly as Rowan does. That is why the header-identity check can require byte-identical
+headers. The class-category fallback applies only to a class you defined yourself, which
+Rowan knows nothing about.
+
+So a Jasper file drops into a Rowan package tree only after splitting out any extension
+methods (and editing `#category` if the class is one of your own). Everything else — the header keys, the method
 blocks, their order — is byte-for-byte what Rowan's own writer produces; that is
 checked against the 720 reference files GemStone ships under
 `$GEMSTONE/projects/gemstoneBaseImage/rowan/src/`.
+
+## What survives a round trip, and what does not
+
+Filing a class out and back in preserves its shape and its behaviour:
+
+| Carried | Notes |
+|---|---|
+| Superclass, instance / class / class-instance variables, pool dictionaries | |
+| Class type | `normal`, `variable` and `byteSubclass`. `immediate` is refused — GemStone has no creation selector for it |
+| Class comment | Cleared if the file carries none: filing in REPLACES |
+| `#gs_options` | `dbTransient`, `subclassesDisallowed` and friends — these change what the class *is* |
+| Class category | Applied after the definition, since no creation selector carries it |
+| Every method, with its protocol and side | |
+
+Two header properties are deliberately **not** applied, and filing in says so in the
+File In log rather than dropping them quietly:
+
+| Not carried | Why |
+|---|---|
+| `#gs_reservedoop` | An identity the base image assigns. Re-applying it to a class created from a file would at best fail and at worst collide with the object that already holds it |
+| `#gs_constraints`, `#gs_foreignKeys` | Per-instance-variable constraints. Expressible in GemStone, but not part of what Jasper shows you, and there is no tested path for applying them |
+
+There is also a size limit: a single Tonel file above **2 MB** is refused. The whole
+file becomes one Smalltalk string inside one doit, and past roughly 5 MB the gem runs
+out of temporary object memory and the *session dies* — so the limit turns a lost
+session into a message about the file. For scale, the largest class in the 3.7.5 base
+image, `Object`, files out at about 218 KB.
 
 ## Running the tests
 
@@ -118,8 +153,13 @@ The Tonel tests need a rowan3 stone and **skip** on any other, which means a gre
 
 ```sh
 npm run test:server:start:rowan3   # 3.7.5 on extent0.rowan3.dbf
-npm test
+JASPER_REQUIRE_ROWAN3=1 npm test
 ```
+
+`JASPER_REQUIRE_ROWAN3=1` turns every Tonel skip into a **failure** naming the
+capabilities that are absent. Use it whenever you mean to verify this feature: a green
+run under it cannot have silently skipped the tier, which a green run without it can.
+Leave it unset in CI and on a base extent, where skipping is the correct behaviour.
 
 `test:server:start:rowan3` repoints `client/.env.test` at that stone, so the two
 tiers do not run side by side — start whichever one you are verifying.

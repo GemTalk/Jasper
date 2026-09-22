@@ -31,9 +31,17 @@
 // base extent, with no edit and nobody remembering to make one.
 //
 // So the probe resolves exactly the classes this feature drives and asks
-// whether they understand exactly the selectors it sends. That doubles as the
-// sharpest available discriminator between rowan3 and the older Rowan, which
-// share the `Rowan` global and several class names.
+// whether they understand exactly the selectors it sends.
+//
+// What this probe does NOT claim
+// -------------------------------
+// It is not a rowan2 detector. Rowan 2 is not a supported configuration and is
+// not tested against, so whether this selector list happens to tell the two
+// generations apart is unknown and deliberately unasserted — an earlier version
+// of this comment claimed it was "the sharpest available discriminator", which
+// nothing here demonstrates. What the probe guarantees is narrower and is the
+// thing that matters: on a stone where these exact calls are not answerable, the
+// feature is hidden.
 //
 // The classes are resolved through `./rowanLookup`, NOT through the session's
 // symbol list directly: on a rowan3 stone the Rowan dictionaries are in
@@ -78,6 +86,16 @@ export const TONEL_CAPABILITIES = [
   // methods (see fileOutClassTonel for why this is always needed).
   'RwMethodDefinition class>>newForSelector:protocol:source:',
   'Class>>rwClassDefinitionInSymbolDictionaryNamed:',
+  // Class options, read from the live class because an unloaded class's definition
+  // carries none — see fileOutClassTonel. Without this a dbTransient class files
+  // out as an ordinary one.
+  'Class>>_rwOptionsArray',
+  'RwClassDefinition>>gs_options:',
+  // File in: the properties the reader carries across, and the ones it only
+  // reports. Listed so a Rowan that stops answering them hides the feature rather
+  // than silently filing classes in with the wrong shape.
+  'RwClassDefinition>>gs_options',
+  'RwClassDefinition>>properties',
   // Telling a trait's methods from the class's own. Traits are not a supported
   // Jasper feature and their methods are excluded from a file-out, so losing this
   // selector must hide the feature rather than silently start exporting them.

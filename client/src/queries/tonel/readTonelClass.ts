@@ -63,12 +63,49 @@ export type TonelReadResult =
     };
 
 /**
+ * The largest Tonel file this reader will send to the stone.
+ *
+ * The whole file becomes one Smalltalk string literal inside one doit, so the gem
+ * holds the text, the parse tree and the resulting definitions in TEMPORARY OBJECT
+ * MEMORY at once. Measured on a 3.7.5 rowan3 stone with the stock gem
+ * configuration, feeding synthetic Tonel files of increasing size:
+ *
+ *     2.6 MB  parsed fine (10,000 methods, 327 ms)
+ *     5.2 MB  "VM temporary object memory is full" — and the gem DIED, taking the
+ *             session with it (GciTsLogout failed, socket EOF)
+ *
+ * That failure mode is why this is a guard and not a documented caveat: past the
+ * ceiling the user does not get an error against their file, they lose their
+ * session and whatever uncommitted work was in it.
+ *
+ * 2 MB sits under the proven-good measurement and an order of magnitude above
+ * anything real: the largest class in the 3.7.5 base image is `Object`, which
+ * files out at 218 KB — and this feature's file-out is class-complete, so it is
+ * already larger than the shipped `Object.class.st`. A file above this limit is
+ * far more likely to be a mistake than a class.
+ */
+export const MAX_TONEL_CHARACTERS = 2 * 1024 * 1024;
+
+/**
  * Parse one Tonel class file's text.
  *
  * Never throws: every caller is a menu command, and a parse failure is a thing
  * to report against the file, not an exception to surface as a broken command.
  */
 export function readTonelClass(execute: QueryExecutor, tonelText: string): TonelReadResult {
+  // Checked before the doit is built, not after: the point is to never send it.
+  if (tonelText.length > MAX_TONEL_CHARACTERS) {
+    return {
+      ok: false,
+      error:
+        `This file is ${Math.round(tonelText.length / 1024)} KB, over the ` +
+        `${MAX_TONEL_CHARACTERS / 1024} KB limit for filing in one Tonel class. ` +
+        `Filing it in would exhaust the gem's temporary object memory and end the ` +
+        `session. The largest class in the base image files out at about 218 KB.`,
+      line: 1,
+    };
+  }
+
   const code = `| rwLookup parserCls projectCls visitorCls proj pkg visitor defs clsDef ws emit names strm |
 ${ROWAN_LOOKUP_PRELUDE}
 parserCls := ${rowanLookupExpr('RwTonelParser')}.
@@ -119,6 +156,24 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
   emit value: 'CVARS' value: (names value: clsDef classVarNames).
   emit value: 'CIVARS' value: (names value: clsDef classInstVarNames).
   emit value: 'POOLS' value: (names value: ([clsDef poolDictionaryNames] on: Error do: [:e | #()])).
+
+  "GemStone class options (#gs_options): dbTransient and friends. They change what
+   the class IS, so they are carried through to file in rather than dropped."
+  emit value: 'OPTIONS' value: (names value: ([clsDef gs_options] on: Error do: [:e | #()])).
+
+  "Header properties we understand but do not apply -- reported so the loss is
+   stated rather than silent. See UNCARRIED_PROPERTIES in tonelWire.ts.
+   Read from the property dictionary because that is the only place presence (as
+   opposed to an accessor answering nil) can be told apart."
+  emit value: 'UNCARRIED' value: ([ | props s |
+    props := clsDef properties.
+    s := WriteStream on: String new.
+    #('gs_reservedoop' 'gs_constraints' 'gs_foreignKeys') do: [:k | | v |
+      v := props at: k asSymbol ifAbsent: [nil].
+      (v isNil or: [v isEmpty]) ifFalse: [
+        s isEmpty ifFalse: [s nextPut: $ ].
+        s nextPutAll: k]].
+    s contents ] on: Error do: [:e | '']).
 
   "The parser answers methods ALONGSIDE the class definition, not attached to it:
    (defs at: 2) at: 1 is the class side, at: 2 the instance side. Rowan own

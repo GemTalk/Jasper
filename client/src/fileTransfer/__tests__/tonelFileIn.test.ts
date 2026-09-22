@@ -21,6 +21,7 @@ vi.mock('../../browserQueries', () => ({
   removeAllMethods: vi.fn(() => 'ok'),
   canClassBeWritten: vi.fn(() => true),
   dictionariesContainingClass: vi.fn(() => []),
+  recategorizeClass: vi.fn(() => 'Recategorized: Widget'),
 }));
 
 import * as vscode from 'vscode';
@@ -30,7 +31,13 @@ import * as fs from 'fs';
 import { applyTonelClass, chooseTonelDictionary, fileInTonelUri } from '../tonelFileIn';
 import type { TonelClass } from '../../queries/tonel/tonelWire';
 
-const SESSION = { id: 1 } as ActiveSession;
+// A FRESH session object per test: the Tonel capability answer is cached per
+// session (tonelAvailability.ts), so a shared object would let one test's probe
+// answer decide another's.
+let SESSION: ActiveSession;
+beforeEach(() => {
+  SESSION = { id: 1 } as ActiveSession;
+});
 
 const widget = (overrides: Partial<TonelClass> = {}): TonelClass => ({
   name: 'Widget',
@@ -42,6 +49,8 @@ const widget = (overrides: Partial<TonelClass> = {}): TonelClass => ({
   classVars: ['Registry'],
   classInstVars: [],
   pools: [],
+  options: [],
+  uncarried: [],
   methods: [
     { isMeta: false, selector: 'size', category: 'accessing', source: 'size\n\t^size' },
     { isMeta: true, selector: 'make', category: 'instance creation', source: 'make\n\t^self new' },
@@ -99,9 +108,30 @@ describe('applyTonelClass — the class definition', () => {
     expect(definitionSource()).toContain("indexableSubclass: 'Widget'");
   });
 
-  it('creates a byte class for a bytes type', () => {
-    applyTonelClass(SESSION, widget({ type: 'bytes' }), 'UserGlobals');
+  it('creates a byte class for Rowan’s byteSubclass type', () => {
+    // Rowan's parser answers 'byteSubclass', not 'bytes' — measured on a 3.7.5
+    // rowan3 stone. Keying the map on 'bytes' made every byte class fail file-in
+    // with "Unsupported class type 'byteSubclass'".
+    applyTonelClass(SESSION, widget({ type: 'byteSubclass' }), 'UserGlobals');
     expect(definitionSource()).toContain("byteSubclass: 'Widget'");
+  });
+
+  it('omits instVarNames: for a byte class, which GemStone does not accept there', () => {
+    // `byteSubclass:instVarNames:…` is not understood on a 3.7.5 stone; the byte
+    // form takes classVars: directly. Emitting instVarNames: anyway made the
+    // definition fail to compile even once the type key was right.
+    applyTonelClass(SESSION, widget({ type: 'byteSubclass', instVars: [] }), 'UserGlobals');
+    expect(definitionSource()).not.toContain('instVarNames:');
+    expect(definitionSource()).toContain('classVars:');
+  });
+
+  it('refuses the immediate type rather than building a normal class', () => {
+    // 29 classes in the shipped 3.7.5 corpus are #type : 'immediate', and GemStone
+    // exposes no immediateSubclass: creation selector, so there is nothing to do
+    // but name it.
+    const outcome = applyTonelClass(SESSION, widget({ type: 'immediate' }), 'UserGlobals');
+    expect(queries.compileClassDefinition).not.toHaveBeenCalled();
+    expect(outcome.errors[0].message).toMatch(/immediate/);
   });
 
   it('refuses a class type it does not understand rather than guessing', () => {
@@ -116,14 +146,19 @@ describe('applyTonelClass — the class definition', () => {
 describe('applyTonelClass — the class comment', () => {
   it('sets the comment the file carries', () => {
     applyTonelClass(SESSION, widget(), 'UserGlobals');
-    expect(queries.setClassComment).toHaveBeenCalledWith(SESSION, 'Widget', 'A widget.');
+    expect(queries.setClassComment).toHaveBeenCalledWith(
+      SESSION,
+      'Widget',
+      'A widget.',
+      'UserGlobals',
+    );
   });
 
   it('clears the comment when the file carries none', () => {
     // Replace semantics reach the comment too: a file with no comment means the
     // class has no comment, not "leave whatever was there".
     applyTonelClass(SESSION, widget({ comment: '' }), 'UserGlobals');
-    expect(queries.setClassComment).toHaveBeenCalledWith(SESSION, 'Widget', '');
+    expect(queries.setClassComment).toHaveBeenCalledWith(SESSION, 'Widget', '', 'UserGlobals');
   });
 
   it('reports a comment that will not set, without failing the rest', () => {
@@ -139,8 +174,8 @@ describe('applyTonelClass — the class comment', () => {
 describe('applyTonelClass — replace, not merge', () => {
   it('clears both sides before compiling the file’s methods', () => {
     applyTonelClass(SESSION, widget(), 'UserGlobals');
-    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', false);
-    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', true);
+    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', false, 'UserGlobals');
+    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', true, 'UserGlobals');
   });
 
   it('clears AFTER defining, so the clear lands on the version the file describes', () => {
@@ -169,6 +204,8 @@ describe('applyTonelClass — the methods', () => {
       false,
       'accessing',
       'size\n\t^size',
+      0,
+      'UserGlobals',
     );
     expect(queries.compileMethod).toHaveBeenCalledWith(
       SESSION,
@@ -176,6 +213,8 @@ describe('applyTonelClass — the methods', () => {
       true,
       'instance creation',
       'make\n\t^self new',
+      0,
+      'UserGlobals',
     );
   });
 
@@ -367,5 +406,166 @@ describe('chooseTonelDictionary', () => {
     vi.mocked(queries.dictionariesContainingClass).mockReturnValue([]);
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
     await expect(chooseTonelDictionary(SESSION, 'Widget')).resolves.toBeUndefined();
+  });
+});
+
+describe('applyTonelClass — every write lands in the chosen dictionary', () => {
+  // The whole point of chooseTonelDictionary is the case where the name lives in
+  // more than one dictionary. Resolving the bare name for the writes that follow
+  // the definition binds to the FIRST dictionary in the symbol list instead, so
+  // picking the second one silently gutted the first one's class and left the
+  // chosen one with a definition and no methods.
+  const twoDictionaries = () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+  };
+
+  it('scopes the class definition, comment, clear and compile to one dictionary', () => {
+    twoDictionaries();
+    applyTonelClass(SESSION, widget(), 'Globals');
+
+    expect(vi.mocked(queries.compileClassDefinition).mock.calls[0][1]).toContain(
+      'inDictionary: Globals',
+    );
+    expect(queries.setClassComment).toHaveBeenCalledWith(SESSION, 'Widget', 'A widget.', 'Globals');
+    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', false, 'Globals');
+    expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Widget', true, 'Globals');
+    for (const call of vi.mocked(queries.compileMethod).mock.calls) {
+      expect(call[6]).toBe('Globals');
+    }
+  });
+
+  it('asks whether the class is writable in the chosen dictionary, not anywhere', () => {
+    twoDictionaries();
+    applyTonelClass(SESSION, widget(), 'Globals');
+    expect(queries.canClassBeWritten).toHaveBeenCalledWith(SESSION, 'Widget', 'Globals');
+  });
+
+  it('files a new class in even though a read-only class of that name exists elsewhere', () => {
+    // The class is in Globals only; the user is filing into UserGlobals, where
+    // there is no Widget at all. A refusal here is about a class they never named.
+    vi.mocked(queries.dictionariesContainingClass).mockImplementation((_s, name) =>
+      name === 'Widget' ? ['Globals'] : ['Globals'],
+    );
+    vi.mocked(queries.canClassBeWritten).mockReturnValue(false);
+
+    const outcome = applyTonelClass(SESSION, widget(), 'UserGlobals');
+
+    expect(outcome.errors).toEqual([]);
+    expect(queries.compileClassDefinition).toHaveBeenCalled();
+  });
+
+  it('still refuses when the class in the CHOSEN dictionary is read-only', () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['Globals']);
+    vi.mocked(queries.canClassBeWritten).mockReturnValue(false);
+
+    const outcome = applyTonelClass(SESSION, widget(), 'Globals');
+
+    expect(queries.compileClassDefinition).not.toHaveBeenCalled();
+    expect(outcome.errors[0].message).toMatch(/Globals/);
+  });
+});
+
+describe('applyTonelClass — properties beyond the class shape', () => {
+  it('carries #gs_options into the definition', () => {
+    // A dbTransient class filed back in without its options is an ordinary
+    // persistent class that looks like it filed in cleanly.
+    applyTonelClass(SESSION, widget({ options: ['dbTransient'] }), 'UserGlobals');
+    expect(definitionSource()).toContain('options: #(dbTransient)');
+  });
+
+  it('omits options: entirely when the file carries none', () => {
+    applyTonelClass(SESSION, widget(), 'UserGlobals');
+    expect(definitionSource()).not.toContain('options:');
+  });
+
+  it('restores the class category, which no creation selector carries', () => {
+    applyTonelClass(SESSION, widget(), 'UserGlobals');
+    expect(queries.recategorizeClass).toHaveBeenCalledWith(
+      SESSION,
+      'Widget',
+      'Widgets',
+      'UserGlobals',
+    );
+  });
+
+  it('does not recategorize when the file carries no category', () => {
+    applyTonelClass(SESSION, widget({ category: '' }), 'UserGlobals');
+    expect(queries.recategorizeClass).not.toHaveBeenCalled();
+  });
+
+  it('reports properties it does not apply instead of dropping them silently', () => {
+    const outcome = applyTonelClass(
+      SESSION,
+      widget({ uncarried: ['gs_reservedoop', 'gs_constraints'] }),
+      'UserGlobals',
+    );
+    expect(outcome.errors.map((e) => e.message).join('\n')).toMatch(
+      /gs_reservedoop, gs_constraints.*not applied/,
+    );
+    // Reported, but the class and its methods still go in.
+    expect(outcome.compiled).toBe(2);
+  });
+
+  it('refuses a pool or option name that is not a Smalltalk identifier', () => {
+    // These are spliced into the doit unquoted, so a name that is not an
+    // identifier would change the shape of the generated Smalltalk.
+    const outcome = applyTonelClass(
+      SESSION,
+      widget({ options: ['dbTransient) foo: #('] }),
+      'UserGlobals',
+    );
+    expect(queries.compileClassDefinition).not.toHaveBeenCalled();
+    expect(outcome.errors[0].message).toMatch(/not usable as a name/);
+  });
+
+  it('doubles a quote in the class name rather than ending the literal', () => {
+    applyTonelClass(SESSION, widget({ name: "Odd'Name" }), 'UserGlobals');
+    expect(definitionSource()).toContain("subclass: 'Odd''Name'");
+  });
+});
+
+describe('fileInTonelUri — dismissing the dictionary prompt', () => {
+  /** A minimal wire answer for a class called Widget with no methods. */
+  const WIRE =
+    'NAME\t6\nWidget\nSUPER\t6\nObject\nTYPE\t6\nnormal\n' +
+    'CATEGORY\t1\nX\nCOMMENT\t0\n\nIVARS\t0\n\nCVARS\t0\n\nCIVARS\t0\n\nPOOLS\t0\n\n' +
+    'OPTIONS\t0\n\nUNCARRIED\t0\n\n';
+
+  beforeEach(() => {
+    vi.mocked(fs.readFileSync).mockReturnValue(`Class {\n\t#name : 'Widget'\n}\n`);
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.executeFetchString).mockReturnValue(WIRE);
+  });
+
+  it('records which file was not filed in, rather than doing nothing silently', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(outcome.compiled).toBe(0);
+    expect(outcome.skipped).toHaveLength(1);
+    expect(outcome.skipped[0].message).toMatch(/not filed in/);
+    expect(outcome.skipped[0].file).toBe('/tmp/Widget.st');
+  });
+
+  it('marks the run cancelled, so the rest are not prompted for one by one', async () => {
+    // With several files picked, dismissing is the only way to stop. Without this
+    // the user gets one prompt per remaining file and no record of any of them.
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals', 'Globals']);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(outcome.cancelled).toBe(true);
+  });
+
+  it('is not cancelled when the class needs no prompt at all', async () => {
+    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(['UserGlobals']);
+
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.st');
+
+    expect(outcome.cancelled).toBe(false);
+    expect(outcome.skipped).toEqual([]);
   });
 });

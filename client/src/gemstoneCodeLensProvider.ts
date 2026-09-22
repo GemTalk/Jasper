@@ -54,8 +54,9 @@ function isFileInTarget(document: vscode.TextDocument): boolean {
 
 /** Files `gemstone.fileInFile` can act on that are TONEL: a `.st` on disk, which
  *  `languageIds.ts` maps to `gemstone-tonel` (issue #616). The command works out
- *  which reader the file needs, so both kinds get the same link with the same
- *  wording — the user picks a file, not a format. */
+ *  which reader the file needs, so both kinds get the same COMMAND; the lens title
+ *  still names the format, so a developer with both kinds open can tell which
+ *  reader will run. */
 function isTonelFileInTarget(document: vscode.TextDocument): boolean {
   return document.uri.scheme === 'file' && document.languageId === 'gemstone-tonel';
 }

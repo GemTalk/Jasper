@@ -24,13 +24,17 @@ import {
   requireTonelAvailable,
 } from '../tonelAvailability';
 
-const SESSION = { id: 1 } as ActiveSession;
+// A FRESH session object per test. The capability answer is cached per session
+// (see tonelAvailability.ts), so sharing one object across tests would let an
+// earlier test's probe answer decide a later one's.
+let SESSION: ActiveSession;
 
 const contextCalls = (): unknown[][] =>
   vi.mocked(vscode.commands.executeCommand).mock.calls.filter((c) => c[0] === 'setContext');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  SESSION = { id: 1 } as ActiveSession;
   vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
 });
 
@@ -96,8 +100,81 @@ describe('requireTonelAvailable', () => {
     expect(text).toMatch(/3\.7\.5/);
   });
 
+  it('names the capabilities that are actually missing', () => {
+    // The probe answers `missing` specifically so a refusal can distinguish "Rowan
+    // is not here at all" from "Rowan changed one selector under us" — only the
+    // second is a bug worth filing, and they read identically without the names.
+    vi.mocked(queries.tonelCapability).mockReturnValue({
+      available: false,
+      missing: ['Class>>_rwOptionsArray'],
+    });
+    requireTonelAvailable(SESSION);
+    const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
+    expect(text).toContain('Class>>_rwOptionsArray');
+  });
+
+  it('caps the list on a stone where everything is absent', () => {
+    // On a base extent every capability is missing; naming all of them makes the
+    // warning unreadable and says nothing the first few do not.
+    vi.mocked(queries.tonelCapability).mockReturnValue({
+      available: false,
+      missing: ['Cap1>>one', 'Cap2>>two', 'Cap3>>three', 'Cap4>>four', 'Cap5>>five'],
+    });
+    requireTonelAvailable(SESSION);
+    const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
+    expect(text).toContain('Cap1>>one, Cap2>>two, Cap3>>three');
+    expect(text).toContain('2 more');
+    expect(text).not.toContain('Cap4>>four');
+  });
+
+  it('does not claim anything is missing when the probe itself failed', () => {
+    // A probe that raised answers no names; inventing "Missing: " there would be a
+    // false diagnosis.
+    vi.mocked(queries.tonelCapability).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+    requireTonelAvailable(SESSION);
+    const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
+    expect(text).not.toContain('Missing:');
+  });
+
   it('refuses without a session', () => {
     expect(requireTonelAvailable(undefined)).toBe(false);
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+  });
+});
+
+describe('the capability probe is not repeated needlessly', () => {
+  it('asks the stone once per session, not once per command', () => {
+    // The probe is a ten-way doit and the guard runs on every Tonel command —
+    // once per FILE in a multi-file file-in.
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+
+    requireTonelAvailable(SESSION);
+    requireTonelAvailable(SESSION);
+    requireTonelAvailable(SESSION);
+
+    expect(queries.tonelCapability).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again after a refresh, which is when the answer could differ', () => {
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    requireTonelAvailable(SESSION);
+    refreshTonelAvailability(SESSION);
+    requireTonelAvailable(SESSION);
+
+    // Once for the first guard, once for the refresh itself; the guard after it
+    // reuses the refresh's answer.
+    expect(queries.tonelCapability).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a probe that threw, so one busy moment is not permanent', () => {
+    vi.mocked(queries.tonelCapability).mockImplementationOnce(() => {
+      throw new Error('session busy');
+    });
+    expect(requireTonelAvailable(SESSION)).toBe(false);
+
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    expect(requireTonelAvailable(SESSION)).toBe(true);
   });
 });

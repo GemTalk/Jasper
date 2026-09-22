@@ -22,7 +22,14 @@ NAME="${3:-jasper-test}"
 # Anything after the positional arguments is passed through to gs-test-setup.sh
 # (notably --extent), so this stays a thin front door rather than a second place
 # that has to learn every option.
-[[ $# -gt 3 ]] && shift 3 || shift $#
+# An `if` rather than `A && B || C`: under `set -e` that idiom runs C whenever B
+# has a non-zero status, not only when A is false, so it is the wrong shape for a
+# guard even where it happens to work.
+if [[ $# -gt 3 ]]; then
+  shift 3
+else
+  shift $#
+fi
 
 case "$COMMAND" in
   --list)  "$SCRIPT_DIR/gs-list.sh" "$VERSION" || true ;;

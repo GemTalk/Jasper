@@ -16,8 +16,16 @@
 // running on their own.
 //
 // A skip is a NON-RESULT, not a pass: a green `npm test` on a base extent says
-// nothing whatsoever about the Tonel feature. When verifying this feature, run
-// against a rowan3 stone and confirm these suites actually executed.
+// nothing whatsoever about the Tonel feature.
+//
+// Set JASPER_REQUIRE_ROWAN3=1 to make that true mechanically: every skip becomes a
+// FAILURE naming the capabilities that are absent. That is what turns "I verified
+// this against a rowan3 stone" from a claim into a command —
+//
+//     JASPER_REQUIRE_ROWAN3=1 npm test --workspace client
+//
+// — because a green run under it cannot have skipped the tier. Unset (the default)
+// the suites skip quietly, which is what CI and a base-extent developer need.
 //
 // It deliberately does NOT re-login as SystemUser
 // ------------------------------------------------
@@ -71,7 +79,16 @@ export function useRowan3Stone(executor: () => QueryExecutor): Rowan3Gate {
       return state.missing;
     },
     skipUnlessAvailable(ctx) {
-      if (!state.available) ctx.skip();
+      if (state.available) return;
+      // Opt-in strictness: a skip is a non-result, and this is how a developer
+      // asks to be told rather than trusting a skip count they have to read.
+      if (process.env.JASPER_REQUIRE_ROWAN3) {
+        throw new Error(
+          'JASPER_REQUIRE_ROWAN3 is set, but this session cannot run the Tonel ' +
+            `tier. Missing: ${state.missing.join(', ') || '(the probe answered nothing)'}`,
+        );
+      }
+      ctx.skip();
     },
   };
 }

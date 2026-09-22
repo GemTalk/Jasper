@@ -21,6 +21,8 @@ describe('decodeTonelClass', () => {
     classVars: ['Registry'],
     classInstVars: [],
     pools: [],
+    options: [],
+    uncarried: [],
     methods: [
       { isMeta: false, selector: 'size', category: 'accessing', source: 'size\n\t^size' },
       {
@@ -51,6 +53,32 @@ describe('decodeTonelClass', () => {
       ],
     };
     expect(decodeTonelClass(encodeTonelClassForTest(gnarly))).toEqual(gnarly);
+  });
+
+  it('round-trips a comment containing a non-BMP character', () => {
+    // GemStone counts code points; JavaScript's `length`/`slice` count UTF-16
+    // units. A single emoji makes them disagree by one, and the reader used to
+    // fail the terminator check and refuse the whole file.
+    const emoji = { ...widget, comment: 'Comment with café, 中文 and 😀.' };
+    expect(decodeTonelClass(encodeTonelClassForTest(emoji))).toEqual(emoji);
+  });
+
+  it('round-trips method source containing a non-BMP character', () => {
+    const emoji = {
+      ...widget,
+      methods: [
+        { isMeta: false, selector: 'label', category: 'accessing', source: "label\n\t^'😀 🎉'" },
+      ],
+    };
+    expect(decodeTonelClass(encodeTonelClassForTest(emoji))).toEqual(emoji);
+  });
+
+  it('still rejects a length that is wrong, non-BMP payload included', () => {
+    // The terminator check has to keep working now that the walk is by code
+    // point: a declared length one too short must still be loud.
+    const good = encodeTonelClassForTest({ ...widget, comment: '😀😀' });
+    const bad = good.replace('COMMENT\t2\n', 'COMMENT\t1\n');
+    expect(() => decodeTonelClass(bad)).toThrow(/COMMENT/);
   });
 
   it('round-trips a comment containing newlines and quotes', () => {

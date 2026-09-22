@@ -27,14 +27,17 @@ import { fileInTonelUri } from './tonelFileIn';
 /**
  * File types the open dialog offers.
  *
- * Both formats, because the user picks a FILE and Jasper works out which reader it
- * needs (see {@link fileInOneUri}) — they should not have to know which command
- * reads which extension. Topaz first, since it is the long-standing default and
- * what most files on disk are; Tonel second.
+ * ONE entry covering both formats, because the user picks a FILE and Jasper works
+ * out which reader it needs (see {@link fileInOneUri}). Splitting Tonel into its own
+ * filter contradicted that: `.st` files were hidden until the user noticed the
+ * dropdown and switched it, which is exactly the "know which command reads which
+ * extension" problem this command exists to remove.
+ *
+ * The SAVE side is deliberately different — file out has two commands, one per
+ * format, and each offers only the extension it writes.
  */
 export const FILE_IN_FILTERS: Record<string, string[]> = {
-  'GemStone Files': ['gs', 'tpz'],
-  'Tonel Files': ['st'],
+  'GemStone Files': ['gs', 'tpz', 'st'],
   'All Files': ['*'],
 };
 
@@ -72,6 +75,13 @@ export interface FileInOutcome {
    *  it — the rest of this file, the files it would have `input`, and any further
    *  files the user picked. */
   stopped: boolean;
+  /** Set when the USER cancelled — dismissing the Tonel dictionary prompt. Stops the
+   *  remaining files like {@link stopped}, but is reported as a cancellation rather
+   *  than as something the file said, and is not an error. Dismissing a prompt is
+   *  the only way to stop a multi-file file-in once it is under way, so it has to
+   *  mean "stop", and it has to say so — silently filing nothing for N files while
+   *  N prompts appear one after another is the behaviour this replaces. */
+  cancelled: boolean;
 }
 
 function emptyOutcome(): FileInOutcome {
@@ -85,6 +95,7 @@ function emptyOutcome(): FileInOutcome {
     skipped: [],
     errors: [],
     stopped: false,
+    cancelled: false,
   };
 }
 
@@ -99,6 +110,7 @@ function absorb(into: FileInOutcome, from: FileInOutcome): void {
   into.errors.push(...from.errors);
   into.askedToCommit ||= from.askedToCommit;
   into.stopped ||= from.stopped;
+  into.cancelled ||= from.cancelled;
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -308,7 +320,7 @@ export async function fileInUris(
         // looking like nothing is happening.
         await new Promise((resolve) => setTimeout(resolve, 0));
         absorb(total, await fileInOneUri(session, uri));
-        if (total.stopped) break;
+        if (total.stopped || total.cancelled) break;
       }
     },
   );
@@ -350,7 +362,8 @@ function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
   log.appendLine(
     `  ${outcome.files} file(s), ${outcome.executed} chunk(s) run, ` +
       `${outcome.compiled} method(s) compiled, ${outcome.removed} removeAllMethods` +
-      (outcome.stopped ? ', stopped at exit' : ''),
+      (outcome.stopped ? ', stopped at exit' : '') +
+      (outcome.cancelled ? ', cancelled' : ''),
   );
   for (const note of outcome.ignored) {
     log.appendLine(`  ignored ${note.file}:${note.line} — ${note.message}`);
@@ -384,6 +397,7 @@ async function report(outcome: FileInOutcome): Promise<void> {
 
   const notes: string[] = [];
   if (outcome.stopped) notes.push('Stopped where the file said exit.');
+  if (outcome.cancelled) notes.push('Cancelled — the remaining files were not filed in.');
   if (outcome.skipped.length > 0) {
     notes.push(`${outcome.skipped.length} directive(s) not recognised.`);
   }

@@ -62,6 +62,21 @@ export interface TonelApplyOutcome {
 /**
  * Rowan's class type → the GemStone creation selector.
  *
+ * The keys are the strings Rowan's parser actually answers from `clsDef classType`,
+ * measured on a 3.7.5 rowan3 stone by parsing a filed-out class of each shape — NOT
+ * the GemStone selector names, which they resemble but do not match. `byteSubclass`
+ * is the one that reads like a mistake and is correct: a byte class's Tonel header
+ * says `#type : 'byteSubclass'`, so keying this map on `bytes` made every byte class
+ * fail file-in with "Unsupported class type 'byteSubclass'".
+ *
+ * A class with no `#type` key is `normal`; the reader defaults it (readTonelClass.ts).
+ *
+ * `immediate` is deliberately absent. It is a real type — 29 classes in the shipped
+ * 3.7.5 corpus carry it — but GemStone exposes no `immediateSubclass:` creation
+ * selector (verified: `Object class canUnderstand:` answers false), so there is no
+ * way to honour it. Refusing names it; guessing `subclass:` would silently build a
+ * non-immediate class of the same name.
+ *
  * Deliberately a closed set. An unrecognised type is an error, not a fall back to
  * `subclass:` — silently creating a normal class for a type we do not understand
  * produces a class of the wrong shape that looks like it filed in cleanly.
@@ -69,7 +84,7 @@ export interface TonelApplyOutcome {
 const CREATION_SELECTOR: Record<string, string> = {
   normal: 'subclass:',
   variable: 'indexableSubclass:',
-  bytes: 'byteSubclass:',
+  byteSubclass: 'byteSubclass:',
 };
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -78,19 +93,48 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 const stringArray = (names: string[]): string =>
   `#(${names.map((n) => `'${n.replace(/'/g, "''")}'`).join(' ')})`;
 
-/** `#(Foo Bar)` — pool dictionaries are named, not quoted. */
+/**
+ * `#(Foo Bar)` — pool dictionaries and class options are named, not quoted.
+ *
+ * Both come from a file on disk, so the names are checked rather than trusted: a
+ * Smalltalk identifier only, or the doit built around it changes shape. An invalid
+ * name is dropped here and refused by {@link checkedSymbols} before it is used.
+ */
 const symbolArray = (names: string[]): string => `#(${names.join(' ')})`;
 
-/** The class-definition expression for this description. */
+/** A Smalltalk identifier — what a pool-dictionary or class-option name may be. */
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The names in `values` that are not usable as Smalltalk identifiers. */
+const invalidSymbols = (values: string[]): string[] => values.filter((v) => !IDENTIFIER.test(v));
+
+/**
+ * The class-definition expression for this description.
+ *
+ * `byteSubclass:` takes NO `instVarNames:` — a byte class has no named instance
+ * variables, and GemStone ships no such variant (verified on a 3.7.5 rowan3 stone:
+ * `byteSubclass:instVarNames:…` is not understood, `byteSubclass:classVars:…` is).
+ * Emitting the keyword anyway made every byte class fail to define, on top of the
+ * type-key bug above.
+ *
+ * `options:` is appended only when the file carries `#gs_options`, because the
+ * 6-keyword forms are the ones used everywhere else and the `options:` variants
+ * take an extra argument we would otherwise be inventing.
+ */
 function definitionSource(tonelClass: TonelClass, dictionary: string): string {
   const creation = CREATION_SELECTOR[tonelClass.type];
+  const instVars =
+    creation === 'byteSubclass:' ? '' : `instVarNames: ${stringArray(tonelClass.instVars)} `;
+  const options =
+    tonelClass.options.length > 0 ? ` options: ${symbolArray(tonelClass.options)}` : '';
   return (
-    `${tonelClass.superclass} ${creation} '${tonelClass.name}' ` +
-    `instVarNames: ${stringArray(tonelClass.instVars)} ` +
+    `${tonelClass.superclass} ${creation} '${tonelClass.name.replace(/'/g, "''")}' ` +
+    instVars +
     `classVars: ${stringArray(tonelClass.classVars)} ` +
     `classInstVars: ${stringArray(tonelClass.classInstVars)} ` +
     `poolDictionaries: ${symbolArray(tonelClass.pools)} ` +
-    `inDictionary: ${dictionary}`
+    `inDictionary: ${dictionary}` +
+    options
   );
 }
 
@@ -120,6 +164,15 @@ export function applyTonelClass(
     return fail(`Unsupported class type '${tonelClass.type}' for ${tonelClass.name}`);
   }
 
+  // Pool and option names are spliced into the definition doit unquoted, so they
+  // must be identifiers. They come from a file on disk; refusing a name that is not
+  // one is what keeps a malformed file from changing the shape of the generated
+  // Smalltalk rather than just failing to compile.
+  const badNames = invalidSymbols([...tonelClass.pools, ...tonelClass.options]);
+  if (badNames.length > 0) {
+    return fail(`${tonelClass.name}: not usable as a name: ${badNames.join(', ')}`);
+  }
+
   // A root class legitimately has no superclass; anything else must resolve, or
   // the class would be silently rooted at Object.
   if (tonelClass.superclass !== 'nil') {
@@ -134,9 +187,19 @@ export function applyTonelClass(
 
   // Only ask of a class that already exists: `canBeWritten` answers false for a
   // class that is not there yet, which would refuse every new class.
+  //
+  // Both questions are asked of the CHOSEN dictionary, not of the bare name. A
+  // read-only `Foo` in another dictionary is not the class being written, and
+  // refusing because of it blocks filing a new `Foo` into a dictionary the user
+  // can perfectly well write.
   const existing = queries.dictionariesContainingClass(session, tonelClass.name);
-  if (existing.length > 0 && !queries.canClassBeWritten(session, tonelClass.name)) {
-    return fail(`${tonelClass.name} cannot be written (read-only repository segment)`);
+  if (
+    existing.includes(dictionary) &&
+    !queries.canClassBeWritten(session, tonelClass.name, dictionary)
+  ) {
+    return fail(
+      `${tonelClass.name} cannot be written in ${dictionary} (read-only repository segment)`,
+    );
   }
 
   try {
@@ -145,11 +208,45 @@ export function applyTonelClass(
     return fail(`Could not define ${tonelClass.name}: ${message(e)}`);
   }
 
+  // Tonel's #category is not carried by any creation selector — GemStone ships no
+  // `…inDictionary:category:` form (verified on a 3.7.5 rowan3 stone) — so it is
+  // applied separately, exactly as the class-definition save path does. Without
+  // this a filed-out class comes back with no category and moves in the Explorer's
+  // Categories pane.
+  //
+  // For a Rowan-loaded class #category is the package name, which is also what
+  // `Class>>category` already answers for it, so the round trip is a fixpoint. For
+  // an unloaded class Rowan writes no category and the file-out falls back to the
+  // dictionary name, so filing in sets the category to that name.
+  if (tonelClass.category.length > 0) {
+    try {
+      queries.recategorizeClass(session, tonelClass.name, tonelClass.category, dictionary);
+    } catch (e) {
+      outcome.errors.push({
+        file: tonelClass.name,
+        line: 1,
+        message: `Could not set the class category: ${message(e)}`,
+      });
+    }
+  }
+
+  // Properties the file carries that this reader does not apply. Reported so the
+  // loss is stated rather than silent — see UNCARRIED_PROPERTIES in tonelWire.ts.
+  if (tonelClass.uncarried.length > 0) {
+    outcome.errors.push({
+      file: tonelClass.name,
+      line: 1,
+      message:
+        `${tonelClass.name}: ${tonelClass.uncarried.join(', ')} ` +
+        `${tonelClass.uncarried.length === 1 ? 'is' : 'are'} in the file but not applied on file in`,
+    });
+  }
+
   // The comment is part of the class, and part of the replace: a file carrying no
   // comment means the class has none, not "leave whatever was there". Reported but
   // not fatal — a missing comment is not worth losing the methods over.
   try {
-    queries.setClassComment(session, tonelClass.name, tonelClass.comment);
+    queries.setClassComment(session, tonelClass.name, tonelClass.comment, dictionary);
   } catch (e) {
     outcome.errors.push({
       file: tonelClass.name,
@@ -161,7 +258,7 @@ export function applyTonelClass(
   // The replace. After defining, so it lands on the version the file describes.
   for (const isMeta of [false, true]) {
     try {
-      queries.removeAllMethods(session, tonelClass.name, isMeta);
+      queries.removeAllMethods(session, tonelClass.name, isMeta, dictionary);
     } catch (e) {
       outcome.errors.push({
         file: tonelClass.name,
@@ -179,6 +276,8 @@ export function applyTonelClass(
         method.isMeta,
         method.category,
         method.source,
+        0,
+        dictionary,
       );
       outcome.compiled += 1;
     } catch (e) {
@@ -267,8 +366,19 @@ export async function fileInTonelUri(
   }
 
   const dictionary = await chooseTonelDictionary(session, read.tonelClass.name);
-  // Dismissing the prompt files nothing in, and is not a failure worth logging.
-  if (dictionary === undefined) return outcome;
+  if (dictionary === undefined) {
+    // Dismissing the prompt is not a failure, but it is not nothing either: with
+    // several files picked it is the only way to stop, and a user who dismisses one
+    // prompt should not have to dismiss the rest one at a time. Recorded so the log
+    // says which file was not filed in, and why.
+    outcome.cancelled = true;
+    outcome.skipped.push({
+      file: filePath,
+      line: 1,
+      message: `No dictionary chosen for ${read.tonelClass.name} — not filed in`,
+    });
+    return outcome;
+  }
 
   const applied = applyTonelClass(session, read.tonelClass, dictionary);
   outcome.compiled = applied.compiled;
@@ -293,5 +403,6 @@ function emptyTonelOutcome(): FileInOutcome {
     skipped: [],
     errors: [],
     stopped: false,
+    cancelled: false,
   };
 }

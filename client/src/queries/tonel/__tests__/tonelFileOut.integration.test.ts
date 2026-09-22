@@ -35,7 +35,11 @@ import { useRowan3Stone } from './useRowan3Stone';
 // image holds the V3 one. Searching by name picks whichever comes first and
 // compares against the wrong file.
 const FIXTURES = [
-  // Chosen for header shape: instVars + #gs_reservedoop, #classVars, #gs_options.
+  // Chosen for header shape: instVars, and a comment above the Class block.
+  // (It carries neither #gs_reservedoop nor #gs_options — an earlier version of
+  // this comment said it did. Classes that carry those are covered by
+  // tonelFileInFidelity.integration.test.ts, which asserts they survive a round
+  // trip rather than only that they are written.)
   //
   // `Message` carries a second job: it DISCRIMINATES between the two plausible
   // method comparators. The corpus emits `sends:` before `sendTo:`
@@ -200,5 +204,56 @@ describe('tonel class file out (integration)', () => {
     const answer = fileOutClassTonel(exec, 'JasperNoSuchClassAnywhere');
     expect(isTonelFileOutError(answer)).toBe(true);
     expect(answer).toContain('Class not found');
+  });
+
+  describe('a class Rowan has not loaded', () => {
+    // The case every developer filing out their OWN work hits, and the one the
+    // reference corpus cannot cover, since everything in it is Rowan-loaded. For an
+    // unloaded class `rwClassDefinitionInSymbolDictionaryNamed:` answers a
+    // definition built from scratch — no methods, no category, no options — so
+    // everything here is something the file-out has to supply itself.
+    const PROBE = 'JasperUnloadedProbe';
+
+    const defineProbe = (): void => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${PROBE}' instVarNames: #('a') classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.compileMethod(session(), PROBE, false, 'accessing', 'a\n\t^a');
+      q.compileMethod(session(), PROBE, false, 'accessing', 'a: x\n\ta := x');
+      q.compileMethod(session(), PROBE, true, 'instance creation', 'make\n\t^self new');
+    };
+
+    it('exports all its methods, which the definition alone carries none of', (ctx) => {
+      rowan3.skipUnlessAvailable(ctx);
+      defineProbe();
+      const tonel = fileOutClassTonel(exec, PROBE);
+      expect(isTonelFileOutError(tonel)).toBe(false);
+
+      const declared = declarationSequenceOf(tonel);
+      expect(declared).toHaveLength(3);
+      expect(tonel).toContain(`${PROBE} >> a [`);
+      expect(tonel).toContain(`${PROBE} >> a: x [`);
+      expect(tonel).toContain(`${PROBE} class >> make [`);
+    });
+
+    it('emits a real category, never #category : nil', (ctx) => {
+      rowan3.skipUnlessAvailable(ctx);
+      // An unloaded class with no class category set answers nil, and
+      // "#category : nil" is not valid Tonel — the file would not read back at all.
+      defineProbe();
+      const tonel = fileOutClassTonel(exec, PROBE);
+      expect(tonel).not.toContain('#category : nil');
+      // Falls back to the dictionary the class lives in.
+      expect(tonel).toContain("#category : 'UserGlobals'");
+    });
+
+    it('prefers the class category over the dictionary when one is set', (ctx) => {
+      rowan3.skipUnlessAvailable(ctx);
+      defineProbe();
+      q.recategorizeClass(session(), PROBE, 'Jasper-Unloaded-Cat');
+      expect(fileOutClassTonel(exec, PROBE)).toContain("#category : 'Jasper-Unloaded-Cat'");
+    });
   });
 });

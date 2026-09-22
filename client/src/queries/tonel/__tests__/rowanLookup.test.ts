@@ -17,9 +17,12 @@ describe('rowanLookup', () => {
   });
 
   it("tries the session's own symbol list first", () => {
-    // The overwhelmingly common case is SystemUser, whose own list already has
-    // the Rowan dictionaries. Reaching for another user's profile first would
-    // make every lookup pay for the rare case.
+    // Not because the session's own list usually has the names — for the ordinary
+    // DataCurator session this feature is built for it never does (see the header,
+    // and useRowan3Stone.ts on why running as DataCurator is load-bearing). The
+    // order is about correctness first and cost second: a session that CAN see the
+    // names directly must bind its own, and reaching into another user's profile is
+    // the fallback, not the default path.
     const own = ROWAN_LOOKUP_PRELUDE.indexOf('System myUserProfile symbolList');
     const reachThrough = ROWAN_LOOKUP_PRELUDE.indexOf('AllUsers');
     expect(own).toBeGreaterThanOrEqual(0);

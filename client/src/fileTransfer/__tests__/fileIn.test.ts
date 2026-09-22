@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
-import { fileInFile, fileInUris, fileInCommand } from '../fileIn';
+import { fileInFile, fileInUris, fileInCommand, FILE_IN_FILTERS } from '../fileIn';
 import * as tonel from '../tonelFileIn';
 import { SessionManager } from '../../sessionManager';
 import type { ActiveSession } from '../../sessionManager';
@@ -571,6 +571,7 @@ describe('choosing a reader by file type', () => {
       skipped: [],
       errors: [],
       stopped: false,
+      cancelled: false,
     });
 
     await fileInUris(manager, [vscode.Uri.file('/tmp/Widget.class.st')], undefined, SESSION);
@@ -605,6 +606,7 @@ describe('choosing a reader by file type', () => {
       skipped: [],
       errors: [],
       stopped: false,
+      cancelled: false,
     });
 
     await fileInUris(
@@ -616,5 +618,19 @@ describe('choosing a reader by file type', () => {
 
     expect(queries.fileInChunk).toHaveBeenCalled();
     expect(tonel.fileInTonelUri).toHaveBeenCalled();
+  });
+});
+
+describe('FILE_IN_FILTERS', () => {
+  it('offers both formats under one entry, so no dropdown switch is needed', () => {
+    // One File In command reads both formats. A separate "Tonel Files" entry hid
+    // .st files behind a dropdown the user had to notice first — the very thing
+    // "you pick a file, not a format" is meant to avoid.
+    expect(FILE_IN_FILTERS['GemStone Files']).toEqual(expect.arrayContaining(['gs', 'tpz', 'st']));
+  });
+
+  it('has no format-specific entry that could hide the other format', () => {
+    const named = Object.keys(FILE_IN_FILTERS).filter((k) => k !== 'All Files');
+    expect(named).toEqual(['GemStone Files']);
   });
 });

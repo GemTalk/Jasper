@@ -36,15 +36,56 @@ const UNAVAILABLE_MESSAGE =
   '(one built from extent0.rowan3.dbf). This session does not have the Rowan ' +
   'classes the feature uses.';
 
+/**
+ * How many absent capabilities to name before the message stops being readable.
+ *
+ * Naming them is the whole reason the probe answers `missing` rather than a bare
+ * boolean: "Rowan is not here at all" and "Rowan is here but changed one selector
+ * under us" are the same warning otherwise, and only the second is a bug to file.
+ * On a base extent every capability is absent, so the list is capped.
+ */
+const MISSING_TO_NAME = 3;
+
+/** The warning for this session, naming what is actually absent. */
+function unavailableMessage(missing: readonly string[]): string {
+  if (missing.length === 0) return UNAVAILABLE_MESSAGE;
+  const named = missing.slice(0, MISSING_TO_NAME).join(', ');
+  const rest = missing.length - MISSING_TO_NAME;
+  return `${UNAVAILABLE_MESSAGE} Missing: ${named}${rest > 0 ? ` and ${rest} more` : ''}.`;
+}
+
+/**
+ * The last probe answer for a session.
+ *
+ * The probe is a ten-way doit, and the guard runs on every Tonel command — once
+ * PER FILE in a multi-file file-in, on top of the refresh each connect already
+ * does. What it measures cannot change within a session: the Rowan classes a
+ * stone has are a property of the stone.
+ *
+ * Keyed on the session object so it cannot outlive it, and cleared by
+ * {@link refreshTonelAvailability}, which already runs on connect and on a session
+ * change — the two moments the answer could legitimately differ.
+ */
+const probed = new WeakMap<ActiveSession, { available: boolean; missing: string[] }>();
+
 /** Ask the session, tolerating a probe that fails. */
-function available(session: ActiveSession | undefined): boolean {
-  if (!session) return false;
+function probe(session: ActiveSession | undefined): { available: boolean; missing: string[] } {
+  if (!session) return { available: false, missing: [] };
+  const cached = probed.get(session);
+  if (cached) return cached;
   try {
-    return queries.tonelCapability(session).available;
+    const result = queries.tonelCapability(session);
+    const answer = { available: result.available, missing: result.missing };
+    probed.set(session, answer);
+    return answer;
   } catch {
     // This runs on every session connect; a busy or half-established session must
-    // not take the connect path down with it. Unavailable is the safe answer.
-    return false;
+    // not take the connect path down with it. Unavailable is the safe answer, and
+    // there is nothing to name — the probe itself did not answer.
+    //
+    // NOT cached: a probe that failed because the session was busy must be asked
+    // again, or one bad moment hides the feature for the rest of the session.
+    return { available: false, missing: [] };
   }
 }
 
@@ -56,7 +97,10 @@ function available(session: ActiveSession | undefined): boolean {
  * false — correct by luck rather than by design.
  */
 export function refreshTonelAvailability(session: ActiveSession | undefined): boolean {
-  const isAvailable = available(session);
+  // The one invalidation point: this is called on connect and whenever the active
+  // session changes, which is exactly when a cached answer could be wrong.
+  if (session) probed.delete(session);
+  const isAvailable = probe(session).available;
   void vscode.commands.executeCommand('setContext', TONEL_AVAILABLE_CONTEXT, isAvailable);
   return isAvailable;
 }
@@ -68,7 +112,8 @@ export function refreshTonelAvailability(session: ActiveSession | undefined): bo
  * palette gives the user no other clue why nothing happened.
  */
 export function requireTonelAvailable(session: ActiveSession | undefined): boolean {
-  if (available(session)) return true;
-  void vscode.window.showWarningMessage(UNAVAILABLE_MESSAGE);
+  const { available, missing } = probe(session);
+  if (available) return true;
+  void vscode.window.showWarningMessage(unavailableMessage(missing));
   return false;
 }
