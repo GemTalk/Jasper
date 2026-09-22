@@ -75,9 +75,9 @@ m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).
 m add: (Array with: 'GsRefactoringChange' with: 31).
 m add: (Array with: 'GsRefactoringChangeSet' with: 20).
-m add: (Array with: 'GsRefactoringEnvironment' with: 30).
+m add: (Array with: 'GsRefactoringEnvironment' with: 32).
 m add: (Array with: 'GsRefactoringJson' with: 3).
-m add: (Array with: 'GsRefactoringUndo' with: 59).
+m add: (Array with: 'GsRefactoringUndo' with: 60).
 m add: (Array with: 'GsRenameClassRefactoring' with: 55).
 m add: (Array with: 'GsRenameClassVariableRefactoring' with: 37).
 m add: (Array with: 'GsRenameInstanceVariableRefactoring' with: 34).

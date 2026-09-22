@@ -29,11 +29,14 @@ import { logError, logInfo } from '../gciLog';
  * needs no parser add-on and depends on nothing but the base image.
  *
  * A REFACTORING never goes near that query — its change set is applied entirely
- * server-side by the engine — so it calls `recordRefactoredIn:…` instead, from
- * `GsRefactoringUndo>>recordMethodHistoryFrom:to:`, which already holds the before and
- * after source of every method slot the change set touched. That is one call site for
- * every refactoring, so history is the record of what happened to a method rather than
- * the record of what was typed into an editor.
+ * server-side by the engine — so it calls `recordRefactoredIn:…` from the two places those
+ * recompiles really pass through. A refactoring that only changes METHODS is caught in
+ * `GsRefactoringUndo>>recordMethodHistoryFrom:to:`, which already holds the before and after
+ * source of every method slot the change set touched. One that RE-VERSIONS a class never
+ * reaches that — each such engine calls its own `applyForToken:` — so those are caught in
+ * `GsRefactoringEnvironment>>copyMethod:from:to:source:meta:into:`, the copy-forward that
+ * carries a class's methods onto its new version. Between them, history is the record of what
+ * happened to a method rather than the record of what was typed into an editor.
  *
  * The two paths do not install the same KIND of string — an edit arrives over GCI as
  * Unicode, the engine builds its source in-image as a byte String — and on 3.6.x

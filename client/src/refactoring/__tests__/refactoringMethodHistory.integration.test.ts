@@ -20,6 +20,7 @@ import {
   startRenameTemporaryPreview,
   applyRenameTemporary,
 } from '../queries/previewRenameTemporary';
+import { startRenameInstVarPreview, applyRenameInstVar } from '../queries/previewRenameInstVar';
 import {
   parseStartPreview as parseTempStartPreview,
   parseApplyResult as parseTempApplyResult,
@@ -75,13 +76,15 @@ describe('method history across a refactoring (integration)', () => {
 
   const CLS = 'RMHItFixture';
 
-  /** A class with an implementor of `movePointX:y:`, a caller that sends it, and a method with a
-   *  temporary to rename — each already carrying a hand-edit history, so the only question below is
-   *  whether the refactoring ADDS to it. */
+  /** A class with an implementor of `movePointX:y:`, a caller that sends it, a method with a
+   *  temporary to rename, a method that READS the instance variable, and one that touches nothing —
+   *  each already carrying a hand-edit history, so the only question below is whether the
+   *  refactoring ADDS to it. The last two are for the class-re-versioning case: one method the
+   *  rename rewrites, and one it merely carries across. */
   const defineFixture = (): void => {
     q.compileClassDefinition(
       session(),
-      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+      `Object subclass: '${CLS}' instVarNames: #(count) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(
@@ -93,6 +96,10 @@ describe('method history across a refactoring (integration)', () => {
     );
     q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 1 y: 2');
     q.compileMethod(session(), CLS, false, 'moving', 'local\n\t| t |\n\tt := 1.\n\t^t + t');
+    // Reads the instance variable, so renaming it rewrites THIS method and no other.
+    q.compileMethod(session(), CLS, false, 'accessing', 'readsIvar\n\t^ count + 1');
+    // Touches nothing the ivar rename rewrites — the control for the copy-forward guard.
+    q.compileMethod(session(), CLS, false, 'accessing', 'untouched\n\t^ 42');
   };
 
   const historyOf = (selector: string) =>
@@ -150,6 +157,75 @@ describe('method history across a refactoring (integration)', () => {
     const result = parseTempApplyResult(await applyRenameTemporary(asyncExec, token, 'test undo'));
     expect(result.failed).toEqual([]);
   };
+
+  /** Rename the instance variable `count` to `total`, previewing then applying. */
+  const renameIvar = async (token: string): Promise<void> => {
+    const exec2 = (code: string): string => exec(code);
+    startRenameInstVarPreview(exec2, CLS, 'count', 'total', token);
+    applyRenameInstVar(exec2, token, []);
+  };
+
+  // ── a refactoring that RE-VERSIONS the class ───────────────────────────────
+
+  /**
+   * The gap the first cut of this fix left. An instance-variable rename does not route through
+   * GsRefactoringUndo at all — it calls its own applyForToken:, as every class-reshaping engine does
+   * — so hooking the undo recorder reached only the nine method-level refactorings. The issue names
+   * this one explicitly ("an inst-var rename that rewrites it"), so it is pinned here.
+   */
+  describe('rename instance variable', () => {
+    it('records the rewritten body of the method that read the variable', async (ctx) => {
+      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      installMethodHistory(session());
+      defineFixture();
+
+      const before = recorded('readsIvar').length;
+      await renameIvar(`rmhit-ivar-${CLS}`);
+
+      const after = recorded('readsIvar');
+      expect(installedSource('readsIvar')).toContain('total + 1');
+      expect(after.length).toBe(before + 1);
+      expect(after[0].source).toContain('total + 1');
+    });
+
+    it('keeps the pre-refactoring source available to go back to', async (ctx) => {
+      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      installMethodHistory(session());
+      defineFixture();
+
+      await renameIvar(`rmhit-ivar-back-${CLS}`);
+
+      expect(recorded('readsIvar').map((v) => v.source)).toContainEqual(
+        expect.stringContaining('count + 1'),
+      );
+    });
+
+    it('does not stamp a version onto every method the re-version carried across', async (ctx) => {
+      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      installMethodHistory(session());
+      defineFixture();
+
+      const before = recorded('untouched').length;
+      await renameIvar(`rmhit-ivar-quiet-${CLS}`);
+
+      // A new class version starts with an empty method dictionary, so EVERY method comes through
+      // the copy-forward — including ones the rename did not rewrite. Recording those would turn one
+      // rename into a version on every method of the class.
+      expect(installedSource('untouched')).toContain('^ 42');
+      expect(recorded('untouched').length).toBe(before);
+    });
+
+    it('still opens the history of a method it carried across untouched', async (ctx) => {
+      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      installMethodHistory(session());
+      defineFixture();
+
+      await renameIvar(`rmhit-ivar-open-${CLS}`);
+
+      expect(() => historyOf('untouched')).not.toThrow();
+      expect(() => historyOf('readsIvar')).not.toThrow();
+    });
+  });
 
   // ── the two compile paths install different kinds of string, on purpose ───
 

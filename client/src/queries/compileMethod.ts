@@ -18,8 +18,8 @@ import { classLookupExpr, escapeString } from './util';
 // never changes the compile's success/error contract or return string.
 //
 // This brackets an EDIT only. A refactoring never reaches this query — the engine
-// applies its whole change set server-side — and records its own versions from
-// GsRefactoringUndo instead (see methodHistoryServer.ts's `recordRefactoredIn:…`).
+// applies its whole change set server-side — and records its own versions from the engine
+// instead (see methodHistoryServer.ts's `recordRefactoredIn:…` for the two hooks).
 export function compileMethod(
   execute: QueryExecutor,
   className: string,

@@ -9887,12 +9887,76 @@ copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failur
 	| cat text label |
 	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
-	text isNil ifTrue: [^true].
+	text isNil ifTrue: [
+		self recordHistoryFor: sel from: srcCls to: dstCls source: source category: cat asString.
+		^true].
 	label := isMeta
 		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
 		ifFalse: [dstCls name asString, '>>', sel asString].
 	failures add: (Array with: label with: label with: 'did not recompile: ', text).
 	^false
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+recordHistoryFor: sel from: srcCls to: dstCls source: newSource category: aCategory
+	"Add the version this copy-forward just compiled to sel's method history, when it really is a
+	 new version.
+
+	 This is the history hook for every refactoring that RE-VERSIONS a class -- rename instance
+	 variable, add/remove instance variable, rename class, split class, extract superclass, the
+	 class-variable engines. Those do not route through GsRefactoringUndo (each calls its own
+	 applyForToken: directly), so the hook there reaches only the method-level refactorings; this
+	 one reaches the rest, because a new class version starts with an empty method dictionary and
+	 EVERY method it keeps comes through here.
+
+	 Which is exactly why the unchanged case has to be excluded. A re-version carries the whole
+	 method dictionary across, and for the methods the refactoring did not touch `source` is just
+	 what srcCls already had. Recording those would stamp a version onto every method of the class
+	 -- turning one instance-variable rename into a hundred spurious history entries -- so a method
+	 whose source is byte-for-byte what it was is skipped here.
+
+	 The old source is read off srcCls and the entry is keyed on dstCls, and the split matters. The
+	 history key carries the DEFINING DICTIONARY, resolved BY IDENTITY, and by the time methods are
+	 carried across the new class version is already the one bound to the name -- so keying on
+	 srcCls resolves to no dictionary at all and files the version under a key no later read will
+	 look at, leaving the method's history frozen at its last hand edit. dstCls is the version that
+	 is bound now and the version a read will resolve, so it is the one that produces the same key
+	 on both sides of the re-version.
+
+	 The recorder is JasperMethodHistory, installed into SessionTemps by the Jasper client at
+	 login; absent on a session that never ran that bootstrap, where this is a no-op. Guarded
+	 throughout: a refactoring must never fail because history could not be written."
+	[ | hist m old |
+	  hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	  hist isNil ifTrue: [^self].
+	  m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
+	  old := m isNil ifTrue: [nil] ifFalse: [m sourceString].
+	  (old notNil and: [self source: old matches: newSource]) ifTrue: [^self].
+	  hist
+	    recordRefactoredIn: dstCls
+	    selector: sel
+	    oldSource: old
+	    newSource: newSource
+	    category: aCategory ]
+		on: Error do: [:e | nil]
+%
+
+category: 'private'
+method: GsRefactoringEnvironment
+source: a matches: b
+	"Whether two method sources are the same text, compared CHARACTER BY CHARACTER (a GemStone
+	 Character is unique per code point, so == is exact).
+
+	 Deliberately not a plain = comparison: the source read back off an installed method and the
+	 source an engine built with the AST rewriter are not guaranteed to be the same String class,
+	 and on 3.6.x comparing a byte String against a Unicode-promoted one RAISES ArgumentError 2718
+	 instead of answering false. Mirrors GsRefactoringUndo>>source:matches: and
+	 JasperMethodHistory>>source:matches:, which exist for the same reason."
+	(a isNil or: [b isNil]) ifTrue: [^a isNil and: [b isNil]].
+	a size = b size ifFalse: [^false].
+	1 to: a size do: [:i | ((a at: i) == (b at: i)) ifFalse: [^false]].
+	^true
 %
 
 category: 'private'
@@ -10601,19 +10665,27 @@ recordAndApplyForToken: token engine: engineName deselected: deselectedIds label
 	 Recording is strictly best-effort and never allowed to break an apply: if the
 	 snapshot or the diff raises, the previous entry is cleared (never left stale) and
 	 the apply's own result is returned unchanged."
-	| ref slots before result after undo recorded |
+	| ref slots before result after undo recorded histSlots histBefore |
 	ref := SessionTemps current at: token asSymbol ifAbsent: [nil].
 	ref isNil ifTrue: [^'{"applied":0,"failed":[],"error":"preview session expired","undoRecorded":false}'].
 	slots := [self slotsTouchedIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
 	before := slots isNil ifTrue: [nil] ifFalse: [[self snapshot: slots] on: Error do: [:ex | nil]].
+	"Method HISTORY is not bound to undo eligibility. slotsTouchedIn: answers nil as soon as any
+	 change reshapes a class, because no Tier-1 undo can reverse that -- but the method changes in
+	 that same change set still happened, and their history is still owed. So the history pair is
+	 taken over the method slots alone, whether or not an undo entry will be recorded."
+	histSlots := [self methodSlotsIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
+	histBefore := histSlots isNil ifTrue: [nil] ifFalse: [[self snapshot: histSlots] on: Error do: [:ex | nil]].
 	"The apply itself is NEVER wrapped: it must behave exactly as it does without undo."
 	result := ref applyDeselected: deselectedIds.
 	recorded := false.
+	histBefore isNil ifFalse: [
+		[self recordMethodHistoryFrom: histBefore to: (self snapshot: histSlots)]
+			on: Error do: [:ex | nil]].
 	before isNil
 		ifTrue: [self clear]
 		ifFalse: [
 			[after := self snapshot: slots.
-			 self recordMethodHistoryFrom: before to: after.
 			 undo := self entryFrom: before to: after label: aLabel engine: engineName.
 			 undo isNil
 				ifTrue: [self clear]
@@ -10622,6 +10694,30 @@ recordAndApplyForToken: token engine: engineName deselected: deselectedIds label
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+methodSlotsIn: aChangeSet deselected: deselectedIds
+	"Every METHOD SLOT the applying changes touch, de-duplicated -- the same list
+	 slotsTouchedIn: builds, except that a change which is NOT a method change is skipped rather
+	 than abandoning the whole answer.
+
+	 That difference is the point. slotsTouchedIn: answers nil for a change set that reshapes a
+	 class, because undo cannot reverse one; method history has no such limit, and the methods such
+	 a refactoring recompiles are owed their versions either way."
+	| ids kinds slots seen |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	kinds := self methodKinds asIdentitySet.
+	slots := OrderedCollection new.
+	seen := Set new.
+	aChangeSet changes do: [:change |
+		((ids includes: change id asSymbol) not
+			and: [kinds includes: change kind asSymbol]) ifTrue: [
+				self add: change selector forChange: change to: slots seen: seen.
+				change newSelector isNil ifFalse: [
+					self add: change newSelector forChange: change to: slots seen: seen]]].
+	^slots asArray
 %
 
 category: 'recording'

@@ -173,19 +173,27 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 	 Recording is strictly best-effort and never allowed to break an apply: if the
 	 snapshot or the diff raises, the previous entry is cleared (never left stale) and
 	 the apply's own result is returned unchanged."
-	| ref slots before result after undo recorded |
+	| ref slots before result after undo recorded histSlots histBefore |
 	ref := SessionTemps current at: token asSymbol ifAbsent: [nil].
 	ref isNil ifTrue: [^'{"applied":0,"failed":[],"error":"preview session expired","undoRecorded":false}'].
 	slots := [self slotsTouchedIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
 	before := slots isNil ifTrue: [nil] ifFalse: [[self snapshot: slots] on: Error do: [:ex | nil]].
+	"Method HISTORY is not bound to undo eligibility. slotsTouchedIn: answers nil as soon as any
+	 change reshapes a class, because no Tier-1 undo can reverse that -- but the method changes in
+	 that same change set still happened, and their history is still owed. So the history pair is
+	 taken over the method slots alone, whether or not an undo entry will be recorded."
+	histSlots := [self methodSlotsIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
+	histBefore := histSlots isNil ifTrue: [nil] ifFalse: [[self snapshot: histSlots] on: Error do: [:ex | nil]].
 	"The apply itself is NEVER wrapped: it must behave exactly as it does without undo."
 	result := ref applyDeselected: deselectedIds.
 	recorded := false.
+	histBefore isNil ifFalse: [
+		[self recordMethodHistoryFrom: histBefore to: (self snapshot: histSlots)]
+			on: Error do: [:ex | nil]].
 	before isNil
 		ifTrue: [self clear]
 		ifFalse: [
 			[after := self snapshot: slots.
-			 self recordMethodHistoryFrom: before to: after.
 			 undo := self entryFrom: before to: after label: aLabel engine: engineName.
 			 undo isNil
 				ifTrue: [self clear]
@@ -194,6 +202,29 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> methodSlotsIn: aChangeSet deselected: deselectedIds [
+	"Every METHOD SLOT the applying changes touch, de-duplicated -- the same list
+	 slotsTouchedIn: builds, except that a change which is NOT a method change is skipped rather
+	 than abandoning the whole answer.
+
+	 That difference is the point. slotsTouchedIn: answers nil for a change set that reshapes a
+	 class, because undo cannot reverse one; method history has no such limit, and the methods such
+	 a refactoring recompiles are owed their versions either way."
+	| ids kinds slots seen |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	kinds := self methodKinds asIdentitySet.
+	slots := OrderedCollection new.
+	seen := Set new.
+	aChangeSet changes do: [:change |
+		((ids includes: change id asSymbol) not
+			and: [kinds includes: change kind asSymbol]) ifTrue: [
+				self add: change selector forChange: change to: slots seen: seen.
+				change newSelector isNil ifFalse: [
+					self add: change newSelector forChange: change to: slots seen: seen]]].
+	^slots asArray
 ]
 
 { #category : 'recording' }
