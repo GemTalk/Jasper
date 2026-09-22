@@ -731,6 +731,29 @@ describe('the pane says which keys it answers to, without spending layout on it'
   });
 });
 
+describe('what the debugger’s row puts where', () => {
+  /**
+   * Reading order, not just presence. The expression and its answer are the pair you READ, so they
+   * sit together; the buttons are what you reach for, and reaching tolerates distance in a way
+   * reading does not. Adding the toolbar pushed the answer to the far end of the row — a full
+   * button-set away from the expression that produced it — which is easy to do again, hence a test
+   * on the order rather than only on the parts.
+   */
+  it('puts the answer beside the expression, ahead of the buttons', () => {
+    document.body.innerHTML = evaluatePaneHtml();
+    const row = document.getElementById('evalbar')!;
+    const order = Array.from(row.children).map((c) => c.id || c.className);
+
+    const box = order.findIndex((c) => c.includes('eval-input-wrap'));
+    const answer = order.indexOf('evalResult');
+    const buttons = order.indexOf('evalToolbar');
+
+    expect(box).toBeGreaterThanOrEqual(0);
+    expect(answer).toBeGreaterThan(box);
+    expect(buttons).toBeGreaterThan(answer);
+  });
+});
+
 describe('the pane is there on demand, not unconditionally', () => {
   it.each(PANES)('%s offers Evaluate as a lower tab', (_name, open) => {
     open();

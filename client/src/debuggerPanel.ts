@@ -4981,7 +4981,9 @@ export class DebuggerPanel {
       padding: 0.3rem 1.4rem 0.3rem 0.5rem; border-radius: 2px;
     }
     /* Display It / Execute It / Inspect It — the Inspector's button set, so the two evaluate panes
-       offer the same three things by the same names. */
+       offer the same three things by the same names. LAST in the row: the expression and its answer
+       are what you read, and they belong next to each other; the buttons are what you reach for, and
+       reaching is less sensitive to distance than reading is. */
     .eval-toolbar { flex: 0 0 auto; display: flex; gap: 0.25rem; }
     .eval-toolbar .btn {
       font-size: 0.78rem; padding: 0.15rem 0.4rem; cursor: pointer; white-space: nowrap;

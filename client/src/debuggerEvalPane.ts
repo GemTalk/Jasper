@@ -33,11 +33,16 @@ export function evaluatePaneHtml(): string {
              title="Shift+Enter or Ctrl+Enter — Display It&#10;Ctrl+K then D / E / I — Display It, Execute It, Inspect It&#10;Ctrl+↑ / Ctrl+↓ — earlier / later expression&#10;Escape — clear the box"></textarea>
       <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
     </span>
+    <!-- The answer sits immediately beside the expression it came from, sharing the row half and
+         half, and the buttons go last. Putting the toolbar between them pushed the answer to the far
+         end of the row, a full button-set away from the thing that produced it — you read the
+         expression on the left and then had to jump the width of three buttons to find what it
+         said. -->
+    <div class="eval-result" id="evalResult"></div>
     <div class="eval-toolbar" id="evalToolbar">
       <button class="btn" data-eval="display" title="Shift+Enter, Ctrl+K D, or Ctrl+Enter">Display It</button>
       <button class="btn" data-eval="execute" title="Ctrl+K E">Execute It</button>
       <button class="btn" data-eval="inspect" title="Ctrl+K I">Inspect It</button>
     </div>
-    <div class="eval-result" id="evalResult"></div>
   </div>`;
 }
