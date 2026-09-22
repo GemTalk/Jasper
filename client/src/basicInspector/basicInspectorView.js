@@ -1041,6 +1041,14 @@
     });
   }
 
+  /** Draw the answer (or the error) in place, leaving the box, its caret and its focus alone. */
+  function renderEvalOut(col) {
+    var out = col.el.contentPane.querySelector('.eval-out');
+    if (!out) return;
+    out.textContent = col.evalOut ? col.evalOut.text : '';
+    out.classList.toggle('error', !!(col.evalOut && !col.evalOut.ok));
+  }
+
   /**
    * Half-typed chords are the reason this is a state machine rather than a
    * modifier test: the closing key of `Ctrl+K D` arrives on its own, and would
@@ -1260,6 +1268,11 @@
 
   function runEval(col, mode) {
     if (!col.evalText.trim()) return;
+    // Running is not leaving: whether it came from the keyboard or from a button, the next thing
+    // you do is almost always type again — edit the expression, or write the next one. A button
+    // click parks the focus on the button, so hand it back.
+    var box = col.el.contentPane.querySelector('.eval-input');
+    if (box) box.focus();
     // The history is of what reached the stone, so an expression typed and thought better of is
     // not in it. A repeat of the last one does not get a second entry.
     var expr = col.evalText;
@@ -1635,7 +1648,12 @@
         col = Columns.get(msg.columnId);
         if (!col) return;
         col.evalOut = { ok: msg.ok, text: msg.text };
-        if (col.activeTab === 'eval') renderEval(col);
+        // Update the OUTPUT only. Re-rendering the whole pane here swapped the textarea out from
+        // under the user on every run, taking the caret and the focus with it — so after
+        // Shift+Enter the keyboard was nowhere and the next keystroke went to the panel rather than
+        // the box. This is the hazard refreshEvalVariables already avoids for the variables list;
+        // the result has the same claim on being drawn in place.
+        if (col.activeTab === 'eval') renderEvalOut(col);
         return;
       case 'setSlotResult':
         col = Columns.get(msg.columnId);

@@ -557,6 +557,46 @@ describe('clearing', () => {
   });
 });
 
+describe('running does not take the keyboard away', () => {
+  /**
+   * The next thing you do after running is almost always type again — edit the expression, or write
+   * the next one. A run that parks the focus somewhere else makes the pane feel like a form you
+   * submit rather than a place you work.
+   */
+  it.each(PANES)('%s keeps the caret in the box after Shift+Enter', (_name, open) => {
+    const pane = open();
+    pane.type('self balance');
+    pane.input.focus();
+
+    pane.runKey();
+
+    expect(document.activeElement).toBe(pane.input);
+  });
+
+  it.each(PANES)('%s hands the focus back after a button run', (_name, open) => {
+    // Clicking parks the focus on the button; typing would then go nowhere useful.
+    const pane = open();
+    pane.type('self balance');
+
+    pane.click('display');
+
+    expect(document.activeElement).toBe(pane.input);
+  });
+
+  it.each(PANES)('%s still has the caret in the box once the answer lands', (_name, open) => {
+    // The Inspector used to re-render the whole pane here, swapping the textarea out from under
+    // the user and taking the caret with it.
+    const pane = open();
+    pane.type('self class name');
+    pane.runKey();
+
+    pane.answer("'Account'");
+
+    expect(document.activeElement).toBe(pane.input);
+    expect(pane.input.value).toBe('self class name');
+  });
+});
+
 describe('showing the answer', () => {
   it.each(PANES)('%s shows what the expression answered', (_name, open) => {
     const pane = open();

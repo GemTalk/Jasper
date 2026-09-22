@@ -812,6 +812,9 @@
       if (!evalInput) return;
       const expr = evalInput.value.trim();
       if (!expr) return;
+      // Running is not leaving: a button click parks the focus on the button, and the next thing
+      // you do is almost always type again. Hand it back, as the Inspector's pane does.
+      evalInput.focus();
       rememberExpression(expr);
       post({ command: 'evalInFrame', level: selectedLevel, expr, mode });
     }
