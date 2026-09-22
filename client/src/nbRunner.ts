@@ -162,10 +162,12 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
  *                the transcript-forwarding settle loop, which chains async
  *                GciTsContinueWith calls), the run only settles when that
  *                promise does — so the progress notification and its
- *                soft/hard-break Cancel keep working for the whole run.
+ *                soft/hard-break Cancel keep working for the whole run,
+ *                including the part of it spent inside `onReady`.
  *
- * If the call outlives `PROGRESS_THRESHOLD_MS`, a cancellable progress
- * notification appears: the first cancel sends a soft break and updates the
+ * If the call outlives `PROGRESS_THRESHOLD_MS` — measured from the start of the
+ * call, not from the start of `onReady`, and in real time rather than in poll
+ * intervals — a cancellable progress notification appears: the first cancel sends a soft break and updates the
  * notification so the user can see it registered; a second sends a hard break
  * and rejects with `NbCancelledError`. A second cancel that lands within
  * `MIN_HARD_BREAK_GAP_MS` of the soft break isn't obeyed immediately — the hard
@@ -184,8 +186,8 @@ export function pollNbToCompletion<T>(
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     let pollIndex = 0;
-    let elapsedMs = 0;
     let progressShown = false;
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
     let softBreakSent = false;
     let softBreakAt = 0;
     let hardBreakScheduled = false;
@@ -200,6 +202,10 @@ export function pollNbToCompletion<T>(
     const settle = (fn: () => void): void => {
       if (settled) return;
       settled = true;
+      if (progressTimer) {
+        clearTimeout(progressTimer);
+        progressTimer = null;
+      }
       finishProgress();
       fn();
     };
@@ -314,9 +320,25 @@ export function pollNbToCompletion<T>(
       const interval =
         pollIndex < BACKOFF_INTERVALS.length ? BACKOFF_INTERVALS[pollIndex] : MAX_INTERVAL;
       pollIndex++;
-      elapsedMs += interval;
 
-      if (elapsedMs >= PROGRESS_THRESHOLD_MS && !progressShown && !opts.suppressNotification) {
+      setTimeout(doPoll, interval);
+    };
+
+    // On a wall-clock timer from the start of the call, NOT from inside the poll
+    // loop above. The loop stops the moment the call first reports ready and
+    // hands over to `onReady`, so a run whose `onReady` does the waiting used to
+    // get no notification at all however long it ran — and the Cancel on this
+    // notification is the only way to stop a run, so such a run could not be
+    // stopped. A Transcript write is exactly that shape: the first forwarder
+    // send makes the call ready within milliseconds, then the settle loop
+    // streams output for as long as the user's code runs
+    // ([#646](https://github.com/GemTalk/Jasper/issues/646)). A timer also
+    // measures real elapsed time: the old accounting summed the poll intervals
+    // it INTENDED to wait, so under load its "2 seconds" ran long.
+    if (!opts.suppressNotification) {
+      progressTimer = setTimeout(() => {
+        progressTimer = null;
+        if (settled || progressShown) return;
         progressShown = true;
         void vscode.window.withProgress(
           {
@@ -332,10 +354,8 @@ export function pollNbToCompletion<T>(
             });
           },
         );
-      }
-
-      setTimeout(doPoll, interval);
-    };
+      }, PROGRESS_THRESHOLD_MS);
+    }
 
     doPoll();
   });

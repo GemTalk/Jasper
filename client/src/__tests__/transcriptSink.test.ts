@@ -58,6 +58,8 @@ function makeGci(overrides: Record<string, unknown> = {}) {
     executeAndFetchString: vi.fn(() => ''),
     GciTsNbResult: vi.fn(() => ({ result: 42n, err: { number: 0, context: 0n } })),
     GciTsContinueWithAsync: vi.fn(async () => ({ result: 42n, err: { number: 0, context: 0n } })),
+    isContinueWithAsyncAvailable: vi.fn(() => true),
+    GciTsClearStack: vi.fn(() => ({ success: true, err: { number: 0 } })),
     ...overrides,
   };
 }

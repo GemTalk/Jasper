@@ -1028,7 +1028,35 @@ export class GciLibrary {
    * API is thread-safe (one call in progress per session, from any thread), so
    * a pool thread may own the call while the event loop stays free — and a
    * GciTsBreak from the main thread still interrupts it.
+   *
+   * A binding with no `.async` falls back to the blocking call rather than
+   * throwing. That fallback is a net, not a route: it costs the two properties
+   * the paragraph above sells. The extension host is blocked for the whole
+   * resumed run, so nothing can deliver the GciTsBreak that Cancel depends on,
+   * and Smalltalk that writes to the Transcript inside an unbounded loop will
+   * hang the window. It is still the better of the two: throwing here leaves
+   * the GsProcess suspended inside `TranscriptStreamPortable`'s critical block,
+   * which poisons every later Transcript write in the session
+   * ([#646](https://github.com/GemTalk/Jasper/issues/646)).
+   *
+   * It should now never fire. The `.async` that went missing in #646 was
+   * stripped by Jasper's own enhanced-inspector perf proxy, which used to bind
+   * every function-valued property; a bound function keeps none of the
+   * original's own properties. That is fixed at the source in
+   * `enhancedInspectorPerfTracker.ts`. Hence the warning: a fallback today
+   * means a new way of losing `.async`, and the log line is the only thing
+   * that would say so — the symptom is a window that stalls, not an error.
    */
+  /**
+   * Whether {@link GciTsContinueWithAsync} can use koffi's worker thread. False
+   * means it will block the caller instead — see that method's comment for what
+   * that costs. Reported rather than logged here because this module is also
+   * loaded by the `client/bin` CLI scripts, which have no vscode output channel.
+   */
+  isContinueWithAsyncAvailable(): boolean {
+    return typeof (this._GciTsContinueWith as { async?: unknown }).async === 'function';
+  }
+
   GciTsContinueWithAsync(
     session: unknown,
     gsProcess: bigint,
@@ -1036,6 +1064,11 @@ export class GciLibrary {
     continueWithError: GciError | null,
     flags: number,
   ): Promise<{ result: bigint; err: GciError }> {
+    if (!this.isContinueWithAsyncAvailable()) {
+      return Promise.resolve(
+        this.GciTsContinueWith(session, gsProcess, replaceTopOfStack, continueWithError, flags),
+      );
+    }
     const err: Record<string, unknown> = {};
     return new Promise((resolve, reject) => {
       this._GciTsContinueWith.async(

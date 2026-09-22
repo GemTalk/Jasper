@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { wrapWithEnhancedInspectorPerfProxy } from '../../enhancedInspector/enhancedInspectorPerfTracker';
 
 /**
  * Session-lifecycle GCI calls that aren't the login/logout calls themselves:
@@ -76,6 +77,95 @@ describe('GCI session lifecycle (integration)', () => {
 
       expect(result).toBe(OOP_ILLEGAL);
       expect(err.number).toBe(RT_ERR_NO_PROCESS_TO_CONTINUE);
+    });
+  });
+
+  describe('GciTsContinueWithAsync', () => {
+    // The same rejected call as the synchronous test above: whichever path the
+    // wrapper takes, it must surface the library's own error rather than a
+    // JavaScript one, so both assertions below are the sync test's assertions.
+    async function expectRejectedGsProcess() {
+      const { result, err } = await gci.GciTsContinueWithAsync(
+        session,
+        OOP_NIL,
+        OOP_ILLEGAL,
+        null,
+        0,
+      );
+
+      expect(result).toBe(OOP_ILLEGAL);
+      expect(err.number).toBe(RT_ERR_NO_PROCESS_TO_CONTINUE);
+    }
+
+    it('resumes on a worker thread when koffi exposes .async', async () => {
+      // Asserted, not assumed: without it this test would pass by silently
+      // taking the fallback below, and `.async` going missing is the very
+      // failure the fallback exists for -- so a red here is the signal.
+      expect(gci.isContinueWithAsyncAvailable()).toBe(true);
+
+      await expectRejectedGsProcess();
+    });
+
+    // The harness builds `gci` with createSessionGciLibrary, so this IS the
+    // wrapped object SessionManager hands a session -- not a bare library and
+    // not a hand-rewrapped one. Any future wrapping added to that factory is
+    // covered here automatically, which the hand-wrapped test below cannot do.
+    it("keeps koffi's worker-thread variant on every binding production uses", () => {
+      const bindings = Object.getOwnPropertyNames(gci).filter(
+        (name) => typeof (gci as unknown as Record<string, unknown>)[name] === 'function',
+      );
+
+      // Guards the guard: if the bindings ever stop being own properties, an
+      // empty list would make every assertion below vacuous.
+      expect(bindings.length).toBeGreaterThan(50);
+      const withoutAsync = bindings.filter(
+        (name) =>
+          typeof (
+            (gci as unknown as Record<string, { async?: unknown }>)[name].async ?? undefined
+          ) !== 'function',
+      );
+      expect(withoutAsync).toEqual([]);
+    });
+
+    it('still exposes .async through the enhanced-inspector perf proxy', async () => {
+      // SessionManager hands every caller a proxied GciLibrary, so this -- not
+      // the bare library above -- is the object production actually resumes
+      // through. The proxy used to bind every function-valued property, and a
+      // bound function keeps none of the original's own properties, so koffi's
+      // `.async` vanished and every live Transcript write failed (#646). This
+      // is the regression test for that; the bare-library test cannot catch it.
+      const proxied = wrapWithEnhancedInspectorPerfProxy(gci);
+
+      expect(proxied.isContinueWithAsyncAvailable()).toBe(true);
+
+      const { result, err } = await proxied.GciTsContinueWithAsync(
+        session,
+        OOP_NIL,
+        OOP_ILLEGAL,
+        null,
+        0,
+      );
+      expect(result).toBe(OOP_ILLEGAL);
+      expect(err.number).toBe(RT_ERR_NO_PROCESS_TO_CONTINUE);
+    });
+
+    it('falls back to the blocking call when koffi exposes no .async', async () => {
+      // `.async` has been seen missing from the binding at runtime, and the
+      // resulting TypeError abandoned the suspended GsProcess -- which left the
+      // Transcript mutex held and every later write in the session deadlocked.
+      // A plain JS function has no `async` property, so substituting one for
+      // the binding reproduces that shape without needing the real cause.
+      const bindings = gci as unknown as Record<string, unknown>;
+      const realBinding = bindings._GciTsContinueWith as (...args: unknown[]) => unknown;
+      const syncOnlyBinding = (...args: unknown[]) => realBinding(...args);
+      expect('async' in syncOnlyBinding).toBe(false);
+
+      bindings._GciTsContinueWith = syncOnlyBinding;
+      try {
+        await expectRejectedGsProcess();
+      } finally {
+        bindings._GciTsContinueWith = realBinding;
+      }
     });
   });
 });

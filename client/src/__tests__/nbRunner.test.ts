@@ -327,6 +327,60 @@ describe('runNbCall — notification suppression', () => {
       vi.mocked(vscode.window.withProgress).mockReset();
     }
   });
+
+  it('shows the notification for a slow onReady, not only for slow polling', async () => {
+    // The threshold used to be counted inside the poll loop, and that loop stops
+    // the moment the call first reports ready. A Transcript write makes the call
+    // ready within milliseconds and then streams output from inside onReady for
+    // as long as the user's code runs, so such a run got no notification however
+    // long it lasted -- and the Cancel on this notification is the only way to
+    // stop a run (#646). Ready at once, onReady never settles.
+    vi.useFakeTimers();
+    vi.mocked(vscode.window.withProgress).mockImplementation(() => new Promise<never>(() => {}));
+    try {
+      const session = makeSession([{ result: 1 }]);
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => new Promise<string>(() => {}),
+        { title: 'GemStone: working…' },
+      );
+      p.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(vscode.window.withProgress).toHaveBeenCalled();
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+      vi.mocked(vscode.window.withProgress).mockReset();
+    }
+  });
+
+  it('never shows the notification for a call that finished before the threshold', async () => {
+    // The other half of moving to a wall-clock timer: it is armed at the start of
+    // every call, so it has to be disarmed when the call settles or a fast
+    // operation would flash a notification seconds after it was done.
+    vi.useFakeTimers();
+    vi.mocked(vscode.window.withProgress).mockImplementation(() => new Promise<never>(() => {}));
+    try {
+      const session = makeSession([{ result: 1 }]);
+      await runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'done quickly',
+        { title: 'GemStone: working…' },
+      );
+
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(vscode.window.withProgress).not.toHaveBeenCalled();
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+      vi.mocked(vscode.window.withProgress).mockReset();
+    }
+  });
 });
 
 describe('after a hard break', () => {

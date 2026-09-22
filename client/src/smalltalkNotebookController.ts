@@ -65,6 +65,23 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
           appendTranscriptOutput(text),
         );
         if (err.number !== 0) {
+          // Clear the stopped process before giving up on it. This is
+          // defensive: wrapExecuteCode wraps every cell in `on: AbstractException
+          // do:`, so an ordinary error -- doesNotUnderstand, halt, ZeroDivide,
+          // even a cancel -- comes back inline with err.number 0 and never gets
+          // here (all four checked against a live 3.6.2 stone). What does get
+          // here is what bypasses Smalltalk handlers, chiefly a breakpoint
+          // signalled through the GCI debug channel. If that lands inside a
+          // Transcript write the process holds the session's Transcript
+          // semaphore, and there is no notebook debugger to hand it to, so
+          // leaving it suspended leaks both (#646). Execute It makes the same
+          // call after the user declines its Debug prompt.
+          // koffi hands a uint64 back as a number whenever it fits, so
+          // normalize before comparing against the bigint OOP constants.
+          const context = BigInt(err.context);
+          if (context !== OOP_NIL && context !== 0n) {
+            session.gci.GciTsClearStack(session.handle, context);
+          }
           throw new Error(err.message || `GCI error ${err.number}`);
         }
         return result;
