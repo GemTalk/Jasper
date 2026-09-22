@@ -3577,7 +3577,7 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^4.0.0",
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
