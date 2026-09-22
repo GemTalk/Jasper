@@ -1033,12 +1033,30 @@
       clearEval(col);
       return;
     }
-    // Shift+Enter walks back through the expressions already RUN here (not merely typed), so a
-    // long doit can be brought back and edited rather than retyped. Enter itself stays a newline:
-    // the box is multi-line on purpose.
+    // Shift+Enter is Display It — the one-key way to run what is in the box. Plain Enter stays a
+    // newline: the box is multi-line on purpose, and with Shift+Enter running there has to be a
+    // key that does not.
     if (ev.key === 'Enter' && ev.shiftKey) {
       ev.preventDefault();
+      runEval(col, 'display');
+      return;
+    }
+    // Ctrl+Up / Ctrl+Down walk the expressions already RUN here (not merely typed), so a long doit
+    // can be brought back and edited rather than retyped.
+    //
+    // MODIFIED arrows, not bare ones. The box is multi-line, so bare Up/Down have to keep moving the
+    // caret; a shell can take them only because its input is one line. Recalling at the box's edges
+    // instead (Up on the first line, Down on the last) would work, but makes the same key mean two
+    // things depending on where the caret happens to be — which is the kind of thing you have to
+    // learn rather than guess. With Ctrl held it means one thing everywhere in the box.
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'ArrowUp') {
+      ev.preventDefault();
       recallPrevious(col);
+      return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      recallNext(col);
       return;
     }
     // Ctrl+Enter stays as it was: the one-key way to see a result, for anyone
@@ -1053,34 +1071,66 @@
    * Step back through this column's run expressions, stopping at the oldest rather than emptying
    * the box. `evalHistoryAt` is -1 when not walking, so the first press lands on the most recent.
    */
+  /** Put `text` in the box, caret at the end, and keep the column's copy in step. */
+  function setEvalText(col, text) {
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (!input) return;
+    col.evalText = text;
+    input.value = text;
+    showClearWhenTyped(col);
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+  }
+
+  /**
+   * Step BACK through the expressions run in this pane, stopping at the oldest.
+   *
+   * Running an expression leaves it in the box, so stepping to the newest entry would put back the
+   * text already on screen and read as a dead key — the first press has to move. Whatever was in
+   * the box when the walk started is kept as `evalDraft`, so walking forward past the newest
+   * returns it rather than leaving you stranded in the history.
+   */
   function recallPrevious(col) {
     var history = col.evalHistory || [];
     var input = col.el.contentPane.querySelector('.eval-input');
     if (!input) return;
     if (history.length === 0) {
       // Nothing has been RUN in this pane yet, so there is nothing to go back to. Silence here is
-      // indistinguishable from the key not being wired at all -- which is exactly how it was read
+      // indistinguishable from the key not being wired at all — which is exactly how it was read
       // when the history was empty because the panel had just been opened. Say which it is.
       flashEvalHint(col, 'No earlier expression yet');
       return;
     }
     if (col.evalHistoryAt == null || col.evalHistoryAt < 0) {
-      // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
-      // entry would put back the text already on screen and read as a dead key — the first press
-      // has to move. When the box holds something else (cleared, or half-typed), the newest entry
-      // is the right first step.
+      col.evalDraft = input.value;
       var start = history.length - 1;
       if (input.value === history[start]) start -= 1;
-      col.evalHistoryAt = Math.max(0, start);
+      if (start < 0) {
+        flashEvalHint(col, 'Oldest expression');
+        return;
+      }
+      col.evalHistoryAt = start;
     } else {
-      col.evalHistoryAt = Math.max(0, col.evalHistoryAt - 1);
+      if (col.evalHistoryAt === 0) {
+        flashEvalHint(col, 'Oldest expression');
+        return;
+      }
+      col.evalHistoryAt -= 1;
     }
-    col.evalText = history[col.evalHistoryAt];
-    input.value = col.evalText;
-    showClearWhenTyped(col);
-    var end = input.value.length;
-    input.focus();
-    input.setSelectionRange(end, end);
+    setEvalText(col, history[col.evalHistoryAt]);
+  }
+
+  /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
+  function recallNext(col) {
+    var history = col.evalHistory || [];
+    if (col.evalHistoryAt == null || col.evalHistoryAt < 0) return;
+    if (col.evalHistoryAt >= history.length - 1) {
+      col.evalHistoryAt = -1;
+      setEvalText(col, col.evalDraft || '');
+      return;
+    }
+    col.evalHistoryAt += 1;
+    setEvalText(col, history[col.evalHistoryAt]);
   }
 
   function armChord(col) {

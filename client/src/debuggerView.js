@@ -736,42 +736,75 @@
     // here — only what actually reached the stone.
     const history = [];
     let historyAt = -1; // -1 = not walking; otherwise an index into `history`
+    let draft = ''; // what was in the box when the walk started, to come back to
 
     function rememberExpression(expr) {
       if (history[history.length - 1] !== expr) history.push(expr);
       historyAt = -1;
     }
 
-    /** Step back through the run expressions, stopping at the oldest rather than emptying the box. */
+    /** Put `text` in the box, caret at the end. */
+    function setEvalText(text) {
+      if (!evalInput) return;
+      evalInput.value = text;
+      showClearWhenTyped();
+      evalInput.focus();
+      if (evalInput.setSelectionRange) evalInput.setSelectionRange(text.length, text.length);
+    }
+
+    /**
+     * Step BACK through the expressions run in this pane, stopping at the oldest.
+     *
+     * Running an expression leaves it in the box, so stepping to the newest entry would put back the
+     * text already on screen and read as a dead key — the first press has to move. Whatever was in
+     * the box when the walk started is kept as `draft`, so walking forward past the newest returns
+     * it rather than leaving you stranded in the history.
+     */
     function recallPrevious() {
       if (!evalInput) return;
       if (history.length === 0) {
         // Nothing has been RUN in this pane yet. Silence reads as a dead key; the result row is
         // this pane's only status surface, and clearEval wipes it like any other answer.
-        if (evalResult) {
-          evalResult.textContent = 'No earlier expression yet';
-          evalResult.title = '';
-          evalResult.classList.remove('error');
-        }
+        setEvalStatus('No earlier expression yet');
         return;
       }
       if (historyAt < 0) {
-        // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
-        // entry would put back the text already on screen and read as a dead key — the first press
-        // has to move. When the box holds something else (cleared, or half-typed), the newest entry
-        // is the right first step.
-        var start = history.length - 1;
+        draft = evalInput.value;
+        let start = history.length - 1;
         if (evalInput.value === history[start]) start -= 1;
-        historyAt = Math.max(0, start);
+        if (start < 0) {
+          setEvalStatus('Oldest expression');
+          return;
+        }
+        historyAt = start;
       } else {
-        historyAt = Math.max(0, historyAt - 1);
+        if (historyAt === 0) {
+          setEvalStatus('Oldest expression');
+          return;
+        }
+        historyAt -= 1;
       }
-      evalInput.value = history[historyAt];
-      showClearWhenTyped();
-      if (evalInput.setSelectionRange) {
-        const end = evalInput.value.length;
-        evalInput.setSelectionRange(end, end);
+      setEvalText(history[historyAt]);
+    }
+
+    /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
+    function recallNext() {
+      if (historyAt < 0) return;
+      if (historyAt >= history.length - 1) {
+        historyAt = -1;
+        setEvalText(draft || '');
+        return;
       }
+      historyAt += 1;
+      setEvalText(history[historyAt]);
+    }
+
+    /** A transient answer that is not a result, in the row the answers use. */
+    function setEvalStatus(text) {
+      if (!evalResult) return;
+      evalResult.textContent = text;
+      evalResult.title = '';
+      evalResult.classList.remove('error');
     }
 
     /** Run what's in the box, in `mode`. A blank expression is not worth a round trip. */
@@ -788,12 +821,14 @@
       if (evalbar) evalbar.classList.toggle('chord-armed', on);
     }
 
-    // Eval-in-frame: Enter evaluates the expression in the selected frame (Display It — what it has
-    // always done). Shift+Enter goes back through what you have already run. Escape clears what you
-    // typed, or closes the bar when it's already empty — the same two-stage Escape the list filters
-    // use. Ctrl+K D / E / I is the editor's own chord, handled here for the reason the Inspector
-    // handles it too: the contributed bindings are `when: editorTextFocus`, which a focused webview
-    // never satisfies, so they do not resolve here and cannot collide.
+    // Eval-in-frame. Shift+Enter is Display It; Ctrl+Up / Ctrl+Down walk what you have already run;
+    // Escape clears what you typed, or closes the pane when it's already empty — the same two-stage
+    // Escape the list filters use. Ctrl+K D / E / I is the editor's own chord, handled here for the
+    // reason the Inspector handles it too: the contributed bindings are `when: editorTextFocus`,
+    // which a focused webview never satisfies, so they do not resolve here and cannot collide.
+    //
+    // Bare Enter used to evaluate. It cannot any more: this box is multi-line now, and a pane where
+    // Enter runs has no way to type a second line. Shift+Enter took over the job, in both panes.
     if (evalInput) {
       evalInput.addEventListener('keydown', (e) => {
         if (chordArmed) {
@@ -817,16 +852,25 @@
           else setEvalCollapsed(true);
           return;
         }
-        if (e.key !== 'Enter') return;
-        if (e.shiftKey) {
+        // MODIFIED arrows, not bare ones: the box is multi-line, so bare Up/Down have to keep
+        // moving the caret. With Ctrl held the key means one thing wherever the caret is.
+        if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowUp') {
           e.preventDefault();
           recallPrevious();
           return;
         }
-        // Ctrl+Enter and bare Enter both mean "show me the answer"; the box is multi-line, so a
-        // newline needs a modifier-free path that ISN'T Enter — which is what the buttons are for.
-        e.preventDefault();
-        runEval('display');
+        if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowDown') {
+          e.preventDefault();
+          recallNext();
+          return;
+        }
+        if (e.key !== 'Enter') return;
+        // Shift+Enter, and Ctrl+Enter for anyone who reached for that first. Plain Enter is a
+        // newline, which is the whole point of the box being multi-line.
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          runEval('display');
+        }
       });
       // A chord left half-typed when focus leaves is not still waiting for its second key.
       evalInput.addEventListener('blur', () => setChordArmed(false));

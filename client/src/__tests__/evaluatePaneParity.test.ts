@@ -67,6 +67,12 @@ interface Pane {
   root(): HTMLElement;
   /** Whatever the pane is currently saying about the last keystroke — its own status surface. */
   status(): string;
+  /** Ctrl+Up — step back through what has been run. */
+  older(): void;
+  /** Ctrl+Down — step forward again, and past the newest back to the draft. */
+  newer(): void;
+  /** Shift+Enter — Display It. */
+  runKey(): void;
 }
 
 // ── the debugger's evaluate pane ────────────────────────────────────────────
@@ -160,6 +166,9 @@ function debuggerPane(): Pane {
     isErrorShown: () => el('evalResult').classList.contains('error'),
     root: () => el('evalbar'),
     status: () => el('evalResult').textContent ?? '',
+    older: () => press('ArrowUp', { ctrlKey: true }),
+    newer: () => press('ArrowDown', { ctrlKey: true }),
+    runKey: () => press('Enter', { shiftKey: true }),
   };
 }
 
@@ -254,6 +263,9 @@ function inspectorPane(): Pane {
     root: () => col.el.contentPane.querySelector('.eval') as HTMLElement,
     status: () =>
       (col.el.contentPane.querySelector('.eval-hint') as HTMLElement)?.textContent ?? '',
+    older: () => press('ArrowUp', { ctrlKey: true }),
+    newer: () => press('ArrowDown', { ctrlKey: true }),
+    runKey: () => press('Enter', { shiftKey: true }),
   };
 }
 
@@ -299,6 +311,78 @@ describe('running the expression from a button', () => {
     pane.click('display');
 
     expect(pane.runCount()).toBe(0);
+  });
+});
+
+describe('Shift+Enter runs, plain Enter does not', () => {
+  it.each(PANES)('%s runs Display It on Shift+Enter', (_name, open) => {
+    const pane = open();
+    pane.type('self balance');
+
+    pane.runKey();
+
+    expect(pane.lastRun()).toBe('display');
+  });
+
+  it.each(PANES)('%s leaves plain Enter alone, so a second line can be typed', (_name, open) => {
+    // The box is multi-line in both panes now. A pane where Enter runs has no way to type a
+    // newline, which is why Shift+Enter took the job over from the debugger's bare Enter.
+    const pane = open();
+    pane.type('| t |');
+
+    const ev = pane.press('Enter');
+
+    expect(pane.runCount()).toBe(0);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it.each(PANES)('%s does not run a blank expression on Shift+Enter', (_name, open) => {
+    const pane = open();
+    pane.type('   ');
+
+    pane.runKey();
+
+    expect(pane.runCount()).toBe(0);
+  });
+});
+
+describe('stepping forward again with Ctrl+Down', () => {
+  it.each(PANES)('%s walks back toward what was typed', (_name, open) => {
+    const pane = open();
+    pane.type('one');
+    pane.click('display');
+    pane.type('two');
+    pane.click('display');
+
+    pane.older(); // -> one
+    expect(pane.input.value).toBe('one');
+
+    pane.newer(); // -> two
+    expect(pane.input.value).toBe('two');
+  });
+
+  it.each(PANES)('%s gives back the draft it interrupted', (_name, open) => {
+    // Walking away from a half-typed expression must not lose it — the walk is a detour, not a
+    // replacement for what you were writing.
+    const pane = open();
+    pane.type('ran this');
+    pane.click('display');
+    pane.type('half typed');
+
+    pane.older();
+    expect(pane.input.value).toBe('ran this');
+
+    pane.newer();
+    expect(pane.input.value).toBe('half typed');
+  });
+
+  it.each(PANES)('%s does nothing when no walk is in progress', (_name, open) => {
+    const pane = open();
+    pane.type('untouched');
+
+    pane.newer();
+
+    expect(pane.input.value).toBe('untouched');
   });
 });
 
@@ -351,10 +435,13 @@ describe("the editor's own Ctrl+K chord", () => {
 
 describe('going back to a previous expression', () => {
   /**
-   * Shift+Enter, driven the way it is actually used: running an expression LEAVES it in the box, so
-   * these must not clear the box first. Clearing is what let a first press that did nothing ship —
-   * it stepped to the newest entry, which was the text already on screen, and read as a dead key.
-   * Tests that cleared the box exercised the mechanism and missed the gesture.
+   * Ctrl+Up / Ctrl+Down, driven the way they are actually used: running an expression LEAVES it in
+   * the box, so these must not clear the box first. Clearing is what let a first press that did
+   * nothing ship — it stepped to the newest entry, which was the text already on screen, and read as
+   * a dead key. Tests that cleared the box exercised the mechanism and missed the gesture.
+   *
+   * MODIFIED arrows rather than bare ones, because the box is multi-line and bare Up/Down have to go
+   * on moving the caret.
    */
   it.each(PANES)(
     '%s moves on the FIRST press, with the box left as the run left it',
@@ -366,7 +453,7 @@ describe('going back to a previous expression', () => {
       pane.click('display');
       expect(pane.input.value).toBe('second'); // the run leaves it there
 
-      pane.press('Enter', { shiftKey: true });
+      pane.older();
 
       expect(pane.input.value).toBe('first');
     },
@@ -379,10 +466,10 @@ describe('going back to a previous expression', () => {
       pane.click('display');
     }
 
-    pane.press('Enter', { shiftKey: true });
+    pane.older();
     expect(pane.input.value).toBe('two');
 
-    pane.press('Enter', { shiftKey: true });
+    pane.older();
     expect(pane.input.value).toBe('one');
   });
 
@@ -393,7 +480,7 @@ describe('going back to a previous expression', () => {
     pane.click('display');
     pane.type('');
 
-    pane.press('Enter', { shiftKey: true });
+    pane.older();
 
     expect(pane.input.value).toBe('amount * 2');
   });
@@ -404,7 +491,7 @@ describe('going back to a previous expression', () => {
     const pane = open();
     pane.type('1 + 1');
 
-    pane.press('Enter', { shiftKey: true });
+    pane.older();
 
     expect(pane.status()).toContain('No earlier expression');
     expect(pane.input.value).toBe('1 + 1'); // and it does not eat what you typed
@@ -418,8 +505,8 @@ describe('going back to a previous expression', () => {
       pane.click('display');
       pane.type('');
 
-      pane.press('Enter', { shiftKey: true });
-      pane.press('Enter', { shiftKey: true });
+      pane.older();
+      pane.older();
 
       expect(pane.input.value).toBe('only');
     },
@@ -432,7 +519,7 @@ describe('going back to a previous expression', () => {
     // Typed, thought better of, and abandoned — the history is of what reached the stone.
     pane.type('never run');
 
-    pane.press('Enter', { shiftKey: true });
+    pane.older();
 
     expect(pane.input.value).toBe('was run');
   });

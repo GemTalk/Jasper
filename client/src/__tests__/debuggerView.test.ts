@@ -700,7 +700,7 @@ describe('DebuggerView.init — progress indicator (#9)', () => {
       const { refs } = setupIdle();
 
       refs.evalInput.value = '3 + 4';
-      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
       vi.advanceTimersByTime(500);
 
       expect(refs.busyOverlay!.style.display).toBe('');
@@ -1212,12 +1212,13 @@ describe('DebuggerView.init — Run to Cursor (#2)', () => {
 });
 
 describe('DebuggerView.init — eval bar', () => {
-  it('posts evalInFrame for the selected frame on Enter (trimmed, non-empty)', () => {
+  it('posts evalInFrame for the selected frame on Shift+Enter (trimmed, non-empty)', () => {
     const { refs, vscode } = setup();
     refs.evalInput.value = '  amount * 2  ';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-    // Bare Enter is Display It — the pane carries the mode so the host does not have to guess
-    // which of the three the gesture meant (see evaluateMode.ts).
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+    // Shift+Enter is Display It, and the pane carries the mode so the host does not have to guess
+    // which of the three the gesture meant (see evaluateMode.ts). It took the job over from bare
+    // Enter when this box became multi-line: a pane where Enter runs cannot type a second line.
     expect(vscode.postMessage).toHaveBeenCalledWith({
       command: 'evalInFrame',
       level: 1,
@@ -1226,11 +1227,11 @@ describe('DebuggerView.init — eval bar', () => {
     });
   });
 
-  it('does not post on Enter when the input is blank', () => {
+  it('does not post on Shift+Enter when the input is blank', () => {
     const { refs, vscode } = setup();
     vi.mocked(vscode.postMessage).mockClear();
     refs.evalInput.value = '   ';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
     expect(vscode.postMessage).not.toHaveBeenCalled();
   });
 });
@@ -1337,11 +1338,13 @@ describe('DebuggerView.init — collapsible eval bar', () => {
     expect(document.body.classList.contains('eval-collapsed')).toBe(true);
   });
 
-  it('still evaluates on Enter once open', () => {
+  it('still evaluates on Shift+Enter once open', () => {
     const { refs, vscode } = setup();
     refs.evalToggle!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     refs.evalInput.value = 'self foo';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    refs.evalInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
 
     expect(vscode.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'evalInFrame', expr: 'self foo' }),
