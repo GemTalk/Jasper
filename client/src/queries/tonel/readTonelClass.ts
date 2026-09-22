@@ -123,7 +123,7 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
   "The parser answers methods ALONGSIDE the class definition, not attached to it:
    (defs at: 2) at: 1 is the class side, at: 2 the instance side. Rowan own
    readClassFile:inPackage: attaches them to the definition in a separate step,
-   so reading clsDef method dictionaries here finds nothing — which is exactly
+   so reading clsDef method dictionaries here finds nothing -- which is exactly
    what happened until the round-trip test caught it."
   ((defs at: 2) at: 2) do: [:md |
     emit value: 'IMETHOD'

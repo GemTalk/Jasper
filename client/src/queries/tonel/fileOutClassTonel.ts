@@ -111,7 +111,7 @@ cls ifNil: [^'${TONEL_ERROR_PREFIX}Class not found: ${escapeString(className)}']
   "Never leave it nil: '#category : nil' is not valid Tonel and will not read back."
   defn category ifNil: [defn category: dictName].
   "Start from NO methods. For a Rowan-loaded class the definition already carries
-   its own package's methods, and Rowan keys them by the #selector property — as
+   its own package's methods, and Rowan keys them by the #selector property -- as
    SYMBOLS. Adding ours alongside without clearing put each method in twice: a
    String key and a Symbol key are different keys, so nothing replaced and nothing
    complained. Clearing makes the live class the single source, which is the
@@ -121,12 +121,12 @@ cls ifNil: [^'${TONEL_ERROR_PREFIX}Class not found: ${escapeString(className)}']
   defn classMethodDefinitions:
     (defn classMethodDefinitions ifNil: [Dictionary new] ifNotNil: [:d | d class new]).
 
-  "Every method the class itself defines, both sides — see the header."
+  "Every method the class itself defines, both sides -- see the header."
   #(false true) do: [:meta | | target |
     target := meta ifTrue: [cls class] ifFalse: [cls].
     target selectors do: [:sel | | m md |
       m := target compiledMethodAt: sel otherwise: nil.
-      "Trait-provided methods are NOT the class's own code — see the header."
+      "Trait-provided methods are NOT the class's own code -- see the header."
       (m notNil and: [m isFromTrait not]) ifTrue: [
         md := mdefCls
           newForSelector: sel

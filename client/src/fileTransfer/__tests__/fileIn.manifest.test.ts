@@ -102,12 +102,16 @@ describe('where File In is offered', () => {
     expect(command(PICK)?.icon).toBeDefined();
   });
 
-  it("offers it on a .gs or .tpz file in VS Code's own Explorer", () => {
+  it("offers it on a .gs, .tpz or .st file in VS Code's own Explorer", () => {
     const when = entriesIn('explorer/context', RESOURCE)[0]?.when ?? '';
 
     expect(when).toContain('resourceExtname == .gs');
     // A hand-written topaz script is filed in the same way a file-out is.
     expect(when).toContain('resourceExtname == .tpz');
+    // And a Tonel class file, same entry and same wording (issue #616): here the
+    // clause is on the EXTENSION, not the language id, so it needs its own term --
+    // widening the editor clauses does nothing for the VS Code Explorer.
+    expect(when).toContain('resourceExtname == .st');
   });
 
   it('offers it on an open Topaz OR Tonel file, in the title bar and the editor menu', () => {
@@ -173,11 +177,15 @@ describe('where File In is offered', () => {
     expect(command(EXPLORER)?.icon).toBe(command(PICK)?.icon);
   });
 
-  it('gates on the language id that .gs and .tpz actually map to', () => {
+  it('gates on the language ids that .gs, .tpz and .st actually map to', () => {
     const topaz = pkg.contributes.languages.find((l) => l.id === 'gemstone-topaz');
+    const tonel = pkg.contributes.languages.find((l) => l.id === 'gemstone-tonel');
 
-    // The editor clauses name gemstone-topaz; if either extension ever moved to
-    // another language the command would vanish from the very files it exists for.
+    // The editor clauses name gemstone-topaz and gemstone-tonel; if any of these
+    // extensions ever moved to another language the command would vanish from the
+    // very files it exists for -- silently, since a `when` clause that matches
+    // nothing looks exactly like a menu entry that was never contributed.
     expect(topaz?.extensions).toEqual(expect.arrayContaining(['.gs', '.tpz']));
+    expect(tonel?.extensions).toEqual(expect.arrayContaining(['.st']));
   });
 });

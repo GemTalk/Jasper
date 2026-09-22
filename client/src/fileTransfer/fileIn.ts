@@ -38,19 +38,6 @@ export const FILE_IN_FILTERS: Record<string, string[]> = {
   'All Files': ['*'],
 };
 
-/**
- * File types the TONEL open dialog offers (issue #616).
- *
- * Kept apart from {@link FILE_IN_FILTERS} because the two formats are read by
- * different code: a `.st` file goes through Rowan's Tonel parser, a `.gs` file
- * through the chunk reader. Offering both in one dialog would invite handing one
- * format to the other's reader.
- */
-export const TONEL_FILE_IN_FILTERS: Record<string, string[]> = {
-  'Tonel Files': ['st'],
-  'All Files': ['*'],
-};
-
 /** Something worth telling the user about one line of one file. */
 export interface FileInNote {
   /** Absolute path of the file the line is in — a file-in can span several via `input`. */

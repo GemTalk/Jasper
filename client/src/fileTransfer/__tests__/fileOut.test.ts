@@ -18,7 +18,7 @@ import {
   FILE_OUT_FILTERS,
   TONEL_FILE_OUT_FILTERS,
 } from '../fileOut';
-import { FILE_IN_FILTERS, TONEL_FILE_IN_FILTERS } from '../fileIn';
+import { FILE_IN_FILTERS } from '../fileIn';
 import { LAST_DIRECTORY_KEY } from '../directory';
 
 describe('sanitizeFileNameStem', () => {
@@ -88,16 +88,18 @@ describe('TONEL_FILE_OUT_FILTERS', () => {
     expect(out).toEqual(['st']);
   });
 
-  it('is what Tonel File In takes back', () => {
-    // Same invariant the chunk pair has: a file saved through a filter the
-    // matching File In does not list would be unreachable from every route back.
+  it('is what File In takes back', () => {
+    // Same invariant the chunk pair has: a file saved through a filter File In does
+    // not list would be unreachable from every route back. There is ONE file-in
+    // dialog for both formats, so this is a subset check, not an equality -- it also
+    // offers `.gs`/`.tpz`, which a Tonel file out never writes.
     const out = Object.values(TONEL_FILE_OUT_FILTERS)
       .flat()
       .filter((e) => e !== '*');
-    const back = Object.values(TONEL_FILE_IN_FILTERS)
-      .flat()
-      .filter((e) => e !== '*');
-    expect(new Set(out)).toEqual(new Set(back));
+    const back = Object.values(FILE_IN_FILTERS).flat();
+
+    expect(out.length).toBeGreaterThan(0);
+    for (const ext of out) expect(back).toContain(ext);
   });
 
   it('keeps .st out of the chunk file-OUT filters', () => {
@@ -122,8 +124,9 @@ describe('FILE_OUT_FILTERS', () => {
     // never writes. What must hold is that everything written can be read back.
     // A file-out saved through a filter File In does not list is unreachable from
     // every route the other half of this feature adds — the code lens, the editor
-    // title bar and context menu, VS Code's own Explorer menu, and the File In
-    // open dialog all name `.gs`/`.tpz` (via the gemstone-topaz language).
+    // title bar and context menu, VS Code's own Explorer menu, and the File In open
+    // dialog. Each of those reaches `.gs`/`.tpz` via the gemstone-topaz language (or,
+    // in the Explorer menu and this dialog, by extension); each also reaches `.st`.
     const out = Object.values(FILE_OUT_FILTERS)
       .flat()
       .filter((e) => e !== '*');

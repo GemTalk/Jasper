@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -63,8 +65,12 @@ describe('GemStoneCodeLensProvider', () => {
     vi.useRealTimers();
   });
 
-  const isFileIn = (lens: CodeLens) => lens.command?.command === 'gemstone.fileInFile';
-  const isTonelFileIn = (lens: CodeLens) => lens.command?.command === 'gemstone.fileInTonelFile';
+  // Both links run the SAME command -- File In reads the file and picks its own
+  // reader -- so they are told apart by title, not by command id.
+  const isFileIn = (lens: CodeLens) =>
+    lens.command?.command === 'gemstone.fileInFile' && !lens.command.title.includes('Tonel');
+  const isTonelFileIn = (lens: CodeLens) =>
+    lens.command?.command === 'gemstone.fileInFile' && lens.command.title.includes('Tonel');
   const fileInLenses = (lenses: CodeLens[]) => lenses.filter(isFileIn);
   const tonelFileInLenses = (lenses: CodeLens[]) => lenses.filter(isTonelFileIn);
   // Everything that is not one of the two file-in links, i.e. the senders/
@@ -504,5 +510,32 @@ foo
       resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('fires a command the extension actually contributes', () => {
+    // A lens can carry any string, and a wrong one fails only at click time with
+    // "command not found" -- no test, no type error, no compile error catches it.
+    // This is how `gemstone.fileInTonelFile` survived after it was retired.
+    const pkg = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
+    ) as { contributes: { commands: Array<{ command: string }> } };
+    const declared = new Set(pkg.contributes.commands.map((c) => c.command));
+
+    const topaz = createMockDocument('run\ntrue\n%');
+    const tonel = {
+      ...createMockDocument("Class {\n\t#name : 'Widget'\n}\n"),
+      languageId: 'gemstone-tonel',
+    };
+    const emitted = [
+      ...provider.provideCodeLenses(topaz),
+      ...provider.provideCodeLenses(tonel as TextDocument),
+    ]
+      .map((l) => l.command?.command)
+      .filter((c): c is string => typeof c === 'string');
+
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const id of emitted) {
+      expect(declared.has(id), `code lens fires undeclared command: ${id}`).toBe(true);
+    }
   });
 });

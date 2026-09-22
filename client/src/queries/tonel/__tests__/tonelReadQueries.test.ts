@@ -143,4 +143,16 @@ describe('readTonelClass', () => {
     expect(result.error).toMatch(/truncat/i);
     expect(result.line).toBe(1);
   });
+
+  it('sends only ASCII to the stone', () => {
+    // Generated Smalltalk must stay ASCII: 3.6.2's compiler mangles wide characters
+    // (build them with `Character codePoint:` instead), and house rule for all generated Smalltalk.
+    // An em dash in a Smalltalk COMMENT is the easy way to break this -- it reads as
+    // harmless prose in the editor and is invisible in review.
+    const e = exec();
+    readTonelClass(e, TONEL);
+    const code = codeOf(e);
+    const wide = [...code].filter((c) => c.charCodeAt(0) > 127);
+    expect(wide).toEqual([]);
+  });
 });
