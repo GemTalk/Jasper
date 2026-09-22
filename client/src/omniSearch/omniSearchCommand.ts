@@ -29,6 +29,7 @@ import {
   stringLiteralReferences,
 } from '../queries/methodSearch';
 import { SystemBrowser } from '../systemBrowser';
+import { focusGemStoneExplorer } from '../explorerContainer';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { readOmniConfig } from './omniConfig';
 import { OMNI_OPEN_KEY_HINT } from './omniSearchShared';
@@ -57,11 +58,31 @@ export interface OmniOpenOptions {
   preview?: boolean;
 }
 
+/** Open a result's document with the GemStone Explorer showing.
+ *
+ *  Opening a hit used to leave the sidebar on whatever container it was already on, so the
+ *  editor appeared and the Explorer — which catches up through `syncToEditor` — cascaded out
+ *  of sight. The container is shown FIRST and the document opened second, so the cascade has
+ *  visible panes to reveal into and keyboard focus still ends in the editor the user asked for.
+ *
+ *  Skipped when the caller asked to preserve focus: that is the Spotter arrow-keying through
+ *  its references list, where taking the sidebar (and the focus with it) on every row would
+ *  make the list unusable. */
+async function openResultDocument(
+  uri: vscode.Uri,
+  openOptions: OmniOpenOptions | undefined,
+): Promise<void> {
+  if (!openOptions?.preserveFocus) await focusGemStoneExplorer();
+  await vscode.commands.executeCommand('gemstone.openDocument', uri, openOptions);
+}
+
 /** The vscode/SystemBrowser side of activating a result. `openOptions` is threaded to the document
  *  open so the Spotter can open beside itself; omitted → the classic active-group open. */
 export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHandlers {
   return {
     openClass(a) {
+      // Another surface may take the result and show it itself; the Explorer is then not
+      // where the user is looking, so its container is left alone.
       if (!SystemBrowser.navigateToClass(a.sessionId, a.dictName, a.className, a.dictIndex)) {
         const uri = vscode.Uri.parse(
           `gemstone://${a.sessionId}` +
@@ -69,7 +90,7 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
             `/${encodeURIComponent(a.className)}` +
             `/definition?dict=${a.dictIndex}`,
         );
-        void vscode.commands.executeCommand('gemstone.openDocument', uri, openOptions);
+        void openResultDocument(uri, openOptions);
       }
     },
     openMethod(a) {
@@ -86,7 +107,7 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
         // resolves by name (0 would be an invalid 1-based SymbolList index).
         dictIndex: a.dictIndex > 0 ? a.dictIndex : undefined,
       });
-      void vscode.commands.executeCommand('gemstone.openDocument', uri, openOptions);
+      void openResultDocument(uri, openOptions);
     },
     revealDictionary(a) {
       // Cascade the Explorer to the named dictionary and select its row (the command resolves the

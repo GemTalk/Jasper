@@ -23,6 +23,7 @@ import {
   transactionStateLabel,
 } from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
+import { sessionTransactionCommand } from './sessionTransactionCommand';
 import {
   DEFAULT_GS_PW,
   GemStoneLogin,
@@ -123,7 +124,12 @@ import {
   isMethodEditorUri,
   isClassCommentUri,
 } from './gemstoneFileSystemProvider';
-import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
+import {
+  GCI_PROVIDER_SELECTORS,
+  METHOD_LANGUAGE,
+  SMALLTALK_LANGUAGE,
+  gemstoneDocumentLanguage,
+} from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
@@ -270,6 +276,10 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * `undefined` is treated like `true`: a failed probe is not evidence of a clean
  * transaction, so we prompt rather than silently discard.
  *
+ * `sessionLabel` is the login behind the number, for the same reason every other
+ * Commit and Abort message carries it: a slot number says nothing about which
+ * stone the commit that just failed was headed for.
+ *
  * `inTransaction` decides which BUTTONS the prompt carries, not whether it is
  * shown. A session outside a transaction can still hold uncommitted work —
  * GemStone lets you write outside a transaction and `System needsCommit` says so;
@@ -282,6 +292,7 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
+  sessionLabel: string,
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
   inTransaction?: boolean,
@@ -314,14 +325,15 @@ export async function confirmLogoutWithUncommittedChanges(
       const { success, err } = commit(sessionId);
       if (!success) {
         vscode.window.showErrorMessage(
-          `Session ${sessionId}: Commit failed — ${err.message || `error ${err.number}`}. Not logging out.`,
+          `Session ${sessionId} — ${sessionLabel}: Commit failed — ` +
+            `${err.message || `error ${err.number}`}. Not logging out.`,
         );
         return 'cancel';
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(
-        `Session ${sessionId}: Commit failed — ${msg}. Not logging out.`,
+        `Session ${sessionId} — ${sessionLabel}: Commit failed — ${msg}. Not logging out.`,
       );
       return 'cancel';
     }
@@ -330,6 +342,14 @@ export async function confirmLogoutWithUncommittedChanges(
 
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
 }
+
+/**
+ * The one wording for "your exported .gs edits are about to go", shared by the
+ * abort's warning and the commit's: the two sit a few lines apart and drifting
+ * apart would read as two different hazards.
+ */
+export const UNSAVED_EXPORT_EDITS_WARNING =
+  'Exported .gs files have unsaved edits that will be overwritten.';
 
 /**
  * The confirmation message to show before aborting, or `null` when the abort is
@@ -350,7 +370,7 @@ export function abortConfirmMessage(
     parts.push('This may discard uncommitted changes (the commit state could not be checked).');
   }
   if (hasUnsavedEditors) {
-    parts.push('Exported .gs files have unsaved edits that will be overwritten.');
+    parts.push(UNSAVED_EXPORT_EDITS_WARNING);
   }
   return parts.length ? parts.join('\n') : null;
 }
@@ -375,6 +395,66 @@ export function transactionModeSwitchDetail(needsCommit: boolean | undefined): s
         ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
         : 'This session has no uncommitted changes, so nothing is lost.';
   return `Changing the transaction mode aborts the current transaction.\n\n${stake}`;
+}
+
+/**
+ * The modal a Commit or Abort should put up first, or `null` for "just do it".
+ *
+ * Two things can call for one. A `warning` from {@link abortConfirmMessage} (or
+ * the commit's own unsaved-editors check) says something is about to be lost.
+ * `ask` says the caller did not name a session: the Command Palette invokes
+ * these commands with no argument and acts in the current session, which is not
+ * something the palette shows you — so it says which one, by number and by
+ * login, before it acts. A session row, the Databases & Versions panel and the
+ * Explorer's Actions & Navigation toolbar all name their session by where the
+ * click landed, and pass `ask` false.
+ *
+ * Exported for the same reason `abortConfirmMessage` is: the wording is worth
+ * pinning without standing up a whole activation.
+ */
+export function sessionActionConfirmation(options: {
+  action: 'Commit' | 'Abort';
+  sessionId: number;
+  sessionLabel: string;
+  warning: string | null;
+  ask: boolean;
+}): { message: string; detail: string; confirmLabel: string } | null {
+  const { action, sessionId, sessionLabel, warning, ask } = options;
+  if (!warning && !ask) return null;
+  return {
+    message: `${action} session ${sessionId}?`,
+    // The login under the question, and what stands to be lost under that.
+    detail: warning ? `${sessionLabel}\n\n${warning}` : sessionLabel,
+    // "Anyway" is the answer to a warning; with nothing to warn about it is the
+    // answer to no question at all.
+    confirmLabel: warning ? `${action} Anyway` : action,
+  };
+}
+
+/**
+ * What the user is shown once a Commit or Abort has actually run: an
+ * information toast on success, an error toast on failure, both headed by the
+ * session — `Session 3 — DataCurator on gs64stone (localhost): Commit
+ * succeeded.` A commit that says nothing is indistinguishable from a commit
+ * that never happened, which is the whole reason the toast is not optional.
+ *
+ * Shared by the commit and the abort, and by both of their failure routes (the
+ * GCI call answering `success: false`, and the call throwing — a session that
+ * has gone answers "Session not found" from the throw path), so the four
+ * messages cannot drift into four shapes. Exported so the contract is testable
+ * without standing up an activation, like `abortConfirmMessage` and
+ * `sessionActionConfirmation` above.
+ */
+export function announceSessionAction(
+  action: 'Commit' | 'Abort',
+  sessionDescription: string,
+  result: { success: true } | { success: false; reason: string },
+): void {
+  if (result.success) {
+    vscode.window.showInformationMessage(`${sessionDescription}: ${action} succeeded.`);
+    return;
+  }
+  vscode.window.showErrorMessage(`${sessionDescription}: ${action} failed — ${result.reason}`);
 }
 
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
@@ -991,14 +1071,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
-  const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
-    { scheme: 'gemstone', language: METHOD_LANGUAGE },
-    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
@@ -1011,9 +1083,9 @@ export function activate(context: vscode.ExtensionContext) {
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
   context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
-    vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
-    vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
+    vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
+    vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
+    vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
@@ -1573,22 +1645,41 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Commit / Abort a session, with the same confirmations and post-action
-  // refreshes whether invoked from the Sessions tree (a session item) or the
-  // GemStone Explorer toolbar (the currently selected session).
-  const commitSession = async (session: ActiveSession): Promise<void> => {
-    if (fileInManager.hasUnsavedChanges(session)) {
+  /**
+   * Which session a message is about: its number, and the login behind it. The
+   * number alone is a slot in this window's list and says nothing about which
+   * stone the work landed in.
+   */
+  const sessionDescription = (session: ActiveSession): string =>
+    `Session ${session.id} — ${loginLabel(session.login)}`;
+
+  // Commit / Abort a session, with the same post-action refreshes whether
+  // invoked from the Sessions tree (a session item), the Databases panel, the
+  // GemStone Explorer toolbar (the currently selected session) or the Command
+  // Palette — which names no session, and so is the one that asks first.
+  const commitSession = async (
+    session: ActiveSession,
+    options?: { ask?: boolean },
+  ): Promise<void> => {
+    const confirmation = sessionActionConfirmation({
+      action: 'Commit',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: fileInManager.hasUnsavedChanges(session) ? UNSAVED_EXPORT_EDITS_WARNING : null,
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        'Exported .gs files have unsaved edits that will be overwritten.',
-        { modal: true },
-        'Commit Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Commit Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.commit(session.id);
       if (success) {
-        vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
+        announceSessionAction('Commit', sessionDescription(session), { success: true });
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
@@ -1598,13 +1689,17 @@ export function activate(context: vscode.ExtensionContext) {
         clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
-        vscode.window.showErrorMessage(
-          `Session ${session.id}: Commit failed — ${explainGciError(err) || `error ${err.number}`}`,
-        );
+        announceSessionAction('Commit', sessionDescription(session), {
+          success: false,
+          reason: explainGciError(err) || `error ${err.number}`,
+        });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Commit failed: ${msg}`);
+      // Named, like the failure above it: `sessionManager.commit` throws
+      // "Session not found" for a session that has gone, and that sentence on
+      // its own does not say which one.
+      announceSessionAction('Commit', sessionDescription(session), { success: false, reason: msg });
     }
   };
 
@@ -1726,33 +1821,76 @@ export function activate(context: vscode.ExtensionContext) {
     );
   };
 
-  const abortSession = async (session: ActiveSession): Promise<void> => {
-    const message = abortConfirmMessage(
-      queries.sessionNeedsCommit(session),
-      fileInManager.hasUnsavedChanges(session),
-    );
-    if (message) {
+  const abortSession = async (
+    session: ActiveSession,
+    options?: { ask?: boolean },
+  ): Promise<void> => {
+    const confirmation = sessionActionConfirmation({
+      action: 'Abort',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: abortConfirmMessage(
+        queries.sessionNeedsCommit(session),
+        fileInManager.hasUnsavedChanges(session),
+      ),
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        message,
-        { modal: true },
-        'Abort Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Abort Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.abort(session.id);
       if (success) {
-        vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
+        announceSessionAction('Abort', sessionDescription(session), { success: true });
         await refreshAfterViewReplaced(session);
       } else {
-        vscode.window.showErrorMessage(
-          `Session ${session.id}: Abort failed — ${explainGciError(err) || `error ${err.number}`}`,
-        );
+        announceSessionAction('Abort', sessionDescription(session), {
+          success: false,
+          reason: explainGciError(err) || `error ${err.number}`,
+        });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Abort failed: ${msg}`);
+      // Named for the same reason the commit's is.
+      announceSessionAction('Abort', sessionDescription(session), { success: false, reason: msg });
     }
+  };
+
+  const sessionTransactionDeps = {
+    sessionManager,
+    commit: commitSession,
+    abort: abortSession,
+  };
+
+  /**
+   * The session a Begin Transaction or Set Transaction Mode should act in: the
+   * one the row named, or the current one when nothing named a row — the Command
+   * Palette and the status bar both invoke these with no argument.
+   *
+   * A row's session is read back by id rather than taken off the item, the rule
+   * {@link sessionTransactionCommand} writes down for Commit and Abort: a tree
+   * item outlives the session it was built from, and a mode switch aborts, so a
+   * stale row would otherwise raise a confirmation naming what is at stake and
+   * then fail with "Session not found".
+   */
+  const sessionForTransactionModeCommand = (
+    item?: GemStoneSessionItem,
+  ): ActiveSession | undefined => {
+    if (!item) {
+      const current = sessionManager.getSelectedSession();
+      if (!current) vscode.window.showErrorMessage('No active GemStone session.');
+      return current;
+    }
+    const session = sessionManager.getSession(item.activeSession.id);
+    if (!session) {
+      vscode.window.showErrorMessage(`Session ${item.activeSession.id} is no longer logged in.`);
+    }
+    return session;
   };
 
   // ── Commands ───────────────────────────────────────────
@@ -2315,51 +2453,44 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    // These three take the row's session when a row invoked them, and fall back to
-    // the selected one when nothing did. The fallback is not decoration: every
-    // command Jasper declares is in the Command Palette unless a `commandPalette`
-    // entry says otherwise, and from there they arrive with no argument at all.
-    // `gemstone.explorer.commit` used to cover the palette for Commit, but it is
-    // hidden now whenever a commit could not land — which is exactly the state
-    // where someone reaches for "GemStone: Commit" and would have got a
-    // `Cannot read properties of undefined` instead of a session.
-    vscode.commands.registerCommand(
-      'gemstone.sessionCommit',
-      async (item?: GemStoneSessionItem) => {
-        const session = item ? item.activeSession : await sessionManager.resolveSession();
-        if (!session) return;
-        return commitSession(session);
-      },
+    // A session row names the session to act in; the Command Palette hands over
+    // nothing, so a session is resolved for it and named before anything is
+    // committed or discarded. Both live in sessionTransactionCommand, where that
+    // dispatch can be tested without an activation. These are the palette's
+    // GemStone: Commit and GemStone: Abort.
+    vscode.commands.registerCommand('gemstone.sessionCommit', (item?: GemStoneSessionItem) =>
+      sessionTransactionCommand(sessionTransactionDeps, 'Commit', item),
     ),
 
-    vscode.commands.registerCommand('gemstone.sessionAbort', async (item?: GemStoneSessionItem) => {
-      const session = item ? item.activeSession : await sessionManager.resolveSession();
-      if (!session) return;
-      return abortSession(session);
-    }),
+    vscode.commands.registerCommand('gemstone.sessionAbort', (item?: GemStoneSessionItem) =>
+      sessionTransactionCommand(sessionTransactionDeps, 'Abort', item),
+    ),
 
-    vscode.commands.registerCommand('gemstone.sessionBegin', async (item?: GemStoneSessionItem) => {
-      const session = item ? item.activeSession : await sessionManager.resolveSession();
+    // Begin and Set Transaction Mode go through sessionForTransactionModeCommand
+    // instead, not through sessionTransactionCommand: that one's job is the modal
+    // naming the session before work is committed or discarded, and neither of
+    // these needs it. A begin has nothing at stake, and a mode switch raises a
+    // confirmation of its own that already names what the abort behind it costs.
+    // The mode is reachable from a session row, from the status bar (which names
+    // no row) and from the palette.
+    vscode.commands.registerCommand('gemstone.sessionBegin', (item?: GemStoneSessionItem) => {
+      const session = sessionForTransactionModeCommand(item);
       if (!session) return;
       return beginSession(session);
     }),
 
-    // The mode is reachable from a session row, from the status bar (which names
-    // no row, so it falls back to the selected session) and from the palette.
-    vscode.commands.registerCommand(
-      'gemstone.setTransactionMode',
-      async (item?: GemStoneSessionItem) => {
-        const session = item ? item.activeSession : await sessionManager.resolveSession();
-        if (!session) return;
-        return setTransactionModeFor(session);
-      },
-    ),
+    vscode.commands.registerCommand('gemstone.setTransactionMode', (item?: GemStoneSessionItem) => {
+      const session = sessionForTransactionModeCommand(item);
+      if (!session) return;
+      return setTransactionModeFor(session);
+    }),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
-    // Abort are reachable without switching to the Sessions view. Begin has no
-    // variant of its own: gemstone.sessionBegin already falls back to the selected
-    // session when no row named one, so a second command would only put a second,
-    // identically titled entry in the Command Palette.
+    // Abort are reachable without switching to the Sessions view. They carry the
+    // same titles as the commands above, so package.json keeps them out of the
+    // Command Palette — two identical GemStone: Commit entries is a coin toss,
+    // not a choice. Begin has no variant of its own: gemstone.sessionBegin
+    // already falls back to the selected session when no row named one.
     vscode.commands.registerCommand('gemstone.explorer.commit', () => {
       const session = sessionManager.getSelectedSession();
       if (!session) {
@@ -2586,6 +2717,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         const decision = await confirmLogoutWithUncommittedChanges(
           session.id,
+          loginLabel(session.login),
           queries.sessionNeedsCommit(session),
           (id) => sessionManager.commit(id),
           session.inTransaction,
@@ -2818,8 +2950,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Offered on a row in the Testing view. A plain click there deliberately does
-    // not move the Explorer (the two navigations are independent), so this is how
-    // you ask for it.
+    // not move the Explorer (the two navigations are independent, and the activity
+    // bar shows one container at a time, so a click that took the sidebar would
+    // have to be clicked back before the next test), so this is how you ask for
+    // it — and asking brings the Explorer's container up as well as cascading its
+    // panes, the mirror of revealInTestExplorer focusing the Testing view first.
     vscode.commands.registerCommand(
       'gemstone.revealTestInExplorer',
       async (item?: { uri?: vscode.Uri }) => {

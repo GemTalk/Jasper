@@ -26,6 +26,7 @@
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
 import { compareGemStoneVersions } from '../gemStoneVersion';
+import { normalizeGemStoneVersion } from '../gemStoneVersionParsing';
 import {
   gemCanRead,
   gsStringLiteral,
@@ -71,19 +72,14 @@ export const ENHANCED_INSPECTOR_DICTIONARY = 'GsEnhancedInspector';
  *
  * `stoneVersion` is the raw `GciTsVersion` string, which starts with the numeric
  * version but may carry a trailing build/description suffix
- * (e.g. "3.7.5 build ..."). We extract the leading `x.y.z[.w]` token before
- * comparing — `compareGemStoneVersions` requires a bare numeric string and would
- * otherwise throw on the suffix (and fail closed, blocking a supported stone).
+ * (e.g. "3.7.5 build ..."). `normalizeGemStoneVersion` strips that suffix and
+ * pads the result, since `compareGemStoneVersions` requires a bare 3–4 segment
+ * numeric string and would otherwise throw (and fail closed, blocking a
+ * supported stone).
  */
 export function supportsEnhancedInspector(stoneVersion: string | undefined): boolean {
-  // Extract the leading numeric version: major.minor with optional patch and
-  // build segments — "3.7.5", "3.7.5.1", or a future short form like "4.0" —
-  // ignoring any trailing build/description suffix from GciTsVersion.
-  const numeric = stoneVersion?.match(/^\d+\.\d+(\.\d+){0,2}/)?.[0];
-  if (!numeric) return false;
-  // compareGemStoneVersions requires 3–4 numeric segments; pad a short version
-  // (e.g. "4.0" -> "4.0.0") so it compares cleanly instead of throwing.
-  const padded = numeric.split('.').length < 3 ? `${numeric}.0` : numeric;
+  const padded = normalizeGemStoneVersion(stoneVersion);
+  if (!padded) return false;
   try {
     return compareGemStoneVersions(padded, ENHANCED_INSPECTOR_MIN_VERSION) >= 0;
   } catch {

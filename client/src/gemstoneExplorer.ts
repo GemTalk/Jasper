@@ -84,6 +84,7 @@ import {
 import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
 import { getGciLog, logInfo, logWarning } from './gciLog';
+import { focusGemStoneExplorer } from './explorerContainer';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
@@ -269,7 +270,10 @@ interface ExplorerState {
   dictIndex?: number; // 1-based symbolList position
   classCategory?: string; // undefined = show all classes in dict
   className?: string;
-  selectedSelector?: string; // last method opened (kept for reference)
+  // The method row the pane is showing as selected — written by a click in the pane
+  // and by every cascade reveal, because reapplyPaneHighlight rebuilds the highlight
+  // from it when a hidden pane reappears.
+  selectedSelector?: string;
   // Context recorded from the Methods pane so New Method / New Method Category
   // land on the right side/category even without a method currently selected.
   selectedIsMeta?: boolean;
@@ -1024,10 +1028,69 @@ export class ExplorerController {
    * GemStone Explorer does from a Testing view row, where a plain click
    * deliberately navigates nothing. Claims the open first, so the guard that
    * ignores test-item documents lets this one through.
+   *
+   * Shows the Explorer's container before cascading, because this one IS the
+   * user asking to be taken there: revealing into a sidebar still showing the
+   * Testing view scrolls rows nobody can see, which reads as the button having
+   * done nothing. That is the same argument revealInTestExplorer makes for
+   * focusing the Testing view first, going the other way. The plain click is
+   * untouched by this and still navigates nothing.
+   *
+   * The reveal underneath also KEEPS the tree's focus rather than handing it
+   * straight back to the editor (see revealMethodRow): a row selected while its
+   * tree has no focus is drawn in VS Code's inactive-selection colour, so the
+   * method you asked for arrives looking like nothing was landed on.
    */
   async revealDocument(uri: vscode.Uri): Promise<void> {
     this.markAttributedOpen(uri);
-    await this.syncToEditor(uri);
+    await this.showExplorerAndWait();
+    // keepTreeFocus: editor-driven sync hands focus back to the editor the moment
+    // it has scrolled the row into view -- you are working in the editor and the
+    // tree must not steal your cursor. This gesture is the opposite: being taken
+    // to the pane is the whole point, so focus stays there and the row is drawn
+    // as the active selection.
+    await this.syncToEditor(uri, { keepTreeFocus: true });
+  }
+
+  /**
+   * Show the Explorer's activity-bar container and wait for VS Code to have
+   * resolved the views inside it, so the cascade that follows has visible panes
+   * to reveal into.
+   *
+   * Only for a jump from OUTSIDE the Explorer whose reveals go through
+   * `revealCascade`: those are skipped while their view is not visible, so the
+   * container has to be up FIRST. Three groups deliberately do not call this --
+   * anything reached by a click inside the Explorer (its container is already
+   * showing), anything reached by a background event rather than a gesture
+   * (`onExternalClassCompiled` must not yank the sidebar out from under you),
+   * and the reveals that do NOT cascade: `revealDictionaryByName` and the
+   * class-category jump reveal with `focus: true` outside `revealCascade`, and a
+   * plain `TreeView.reveal` brings its own view up, container and all.
+   *
+   * Waits for ANY pane to report visible rather than one named pane, because
+   * what is being waited for is the container rendering: once one pane in it is
+   * up, a pane still reporting false is one the user has collapsed, and waiting
+   * on that would burn the whole deadline to reach a reveal that is going to be
+   * skipped anyway. Bounded, and deliberately not an error when it expires --
+   * every pane collapsed is a container that never reports a visible view, and a
+   * jump must not hang on one. The reveal is then skipped exactly as the
+   * collapsed-pane rule intends, and deferred to reapplyPaneHighlight.
+   */
+  private async showExplorerAndWait(timeoutMs = 1000): Promise<void> {
+    await focusGemStoneExplorer();
+    const deadline = Date.now() + timeoutMs;
+    while (!this.anyPaneVisible() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  /** Has VS Code resolved the views inside the Explorer's container yet? Views we
+   *  don't have at all (a test that builds none) count as resolved: there is
+   *  nothing to wait for, and nothing a reveal could land in either. */
+  private anyPaneVisible(): boolean {
+    const views = this.views;
+    if (!views) return true;
+    return Object.values(views).some((v) => v.visible);
   }
 
   // Owns where our source editors land. Balances "open to the side" across only
@@ -1210,6 +1273,16 @@ export class ExplorerController {
   //     dictionary or a class category, or the row the user's own action in that
   //     pane just created, renamed or moved. Being shown the thing is the point,
   //     so these call `view.reveal` directly and are expected to open their pane.
+  //
+  // Showing the Explorer's CONTAINER is a third thing, and belongs to neither
+  // group: `focusGemStoneExplorer` (explorerContainer.ts) brings the activity-bar
+  // container up without expanding anything inside it, so a jump from GemStone
+  // Search, from the Inspector's or the debugger's Browse, or from Reveal in
+  // GemStone Explorer lands somewhere the user can see. That is not the gesture
+  // the rule above forbids: it opens the container, and which of the six panes
+  // are expanded within it stays the user's business. It has to happen BEFORE
+  // the cascade, because a view inside a hidden container is not `visible` and
+  // `revealCascade` would skip every reveal in the jump.
   //
   // A reveal added later belongs to one group or the other; decide which before
   // writing it, rather than defaulting to whichever line is nearer.
@@ -4537,9 +4610,21 @@ export class ExplorerController {
   private async revealMethodRow(
     isMeta: boolean,
     info: SelectorInfo,
-    opts: { focusEditorAfter?: boolean } = {},
+    opts: { focusEditorAfter?: boolean; keepTreeFocus?: boolean } = {},
   ): Promise<void> {
     this.setMethodSide(isMeta);
+    // Record the selection BEFORE revealing, so a reveal the pane is not visible for
+    // is genuinely deferred rather than lost: reapplyPaneHighlight rebuilds this
+    // highlight from state when the pane reappears, and had nothing to rebuild from
+    // -- only a click in the pane wrote the selector, so a row revealed into a closed
+    // or still-opening pane stayed unselected. Keeping the side in step follows
+    // setMethodSide's rule that a recorded category belongs to the recorded side, so
+    // a flip drops the category rather than pairing it with the wrong one.
+    if (this.state.selectedIsMeta !== isMeta) {
+      this.state.selectedIsMeta = isMeta;
+      this.state.selectedMethodCategory = undefined;
+    }
+    this.state.selectedSelector = info.selector;
     const item = this.methodRowNode(isMeta, info);
     // In this VS Code build focus:false selects the row but never scrolls it into view; only
     // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
@@ -4560,8 +4645,12 @@ export class ExplorerController {
     // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
     // leaving the user's cursor stranded in the tree is the worse outcome. But not when the pane is
     // closed — the reveal was skipped entirely then, so nothing took focus and there is nothing to
-    // hand back.
-    if (takesFocus && this.views?.method.visible) {
+    // hand back — and not when the caller asked to keep the tree's focus, which is the explicit
+    // Reveal in GemStone Explorer: the user asked to be put in the pane, and handing focus back
+    // would leave the row drawn in VS Code's inactive-selection colour, looking like nothing was
+    // landed on. That arrives as an option rather than off a flag on the controller so a sync that
+    // overlaps the reveal cannot pick it up.
+    if (takesFocus && opts.keepTreeFocus !== true && this.views?.method.visible) {
       try {
         await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
       } catch (e) {
@@ -4773,6 +4862,12 @@ export class ExplorerController {
   // send would reach once this implementation is gone, which is what makes removing an
   // override harmless. Best-effort: a failure here answers undefined, which only means the
   // caller falls back to the full sender scan.
+  //
+  // No environment is passed, so this reads environment 0 — deliberately, and not merely
+  // inherited from the query's default. The pane deletes the environment-0 method
+  // (EXPLORER_METHOD_ENVIRONMENT), and a send compiled in one environment resolves in that
+  // environment, so environment 0 is the question being asked. The caller documents what an
+  // under-report costs here: a question, never a wrong silent delete.
   private superclassImplementorOf(
     session: ActiveSession,
     className: string,
@@ -5066,6 +5161,15 @@ export class ExplorerController {
       if (!picked) return;
       chosen = picked.entry;
     }
+    // A class was resolved, so this jump is going to land: show the Explorer
+    // before cascading, and wait for it to have rendered. Not earlier — a name
+    // that matches nothing warns and returns, and stealing the sidebar to show
+    // the user nothing is worse than leaving it where it was. The wait matters
+    // as much here as in revealDocument: without it every reveal in the cascade
+    // is skipped, and reapplyPaneHighlight catches the panes up only as a plain
+    // select, which does not scroll (see revealMethodRow) — so the Browse lands
+    // on a class or method row that can be sitting off-screen in a long list.
+    await this.showExplorerAndWait();
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
       revealMethod: method,
     });
@@ -5463,7 +5567,14 @@ export class ExplorerController {
     dictName: string,
     dictIndex: number,
     className: string,
-    opts: { revealMethod?: { selector: string; isMeta: boolean } } = {},
+    opts: {
+      revealMethod?: { selector: string; isMeta: boolean };
+      /** Leave the method reveal holding the tree's focus instead of handing it back to
+       *  the editor -- see revealMethodRow. Only an explicit "take me there" gesture sets
+       *  it; it is threaded through rather than kept on the controller so a sync that
+       *  overlaps one cannot read it by accident. */
+      keepTreeFocus?: boolean;
+    } = {},
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
@@ -5555,7 +5666,10 @@ export class ExplorerController {
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
-        await this.revealMethodRow(opts.revealMethod.isMeta, info, { focusEditorAfter: true });
+        await this.revealMethodRow(opts.revealMethod.isMeta, info, {
+          focusEditorAfter: true,
+          keepTreeFocus: opts.keepTreeFocus,
+        });
         this.syncTitles();
       }
     }
@@ -5573,16 +5687,19 @@ export class ExplorerController {
   //
   // The body is a separate method purely so the flag above is raised and lowered
   // in one place, whichever of the many early returns the sync takes.
-  async syncToEditor(uri: vscode.Uri): Promise<void> {
+  async syncToEditor(uri: vscode.Uri, opts: { keepTreeFocus?: boolean } = {}): Promise<void> {
     this.syncingToEditor = true;
     try {
-      await this.syncPanesToEditor(uri);
+      await this.syncPanesToEditor(uri, opts);
     } finally {
       this.syncingToEditor = false;
     }
   }
 
-  private async syncPanesToEditor(uri: vscode.Uri): Promise<void> {
+  private async syncPanesToEditor(
+    uri: vscode.Uri,
+    opts: { keepTreeFocus?: boolean } = {},
+  ): Promise<void> {
     if (uri.scheme !== 'gemstone') return;
     // We opened this editor ourselves from a tree click — the tree selection is
     // already correct, so don't bounce it (e.g. onto the ALL METHODS node).
@@ -5638,7 +5755,10 @@ export class ExplorerController {
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
-          await this.revealMethodRow(revealMethod.isMeta, info, { focusEditorAfter: true });
+          await this.revealMethodRow(revealMethod.isMeta, info, {
+            focusEditorAfter: true,
+            keepTreeFocus: opts.keepTreeFocus,
+          });
           this.syncTitles();
         }
       }
@@ -5647,7 +5767,10 @@ export class ExplorerController {
 
     const dictIndex = queries.getDictionaryNames(session).indexOf(dictName) + 1;
     if (dictIndex <= 0) return;
-    await this.revealClass(dictName, dictIndex, className, { revealMethod });
+    await this.revealClass(dictName, dictIndex, className, {
+      revealMethod,
+      keepTreeFocus: opts.keepTreeFocus,
+    });
   }
 
   // ── New (+) actions ─────────────────────────────────────────────────────────

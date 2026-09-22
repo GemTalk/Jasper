@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { skipLiteral } from '../../smalltalkScan';
 
 // Guards the invariant the engines' compile-failure reporting rests on: every method the
 // refactoring engines compile goes through ONE helper, so no site can forget to look at what
@@ -41,67 +42,25 @@ const FUNNEL_METHOD = 'compileFailureFor: source into: aBehavior category: aCate
  * either permanently red or (if the threshold were padded to accommodate them) blind to a
  * real regression.
  *
- * Smalltalk quoting: `"…"` is a comment and `'…'` a string literal; each doubles its own
- * delimiter to escape it. A comment can contain apostrophes and a string can contain double
- * quotes, so the two must be tracked together in one pass rather than stripped separately.
- *
- * `$x` is a character literal, so `$"` and `$'` are ordinary code rather than delimiters, and
- * both are in the engine tree today — `$"` in the JSON escapers, `$'` in the class-definition
- * builders. Consume the pair before either branch below: reading one as a delimiter inverts
- * the polarity for the rest of the file, which would hide real sends from this test.
+ * Which spans are quoted is `skipLiteral`'s job, not this test's. Reading `$"` or `$'` as a
+ * delimiter would invert the polarity for the rest of the file and hide real sends from this
+ * test, and both are in the engine tree today — `$"` in the JSON escapers, `$'` in the
+ * class-definition builders.
  */
 const stripComments = (source: string): string => {
   let out = '';
   let i = 0;
   while (i < source.length) {
-    const ch = source[i];
-    if (ch === '$') {
-      // A character literal: copy `$` and whatever it quotes, so `$"` and `$'` cannot be
-      // mistaken for the start of a comment or a string.
-      out += ch;
-      i++;
-      out += source[i] ?? '';
+    const span = skipLiteral(source, i);
+    if (!span) {
+      out += source[i];
       i++;
       continue;
     }
-    if (ch === "'") {
-      // A string literal: copy it verbatim, including any doubled '' escapes.
-      out += ch;
-      i++;
-      while (i < source.length) {
-        if (source[i] === "'") {
-          out += source[i];
-          i++;
-          if (source[i] === "'") {
-            out += source[i];
-            i++;
-            continue;
-          }
-          break;
-        }
-        out += source[i];
-        i++;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      // A comment: drop it, honouring doubled "" escapes.
-      i++;
-      while (i < source.length) {
-        if (source[i] === '"') {
-          i++;
-          if (source[i] === '"') {
-            i++;
-            continue;
-          }
-          break;
-        }
-        i++;
-      }
-      continue;
-    }
-    out += ch;
-    i++;
+    // Comments are the thing being dropped. A string or a character literal is code,
+    // so it is copied through verbatim, escapes and all.
+    if (span.kind !== 'comment') out += source.slice(i, span.end);
+    i = span.end;
   }
   return out;
 };

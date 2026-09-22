@@ -83,6 +83,10 @@ export class SessionManager {
   private pendingLogins = 0;
 
   private _selectedId: number | null = null;
+  // Session ids in the order they were last made current, most recent last.
+  // Read when the current session is logged out, to hand the window back to the
+  // session the user was working in before it.
+  private selectionOrder: number[] = [];
   private _onDidChangeSelection = new vscode.EventEmitter<number | null>();
   readonly onDidChangeSelection = this._onDidChangeSelection.event;
 
@@ -116,6 +120,7 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
     this._selectedId = id;
+    this.selectionOrder = [...this.selectionOrder.filter((sid) => sid !== id), id];
     this._onDidChangeSelection.fire(id);
     vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', true);
   }
@@ -456,6 +461,33 @@ export class SessionManager {
     };
   }
 
+  /**
+   * The session to hand the window to when the current one is logged out: the
+   * one worked in most recently before it.
+   *
+   * Discards entries for sessions that have gone as it scans, rather than
+   * stepping over them — a session that left without being pruned would
+   * otherwise be looked up again on every later logout, and the list would only
+   * grow. `logout` is the one path that removes a session and it prunes as it
+   * goes, so today nothing reaches this; it is what keeps a future removal path
+   * that forgets to prune from handing the window a logged-out session.
+   *
+   * Falls back to the lowest remaining id when the order has no answer at all —
+   * several sessions logged in and never switched between, since login makes a
+   * session current only when it is the first one.
+   */
+  private sessionToPromote(): ActiveSession | undefined {
+    while (this.selectionOrder.length > 0) {
+      const candidate = this.sessions.get(this.selectionOrder[this.selectionOrder.length - 1]);
+      if (candidate) return candidate;
+      this.selectionOrder.pop();
+    }
+    return [...this.sessions.values()].reduce<ActiveSession | undefined>(
+      (best, s) => (best === undefined || s.id < best.id ? s : best),
+      undefined,
+    );
+  }
+
   logout(id: number): void {
     const s = this.sessions.get(id);
     if (!s) return;
@@ -466,6 +498,10 @@ export class SessionManager {
       // Session may already be dead — remove it regardless
     }
     this.sessions.delete(id);
+    // Drop it from the selection order too, so it cannot be promoted later. This
+    // is what makes that guarantee, for a background session as much as the
+    // current one; sessionToPromote's own discard is the backstop behind it.
+    this.selectionOrder = this.selectionOrder.filter((sid) => sid !== id);
     // Signal removal unconditionally so listeners reap even when a *background*
     // (non-selected) session is logged out — onDidChangeSelection below only
     // fires for the selected session.
@@ -473,16 +509,26 @@ export class SessionManager {
 
     if (this._selectedId === id) {
       this._selectedId = null;
-      if (this.sessions.size === 1) {
-        const remaining = this.sessions.values().next().value!;
-        this.selectSession(remaining.id);
+      // Hand the selection on rather than leaving the window with none: every
+      // command that acts in "the current session" would otherwise have nothing
+      // to act in, so a palette Commit or Abort would have to stop and ask which
+      // session it means — mid-transaction, and unasked for.
+      const promoted = this.sessionToPromote();
+      if (promoted) {
+        this.selectSession(promoted.id);
+        // Said out loud, because the window has just moved out from under the
+        // user: everything that acts in "the current session" — Display It,
+        // Execute It, Debug It, a notebook cell, a search — now acts in a stone
+        // they did not choose, and most of those run without a confirmation of
+        // their own. The alternative was leaving nothing selected, which is what
+        // used to happen and which stopped those commands to ask which session
+        // they meant.
+        vscode.window.showInformationMessage(
+          `Session ${promoted.id} — ${loginLabel(promoted.login)} is now the current session.`,
+        );
       } else {
         this._onDidChangeSelection.fire(null);
-        vscode.commands.executeCommand(
-          'setContext',
-          'gemstone.hasActiveSession',
-          this.sessions.size > 0,
-        );
+        vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', false);
       }
     }
   }
@@ -642,6 +688,12 @@ export class SessionManager {
       }
     }
     this.sessions.clear();
+    // Both halves of the selection go with the sessions. getSelectedSession()
+    // reads through the map so a stale id answered undefined anyway, but leaving
+    // one behind while clearing the order it belongs to is a trap for the next
+    // reader.
+    this._selectedId = null;
+    this.selectionOrder = [];
     for (const gci of this.gciInstances.values()) {
       try {
         gci.close();
