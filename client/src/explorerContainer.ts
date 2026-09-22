@@ -16,6 +16,12 @@
  * collapsed pane, which navigation must never do (see the reveal doc-comment in
  * gemstoneExplorer.ts). This opens the container; which of its six panes are
  * expanded inside it stays the user's business.
+ *
+ * Showing the container is not instant: VS Code resolves the tree views inside
+ * it after this command has returned, so a caller that is about to cascade wants
+ * the controller's `showExplorerAndWait`, which pairs this with the wait for a
+ * pane to appear. This is the bare command, kept view-free so a caller outside
+ * the controller (GemStone Search) can reach it.
  */
 import * as vscode from 'vscode';
 import { logWarning } from './gciLog';
@@ -29,8 +35,10 @@ const FOCUS_EXPLORER_CONTAINER = 'workbench.view.extension.gemstoneExplorer';
  * somewhere the user can see.
  *
  * Await it before cascading: the panes' `visible` flags are what the cascade
- * gates on. Best-effort — a command id we don't own, so a VS Code release that
- * renamed it must cost the jump its sidebar switch, not the jump itself.
+ * gates on, and they do not flip the moment this resolves — use the controller's
+ * `showExplorerAndWait` when a cascade follows immediately. Best-effort — a
+ * command id we don't own, so a VS Code release that renamed it must cost the
+ * jump its sidebar switch, not the jump itself.
  */
 export async function focusGemStoneExplorer(): Promise<void> {
   try {

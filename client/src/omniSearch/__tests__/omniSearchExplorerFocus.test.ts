@@ -13,8 +13,9 @@
  * would make that list unusable, so the jump there stays an open and nothing
  * more.
  *
- * The container focus is matched loosely (same helper and reasoning as
- * explorerContainerFocus.test.ts).
+ * The container focus is matched loosely, with the helper
+ * explorerContainerFocus.test.ts shares (src/__tests__/helpers/) rather than a
+ * copy of it.
  *
  * Covers https://github.com/GemTalk/Jasper/issues/629
  */
@@ -28,18 +29,25 @@ vi.mock('../../gciLog', async () => {
 
 import * as vscode from 'vscode';
 import { buildOmniHandlers } from '../omniSearchCommand';
+import {
+  focusedTheExplorerContainer as sawContainerFocus,
+  showsTheExplorerContainer,
+} from '../../__tests__/helpers/explorerContainerFocus';
 
 const executeCommand = vscode.commands.executeCommand as ReturnType<typeof vi.fn>;
 
 function focusedTheExplorerContainer(): boolean {
-  return executeCommand.mock.calls
-    .map((c) => String(c[0]))
-    .some(
-      (c) =>
-        c === 'workbench.view.extension.gemstoneExplorer' ||
-        c === 'workbench.view.extension.gemstoneExplorer.focus' ||
-        (/^gemstoneExplorer/.test(c) && c.endsWith('.focus')),
-    );
+  return sawContainerFocus(executeCommand);
+}
+
+/** Where each of the two halves of the jump landed in the command log, so the
+ *  ORDER can be asserted and not just that both happened. -1 for "never ran". */
+function jumpOrder(): { container: number; open: number } {
+  const commands = executeCommand.mock.calls.map((c) => String(c[0]));
+  return {
+    container: commands.findIndex(showsTheExplorerContainer),
+    open: commands.indexOf('gemstone.openDocument'),
+  };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -66,6 +74,12 @@ describe('opening a Search result', () => {
     expect(focusedTheExplorerContainer()).toBe(true);
     // And the editor still opens — the focus is added to the jump, not instead of it.
     expect(executeCommand.mock.calls.some((c) => c[0] === 'gemstone.openDocument')).toBe(true);
+    // The order is the point, not merely that both ran: the cascade the open
+    // triggers is skipped for any pane that is not visible yet, so showing the
+    // container second would leave the jump exactly as broken as before.
+    const { container, open } = jumpOrder();
+    expect(container).toBeGreaterThanOrEqual(0);
+    expect(container).toBeLessThan(open);
   });
 
   it('leaves the sidebar alone when the caller asked to preserve focus', async () => {
@@ -99,5 +113,8 @@ describe('opening a Search result', () => {
     await settled();
 
     expect(focusedTheExplorerContainer()).toBe(true);
+    const { container, open } = jumpOrder();
+    expect(container).toBeGreaterThanOrEqual(0);
+    expect(container).toBeLessThan(open);
   });
 });

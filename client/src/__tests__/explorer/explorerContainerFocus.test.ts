@@ -18,11 +18,12 @@
  * GemStone Explorer is how you ask to be taken there, and it is the gesture
  * covered below; explorerOpenMethod.test.ts guards the plain click.
  *
- * The container focus is asserted loosely, by looking for any executed command
- * that opens the `gemstoneExplorer` container, because what matters is that
- * SOMETHING brings it up — not which of `workbench.view.extension.gemstoneExplorer`
- * or a pane's own `<viewId>.focus` does it. A future change is free to swap one
- * for the other without rewriting these.
+ * The container focus is asserted loosely, and the stub that models VS Code
+ * reacts to the same set of commands the matcher accepts, so a future change
+ * really is free to swap `workbench.view.extension.gemstoneExplorer` for a
+ * pane's own `<viewId>.focus` without rewriting these — see
+ * __tests__/helpers/explorerContainerFocus.ts, shared with the GemStone Search
+ * suite that makes the same claim.
  *
  * Covers https://github.com/GemTalk/Jasper/issues/629
  */
@@ -50,6 +51,11 @@ vi.mock('../../gciLog', () => ({
 }));
 
 import { ExplorerController } from '../../gemstoneExplorer';
+import {
+  focusedTheExplorerContainer as sawContainerFocus,
+  fakeViews,
+  flipVisibleOnContainerShow,
+} from '../helpers/explorerContainerFocus';
 import { Uri, commands, __resetConfig } from '../../__mocks__/vscode';
 import {
   getAllClassNames,
@@ -68,46 +74,17 @@ function executedCommands(): string[] {
   return executeCommand.mock.calls.map((c) => String(c[0]));
 }
 
-/**
- * Did anything bring the GemStone Explorer's activity-bar container up? Matches
- * either shape a fix could take: the container command VS Code generates for a
- * contributed `viewsContainers` entry, or a `.focus` on one of the six panes
- * inside it (all named `gemstoneExplorer*`).
- */
 function focusedTheExplorerContainer(): boolean {
-  return executedCommands().some(
-    (c) =>
-      c === 'workbench.view.extension.gemstoneExplorer' ||
-      c === 'workbench.view.extension.gemstoneExplorer.focus' ||
-      (/^gemstoneExplorer/.test(c) && c.endsWith('.focus')),
-  );
+  return sawContainerFocus(executeCommand);
 }
 
-/** A TreeView stub. `visible` is the flag `revealCascade` gates on. */
-function fakeView(visible = true) {
-  return { reveal: vi.fn(async () => {}), selection: [] as unknown[], description: '', visible };
-}
-
+/** Views on the controller, plus the stub that makes showing the container flip
+ *  them visible a tick later — the way VS Code really resolves them. `visible`
+ *  is where they START; pass false for a container that is not showing yet. */
 function withViews(ctl: ExplorerController, visible = true) {
-  const views = {
-    dict: fakeView(visible),
-    category: fakeView(visible),
-    klass: fakeView(visible),
-    hierarchy: fakeView(visible),
-    method: fakeView(visible),
-  };
+  const views = fakeViews(visible);
   ctl.setViews(views as never);
-  // Model what VS Code does when the container is shown: the views inside it
-  // become visible. Without this a stub starts hidden and stays hidden, and a
-  // cascade that the real editor would run looks skipped for a reason the real
-  // editor does not have — which is the whole point of the hidden-container
-  // test below.
-  executeCommand.mockImplementation((command: unknown) => {
-    if (command === 'workbench.view.extension.gemstoneExplorer') {
-      for (const v of Object.values(views)) v.visible = true;
-    }
-    return Promise.resolve(undefined);
-  });
+  flipVisibleOnContainerShow(executeCommand, views);
   return views;
 }
 
@@ -158,12 +135,31 @@ describe('Browse Class from the Inspector or the debugger', () => {
     // cascade reveal in the jump was skipped. Showing the container first is
     // what makes the reveal land, which is why the focus has to come BEFORE the
     // cascade rather than after it.
+    //
+    // The stub flips `visible` on a timer, not synchronously, so this also
+    // guards the wait: VS Code resolves the views after the container command
+    // has returned, and without waiting for them the reveal here is skipped and
+    // reapplyPaneHighlight catches the pane up only as a plain select — which
+    // does not scroll, leaving a Browse landing on a row that can be off-screen.
     const ctl = makeController();
     const views = withViews(ctl, false);
 
     await ctl.findClass('Account', SESSION_ID);
 
     expect(views.klass.reveal).toHaveBeenCalled();
+  });
+
+  it('reveals the method row too, for the debugger frame Browse', async () => {
+    // Browse from a debugger frame passes a method, so the cascade runs class
+    // THEN method. Both are cascade reveals and both were skipped while the
+    // container had not rendered.
+    const ctl = makeController();
+    const views = withViews(ctl, false);
+
+    await ctl.findClass('Account', SESSION_ID, undefined, { selector: 'balance', isMeta: false });
+
+    expect(views.klass.reveal).toHaveBeenCalled();
+    expect(views.method.reveal).toHaveBeenCalled();
   });
 });
 
@@ -235,33 +231,87 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     expect(executedCommands()).not.toContain('workbench.action.focusActiveEditorGroup');
   });
 
-  it('waits for the Methods pane before cascading, so the reveal is not skipped', async () => {
+  it('waits for the container to render before cascading, so the reveal is not skipped', async () => {
     // VS Code resolves the tree views inside a container AFTER the container
     // command has returned, so the panes still report visible:false for a tick or
     // two, and a cascade reveal into a view that is not visible is skipped. The
     // highlight is re-applied when the pane appears, but only as a plain select,
     // so without this wait the row the user asked to be taken to arrives without
-    // focus. Modelled here the way the editor really behaves; a stub that flips
-    // visible synchronously passes whether or not the wait exists.
+    // focus. The shared stub flips visible on a timer, the way the editor really
+    // behaves; one that flipped it synchronously would pass whether or not the
+    // wait exists.
     const ctl = controllerWithSunit();
     const views = withViews(ctl, false);
-    executeCommand.mockImplementation((command: unknown) => {
-      if (command === 'workbench.view.extension.gemstoneExplorer') {
-        setTimeout(() => {
-          for (const v of Object.values(views)) v.visible = true;
-        }, 40);
-      }
-      return Promise.resolve(undefined);
-    });
 
     await ctl.revealDocument(Uri.parse(TEST_URI));
 
     expect(views.method.reveal).toHaveBeenCalled();
   });
 
+  it('returns promptly with the Methods pane collapsed, and leaves it collapsed', async () => {
+    // The regression case for the collapsed-pane rule: a pane the user has closed
+    // never becomes visible, so the wait can only end on its deadline — and the
+    // gesture must not hang there. What is waited for is the CONTAINER rendering,
+    // which one visible pane is enough to prove, so a collapsed Methods pane costs
+    // the jump nothing and its reveal is skipped exactly as intended.
+    vi.useFakeTimers();
+    try {
+      const ctl = controllerWithSunit();
+      const views = fakeViews(false);
+      ctl.setViews(views as never);
+      // The container comes up and its OTHER panes resolve; the Methods pane stays
+      // collapsed, which is what the user asked for by collapsing it.
+      executeCommand.mockImplementation((command: unknown) => {
+        if (String(command) === 'workbench.view.extension.gemstoneExplorer') {
+          setTimeout(() => {
+            views.dict.visible = true;
+            views.category.visible = true;
+            views.klass.visible = true;
+            views.hierarchy.visible = true;
+          }, 40);
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const done = vi.fn();
+      void ctl.revealDocument(Uri.parse(TEST_URI)).then(done);
+      // Well inside the deadline: the jump ends when the container renders, not
+      // when the collapsed pane does (it never will).
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(done).toHaveBeenCalled();
+      expect(views.method.reveal).not.toHaveBeenCalled();
+      expect(views.method.visible).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a deadline when every pane is collapsed, rather than hanging', async () => {
+    // Nothing in the container ever reports visible, so there is no event to wait
+    // for and only the deadline ends it. Bounded is the whole requirement here:
+    // the reveal is skipped, and the gesture still returns.
+    vi.useFakeTimers();
+    try {
+      const ctl = controllerWithSunit();
+      const views = fakeViews(false);
+      ctl.setViews(views as never);
+      executeCommand.mockImplementation(() => Promise.resolve(undefined));
+
+      const done = vi.fn();
+      void ctl.revealDocument(Uri.parse(TEST_URI)).then(done);
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(done).toHaveBeenCalled();
+      expect(views.method.reveal).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('still hands focus back on an ordinary editor-driven sync', async () => {
-    // The flag is raised only for the duration of the explicit reveal. Typing in
-    // an editor must not end with the cursor stranded in the tree.
+    // keepTreeFocus is passed only by the explicit reveal. Typing in an editor
+    // must not end with the cursor stranded in the tree.
     const ctl = controllerWithSunit();
     withViews(ctl);
     ctl.markAttributedOpen(Uri.parse(TEST_URI));
