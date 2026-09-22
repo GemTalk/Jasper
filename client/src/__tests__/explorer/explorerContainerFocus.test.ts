@@ -161,6 +161,18 @@ describe('Browse Class from the Inspector or the debugger', () => {
     expect(views.klass.reveal).toHaveBeenCalled();
     expect(views.method.reveal).toHaveBeenCalled();
   });
+
+  it('leaves the keyboard in the editor it opened, not in the tree', async () => {
+    // The counterpart to Reveal in GemStone Explorer, which deliberately keeps the
+    // tree's focus. A Browse opens the source and is there to be read and edited, so
+    // the reveal takes focus only to force the scroll and hands it straight back.
+    const ctl = makeController();
+    withViews(ctl);
+
+    await ctl.findClass('Account', SESSION_ID, undefined, { selector: 'balance', isMeta: false });
+
+    expect(executedCommands()).toContain('workbench.action.focusActiveEditorGroup');
+  });
 });
 
 describe('Reveal in GemStone Explorer, from a test row', () => {
@@ -307,6 +319,33 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('hands focus back on an ordinary sync that overlaps an explicit reveal', async () => {
+    // Keeping the tree's focus used to be a flag on the controller, raised for the
+    // whole of the explicit reveal's sync. Anything else that reached the method
+    // reveal inside that window — an editor-change sync, which arrives whenever a
+    // tab is clicked — read the same flag and skipped its own hand-back, stranding
+    // the cursor in the tree. Carried as an option, only the call that asked for it
+    // gets it.
+    const ctl = controllerWithSunit();
+    const views = withViews(ctl);
+
+    let releaseTheReveal!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseTheReveal = resolve;
+    });
+    views.method.reveal.mockImplementationOnce(() => held);
+
+    const explicit = ctl.revealDocument(Uri.parse(TEST_URI));
+    await vi.waitFor(() => expect(views.method.reveal).toHaveBeenCalled());
+    ctl.markAttributedOpen(Uri.parse(TEST_URI));
+    await ctl.syncToEditor(Uri.parse(TEST_URI));
+
+    expect(executedCommands()).toContain('workbench.action.focusActiveEditorGroup');
+
+    releaseTheReveal();
+    await explicit;
   });
 
   it('still hands focus back on an ordinary editor-driven sync', async () => {
