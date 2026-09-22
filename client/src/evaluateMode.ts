@@ -13,8 +13,3 @@
  * halted process to hand over, so the key would have nothing to open.
  */
 export type EvalMode = 'display' | 'execute' | 'inspect';
-
-/** Whether `value` is one of the three modes — for narrowing a mode that arrived from a webview. */
-export function isEvalMode(value: unknown): value is EvalMode {
-  return value === 'display' || value === 'execute' || value === 'inspect';
-}

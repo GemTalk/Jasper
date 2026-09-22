@@ -330,6 +330,148 @@ describe('a keyword send is marked part by part', () => {
   });
 });
 
+describe('a method’s own signature is a definition, not a send', () => {
+  /**
+   * `patternLength` skips the method pattern before the scan begins, and until now nothing tested
+   * the case it exists for. A senders list routinely contains a method that also IMPLEMENTS the
+   * selector — anything that calls itself, or the implementor of a selector its own class sends —
+   * and marking its first line would say "called here" about the definition.
+   */
+  let mounted: MountedOmniView;
+  beforeEach(() => {
+    mounted = mountOmniView({ categories: CATEGORIES, scopeId: null, caseSensitive: false });
+  });
+
+  it('does not mark a keyword pattern that spells the searched selector', () => {
+    const src = expandedSource(
+      mounted,
+      'at:put:',
+      'at: key put: value\n\t^ store at: key put: value',
+    );
+
+    // Twice in the source, once in the body — the first line defines it.
+    expect(marks(src)).toEqual(['at:', 'put:']);
+  });
+
+  it('does not mark a unary pattern that spells the searched selector', () => {
+    const src = expandedSource(mounted, 'printString', 'printString\n\t^ self value printString');
+
+    expect(marks(src)).toEqual(['printString']);
+  });
+
+  it('does not mark a binary pattern that spells the searched selector', () => {
+    const src = expandedSource(mounted, ',', 'caller\n\t^ self a , self b');
+
+    expect(marks(src)).toEqual([',']);
+  });
+
+  it('marks nothing in an implementor that never sends it', () => {
+    const src = expandedSource(
+      mounted,
+      'at:put:',
+      'at: key put: value\n\t^ self subclassResponsibility',
+    );
+
+    expect(marks(src)).toEqual([]);
+  });
+});
+
+describe('the literals a scanner trips over', () => {
+  /**
+   * The lexer treats a comment, a string, a character literal, a symbol and a literal array as ONE
+   * token each, which is what keeps the selector inside them from being marked and — more
+   * importantly — keeps their contents from being read as code.
+   *
+   * These are the exact shapes that have broken scanners in this codebase before: a character
+   * literal whose VALUE is a delimiter (`$'` opens no string, `$[` no block, `$"` no comment) took
+   * out the Tonel parser and the debugger's step-point scan, and a doubled `""` inside a comment
+   * took out the formatter. The branches that handle them here had no test at all, so this is the
+   * only thing standing between that class of bug and a third appearance.
+   */
+  let mounted: MountedOmniView;
+  beforeEach(() => {
+    mounted = mountOmniView({ categories: CATEGORIES, scopeId: null, caseSensitive: false });
+  });
+
+  it('is not derailed by a character literal that is a quote', () => {
+    const src = expandedSource(
+      mounted,
+      'at:put:',
+      "caller\n\tsep := $'.\n\t^ dict at: #k put: sep",
+    );
+
+    expect(marks(src)).toEqual(['at:', 'put:']);
+  });
+
+  it('is not derailed by a character literal that is a bracket', () => {
+    const src = expandedSource(
+      mounted,
+      'at:put:',
+      'caller\n\topen := $[.\n\tclose := $].\n\t^ dict at: #k put: open',
+    );
+
+    expect(marks(src)).toEqual(['at:', 'put:']);
+  });
+
+  it('is not derailed by a character literal that is a comment quote', () => {
+    const src = expandedSource(mounted, 'at:put:', 'caller\n\tq := $".\n\t^ dict at: #k put: q');
+
+    expect(marks(src)).toEqual(['at:', 'put:']);
+  });
+
+  it('reads a doubled "" inside a comment as an escaped quote, not the end of it', () => {
+    // The comment runs on past the "", so the at:put: inside it is still inside a comment.
+    const src = expandedSource(
+      mounted,
+      'at:put:',
+      'caller\n\t"a comment with an embedded "" quote and dict at: #k put: 1 in it"\n\t^ 0',
+    );
+
+    expect(marks(src)).toEqual([]);
+  });
+
+  it('does not read a literal array’s contents as code', () => {
+    // A real kernel shape: Behavior>>changeStamp passes #(2 1 3 $/ 1 1 $: false ) — a literal array
+    // carrying character literals that are themselves delimiters.
+    const src = expandedSource(
+      mounted,
+      'asString',
+      'changeStamp\n\t^ self initials , (Date today asStringUsingFormat: #(2 1 3 $/ 1 1 $: false )), ' +
+        "' ' , (Time now asString copyFrom: 1 to: 5)",
+    );
+
+    // The one real send of `asString`; `asStringUsingFormat:` is a different selector.
+    expect(marks(src)).toEqual(['asString']);
+  });
+
+  it('does not mark a selector written as a symbol literal', () => {
+    const src = expandedSource(mounted, 'at:put:', 'caller\n\t^ self perform: #at:put: with: 1');
+
+    // `#at:put:` is a literal being passed, not a send of at:put:.
+    expect(marks(src)).toEqual([]);
+  });
+
+  it('does not mark a selector inside a quoted symbol', () => {
+    const src = expandedSource(mounted, 'printString', "caller\n\t^ self perform: #'printString'");
+
+    expect(marks(src)).toEqual([]);
+  });
+
+  it('is not derailed by a radix or scaled number', () => {
+    const src = expandedSource(mounted, 'at:put:', 'caller\n\t^ dict at: 16rFF put: 1.5s2');
+
+    expect(marks(src)).toEqual(['at:', 'put:']);
+  });
+
+  it('keeps every character of a source full of literals', () => {
+    const source = "caller\n\t\"c\"\n\tx := $'.\n\t^ #(1 $] 2) , 'txt' , #sym printString";
+    const src = expandedSource(mounted, 'printString', source);
+
+    expect(text(src)).toBe(source);
+    expect(marks(src)).toEqual(['printString']);
+  });
+});
+
 describe('a longer selector is not mistaken for a shorter one', () => {
   let mounted: MountedOmniView;
   beforeEach(() => {
