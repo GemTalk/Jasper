@@ -1169,6 +1169,7 @@
       col.evalHistoryAt -= 1;
     }
     setEvalText(col, history[col.evalHistoryAt]);
+    flashEvalHint(col, walkLabel(col));
   }
 
   /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
@@ -1178,10 +1179,32 @@
     if (col.evalHistoryAt >= history.length - 1) {
       col.evalHistoryAt = -1;
       setEvalText(col, col.evalDraft || '');
+      flashEvalHint(col, 'Back to what you were typing');
       return;
     }
     col.evalHistoryAt += 1;
     setEvalText(col, history[col.evalHistoryAt]);
+    flashEvalHint(col, walkLabel(col));
+  }
+
+  /**
+   * Where you are in the walk, and how to get out of it.
+   *
+   * Walking into the history replaces what you were typing, and nothing on screen said so or said
+   * how to get it back — so the draft looked lost and the walk looked like a one-way trip. Naming
+   * the way out at the moment you step is what makes it a detour rather than a commitment.
+   */
+  function walkLabel(col) {
+    var history = col.evalHistory || [];
+    return (
+      'Earlier ' +
+      (history.length - col.evalHistoryAt) +
+      ' of ' +
+      history.length +
+      ' \u00b7 ' +
+      ctrlLabel() +
+      '+\u2193 for your draft'
+    );
   }
 
   function armChord(col) {

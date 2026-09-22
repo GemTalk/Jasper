@@ -376,6 +376,47 @@ describe('stepping forward again with Ctrl+Down', () => {
     expect(pane.input.value).toBe('half typed');
   });
 
+  /**
+   * The walk replaces what you were typing, and nothing on screen said so or said how to get it
+   * back — so the draft looked lost and the walk looked like a one-way trip. "I don't see a way to
+   * return to my half-typed one" was the report; the mechanism was there and unannounced.
+   */
+  it.each(PANES)('%s names the way back to the draft while walking', (_name, open) => {
+    const pane = open();
+    pane.type('ran this');
+    pane.click('display');
+    pane.type('half typed');
+
+    pane.older();
+
+    expect(pane.status()).toMatch(/for your draft/);
+  });
+
+  it.each(PANES)('%s says where in the history you are', (_name, open) => {
+    const pane = open();
+    for (const expr of ['one', 'two', 'three']) {
+      pane.type(expr);
+      pane.click('display');
+    }
+
+    pane.older();
+
+    expect(pane.status()).toMatch(/Earlier 2 of 3/);
+  });
+
+  it.each(PANES)('%s says so when the draft comes back', (_name, open) => {
+    const pane = open();
+    pane.type('ran this');
+    pane.click('display');
+    pane.type('half typed');
+    pane.older();
+
+    pane.newer();
+
+    expect(pane.input.value).toBe('half typed');
+    expect(pane.status()).toMatch(/what you were typing/);
+  });
+
   it.each(PANES)('%s does nothing when no walk is in progress', (_name, open) => {
     const pane = open();
     pane.type('untouched');

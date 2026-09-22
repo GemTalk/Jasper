@@ -785,6 +785,7 @@
         historyAt -= 1;
       }
       setEvalText(history[historyAt]);
+      setEvalStatus(walkLabel());
     }
 
     /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
@@ -793,10 +794,27 @@
       if (historyAt >= history.length - 1) {
         historyAt = -1;
         setEvalText(draft || '');
+        setEvalStatus('Back to what you were typing');
         return;
       }
       historyAt += 1;
       setEvalText(history[historyAt]);
+      setEvalStatus(walkLabel());
+    }
+
+    /**
+     * Where you are in the walk, and how to get out of it.
+     *
+     * Walking into the history replaces what you were typing, and nothing on screen said so or said
+     * how to get it back — so the draft looked lost and the walk looked like a one-way trip. Naming
+     * the way out at the moment you step is what makes it a detour rather than a commitment.
+     */
+    function walkLabel() {
+      const mod =
+        ((typeof navigator !== 'undefined' && navigator.platform) || '').indexOf('Mac') === 0
+          ? 'Cmd'
+          : 'Ctrl';
+      return `Earlier ${history.length - historyAt} of ${history.length} \u00b7 ${mod}+\u2193 for your draft`;
     }
 
     /** A transient answer that is not a result, in the row the answers use. */
