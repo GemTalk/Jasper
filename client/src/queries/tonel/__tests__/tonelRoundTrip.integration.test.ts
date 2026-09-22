@@ -20,9 +20,17 @@
 //
 // The copy is filed in under a DIFFERENT NAME, never over the original. That is
 // not tidiness: file in REPLACES, so filing a class back onto itself would clear
-// its methods first. On a base-image class that would be destructive — and
-// measured on a rowan3 stone, 0 of 1127 Globals classes answer `canBeWritten`
-// anyway, so it could not succeed even if it were wise.
+// its methods first, and on a base-image class that is destructive.
+//
+// It is destructive in a way this suite could actually cause, which is the point.
+// `canBeWritten` is an AUTHORIZATION answer, not a property of the class: measured
+// on a 3.7.5 rowan3 stone, all 1127 classes in `Globals` answer true as SystemUser
+// and none of them do as DataCurator. This tier runs as DataCurator (see
+// useRowan3Stone.ts on why that is load-bearing), so today the write would be
+// refused — but a developer running the same code as SystemUser, which is the
+// ordinary way to work on base code, would succeed. The different name is what
+// makes the suite safe under either login, so do not relax it on the grounds that
+// the write "cannot" land.
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../../__mocks__/vscode.js'));
 

@@ -462,6 +462,9 @@ describe('applyTonelClass — every write lands in the chosen dictionary', () =>
 
     expect(queries.compileClassDefinition).not.toHaveBeenCalled();
     expect(outcome.errors[0].message).toMatch(/Globals/);
+    // Names the login, not the class: canBeWritten is an authorization answer, and
+    // every Globals class is writable as SystemUser and none as DataCurator.
+    expect(outcome.errors[0].message).toMatch(/SystemUser/);
   });
 });
 

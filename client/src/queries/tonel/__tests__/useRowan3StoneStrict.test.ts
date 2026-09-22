@@ -6,7 +6,7 @@
 // result in a `beforeAll`. The mock is seeded in a `beforeAll` registered BEFORE
 // the gate's, so it is in place when the gate reads it; the environment variable
 // is read at call time and so is set inside the test body.
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 
 vi.mock('../tonelCapability', () => ({ tonelCapability: vi.fn() }));
 
@@ -15,8 +15,14 @@ import { useRowan3Stone } from './useRowan3Stone';
 
 const executor = () => (() => '') as never;
 
-afterEach(() => {
-  delete process.env.JASPER_REQUIRE_ROWAN3;
+// Each test sets the variable it needs EXPLICITLY, both ways. The suite itself is
+// meant to be run under `JASPER_REQUIRE_ROWAN3=1` (that is how this feature gets
+// verified), so a test that only deletes the variable afterwards would assert the
+// default behaviour while the ambient environment says otherwise — and fail.
+const original = process.env.JASPER_REQUIRE_ROWAN3;
+afterAll(() => {
+  if (original === undefined) delete process.env.JASPER_REQUIRE_ROWAN3;
+  else process.env.JASPER_REQUIRE_ROWAN3 = original;
 });
 
 describe('useRowan3Stone — the machinery is absent', () => {
@@ -26,6 +32,7 @@ describe('useRowan3Stone — the machinery is absent', () => {
   const gate = useRowan3Stone(executor);
 
   it('skips rather than failing by default, so CI and base extents stay green', () => {
+    delete process.env.JASPER_REQUIRE_ROWAN3;
     const ctx = { skip: vi.fn() };
     expect(() => gate.skipUnlessAvailable(ctx)).not.toThrow();
     expect(ctx.skip).toHaveBeenCalled();

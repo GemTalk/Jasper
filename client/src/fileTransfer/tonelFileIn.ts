@@ -188,6 +188,10 @@ export function applyTonelClass(
   // Only ask of a class that already exists: `canBeWritten` answers false for a
   // class that is not there yet, which would refuse every new class.
   //
+  // It answers AUTHORIZATION, not a property of the class — on a 3.7.5 rowan3 stone
+  // every class in Globals is writable as SystemUser and none is as DataCurator —
+  // so the refusal names the login rather than blaming the class.
+  //
   // Both questions are asked of the CHOSEN dictionary, not of the bare name. A
   // read-only `Foo` in another dictionary is not the class being written, and
   // refusing because of it blocks filing a new `Foo` into a dictionary the user
@@ -198,7 +202,8 @@ export function applyTonelClass(
     !queries.canClassBeWritten(session, tonelClass.name, dictionary)
   ) {
     return fail(
-      `${tonelClass.name} cannot be written in ${dictionary} (read-only repository segment)`,
+      `${tonelClass.name} cannot be written in ${dictionary} by ` +
+        `this session — base classes need a SystemUser login`,
     );
   }
 
