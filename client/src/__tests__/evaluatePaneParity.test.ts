@@ -65,6 +65,8 @@ interface Pane {
   isErrorShown(): boolean;
   /** The pane's own root, for asking what controls it offers. */
   root(): HTMLElement;
+  /** Whatever the pane is currently saying about the last keystroke — its own status surface. */
+  status(): string;
 }
 
 // ── the debugger's evaluate pane ────────────────────────────────────────────
@@ -157,6 +159,7 @@ function debuggerPane(): Pane {
     clearBtn: () => el('evalClear'),
     isErrorShown: () => el('evalResult').classList.contains('error'),
     root: () => el('evalbar'),
+    status: () => el('evalResult').textContent ?? '',
   };
 }
 
@@ -249,6 +252,8 @@ function inspectorPane(): Pane {
     isErrorShown: () =>
       (col.el.contentPane.querySelector('.eval-out') as HTMLElement).classList.contains('error'),
     root: () => col.el.contentPane.querySelector('.eval') as HTMLElement,
+    status: () =>
+      (col.el.contentPane.querySelector('.eval-hint') as HTMLElement)?.textContent ?? '',
   };
 }
 
@@ -391,6 +396,18 @@ describe('going back to a previous expression', () => {
     pane.press('Enter', { shiftKey: true });
 
     expect(pane.input.value).toBe('amount * 2');
+  });
+
+  it.each(PANES)('%s says so when there is nothing to go back to', (_name, open) => {
+    // A pane just opened has run nothing, so there is no history. Doing nothing silently is
+    // indistinguishable from the key not being wired — which is how it was read.
+    const pane = open();
+    pane.type('1 + 1');
+
+    pane.press('Enter', { shiftKey: true });
+
+    expect(pane.status()).toContain('No earlier expression');
+    expect(pane.input.value).toBe('1 + 1'); // and it does not eat what you typed
   });
 
   it.each(PANES)(

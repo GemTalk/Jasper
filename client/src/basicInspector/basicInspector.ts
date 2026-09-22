@@ -1028,6 +1028,9 @@ export class BasicInspector {
     .eval-var-copy:hover { opacity: 1; }
     .eval-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
     .eval-hint.armed { color: var(--vscode-textLink-foreground); }
+    /* A transient answer that is not a result -- "there is nothing to recall". Tinted so it reads as
+       a reply to the keystroke rather than as the chord hint having changed wording. */
+    .eval-hint.flash { color: var(--vscode-foreground); font-style: italic; }
     .eval-out {
       flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; word-break: break-word;
       font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);

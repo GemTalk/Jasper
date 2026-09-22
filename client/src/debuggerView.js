@@ -744,8 +744,17 @@
 
     /** Step back through the run expressions, stopping at the oldest rather than emptying the box. */
     function recallPrevious() {
-      if (history.length === 0) return;
       if (!evalInput) return;
+      if (history.length === 0) {
+        // Nothing has been RUN in this pane yet. Silence reads as a dead key; the result row is
+        // this pane's only status surface, and clearEval wipes it like any other answer.
+        if (evalResult) {
+          evalResult.textContent = 'No earlier expression yet';
+          evalResult.title = '';
+          evalResult.classList.remove('error');
+        }
+        return;
+      }
       if (historyAt < 0) {
         // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
         // entry would put back the text already on screen and read as a dead key — the first press

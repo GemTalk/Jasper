@@ -1055,9 +1055,15 @@
    */
   function recallPrevious(col) {
     var history = col.evalHistory || [];
-    if (history.length === 0) return;
     var input = col.el.contentPane.querySelector('.eval-input');
     if (!input) return;
+    if (history.length === 0) {
+      // Nothing has been RUN in this pane yet, so there is nothing to go back to. Silence here is
+      // indistinguishable from the key not being wired at all -- which is exactly how it was read
+      // when the history was empty because the panel had just been opened. Say which it is.
+      flashEvalHint(col, 'No earlier expression yet');
+      return;
+    }
     if (col.evalHistoryAt == null || col.evalHistoryAt < 0) {
       // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
       // entry would put back the text already on screen and read as a dead key — the first press
@@ -1086,6 +1092,25 @@
     if (!col.chordArmed) return;
     col.chordArmed = false;
     setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
+  }
+
+  /**
+   * Put a transient message where the chord hint lives, then put the hint back. Used for the
+   * answers that are not results -- "there is nothing to recall" -- which have nowhere else to go:
+   * the output area belongs to what the stone returned, and a toast is far too loud for a keystroke.
+   */
+  function flashEvalHint(col, text) {
+    var hint = col.el.contentPane.querySelector('.eval-hint');
+    if (!hint) return;
+    if (col.hintTimer) clearTimeout(col.hintTimer);
+    hint.textContent = text;
+    hint.classList.add('flash');
+    col.hintTimer = setTimeout(function () {
+      col.hintTimer = null;
+      hint.classList.remove('flash');
+      // Re-derive rather than remember: the chord may have been armed while this was showing.
+      setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
+    }, 1600);
   }
 
   function setChordHint(col, html) {
