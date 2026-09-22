@@ -1056,12 +1056,19 @@
   function recallPrevious(col) {
     var history = col.evalHistory || [];
     if (history.length === 0) return;
-    col.evalHistoryAt =
-      col.evalHistoryAt == null || col.evalHistoryAt < 0
-        ? history.length - 1
-        : Math.max(0, col.evalHistoryAt - 1);
     var input = col.el.contentPane.querySelector('.eval-input');
     if (!input) return;
+    if (col.evalHistoryAt == null || col.evalHistoryAt < 0) {
+      // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
+      // entry would put back the text already on screen and read as a dead key — the first press
+      // has to move. When the box holds something else (cleared, or half-typed), the newest entry
+      // is the right first step.
+      var start = history.length - 1;
+      if (input.value === history[start]) start -= 1;
+      col.evalHistoryAt = Math.max(0, start);
+    } else {
+      col.evalHistoryAt = Math.max(0, col.evalHistoryAt - 1);
+    }
     col.evalText = history[col.evalHistoryAt];
     input.value = col.evalText;
     showClearWhenTyped(col);

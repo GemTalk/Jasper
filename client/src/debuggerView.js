@@ -745,8 +745,18 @@
     /** Step back through the run expressions, stopping at the oldest rather than emptying the box. */
     function recallPrevious() {
       if (history.length === 0) return;
-      historyAt = historyAt < 0 ? history.length - 1 : Math.max(0, historyAt - 1);
       if (!evalInput) return;
+      if (historyAt < 0) {
+        // Starting a walk. Running an expression leaves it IN the box, so stepping to the newest
+        // entry would put back the text already on screen and read as a dead key — the first press
+        // has to move. When the box holds something else (cleared, or half-typed), the newest entry
+        // is the right first step.
+        var start = history.length - 1;
+        if (evalInput.value === history[start]) start -= 1;
+        historyAt = Math.max(0, start);
+      } else {
+        historyAt = Math.max(0, historyAt - 1);
+      }
       evalInput.value = history[historyAt];
       showClearWhenTyped();
       if (evalInput.setSelectionRange) {

@@ -345,8 +345,44 @@ describe("the editor's own Ctrl+K chord", () => {
 });
 
 describe('going back to a previous expression', () => {
-  // Shift+Enter, in a pane where bare Enter already means something else in at least one panel.
-  it.each(PANES)('%s recalls the expression it just ran', (_name, open) => {
+  /**
+   * Shift+Enter, driven the way it is actually used: running an expression LEAVES it in the box, so
+   * these must not clear the box first. Clearing is what let a first press that did nothing ship —
+   * it stepped to the newest entry, which was the text already on screen, and read as a dead key.
+   * Tests that cleared the box exercised the mechanism and missed the gesture.
+   */
+  it.each(PANES)(
+    '%s moves on the FIRST press, with the box left as the run left it',
+    (_name, open) => {
+      const pane = open();
+      pane.type('first');
+      pane.click('display');
+      pane.type('second');
+      pane.click('display');
+      expect(pane.input.value).toBe('second'); // the run leaves it there
+
+      pane.press('Enter', { shiftKey: true });
+
+      expect(pane.input.value).toBe('first');
+    },
+  );
+
+  it.each(PANES)('%s walks back one per press', (_name, open) => {
+    const pane = open();
+    for (const expr of ['one', 'two', 'three']) {
+      pane.type(expr);
+      pane.click('display');
+    }
+
+    pane.press('Enter', { shiftKey: true });
+    expect(pane.input.value).toBe('two');
+
+    pane.press('Enter', { shiftKey: true });
+    expect(pane.input.value).toBe('one');
+  });
+
+  it.each(PANES)('%s recalls the newest when the box was cleared', (_name, open) => {
+    // Nothing on screen to step past, so the newest entry IS the move.
     const pane = open();
     pane.type('amount * 2');
     pane.click('display');
@@ -355,21 +391,6 @@ describe('going back to a previous expression', () => {
     pane.press('Enter', { shiftKey: true });
 
     expect(pane.input.value).toBe('amount * 2');
-  });
-
-  it.each(PANES)('%s walks back through two expressions', (_name, open) => {
-    const pane = open();
-    pane.type('first');
-    pane.click('display');
-    pane.type('second');
-    pane.click('display');
-    pane.type('');
-
-    pane.press('Enter', { shiftKey: true });
-    expect(pane.input.value).toBe('second');
-
-    pane.press('Enter', { shiftKey: true });
-    expect(pane.input.value).toBe('first');
   });
 
   it.each(PANES)(
