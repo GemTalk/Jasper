@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
+import { buildMethodUri } from './gemstoneFileSystemProvider';
+import { dedupeMethodResults } from './queries/methodSearch';
+import { sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
 
 export interface SelectorResolver {
@@ -30,20 +33,19 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     if (selector) {
-      const env = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
-      const results = queries.implementorsOf(session, selector, env);
-      return results.map((r) => {
-        const side = r.isMeta ? 'class' : 'instance';
-        const uri = vscode.Uri.parse(
-          `gemstone://${session.id}` +
-            `/${encodeURIComponent(r.dictName)}` +
-            `/${encodeURIComponent(r.className)}` +
-            `/${side}` +
-            `/${encodeURIComponent(r.category)}` +
-            `/${encodeURIComponent(r.selector)}`,
-        );
-        return new vscode.Location(uri, new vscode.Position(0, 0));
-      });
+      // Captured as a const: TypeScript drops the null-narrowing inside the sweep callback.
+      const sel = selector;
+      // `gemstone.maxEnvironment` is a ceiling — see sweepEnvironments, which carries the rule.
+      const all = sweepEnvironments((env) => queries.implementorsOf(session, sel, env));
+      // Spread the row in: it carries the environment it was found in, and without that an
+      // implementor above environment 0 opens the environment-0 method of the same name.
+      return dedupeMethodResults(all).map(
+        (r) =>
+          new vscode.Location(
+            buildMethodUri({ kind: 'method', sessionId: session.id, ...r }),
+            new vscode.Position(0, 0),
+          ),
+      );
     }
 
     // 2. Try class name (uppercase identifier)
