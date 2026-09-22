@@ -9,6 +9,12 @@
  * The pane is a lower tab rather than an always-present bar, offering the same three actions by the
  * same names as the Inspector's evaluate tab (see evaluateMode.ts). Its wiring lives in
  * debuggerView.js; the styles live with the rest of the panel's stylesheet.
+ *
+ * The keys it answers to are advertised without costing a pixel of layout — this pane is squeezed
+ * into a panel that is always short of height. The placeholder occupies space the empty box was
+ * spending on nothing and is gone the moment you type; the rest rides on the buttons' tooltips.
+ * The placeholder previously said "Enter", which stopped being true when the box became multi-line
+ * and Shift+Enter took over running it.
  */
 export function evaluatePaneHtml(): string {
   return `<div class="evalbar" id="evalbar">
@@ -18,11 +24,11 @@ export function evaluatePaneHtml(): string {
     </div>
     <span class="eval-input-wrap">
       <textarea id="evalInput" rows="1" autocomplete="off" spellcheck="false"
-             placeholder="Evaluate in the selected frame — Enter, or Ctrl+K D · E · I"></textarea>
+             placeholder="Shift+Enter to run · Ctrl+↑↓ for earlier expressions"></textarea>
       <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
     </span>
     <div class="eval-toolbar" id="evalToolbar">
-      <button class="btn" data-eval="display" title="Ctrl+K D">Display It</button>
+      <button class="btn" data-eval="display" title="Shift+Enter, Ctrl+K D, or Ctrl+Enter">Display It</button>
       <button class="btn" data-eval="execute" title="Ctrl+K E">Execute It</button>
       <button class="btn" data-eval="inspect" title="Ctrl+K I">Inspect It</button>
     </div>

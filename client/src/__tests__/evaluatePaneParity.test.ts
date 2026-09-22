@@ -602,6 +602,38 @@ describe('typing an expression that needs more than one line', () => {
   });
 });
 
+describe('the pane says which keys it answers to, without spending layout on it', () => {
+  /**
+   * Both panes are squeezed — the debugger's into a panel always short of height, the Inspector's
+   * into a column beside the miller strip — so the guidance has to be free. The placeholder occupies
+   * space the empty box was spending on nothing and vanishes as you type; the rest rides on tooltips.
+   * No row, no legend bar, nothing added to the layout.
+   */
+  it.each(PANES)('%s names the run key and the history keys in its placeholder', (_name, open) => {
+    const pane = open();
+
+    const hint = pane.input.getAttribute('placeholder') ?? '';
+
+    expect(hint).toMatch(/Shift\+Enter/);
+    expect(hint).toMatch(/\u2191\u2193|Up|Down/);
+  });
+
+  it.each(PANES)('%s stops advertising the key that no longer runs anything', (_name, open) => {
+    // The debugger's placeholder said "Enter" until Shift+Enter took the job over; a hint that
+    // names a dead key is worse than none, because it is the one thing the user will try first.
+    const pane = open();
+
+    expect(pane.input.getAttribute('placeholder') ?? '').not.toMatch(/(^|[^+])\bEnter\b/);
+  });
+
+  it.each(PANES)('%s puts the run key on the Display It button too', (_name, open) => {
+    const pane = open();
+    const btn = pane.root().querySelector('[data-eval="display"]') as HTMLElement;
+
+    expect(btn.getAttribute('title') ?? '').toMatch(/Shift\+Enter/);
+  });
+});
+
 describe('the pane is there on demand, not unconditionally', () => {
   it.each(PANES)('%s offers Evaluate as a lower tab', (_name, open) => {
     open();

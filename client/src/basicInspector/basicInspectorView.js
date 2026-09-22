@@ -837,6 +837,39 @@
    */
   var EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
 
+  /** The plain modifier this platform writes for the arrow walk — Cmd on a Mac, Ctrl elsewhere.
+   *  (The pane accepts either, but the hint should name the one you actually have.) */
+  function ctrlLabel() {
+    var platform = (typeof navigator !== 'undefined' && navigator.platform) || '';
+    return platform.indexOf('Mac') === 0 ? 'Cmd' : 'Ctrl';
+  }
+
+  /** What the empty box says. A placeholder is the one piece of guidance that costs NO screen
+   *  space — it lives where the expression will go, and is gone the moment you type. */
+  function placeholderHint() {
+    return 'Shift+Enter to run \u00b7 ' + ctrlLabel() + '+\u2191\u2193 for earlier expressions';
+  }
+
+  /** The full key legend, for the hint's tooltip: everything the pane answers to, in one place,
+   *  again at no cost to the layout. */
+  function keyLegend() {
+    var c = ctrlLabel();
+    return (
+      'Shift+Enter or ' +
+      c +
+      '+Enter \u2014 Display It' +
+      '\n' +
+      chordLabel() +
+      ' then D / E / I \u2014 Display It, Execute It, Inspect It' +
+      '\n' +
+      c +
+      '+\u2191 / ' +
+      c +
+      '+\u2193 \u2014 earlier / later expression' +
+      '\nEscape \u2014 clear the box'
+    );
+  }
+
   /** The chord prefix as this platform writes it, for buttons and the hint. */
   function chordLabel() {
     var platform = (typeof navigator !== 'undefined' && navigator.platform) || '';
@@ -945,22 +978,30 @@
   function renderEval(col) {
     var pane = col.el.contentPane;
     var mod = chordLabel();
+    var ctrl = ctrlLabel();
     // A chord left half-typed when the tab was switched away is not still
     // waiting for its second key when the pane comes back.
     col.chordArmed = false;
     pane.innerHTML =
       '<div class="eval">' +
       '<div class="toolbar">' +
-      '<button class="btn" data-eval="display" title="' +
+      // Every key this pane answers to is advertised WITHOUT costing a pixel of layout: the
+      // chord legend already had a line, the rest ride on tooltips and on the placeholder, which
+      // occupies space the empty box was spending on nothing.
+      '<button class="btn" data-eval="display" title="Shift+Enter, ' +
       mod +
-      ' D">Display It</button>' +
+      ' D, or ' +
+      ctrl +
+      '+Enter">Display It</button>' +
       '<button class="btn" data-eval="execute" title="' +
       mod +
       ' E">Execute It</button>' +
       '<button class="btn" data-eval="inspect" title="' +
       mod +
       ' I">Inspect It</button>' +
-      '<span class="eval-hint">' +
+      '<span class="eval-hint" title="' +
+      keyLegend() +
+      '">' +
       mod +
       ' D &#183; E &#183; I</span>' +
       '</div>' +
@@ -970,7 +1011,9 @@
       // only once there is something to clear — the affordance the debugger's
       // eval bar and the list filters already use.
       '<div class="eval-input-wrap">' +
-      '<textarea class="eval-input" spellcheck="false"></textarea>' +
+      '<textarea class="eval-input" spellcheck="false" placeholder="' +
+      placeholderHint() +
+      '"></textarea>' +
       '<button class="clear-btn" data-eval-clear="1" tabindex="-1" title="Clear">&#10005;</button>' +
       '</div>' +
       '<div class="eval-out' +
