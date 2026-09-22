@@ -4283,9 +4283,12 @@ export class ExplorerController {
    * nothing about the blast radius. So this refreshes them all, which is bounded by how many panels
    * are open (usually one) and is the only answer that cannot miss a panel.
    *
-   * A panel whose method the refactoring RENAMED now names a selector the class no longer has; the
-   * re-fetch answers an empty history for it rather than failing, which is the truthful reading —
-   * that method is gone. Following a rename to its new name is a separate thing and not attempted.
+   * A panel whose method the refactoring RENAMED now names a selector the class no longer has, and
+   * keeps showing every version recorded under it — the store is keyed by selector, and a rename
+   * moves the method, not its history. That is the useful answer rather than a loose end: those
+   * versions stay restorable, so a rename you regret can be undone from the panel that was already
+   * open on it. None of them is flagged current, because nothing is installed under that selector
+   * any more. Following a rename to its NEW name is a separate thing and not attempted.
    */
   refreshAllMethodHistoryPanels(sessionId: number): void {
     for (const entry of this.methodHistoryPanels) {

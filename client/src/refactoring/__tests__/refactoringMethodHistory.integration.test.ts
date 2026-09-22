@@ -158,6 +158,26 @@ describe('method history across a refactoring (integration)', () => {
     expect(result.failed).toEqual([]);
   };
 
+  /** Rename `caller` to `callerRenamed` — a rename of the method whose history is being watched,
+   *  rather than of something it sends. */
+  const renameCaller = async (token: string): Promise<void> => {
+    const start = parseStartPreview(
+      await startRenameMethodPreview(
+        asyncExec,
+        CLS,
+        'caller',
+        ['callerRenamed'],
+        [],
+        { kind: 'wholeSystem' },
+        token,
+        PREVIEW_PAGE_BYTES,
+      ),
+    );
+    expect(start.total).toBeGreaterThanOrEqual(1);
+    const result = parseApplyResult(await applyRenameMethod(asyncExec, token, [], 'test undo'));
+    expect(result.failed).toEqual([]);
+  };
+
   /** Rename the instance variable `count` to `total`, previewing then applying. */
   const renameIvar = async (token: string): Promise<void> => {
     const exec2 = (code: string): string => exec(code);
@@ -361,6 +381,34 @@ describe('method history across a refactoring (integration)', () => {
       const current = historyOf('caller').find((v) => v.isCurrent);
       expect(current?.notInHistory).not.toBe(true);
       expect(current?.source).toContain('moveY: 2 x: 1');
+    });
+
+    /**
+     * A rename does not take the old selector's history with it, and that is the useful answer
+     * rather than a loose end: the versions recorded under the name you renamed AWAY from stay
+     * readable and restorable, so a rename you regret can be undone by restoring one of them. None
+     * of them is flagged current, because nothing is installed under that selector any more — the
+     * panel must not claim one of them is what the stone is running.
+     */
+    it('leaves the old selector’s history readable, so a regretted rename can be restored', async (ctx) => {
+      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      installMethodHistory(session());
+      defineFixture();
+      // A second hand edit, so the old selector has a history worth recovering.
+      q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 3 y: 4');
+
+      const before = recorded('caller').length;
+      await renameCaller(`rmhit-oldsel-${CLS}`);
+
+      const old = recorded('caller');
+      expect(installedSource('callerRenamed')).toContain('movePointX: 3 y: 4');
+      // Every version it had is still there ...
+      expect(old.length).toBe(before);
+      expect(old.map((v) => v.source)).toContainEqual(
+        expect.stringContaining('movePointX: 3 y: 4'),
+      );
+      // ... and none of them claims to be what is installed, because nothing is.
+      expect(historyOf('caller').some((v) => v.isCurrent)).toBe(false);
     });
 
     it('records the renamed implementor under its new selector', async (ctx) => {
