@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
 
 export interface SelectorResolver {
@@ -32,13 +33,10 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     if (selector) {
-      // `gemstone.maxEnvironment` is a CEILING, not a selection: sweep and fold. Same rule and
-      // same failure as GemStoneHoverProvider — see the comment there.
-      const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
-      const all: queries.MethodSearchResult[] = [];
-      for (let env = 0; env <= maxEnv; env++) {
-        all.push(...queries.implementorsOf(session, selector, env));
-      }
+      // Captured as a const: TypeScript drops the null-narrowing inside the sweep callback.
+      const sel = selector;
+      // `gemstone.maxEnvironment` is a ceiling — see sweepEnvironments, which carries the rule.
+      const all = sweepEnvironments((env) => queries.implementorsOf(session, sel, env));
       // Spread the row in: it carries the environment it was found in, and without that an
       // implementor above environment 0 opens the environment-0 method of the same name.
       return dedupeMethodResults(all).map(

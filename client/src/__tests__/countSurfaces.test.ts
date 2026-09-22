@@ -33,7 +33,8 @@ import { implementorsOf, sendersOf } from '../browserQueries';
  * The rule, stated once here rather than left implicit in two suites:
  *
  *   1. A `gemstone://` method editor is covered by a surface that shows counts.
- *   2. Every surface that shows counts sweeps 0..`gemstone.maxEnvironment`.
+ *   2. Every surface that shows counts sweeps 0..`gemstone.maxEnvironment`
+ *      (`sweepEnvironments`, which carries the rule and its rationale).
  *
  * If the counts move again, the new home goes in COUNT_SURFACES below. That
  * list is the checklist a move has to pass, not documentation of one.

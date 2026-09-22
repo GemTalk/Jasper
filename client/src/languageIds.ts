@@ -129,13 +129,8 @@ export function gemstoneDocumentLanguage(uri: vscode.Uri): string {
  * registered for — editors holding GemStone source that a live session can be
  * asked about.
  *
- * Exported so the senders/implementors counts have something to assert against.
- * Those counts must be served for a `gemstone://` method editor, and whichever
- * surface serves them must sweep environments 0..`gemstone.maxEnvironment`
- * rather than query the ceiling alone. They have moved once already — from the
- * CodeLens, which swept, into the hover, which did not — and the move left the
- * method editor with counts that were always empty for anyone who had raised the
- * setting. See countSurfaces.test.ts, which pins both halves of that rule.
+ * Exported for countSurfaces.test.ts, which pins where the senders/implementors
+ * counts must be served.
  */
 export const GCI_PROVIDER_SELECTORS: vscode.DocumentFilter[] = [
   { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },

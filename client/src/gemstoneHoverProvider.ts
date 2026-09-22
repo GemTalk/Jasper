@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { SelectorResolver } from './gemstoneDefinitionProvider';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { maxEnvironment, sweepEnvironments } from './methodEnvironments';
 import * as queries from './browserQueries';
 
 export class GemStoneHoverProvider implements vscode.HoverProvider {
@@ -56,43 +57,41 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     }
 
     if (selector) {
-      // `gemstone.maxEnvironment` is a CEILING, not a selection — sweep 0..max and fold, the
-      // same shape as the two commands these links fire and as the senders/implementors
-      // CodeLens. Passing it straight through as the environment id asked about that one
-      // environment instead, and almost nothing is compiled above 0, so with the setting raised
-      // both counts came back 0 for EVERY selector — and a hover with nothing to report returns
-      // null, which reads as the senders/implementors line having been removed.
-      const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
-      // A thrown query (busy session, browser/RB plugin absent) must not reject
-      // the whole hover — that silently shows nothing. Degrade to no implementors,
-      // mirroring the sendersOf guard below.
-      let results: queries.MethodSearchResult[];
-      try {
-        const found: queries.MethodSearchResult[] = [];
-        for (let env = 0; env <= maxEnv; env++) {
-          found.push(...queries.implementorsOf(session, selector, env));
-        }
-        results = dedupeMethodResults(found);
-      } catch {
-        results = [];
-      }
+      // Captured as a const: TypeScript drops the null-narrowing inside the sweep callbacks.
+      const sel = selector;
+      // `gemstone.maxEnvironment` is a ceiling — see sweepEnvironments, which carries the rule.
+      // A thrown query (busy session, browser/RB plugin absent) must not reject the whole hover;
+      // that silently shows nothing. Guarding INSIDE the callback rather than around the sweep
+      // keeps what the other environments found, the way the senders/implementors CodeLens does.
+      const results = dedupeMethodResults(
+        sweepEnvironments((env) => {
+          try {
+            return queries.implementorsOf(session, sel, env);
+          } catch {
+            return [];
+          }
+        }),
+      );
 
       // Senders count (cached — sendersOf is costly and a hover fires easily).
-      const sKey = `${selector}|${session.id}|${maxEnv}`;
+      const sKey = `${sel}|${session.id}|${maxEnvironment()}`;
       let sendersCount = this.sendersCountCache.get(sKey);
       if (sendersCount === undefined) {
-        try {
-          // Summed, not folded: a sweep stamps each row with the environment it was found
-          // in, so no row from one environment can duplicate a row from another, and this
-          // has to agree with the senders/implementors CodeLens, which sums the same way.
-          sendersCount = 0;
-          for (let env = 0; env <= maxEnv; env++) {
-            sendersCount += queries.sendersOf(session, selector, env).length;
+        // Summed, not folded: a sweep stamps each row with the environment it was found
+        // in, so no row from one environment can duplicate a row from another, and this
+        // has to agree with the senders/implementors CodeLens, which sums the same way.
+        let anyEnvironmentFailed = false;
+        sendersCount = sweepEnvironments((env) => {
+          try {
+            return queries.sendersOf(session, sel, env);
+          } catch {
+            anyEnvironmentFailed = true;
+            return [];
           }
-        } catch {
-          sendersCount = 0;
-        }
-        this.sendersCountCache.set(sKey, sendersCount);
+        }).length;
+        // Nothing clears this map short of a new session, so caching a count an environment
+        // failed to contribute to would leave the hover saying `0 senders` for the rest of it.
+        if (!anyEnvironmentFailed) this.sendersCountCache.set(sKey, sendersCount);
       }
 
       // Nothing to say if the selector is neither sent nor implemented anywhere.
@@ -107,7 +106,10 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       const show = results.slice(0, 10);
       for (const r of show) {
         const side = r.isMeta ? ' class' : '';
-        md.appendMarkdown(`- \`${r.className}${side}\` (${r.category})\n`);
+        // The same selector on the same class in two environments is two different methods and
+        // both are kept, so name the environment or the list reads as a repeated row.
+        const env = r.environmentId > 0 ? ` · env ${r.environmentId}` : '';
+        md.appendMarkdown(`- \`${r.className}${side}\` (${r.category})${env}\n`);
       }
       if (results.length > 10) {
         md.appendMarkdown(`\n...and ${results.length - 10} more`);

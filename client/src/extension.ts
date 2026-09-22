@@ -1022,7 +1022,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
-  const providerSelectors = GCI_PROVIDER_SELECTORS;
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
@@ -1035,9 +1034,9 @@ export function activate(context: vscode.ExtensionContext) {
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
   context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
-    vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
-    vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
+    vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
+    vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
+    vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
