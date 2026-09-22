@@ -35,6 +35,10 @@ import type { GemStoneLoginItem } from '../loginTreeProvider';
 import * as queries from '../browserQueries';
 import { InFlightGuard } from '../inFlightGuard';
 import { DEFAULT_LOGIN } from '../loginTypes';
+import { _resetGciLogForTests, getGciLog } from '../gciLog';
+
+/** Let the toast's `.then` run: it is a microtask, and announceSessionAction returns void. */
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Replace the mocked `tabGroups.all`, keeping the cast in one place. */
 function setTabs(groups: { tabs: vscode.Tab[] }[]): void {
@@ -401,6 +405,92 @@ describe('announceSessionAction', () => {
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     },
   );
+
+  // GemStone REFUSES a commit that conflicts; it does not fail it. The two read
+  // very differently to someone deciding whether their stone is broken or their
+  // colleague got there first.
+  it('says refused, not failed, when the stone turned the commit down', () => {
+    extension.announceSessionAction('Commit', DESCRIPTION, {
+      success: false,
+      verb: 'refused',
+      reason: 'Write-Write on 2 objects. Abort for a fresh view, then try again.',
+    });
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${DESCRIPTION}: Commit refused — Write-Write on 2 objects. ` +
+        `Abort for a fresh view, then try again.`,
+    );
+  });
+
+  it('offers no button when there is nothing more to show', () => {
+    extension.announceSessionAction('Commit', DESCRIPTION, {
+      success: false,
+      reason: 'Session not found',
+    });
+
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0]).toHaveLength(1);
+  });
+
+  describe('with a conflict set to show', () => {
+    const DETAILS = 'commitResult: failure\n\nWrite-Write — 1 object\n  12200193  Account';
+    let channel: { appendLine: ReturnType<typeof vi.fn>; show: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      _resetGciLogForTests();
+      channel = getGciLog() as unknown as typeof channel;
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+    });
+
+    const announce = () =>
+      extension.announceSessionAction('Commit', DESCRIPTION, {
+        success: false,
+        verb: 'refused',
+        reason: 'Write-Write on 1 object. Abort for a fresh view, then try again.',
+        details: DETAILS,
+      });
+
+    it('puts the button on the toast', () => {
+      announce();
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Commit refused'),
+        extension.SHOW_CONFLICTS,
+      );
+    });
+
+    it('writes the conflict set to the GemStone GCI channel and reveals it when pressed', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(
+        extension.SHOW_CONFLICTS as unknown as vscode.MessageItem,
+      );
+
+      announce();
+      await flushMicrotasks();
+
+      const written = channel.appendLine.mock.calls.map((c) => c[0]).join('\n');
+      expect(written).toContain('12200193  Account');
+      expect(written).toContain(DESCRIPTION);
+      expect(channel.show).toHaveBeenCalled();
+    });
+
+    it('writes nothing when the toast is dismissed', async () => {
+      announce();
+      await flushMicrotasks();
+
+      expect(channel.show).not.toHaveBeenCalled();
+    });
+
+    // The toast's result is a Thenable in VS Code and plain undefined from a stub
+    // that was never given one; neither may throw past the caller.
+    it('survives a toast that answers nothing at all', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockReturnValue(
+        undefined as unknown as Thenable<vscode.MessageItem | undefined>,
+      );
+
+      expect(() => announce()).not.toThrow();
+      await flushMicrotasks();
+      expect(channel.show).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('confirmLogoutWithUncommittedChanges', () => {
@@ -464,6 +554,30 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('Session 3 — DataCurator on gs64stone (localhost): Commit failed'),
     );
+  });
+
+  // A commit the stone REFUSED leaves no error behind, so this used to read
+  // "Commit failed — error 0" at exactly the moment the user is deciding whether
+  // to log out over work that is still sitting there uncommitted.
+  it('says the commit was refused, not that it failed with no error', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Commit & Logout' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn(() => ({ success: false, err: { number: 0, message: '' } }));
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
+
+    expect(decision).toBe('cancel');
+    const message = vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0];
+    expect(message).toContain('Commit refused');
+    expect(message).toContain('another session committed a change this transaction also made');
+    expect(message).toContain('Not logging out.');
+    expect(message).not.toContain('error 0');
   });
 
   it('proceeds without committing when the user chooses to log out anyway', async () => {

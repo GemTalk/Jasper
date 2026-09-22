@@ -656,7 +656,7 @@ describe('tools', () => {
 
   describe('commit', () => {
     it('commits the transaction', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Transaction committed');
+      vi.mocked(session.executeFetchString).mockReturnValue('committed');
       const tool = server.getTool('commit')!;
       const result = await tool.handler({});
 
@@ -665,14 +665,18 @@ describe('tools', () => {
       expect(result.content[0].text).toBe('Transaction committed');
     });
 
-    it('reports commit failure', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
-        'Commit failed — possible conflict. Use abort to reset, then retry.',
-      );
+    // A refusal names the objects that collided, so the caller can look at them
+    // rather than guess: the commit answers 'refused', then the conflict set is
+    // read in a second round trip.
+    it('names the conflict when the stone refuses the commit', async () => {
+      vi.mocked(session.executeFetchString)
+        .mockReturnValueOnce('refused')
+        .mockReturnValueOnce('R\tfailure\nK\tWrite-Write\t1\nO\t12200193\tAccount\n');
       const tool = server.getTool('commit')!;
       const result = await tool.handler({});
 
-      expect(result.content[0].text).toContain('Commit failed');
+      expect(result.content[0].text).toContain('Commit refused — Write-Write on 1 object');
+      expect(result.content[0].text).toContain('12200193  Account');
     });
   });
 

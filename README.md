@@ -180,6 +180,8 @@ Changing the mode **aborts the current transaction** — GemStone does that as p
 
 Outside a transaction you can still *change* things; GemStone refuses only the commit. So Jasper still warns you at logout about uncommitted work in a session that is between transactions — it just does not offer to commit it, since that could only fail. When the stone does refuse a save with "not inside of a transaction", Jasper names **Begin Transaction** as the way on. More detail: [Transaction modes](docs/reference/transaction-modes.md).
 
+**When a commit does not land, Jasper says which of the two things happened.** A commit the stone *refused* — another session committed over an object you changed — is not a malfunction, and retrying it cannot work, so it is reported as `Commit refused — Write-Write on 2 objects. Abort for a fresh view, then try again.` **Show Conflicts** on that message lists every object that collided, by OOP and class, in the **GemStone GCI** output channel. A commit that *failed* with an error still reports the stone's own words. Claude's `commit` tool answers the same way.
+
 #### Single vs. multiple sessions
 
 By default Jasper runs in **single-session mode**: each login may have at most one session at a time. This keeps a simpler mental model — there is one session, so the active session, the GemStone Explorer, and any open workspace can never point at different sessions.

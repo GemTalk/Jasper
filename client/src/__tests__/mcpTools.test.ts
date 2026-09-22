@@ -528,12 +528,24 @@ describe('registerMcpTools', () => {
     });
 
     it('commit runs System commitTransaction', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('Transaction committed');
+      vi.mocked(queries.executeFetchString).mockReturnValue('committed');
       const result = await server.getTool('commit')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('commitTransaction');
       expect(result.content[0].text).toBe('Transaction committed');
+    });
+
+    // Same shared query the session-row Commit uses, so a refusal reads the same
+    // on both surfaces rather than 'possible conflict'.
+    it('commit names what conflicted when the stone refuses', async () => {
+      vi.mocked(queries.executeFetchString)
+        .mockReturnValueOnce('refused')
+        .mockReturnValueOnce('R\tfailure\nK\tWrite-Write\t1\nO\t12200193\tAccount\n');
+      const result = await server.getTool('commit')!.handler({});
+
+      expect(result.content[0].text).toContain('Commit refused — Write-Write on 1 object');
+      expect(result.content[0].text).toContain('12200193  Account');
     });
 
     it('compile_method forwards args (escaping happens inside the shared query)', async () => {

@@ -14,6 +14,7 @@ import { withMcpErrorMap } from './mcpZodErrorMap';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { VIEW_REFRESH_CODE } from './queries/transactionMode';
+import { commitTransaction } from './queries/commitTransaction';
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
 // (MCP tools run on the FetchBytes path, which cannot host live forwarding —
@@ -226,12 +227,9 @@ export function registerMcpTools(
     {},
     async () =>
       wrapMoving<Record<string, unknown>>((session) => {
-        return executeString(
-          session,
-          `System commitTransaction
-  ifTrue: ['Transaction committed']
-  ifFalse: ['Commit failed - possible conflict. Use abort to reset, then retry.']`,
-        );
+        // Through the shared query rather than inline, so a refusal here names the
+        // conflicting objects exactly as the session-row Commit does.
+        return commitTransaction((code) => executeString(session, code));
       })({}),
   );
 

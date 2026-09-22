@@ -1,4 +1,11 @@
 import { GciError } from './gciLibrary';
+
+/**
+ * The fields an error's wording is read from. Narrower than {@link GciError} so a
+ * caller holding only what a GCI call reported — the logout flow is handed a
+ * `commit` callback, not a session — can still word its failure the same way.
+ */
+export type ReportedGciError = Pick<GciError, 'number' | 'message'>;
 import {
   ERR_GEM_AUTO_ABORT,
   ERR_GEM_AUTO_LOST_OT,
@@ -28,7 +35,7 @@ import {
  *
  * Returns the stone's message unchanged for everything else.
  */
-export function explainGciError(gciError: GciError): string {
+export function explainGciError(gciError: ReportedGciError): string {
   if (gciError.number === ERR_GEM_AUTO_ABORT || gciError.number === ERR_GEM_AUTO_LOST_OT) {
     return (
       `Your view of the repository was refreshed: the stone asked for its commit record back ` +
@@ -70,7 +77,7 @@ export class GciLibraryError extends Error {
    * and its message as {@link explainGciError} words it — which is the stone's own
    * text for all but the handful of errors that read as something they are not.
    */
-  static fromGciError(gciError: GciError) {
+  static fromGciError(gciError: ReportedGciError) {
     return new GciLibraryError(explainGciError(gciError), gciError.number);
   }
 

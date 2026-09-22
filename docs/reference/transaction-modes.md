@@ -108,6 +108,55 @@ config this suite does not control. That end-to-end test is deliberately not in
 the default suite; what is covered is that the option arms, that the session is a
 remote client, and that 3007/3008 are classified as a refreshed view.
 
+## A commit the stone refuses
+
+A commit can fail two ways, and GemStone reports them differently. GemBuilder for
+C's own `GciCommit` example draws the line:
+
+```c
+if ( ! GciCommit()) {
+  if (GciErr(&errInfo)) { /* an error */ } else { /* a concurrency conflict */ }
+}
+```
+
+No error number means the commit was **refused** — another session committed over
+an object this transaction touched. `GciTsCommit` is the same call ("implemented
+in client library as message send", `gcits.hf`), so `isCommitConflict` in
+`client/src/commitFailure.ts` reads it the same way: `err.number` of 0, or an
+out-struct the GCI never filled in, is a refusal.
+
+That distinction is the whole reason the wording differs. A refusal is not a
+malfunction, and repeating it cannot work — "You must abort the transaction in
+order to get a new snapshot view of the repository and, along with it, an empty
+read set and an empty write set" (Programming Guide §9.2) — so every refusal
+carries that advice.
+
+`System transactionConflicts` says what collided: `#commitResult` plus one
+Association per kind of conflict, each value an Array of the objects
+(Table 9.1 — `Write-Write`, `Write-Dependency`, `Write-ReadLock`, `Rc-Write-Write`
+and the rest). `client/src/queries/transactionConflicts.ts` reads it. Three
+constraints shape that query:
+
+- **Read it before anything else touches the transaction.** "Conflict sets are
+  cleared at the beginning of a commit or abort and thus can be examined until the
+  next commit, continue, or abort."
+- **Send the conflicting objects nothing but `asOop` and `class name`.**
+  `printString` would run application code inside the doit, on the objects two
+  sessions are fighting over.
+- **Drop the reference before answering.** "If you save a reference to the
+  conflict set, be sure to clear this reference to avoid making the conflict set
+  persistent."
+
+Only the first `CONFLICT_OBJECT_LIMIT` objects per kind come back; a conflict on
+an indexed collection can name thousands, and the stone's own count is reported
+either way.
+
+A genuine refusal cannot be reproduced in the integration suite: it needs a second
+session to really commit, and the harness arms GemStone's commit guard on every
+session it opens. What the live suite does cover is that the doit compiles and
+parses on each stone in the matrix, and that a *guarded* commit — which leaves
+error 2249 — is classified as an error rather than a conflict.
+
 ## Refreshing a view without losing anything
 
 GemStone's GCI pins a session's read view until it aborts or commits, so a commit
@@ -139,6 +188,11 @@ the next transaction. Under `transactionless` there is nothing to end.
 - Switching modes **aborts** — GemStone does that as part of switching and there is
   no way to ask it not to — so the confirmation says so, names how much is at
   stake, and on confirm runs the same refresh cascade an abort runs.
+- **A refused Commit names what collided** — `Commit refused — Write-Write on 2
+  objects. Abort for a fresh view, then try again.` — with **Show Conflicts** on
+  the toast, which writes every conflicting object's OOP and class to the
+  **GemStone GCI** output channel. The MCP `commit` tool answers with the same
+  wording and the same list, through the same shared query.
 - **Claude's tools count too.** The in-window MCP `commit`, `abort` and
   `execute_code` tools move the same session the rows are drawn from, so they tell
   `SessionManager` to re-read the state afterwards. Without that, a commit from

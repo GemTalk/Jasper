@@ -162,7 +162,8 @@ import { SmalltalkNotebookController } from './smalltalkNotebookController';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
-import { getGciLog, logError } from './gciLog';
+import { getGciLog, logError, logWarning } from './gciLog';
+import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
@@ -324,9 +325,12 @@ export async function confirmLogoutWithUncommittedChanges(
     try {
       const { success, err } = commit(sessionId);
       if (!success) {
+        // Same refused/failed split the session Commit draws, minus the conflict
+        // set: this flow is handed a `commit` callback rather than a session, so
+        // there is nothing here to read `System transactionConflicts` with.
+        const { verb, reason } = commitFailureMessage(err, undefined);
         vscode.window.showErrorMessage(
-          `Session ${sessionId} — ${sessionLabel}: Commit failed — ` +
-            `${err.message || `error ${err.number}`}. Not logging out.`,
+          `Session ${sessionId} — ${sessionLabel}: Commit ${verb} — ${reason} Not logging out.`,
         );
         return 'cancel';
       }
@@ -342,6 +346,9 @@ export async function confirmLogoutWithUncommittedChanges(
 
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
 }
+
+/** The button on a refused-commit toast; also what the choice is compared against. */
+export const SHOW_CONFLICTS = 'Show Conflicts';
 
 /**
  * The one wording for "your exported .gs edits are about to go", shared by the
@@ -448,13 +455,28 @@ export function sessionActionConfirmation(options: {
 export function announceSessionAction(
   action: 'Commit' | 'Abort',
   sessionDescription: string,
-  result: { success: true } | { success: false; reason: string },
+  result:
+    | { success: true }
+    | { success: false; reason: string; verb?: 'refused' | 'failed'; details?: string },
 ): void {
   if (result.success) {
     vscode.window.showInformationMessage(`${sessionDescription}: ${action} succeeded.`);
     return;
   }
-  vscode.window.showErrorMessage(`${sessionDescription}: ${action} failed — ${result.reason}`);
+  const message = `${sessionDescription}: ${action} ${result.verb ?? 'failed'} — ${result.reason}`;
+  if (!result.details) {
+    vscode.window.showErrorMessage(message);
+    return;
+  }
+  const details = result.details;
+  // `Promise.resolve` rather than `.then` on the return value: a toast that has
+  // no one to answer it resolves to undefined, and so does a stub in a test that
+  // never set one.
+  void Promise.resolve(vscode.window.showErrorMessage(message, SHOW_CONFLICTS)).then((choice) => {
+    if (choice !== SHOW_CONFLICTS) return;
+    logWarning(`${sessionDescription}: ${action} ${result.verb ?? 'failed'}.\n${details}`);
+    getGciLog().show(true);
+  });
 }
 
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
@@ -1689,9 +1711,16 @@ export function activate(context: vscode.ExtensionContext) {
         clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
+        // Only a refusal has a conflict set, so an errored commit costs no extra
+        // round trip. Read before anything else touches the transaction: GemStone
+        // clears the set at the start of the next commit, abort or continue.
+        const conflicts = isCommitConflict(err) ? queries.transactionConflicts(session) : undefined;
+        const failure = commitFailureMessage(err, conflicts);
         announceSessionAction('Commit', sessionDescription(session), {
           success: false,
-          reason: explainGciError(err) || `error ${err.number}`,
+          verb: failure.verb,
+          reason: failure.reason,
+          details: failure.details,
         });
       }
     } catch (e: unknown) {
