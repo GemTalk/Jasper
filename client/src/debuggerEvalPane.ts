@@ -12,9 +12,14 @@
  *
  * The keys it answers to are advertised without costing a pixel of layout — this pane is squeezed
  * into a panel that is always short of height. The placeholder occupies space the empty box was
- * spending on nothing and is gone the moment you type; the rest rides on the buttons' tooltips.
- * The placeholder previously said "Enter", which stopped being true when the box became multi-line
- * and Shift+Enter took over running it.
+ * spending on nothing and is gone the moment you type; the rest rides on tooltips, here and on the
+ * buttons. The placeholder previously said "Enter", which stopped being true when the box became
+ * multi-line and Shift+Enter took over running it.
+ *
+ * It names ONE key rather than the full legend, because this box is a single line in a narrow
+ * column: a placeholder wider than the field made the textarea scroll sideways, and the scrollbar
+ * ate most of a 1.9rem box — so a pane nobody had touched yet looked broken. The full legend is on
+ * this element's tooltip, which costs nothing and cannot overflow.
  */
 export function evaluatePaneHtml(): string {
   return `<div class="evalbar" id="evalbar">
@@ -24,7 +29,8 @@ export function evaluatePaneHtml(): string {
     </div>
     <span class="eval-input-wrap">
       <textarea id="evalInput" rows="1" autocomplete="off" spellcheck="false"
-             placeholder="Shift+Enter to run · Ctrl+↑↓ for earlier expressions"></textarea>
+             placeholder="Shift+Enter to run"
+             title="Shift+Enter or Ctrl+Enter — Display It&#10;Ctrl+K then D / E / I — Display It, Execute It, Inspect It&#10;Ctrl+↑ / Ctrl+↓ — earlier / later expression&#10;Escape — clear the box"></textarea>
       <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
     </span>
     <div class="eval-toolbar" id="evalToolbar">

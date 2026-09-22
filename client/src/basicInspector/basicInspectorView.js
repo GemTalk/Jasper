@@ -844,10 +844,17 @@
     return platform.indexOf('Mac') === 0 ? 'Cmd' : 'Ctrl';
   }
 
-  /** What the empty box says. A placeholder is the one piece of guidance that costs NO screen
-   *  space — it lives where the expression will go, and is gone the moment you type. */
+  /**
+   * What the empty box says. A placeholder is the one piece of guidance that costs NO screen space —
+   * it lives where the expression will go, and is gone the moment you type.
+   *
+   * ONE key, not the full legend. A placeholder wider than the field makes the box scroll sideways,
+   * and in the debugger's one-line version the scrollbar ate most of the box — a pane nobody had
+   * touched yet looked broken. Both panes say the same short thing and carry the rest on the box's
+   * own tooltip, which costs nothing and cannot overflow.
+   */
   function placeholderHint() {
-    return 'Shift+Enter to run \u00b7 ' + ctrlLabel() + '+\u2191\u2193 for earlier expressions';
+    return 'Shift+Enter to run';
   }
 
   /** The full key legend, for the hint's tooltip: everything the pane answers to, in one place,
@@ -1013,6 +1020,8 @@
       '<div class="eval-input-wrap">' +
       '<textarea class="eval-input" spellcheck="false" placeholder="' +
       placeholderHint() +
+      '" title="' +
+      keyLegend() +
       '"></textarea>' +
       '<button class="clear-btn" data-eval-clear="1" tabindex="-1" title="Clear">&#10005;</button>' +
       '</div>' +

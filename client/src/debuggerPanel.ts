@@ -4968,7 +4968,12 @@ export class DebuggerPanel {
     .evalbar.has-text .clear-btn { visibility: visible; }
     .evalbar textarea {
       flex: 1 1 auto; min-width: 0; box-sizing: border-box;
-      resize: vertical; min-height: 1.9rem; height: 1.9rem; white-space: pre; overflow-x: auto;
+      resize: vertical; min-height: 1.9rem; height: 1.9rem;
+      /* WRAP rather than scroll sideways. This box is one line tall, and a horizontal scrollbar is
+         about two thirds of that -- it swallowed the text it was meant to let you reach, and did it
+         for the PLACEHOLDER alone, so an untouched pane looked broken. Sideways scrolling in a
+         1.9rem box was never usable anyway; long expressions wrap, and the box drags taller. */
+      white-space: pre-wrap; overflow-x: hidden; overflow-y: auto;
       user-select: text; -webkit-user-select: text;
       font-family: var(--vscode-editor-font-family, monospace);
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);

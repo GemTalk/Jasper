@@ -690,13 +690,29 @@ describe('the pane says which keys it answers to, without spending layout on it'
    * space the empty box was spending on nothing and vanishes as you type; the rest rides on tooltips.
    * No row, no legend bar, nothing added to the layout.
    */
-  it.each(PANES)('%s names the run key and the history keys in its placeholder', (_name, open) => {
+  it.each(PANES)('%s names the run key in its placeholder', (_name, open) => {
     const pane = open();
 
-    const hint = pane.input.getAttribute('placeholder') ?? '';
+    expect(pane.input.getAttribute('placeholder') ?? '').toMatch(/Shift\+Enter/);
+  });
 
-    expect(hint).toMatch(/Shift\+Enter/);
-    expect(hint).toMatch(/\u2191\u2193|Up|Down/);
+  it.each(PANES)('%s keeps the placeholder short enough not to overflow the box', (_name, open) => {
+    // A placeholder wider than the field made the debugger's one-line box scroll SIDEWAYS, and the
+    // scrollbar ate most of a 1.9rem box — so a pane nobody had touched looked broken. The rest of
+    // the legend belongs on the tooltip, which cannot overflow.
+    const pane = open();
+
+    expect((pane.input.getAttribute('placeholder') ?? '').length).toBeLessThanOrEqual(24);
+  });
+
+  it.each(PANES)('%s carries the full key legend on the box’s tooltip', (_name, open) => {
+    const pane = open();
+    const legend = pane.input.getAttribute('title') ?? '';
+
+    expect(legend).toMatch(/Shift\+Enter/);
+    expect(legend).toMatch(/\u2191/);
+    expect(legend).toMatch(/\u2193/);
+    expect(legend).toMatch(/Escape/);
   });
 
   it.each(PANES)('%s stops advertising the key that no longer runs anything', (_name, open) => {
