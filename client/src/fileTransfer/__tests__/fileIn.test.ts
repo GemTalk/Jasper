@@ -556,11 +556,19 @@ describe('choosing a reader by file type', () => {
     resolveSession: () => Promise.resolve(SESSION),
   } as unknown as SessionManager;
 
+  // Through `at()`, like every other fixture path in this file. A raw '/tmp/x.gs'
+  // string is keyed by `path.resolve` as `D:\tmp\x.gs` on Windows while the Uri the
+  // code under test receives answers `d:\tmp\x.gs` — so the mock filesystem never
+  // matched, readFileSync threw ENOENT, and the dispatch these cases exist to check
+  // never ran. Green on Linux and macOS, all three red on Windows.
+  const THING_GS = at('/tmp/thing.gs');
+  const WIDGET_ST = at('/tmp/Widget.class.st');
+
   it('sends a .st file to the Tonel reader, not the chunk one', async () => {
     // The whole point of one File In command: the user picks a file, and the
     // extension decides which reader runs. Handing a Tonel file to the chunk reader
     // fails in a way that reads as a broken file rather than the wrong command.
-    withFiles({ '/tmp/Widget.class.st': "Class {\n\t#name : 'Widget'\n}\n" });
+    withFiles({ [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n" });
     vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
       executed: 0,
       compiled: 3,
@@ -574,16 +582,16 @@ describe('choosing a reader by file type', () => {
       cancelled: false,
     });
 
-    await fileInUris(manager, [vscode.Uri.file('/tmp/Widget.class.st')], undefined, SESSION);
+    await fileInUris(manager, [vscode.Uri.file(WIDGET_ST)], undefined, SESSION);
 
-    expect(tonel.fileInTonelUri).toHaveBeenCalledWith(SESSION, '/tmp/Widget.class.st');
+    expect(tonel.fileInTonelUri).toHaveBeenCalledWith(SESSION, WIDGET_ST);
     expect(queries.fileInChunk).not.toHaveBeenCalled();
   });
 
   it('sends a .gs file to the chunk reader', async () => {
-    withFiles({ '/tmp/thing.gs': 'run\ntrue\n%\n' });
+    withFiles({ [THING_GS]: 'run\ntrue\n%\n' });
 
-    await fileInUris(manager, [vscode.Uri.file('/tmp/thing.gs')], undefined, SESSION);
+    await fileInUris(manager, [vscode.Uri.file(THING_GS)], undefined, SESSION);
 
     expect(tonel.fileInTonelUri).not.toHaveBeenCalled();
     expect(queries.fileInChunk).toHaveBeenCalled();
@@ -593,8 +601,8 @@ describe('choosing a reader by file type', () => {
     // One user action, so one report — which is why the Tonel path answers the same
     // outcome shape the chunk path does.
     withFiles({
-      '/tmp/thing.gs': 'run\ntrue\n%\n',
-      '/tmp/Widget.class.st': "Class {\n\t#name : 'Widget'\n}\n",
+      [THING_GS]: 'run\ntrue\n%\n',
+      [WIDGET_ST]: "Class {\n\t#name : 'Widget'\n}\n",
     });
     vi.mocked(tonel.fileInTonelUri).mockResolvedValue({
       executed: 0,
@@ -611,7 +619,7 @@ describe('choosing a reader by file type', () => {
 
     await fileInUris(
       manager,
-      [vscode.Uri.file('/tmp/thing.gs'), vscode.Uri.file('/tmp/Widget.class.st')],
+      [vscode.Uri.file(THING_GS), vscode.Uri.file(WIDGET_ST)],
       undefined,
       SESSION,
     );
