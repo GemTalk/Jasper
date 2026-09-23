@@ -106,10 +106,6 @@ export default defineConfig({
             shuffle: true,
             seed: shuffleSeed,
           },
-          // Removes gci<pid>trace.log written by the GciTsGemTrace test on a
-          // clean run; keeps them when a test failed (for debugging).
-          globalSetup: ['./src/__tests__/gci/gciTraceGlobalSetup.ts'],
-          setupFiles: ['./src/__tests__/gci/gciTraceCleanup.ts'],
         },
       },
     ],
