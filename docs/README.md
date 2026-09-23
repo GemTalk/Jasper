@@ -9,6 +9,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Raising the VS Code / Node version floor](how-to/raising-the-version-floor.md) — the coordinated set of files that must move together.
 - [Publishing a release](how-to/publishing-a-release.md) — the maintainer-only release PR and the `Release` workflow that publishes it, plus the two registry tokens and why a success message is not yet a live release.
 - [Consulting the official GemStone manuals](how-to/consulting-the-gemstone-manuals.md) — the optional `npm run docs:fetch` download, and how the agent uses it.
+- [Filing a class out and in as Tonel](how-to/tonel-file-out-and-in.md) — the `.st` one-class-per-file format, what it needs (3.7.5+ on a rowan3 extent), and how a Jasper file differs from a Rowan one.
 - [Diagnosing Windows GCI crashes in CI](how-to/diagnosing-windows-gci-crashes.md) — hit a generic `[vitest-pool]: Worker forks emitted error` on Windows health-check? Find the real native stack trace in the `gci-crash-dumps-*` artifact.
 
 ## Explanation
