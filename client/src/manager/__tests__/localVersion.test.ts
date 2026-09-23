@@ -410,6 +410,53 @@ describe('VersionManager.fetchAvailableVersions', () => {
   );
 
   onSupportedPosixIt(
+    'includes a product directory whose version carries a pre-release tag',
+    async () => {
+      const storage = new SysadminStorage();
+      const manager = new VersionManager(storage);
+      const suffix = storage.getPlatformSuffix();
+
+      // The same private-build case as above, with the version spelled the way a
+      // pre-release build spells itself. The row was always produced; it was the
+      // minimum-version filter 28 lines later that threw on the tag, taking the
+      // whole Databases & Versions panel with it — nothing needed to be running.
+      const versionDir = path.join(tmpDir, `GemStone64Bit4.0.0-a3${suffix}`);
+      fs.mkdirSync(versionDir);
+      writeVersionTxt(
+        versionDir,
+        'GemStone/S 64 Bit\n4.0.0-a3 Build: 2026-09-01T10:00:00-07:00 abcdef\nprivate 4.0 build',
+      );
+
+      vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+      const versions = await manager.fetchAvailableVersions();
+
+      expect(versions).toHaveLength(1);
+      expect(versions[0].version).toBe('4.0.0-a3');
+      expect(versions[0].extracted).toBe(true);
+    },
+  );
+
+  onSupportedPosixIt('sorts a pre-release below its release and above the last one', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+
+    // The sort is the other half of the filter: both call the comparison, so a
+    // list holding a tagged build has to come back ordered rather than throwing.
+    for (const version of ['3.7.6', '4.0.0-a3', '4.0.0']) {
+      fs.mkdirSync(path.join(tmpDir, `GemStone64Bit${version}${suffix}`));
+    }
+
+    vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+    const versions = await manager.fetchAvailableVersions();
+
+    // Newest first, and the alpha sits under the release it leads to.
+    expect(versions.map((v) => v.version)).toEqual(['4.0.0', '4.0.0-a3', '3.7.6']);
+  });
+
+  onSupportedPosixIt(
     'lists a catalog version present as a real directory only once, marked extracted',
     async () => {
       const storage = new SysadminStorage();

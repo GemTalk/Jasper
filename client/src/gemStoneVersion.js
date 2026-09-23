@@ -6,32 +6,42 @@
 // types for the compiled extension.
 
 /**
- * Throws if versionString is not a 3- or 4-part numeric version (e.g. "3.6.2" or "3.6.2.1").
- * @param {string} versionString
+ * A release, and optionally the pre-release tag that leads to it: three or four
+ * numeric parts, then a tag attached with either separator — GemStone builds
+ * have spelled it both ways ("4.0.0.a2", "4.0.0-a3"). A tag starts with a letter,
+ * which is what keeps it distinct from a fourth numeric part: "3.7.4.3" is a
+ * patch release, not a pre-release of 3.7.4.
  */
-function assertIsValidVersionString(versionString) {
-  if (!/^\d+\.\d+\.\d+(\.\d+)?$/.test(versionString))
-    throw new Error(`Invalid version: ${versionString}`);
-}
+const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:[.-]([A-Za-z][A-Za-z0-9]*))?$/;
 
 /**
- * Parses a version string into a 4-element numeric array, padding with 0 if needed.
+ * Parses a version string into its four numeric parts (padded with 0) and its
+ * pre-release tag, if it has one. Throws if the string is neither.
  * @param {string} versionString
- * @returns {number[]}
+ * @returns {{ segments: number[], tag: string | undefined }}
  */
 function parseGemStoneVersion(versionString) {
-  assertIsValidVersionString(versionString);
+  const match = VERSION_PATTERN.exec(versionString);
+  if (!match) throw new Error(`Invalid version: ${versionString}`);
 
-  const segments = versionString.split('.').map(Number);
-
-  // normalize to 4 parts so compareVersions can always iterate exactly 4
-  if (segments.length === 3) segments.push(0);
-
-  return segments;
+  return {
+    // normalize to 4 parts so compareGemStoneVersions can always iterate exactly 4
+    segments: [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 0)],
+    tag: match[5],
+  };
 }
 
 /**
  * Compares two GemStone version strings.
+ *
+ * A pre-release sorts *before* the release it leads to — "4.0.0-a3" < "4.0.0" —
+ * which is semver's rule and the one that reads correctly while 4.0.0 proper does
+ * not exist yet. The opposite reading (a tag as a later build of a release, the
+ * way 3.7.4.3 follows 3.7.4) is defensible too, so it is written down here rather
+ * than left to be inferred: the Versions list sort is the only thing that depends
+ * on it. Two pre-releases of one release compare by tag, digits within the tag
+ * numerically, so a9 precedes a10.
+ *
  * @param {string} versionString
  * @param {string} anotherVersionString
  * @returns {number} Negative if versionString < anotherVersionString,
@@ -43,11 +53,14 @@ function compareGemStoneVersions(versionString, anotherVersionString) {
   const vb = parseGemStoneVersion(anotherVersionString);
 
   for (let i = 0; i < 4; i++) {
-    const diff = va[i] - vb[i];
+    const diff = va.segments[i] - vb.segments[i];
     if (diff !== 0) return diff;
   }
 
-  return 0;
+  if (va.tag === vb.tag) return 0;
+  if (va.tag === undefined) return 1;
+  if (vb.tag === undefined) return -1;
+  return va.tag.localeCompare(vb.tag, 'en', { numeric: true, sensitivity: 'base' });
 }
 
 module.exports = { compareGemStoneVersions };
