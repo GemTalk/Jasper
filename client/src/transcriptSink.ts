@@ -276,14 +276,26 @@ export function decodeTranscriptForwarderSend(
  * a live stone: clear immediately and the next write succeeds; let one other
  * write queue on the semaphore first and clearing is no longer enough, because
  * the signal is handed to that now-dead waiter. Hence "immediately".
+ *
+ * `abandoned` is the runner's hard-break signal (see `pollNbToCompletion`).
+ * Once it fires the caller already has NbCancelledError, so nobody else will
+ * clear what the break stopped: a writer caught between sends is cleared
+ * rather than resumed, and the process a hard break stops is cleared too —
+ * stopped inside a write, it holds the semaphore just the same (measured on
+ * 3.6.2 and 3.7.5).
  */
 export async function settleNbResult(
   session: ActiveSession,
   onTranscript: (text: string) => void,
+  abandoned?: AbortSignal,
 ): Promise<{ result: bigint; err: GciError }> {
   let { result, err } = session.gci.GciTsNbResult(session.handle);
   while (isForwarderSendError(err)) {
     const suspended = toBigInt(err.context);
+    if (abandoned?.aborted) {
+      clearSuspendedWriter(session, suspended);
+      return { result, err };
+    }
     try {
       const text = decodeTranscriptForwarderSend(session, err);
       if (text !== null && text.length > 0) onTranscript(text);
@@ -298,6 +310,9 @@ export async function settleNbResult(
       clearSuspendedWriter(session, suspended);
       throw e;
     }
+  }
+  if (abandoned?.aborted && err.number !== 0) {
+    clearSuspendedWriter(session, toBigInt(err.context));
   }
   return { result, err };
 }

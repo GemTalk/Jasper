@@ -3,6 +3,7 @@ import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
 import { logInfo } from './gciLog';
+import { OOP_NIL } from './gciConstants';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -99,8 +100,10 @@ const DRAIN_ATTEMPTS = 40;
 const DRAIN_INTERVAL_MS = 50;
 
 /**
- * Sessions whose abandoned call is still being collected. The next call on that
- * session waits for it: draining takes as long as the gem takes to notice the
+ * Sessions still busy with a call we gave up on: its result is still being
+ * collected ({@link drainAbandonedCall}), or its `onReady` is still resuming it
+ * on a worker thread ({@link awaitAbandonedRead}). The next call on that
+ * session waits for it: either takes as long as the gem takes to notice the
  * break, and a run started in the meantime would be refused outright — which,
  * from the user's side, is pressing stop and then having the next run do nothing.
  *
@@ -116,9 +119,14 @@ const draining = new Map<number, Promise<void>>();
  *
  * A hard break stops the gem but does not, by itself, end the GCI call: until
  * something reads its result the session reports a call in progress and refuses
- * the next one. Nothing here cares what the result was — only that it has been
- * taken. Gives up after a bounded number of attempts rather than polling a
+ * the next one. The result itself is thrown away, but the process it names is
+ * cleared: one stopped inside a Transcript write holds the session's Transcript
+ * semaphore, and every later write fails until it is cleared (measured on 3.6.2
+ * and 3.7.5). Gives up after a bounded number of attempts rather than polling a
  * session that is never going to answer.
+ *
+ * Only for a call whose result has not been read yet. Once `onReady` has read
+ * it, see {@link awaitAbandonedRead}.
  */
 function drainAbandonedCall(session: ActiveSession): Promise<void> {
   const existing = draining.get(session.id);
@@ -129,7 +137,8 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
       try {
         const { result } = pollNbResultReady(session);
         if (result === 1) {
-          session.gci.GciTsNbResult(session.handle);
+          const { err } = session.gci.GciTsNbResult(session.handle);
+          clearStoppedProcess(session, err?.context);
           resolve();
           return;
         }
@@ -153,6 +162,68 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
 }
 
 /**
+ * How long the next call on a session waits for an abandoned `onReady` to
+ * finish. A hard break brings a worker-thread GciTsContinueWith back within
+ * milliseconds; this is only the bound for a session that never answers.
+ */
+const ABANDONED_READ_WAIT_MS = DRAIN_ATTEMPTS * DRAIN_INTERVAL_MS;
+
+/**
+ * Hold the session for an `onReady` whose run was hard-broken, until that
+ * `onReady` finishes.
+ *
+ * There is nothing left to drain: `onReady` has already read the non-blocking
+ * result. But it may be resuming the run on a koffi worker thread (the
+ * Transcript settle loop does), and while it is, any poll of the session from
+ * the main thread kills the process — GciTsNbPoll on 3.7.5, GciTsNbResult on
+ * 3.6.2, both measured. So nothing here touches the session; `onReady`'s own
+ * promise is the only signal that it is free, and clearing whatever the break
+ * stopped is left to `onReady`, which is told of the break through its signal.
+ *
+ * Bounded, so a worker that never returns cannot hold the session forever.
+ * Past the bound a new call is refused cleanly by GemStone itself ("call in
+ * progress by another C thread"), never crashed.
+ */
+function awaitAbandonedRead(session: ActiveSession, read: Promise<unknown>): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done: Promise<void> = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      logInfo(
+        `[Session ${session.id}] Stopped waiting for a cancelled run to hand the session back.`,
+      );
+      resolve();
+    }, ABANDONED_READ_WAIT_MS);
+    read.then(
+      () => resolve(),
+      () => resolve(),
+    );
+  }).finally(() => {
+    clearTimeout(timer);
+    if (draining.get(session.id) === done) draining.delete(session.id);
+  });
+  draining.set(session.id, done);
+}
+
+/**
+ * Best-effort GciTsClearStack of the process an abandoned call stopped in.
+ * The caller is already on its way out with NbCancelledError, so a failure
+ * here is logged, never thrown.
+ */
+function clearStoppedProcess(session: ActiveSession, context: unknown): void {
+  if (context === undefined || context === null) return;
+  const gsProcess = BigInt(context as bigint | number);
+  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
+  try {
+    session.gci.GciTsClearStack(session.handle, gsProcess);
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Could not clear a cancelled run's process: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
+/**
  * Poll an ALREADY-STARTED non-blocking GemStone call to completion without
  * blocking the extension host.
  *
@@ -163,7 +234,12 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
  *                GciTsContinueWith calls), the run only settles when that
  *                promise does — so the progress notification and its
  *                soft/hard-break Cancel keep working for the whole run,
- *                including the part of it spent inside `onReady`.
+ *                including the part of it spent inside `onReady`. Its `signal`
+ *                aborts on a hard break: the run has been rejected by then, so
+ *                an async `onReady` that is still working owns the cleanup of
+ *                whatever the break stopped. The session stays held for the
+ *                next call until `onReady` finishes (see
+ *                {@link awaitAbandonedRead}).
  *
  * If the call outlives `PROGRESS_THRESHOLD_MS` — measured from the start of the
  * call, not from the start of `onReady`, and in real time rather than in poll
@@ -180,7 +256,7 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
  */
 export function pollNbToCompletion<T>(
   session: ActiveSession,
-  onReady: () => T | Promise<T>,
+  onReady: (signal: AbortSignal) => T | Promise<T>,
   opts: NbRunOptions = {},
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -192,6 +268,10 @@ export function pollNbToCompletion<T>(
     let softBreakAt = 0;
     let hardBreakScheduled = false;
     let progressResolve: (() => void) | null = null;
+    const abandoned = new AbortController();
+    // onReady's work, once it has begun: from then on the non-blocking result
+    // is already read and the session may belong to a worker thread.
+    let reading: Promise<T> | null = null;
 
     const finishProgress = (): void => {
       if (progressResolve) {
@@ -219,16 +299,25 @@ export function pollNbToCompletion<T>(
     // safe point; a second interrupts now and gives up on the call.
     const sendHardBreak = (): void => {
       if (settled) return;
+      // Before the break, not after: a worker thread answers it within a
+      // millisecond, and onReady must already see the run as abandoned then.
+      abandoned.abort();
       const { success, err } = session.gci.GciTsBreak(session.handle, true);
       logInfo(
         `[Session ${session.id}] Hard break sent: success=${success}` +
           (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
       );
-      // A hard break abandons the call, but the session still counts it as in
-      // progress until its (aborted) result is collected. Drain it, or the very
-      // next call on this session is refused with "session is busy" — which reads
-      // as the next run silently doing nothing.
-      void drainAbandonedCall(session);
+      if (reading) {
+        // Nothing to drain, and the session must not be touched — see
+        // awaitAbandonedRead.
+        awaitAbandonedRead(session, reading);
+      } else {
+        // A hard break abandons the call, but the session still counts it as in
+        // progress until its (aborted) result is collected. Drain it, or the very
+        // next call on this session is refused with "session is busy" — which reads
+        // as the next run silently doing nothing.
+        void drainAbandonedCall(session);
+      }
       settle(() => reject(new NbCancelledError()));
     };
 
@@ -279,12 +368,13 @@ export function pollNbToCompletion<T>(
         // past this first ready signal, and Cancel must stay live throughout.
         let ready: T | Promise<T>;
         try {
-          ready = onReady();
+          ready = onReady(abandoned.signal);
         } catch (e) {
           settle(() => reject(e));
           return;
         }
-        Promise.resolve(ready).then(
+        reading = Promise.resolve(ready);
+        reading.then(
           (value) => settle(() => resolve(value)),
           (e) => settle(() => reject(e)),
         );
@@ -371,7 +461,7 @@ export function pollNbToCompletion<T>(
 export function runNbCall<T>(
   session: ActiveSession,
   start: () => { success: boolean; err: GciError },
-  onReady: () => T | Promise<T>,
+  onReady: (signal: AbortSignal) => T | Promise<T>,
   opts: NbRunOptions = {},
 ): Promise<T> {
   // A call we gave up on may still be being collected. Starting now would be
@@ -386,7 +476,7 @@ export function runNbCall<T>(
   // Nb result is still uncollected, and it is that result the next GciTsNbExecute
   // refuses over ("session has a GciTsNb operation in progress"). Only the drain
   // itself knows when the session is really free, so wait on it. Bounded by
-  // DRAIN_ATTEMPTS, so it always resolves.
+  // DRAIN_ATTEMPTS (or ABANDONED_READ_WAIT_MS), so it always resolves.
   const pending = draining.get(session.id);
   if (pending) return pending.then(() => beginNbCall(session, start, onReady, opts));
   return beginNbCall(session, start, onReady, opts);
@@ -395,7 +485,7 @@ export function runNbCall<T>(
 function beginNbCall<T>(
   session: ActiveSession,
   start: () => { success: boolean; err: GciError },
-  onReady: () => T | Promise<T>,
+  onReady: (signal: AbortSignal) => T | Promise<T>,
   opts: NbRunOptions,
 ): Promise<T> {
   const { success, err } = start();

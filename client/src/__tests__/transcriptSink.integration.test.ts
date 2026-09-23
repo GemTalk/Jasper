@@ -25,7 +25,7 @@ import {
   drainTranscript,
   settleNbResult,
 } from '../transcriptSink';
-import { runNbCall } from '../nbRunner';
+import { runNbCall, NbCancelledError } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
 import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 
@@ -84,7 +84,7 @@ describe('transcript sink (integration)', () => {
     return runNbCall(
       session(),
       () => gci.GciTsNbExecute(handle, code, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
-      () => settleNbResult(session(), onTranscript),
+      (signal) => settleNbResult(session(), onTranscript, signal),
       { suppressNotification: true },
     );
   }
@@ -209,6 +209,79 @@ tmps := SessionTemps current.
     });
 
     expect(chunks).toEqual(['before', 'after']);
+  });
+
+  it('a hard break while output streams leaves the session and its Transcript usable', async () => {
+    // Cancel pressed twice while the Transcript streams: the second press lands
+    // while a koffi worker thread owns the session for GciTsContinueWith.
+    // Polling the session from the main thread then kills the extension host
+    // (measured on 3.6.2 and 3.7.5), and a process stopped holding the
+    // Transcript semaphore fails every later write until it is cleared.
+    //
+    // Built so the hard break always lands in that worst place. The run first
+    // writes, which puts it on the worker, and then holds the semaphore in a
+    // loop of short waits. The soft break is resumed by a handler around both,
+    // so the run is still inside when the hard break arrives: soft-break
+    // delivery varies by an order of magnitude, and a run that stops at the
+    // soft break never reaches the path under test. Short waits rather than
+    // one long one, because on 3.6.2 resuming the break cuts a single Delay
+    // short. Bounded, so a break that never arrives cannot hang the file.
+    setTranscriptLive(session(), true);
+    let wroteOnce: () => void = () => {};
+    const onWorker = new Promise<void>((resolve) => {
+      wroteOnce = resolve;
+    });
+    let cancel: (() => void) | undefined;
+    const run = runNbCall(
+      session(),
+      () =>
+        gci.GciTsNbExecute(
+          handle,
+          "[Transcript nextPutAll: 'streaming'. " +
+            '(SessionTemps current at: #TranscriptStream_SessionMutex) ' +
+            'critical: [200 timesRepeat: [(Delay forMilliseconds: 50) wait]]] ' +
+            'on: Break do: [:e | e resume]. 42',
+          OOP_CLASS_STRING,
+          OOP_ILLEGAL,
+          OOP_NIL,
+          0,
+          0,
+        ),
+      (signal) => settleNbResult(session(), () => wroteOnce(), signal),
+      {
+        suppressNotification: true,
+        onStart: (c) => {
+          cancel = c;
+        },
+      },
+    );
+    // Claimed now: it rejects inside a timer tick, before `expect` attaches.
+    run.catch(() => {});
+    try {
+      await onWorker;
+      cancel!();
+      cancel!();
+
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+
+      // Live stays on: switching it on repairs a held semaphore by itself, and
+      // would pass this with the break's process left uncleared.
+      const chunks: string[] = [];
+      const { result, err } = await executeLive("Transcript nextPutAll: 'after'. 6 * 7", (text) =>
+        chunks.push(text),
+      );
+      expect(err.number).toBe(0);
+      expect(chunks).toEqual(['after']);
+      expect(gci.oopToInteger(handle, result)).toBe(42n);
+    } finally {
+      // Whatever failed above, nothing may still be running into the next
+      // test: stop the run, and wait until the session is free again (a new
+      // call waits for exactly that).
+      cancel?.();
+      cancel?.();
+      await run.catch(() => {});
+      await executeLive('nil', () => {}).catch(() => {});
+    }
   });
 
   it('a live write with no worker thread fails loudly and strands nothing', async () => {

@@ -60,9 +60,11 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         );
         return { success, err };
       },
-      async () => {
-        const { result, err } = await settleNbResult(session, (text) =>
-          appendTranscriptOutput(text),
+      async (signal) => {
+        const { result, err } = await settleNbResult(
+          session,
+          (text) => appendTranscriptOutput(text),
+          signal,
         );
         if (err.number !== 0) {
           // Clear the stopped process before giving up on it. This is
