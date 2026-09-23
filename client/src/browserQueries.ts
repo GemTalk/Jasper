@@ -31,7 +31,7 @@ import { getStoredClassComment as sharedGetStoredClassComment } from './queries/
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
-import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/tonel/dictionariesContainingClass';
+import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
 import {
   tonelCapability as sharedTonelCapability,
   TonelCapabilityResult,

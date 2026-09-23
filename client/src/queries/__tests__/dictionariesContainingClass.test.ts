@@ -1,9 +1,6 @@
-// SUPPORTED CONFIGURATION: GemStone 3.7.5+ on a rowan3 extent — see
-// `../tonelCapability` for the full statement.
-//
-// Which dictionaries hold a given name. File-in needs this twice: to default the
-// target dictionary to the one the class already lives in, and to tell whether a
-// superclass resolves at all before creating anything.
+// Which dictionaries hold a given name. A plain symbol-list walk that answers on
+// any stone; Tonel file in is its first caller, needing the default target
+// dictionary and whether a superclass resolves before anything is created.
 import { describe, it, expect, vi } from 'vitest';
 
 import { dictionariesContainingClass } from '../dictionariesContainingClass';
