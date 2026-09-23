@@ -69,6 +69,7 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
     expect(referenced).toContain('debuggerView.js');
     expect(referenced).toContain('refactoring/renameMethodPanelView.js');
     expect(referenced).toContain('webview/millerColumns.js');
+    expect(referenced).toContain('webview/evaluatePane.js');
     expect(referenced).toContain('basicInspector/basicInspectorView.js');
   });
 

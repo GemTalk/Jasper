@@ -37,9 +37,14 @@ import {
   fetchBrowseLocation,
 } from './queries/basicInspectorQueries';
 
-// Both webview scripts are read at runtime and injected as <script> tags — they
-// are NOT compiled into the bundle (see webviewAssets.ts, and the `!` lines in
-// .vscodeignore that keep them in the package).
+// All three webview scripts are read at runtime and injected as <script> tags —
+// they are NOT compiled into the bundle (see webviewAssets.ts, and the `!` lines
+// in .vscodeignore that keep them in the package).
+// The evaluate tab's keys and expression history, shared with the debugger's
+// evaluate pane so the same gesture cannot mean two things (see
+// client/src/webview/evaluatePane.js). basicInspectorView.js wires its tab
+// through the global this registers, so it has to be injected first.
+const evaluatePaneJs = readWebviewScript('evaluatePane.js', 'webview');
 const millerColumnsJs = readWebviewScript('millerColumns.js', 'webview');
 const basicInspectorViewJs = readWebviewScript('basicInspectorView.js', 'basicInspector');
 
@@ -1091,6 +1096,7 @@ export class BasicInspector {
   <div id="methodCtxMenu" class="ctx-menu">
     <div class="ctx-item" data-action="browseMethod">Browse Method</div>
   </div>
+  <script nonce="${nonce}">${evaluatePaneJs}</script>
   <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">${basicInspectorViewJs}</script>
   <script nonce="${nonce}">

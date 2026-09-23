@@ -10,20 +10,12 @@
  * same names as the Inspector's evaluate tab (see evaluateMode.ts). Its wiring lives in
  * debuggerView.js; the styles live with the rest of the panel's stylesheet.
  *
- * The keys it answers to are advertised without costing a pixel of layout — this pane is squeezed
- * into a panel that is always short of height. The placeholder occupies space the empty box was
- * spending on nothing and is gone the moment you type; the rest rides on tooltips, here and on the
- * buttons. The placeholder previously said "Enter", which stopped being true when the box became
- * multi-line and Shift+Enter took over running it.
- *
- * The keys are written `Ctrl` here, which is right everywhere but a Mac. Only the webview knows
- * which platform it is on, so `labelKeysForPlatform` in debuggerView.js rewrites these titles to
- * `Cmd` when it is one — the markup carries the one copy of the wording, the webview adjusts it.
- *
- * It names ONE key rather than the full legend, because this box is a single line in a narrow
- * column: a placeholder wider than the field made the textarea scroll sideways, and the scrollbar
- * ate most of a 1.9rem box — so a pane nobody had touched yet looked broken. The full legend is on
- * this element's tooltip, which costs nothing and cannot overflow.
+ * This markup carries NO key wording — no placeholder, no tooltip naming a chord. Those are written
+ * on at load by `EvaluatePane.applyLabels` (client/src/webview/evaluatePane.js), which the
+ * Inspector's evaluate tab calls too, so one function is the only place either pane's keys are
+ * spelled out. Only the webview knows which platform it is on, and a legend baked in here said
+ * `Ctrl` on a Mac while the half of the pane that derived its own said `Cmd`. The box keeps its
+ * `eval-input` class for that call to find it — the same class the Inspector's box carries.
  */
 export function evaluatePaneHtml(): string {
   return `<div class="evalbar" id="evalbar">
@@ -32,9 +24,8 @@ export function evaluatePaneHtml(): string {
            aria-selected="false" title="Evaluate an expression in the selected frame">Evaluate</div>
     </div>
     <span class="eval-input-wrap">
-      <textarea id="evalInput" rows="1" autocomplete="off" spellcheck="false"
-             placeholder="Shift+Enter to run"
-             title="Shift+Enter or Ctrl+Enter — Display It&#10;Ctrl+K then D / E / I — Display It, Execute It, Inspect It&#10;Ctrl+↑ / Ctrl+↓ — earlier / later expression&#10;Escape — clear the box"></textarea>
+      <textarea class="eval-input" id="evalInput" rows="1" autocomplete="off"
+             spellcheck="false"></textarea>
       <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
     </span>
     <!-- The answer sits immediately beside the expression it came from, sharing the row half and
@@ -44,9 +35,9 @@ export function evaluatePaneHtml(): string {
          said. -->
     <div class="eval-result" id="evalResult"></div>
     <div class="eval-toolbar" id="evalToolbar">
-      <button class="btn" data-eval="display" title="Shift+Enter, Ctrl+K D, or Ctrl+Enter">Display It</button>
-      <button class="btn" data-eval="execute" title="Ctrl+K E">Execute It</button>
-      <button class="btn" data-eval="inspect" title="Ctrl+K I">Inspect It</button>
+      <button class="btn" data-eval="display">Display It</button>
+      <button class="btn" data-eval="execute">Execute It</button>
+      <button class="btn" data-eval="inspect">Inspect It</button>
     </div>
   </div>`;
 }
