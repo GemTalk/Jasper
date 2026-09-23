@@ -16,6 +16,7 @@ vi.mock('../../wslBridge', () => ({
 }));
 
 import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
+import { appendSysadmin } from '../../sysadminChannel';
 import { SysadminStorage } from '../../sysadminStorage';
 import { VersionManager } from '../versionManager';
 import { timestampForFileName } from '../databaseManager';
@@ -553,5 +554,60 @@ describe('timestampForFileName', () => {
 
   it('pads every field, so the widths never move', () => {
     expect(timestampForFileName(new Date(2026, 0, 2, 3, 4, 5))).toBe('20260102-030405');
+  });
+});
+
+describe('a product directory whose version number cannot be read', () => {
+  // The name is whatever someone called the directory, and the minimum-version
+  // filter threw on one it could not parse — taking the whole list, and the
+  // panel built from it, rather than the single row.
+  onSupportedPosixIt('costs its own place in the order, not the whole list', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    for (const name of ['3.7.5', '3.7', '3.6.6']) {
+      fs.mkdirSync(path.join(tmpDir, `GemStone64Bit${name}${suffix}`));
+    }
+
+    const versions = manager.getInstalledVersions();
+
+    // Readable rows keep their order, newest first; the unreadable one goes last.
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5', '3.6.6', '3.7']);
+    expect(appendSysadmin).toHaveBeenCalledWith(expect.stringContaining('3.7'));
+  });
+
+  // The panel re-reads the disk twice onevery open and again on every refresh, so a
+  // line per read buried the log in a folder that had not moved.
+  onSupportedPosixIt('is named once, not on every read', () => {
+    // The mock is shared by every test in this file and nothing resets it.
+    vi.mocked(appendSysadmin).mockClear();
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    fs.mkdirSync(path.join(tmpDir, `GemStone64Bit3.7${storage.getPlatformSuffix()}`));
+
+    manager.getInstalledVersions();
+    manager.getInstalledVersions();
+
+    const said = vi
+      .mocked(appendSysadmin)
+      .mock.calls.filter(([line]) => line.includes('not understood'));
+    expect(said).toHaveLength(1);
+  });
+
+  // A symlinked build skips the minimum-version filter, so it used to reach the
+  // sort unchecked — where the comparison threw just the same.
+  onSupportedPosixIt('survives it on a local build too', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    const productDir = path.join(tmpDir, 'product');
+    fs.mkdirSync(productDir);
+    fs.symlinkSync(productDir, path.join(tmpDir, `GemStone64Bit4.0.0-alpha.1${suffix}`));
+    fs.mkdirSync(path.join(tmpDir, `GemStone64Bit3.7.5${suffix}`));
+
+    expect(manager.getInstalledVersions().map((v) => v.version)).toEqual([
+      '3.7.5',
+      '4.0.0-alpha.1',
+    ]);
   });
 });

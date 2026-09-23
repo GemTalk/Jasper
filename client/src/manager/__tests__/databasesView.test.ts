@@ -97,6 +97,14 @@ function mount(s: Record<string, unknown> = state()): void {
   api().render(s);
 }
 
+/** The panel as it is before any state arrives: initialised, still a skeleton. */
+function mountBare(): void {
+  document.body.innerHTML = '<div id="root"></div>';
+  root = document.getElementById('root') as HTMLElement;
+  host = { postMessage: vi.fn() };
+  api().init({ root }, host);
+}
+
 /** Click the first element carrying this action, as a user would. */
 function click(action: string): void {
   const el = root.querySelector<HTMLElement>(`[data-action="${action}"]`);
@@ -197,6 +205,38 @@ describe('when the host says an action failed', () => {
     // The host always posts state after a failure; it is the same state as before.
     api().render(state());
     expect(root.textContent).toContain('could not register');
+  });
+
+  // Before the first state there was nothing to redraw the banner onto, so the
+  // message was dropped and the tab kept its loading skeleton — with the reason
+  // shown nowhere in the panel.
+  it('shows the reason when nothing has been drawn yet', () => {
+    mountBare();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    expect(root.querySelector('.skeleton')).toBeNull();
+    expect(root.querySelector('.gm-blocked')?.textContent).toContain('Invalid version: 3.7');
+  });
+
+  // Dismiss would leave an empty tab, and the header's Refresh is part of a
+  // screen that never rendered — so this failure carries the way out itself.
+  it('offers a retry when it is the whole screen', () => {
+    mountBare();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    click('refresh');
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'refresh' }));
+  });
+
+  // It described the attempt before this one. A panel still saying "permission
+  // denied" after the permission is back is worse than one saying nothing.
+  it('retires it when the next attempt is made', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'EACCES: permission denied' });
+    expect(root.textContent).toContain('permission denied');
+
+    click('refresh');
+    api().render(state());
+
+    expect(root.textContent).not.toContain('permission denied');
   });
 
   it('lets it be dismissed', () => {
@@ -1161,13 +1201,6 @@ describe('a Windows machine with no WSL', () => {
 
 describe('the form the host opens the panel into', () => {
   /** A panel whose script has loaded but which the host has not sent a state to yet. */
-  function mountBare(): void {
-    document.body.innerHTML = '<div id="root"></div>';
-    root = document.getElementById('root') as HTMLElement;
-    host = { postMessage: vi.fn() };
-    api().init({ root }, host);
-  }
-
   // The host posts `beginCreate` ahead of the first state now, so the form is not
   // held behind a call to the download site. Arriving first, it has nothing to
   // draw from — and a form built out of no state is a version dropdown with no

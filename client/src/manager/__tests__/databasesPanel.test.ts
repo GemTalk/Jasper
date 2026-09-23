@@ -196,6 +196,7 @@ function lastState(): {
     extentBackupFiles: unknown[];
   }[];
   create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
+  versions: { version: string }[];
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -203,6 +204,30 @@ function lastState(): {
   );
   return (states[states.length - 1][0] as { state: ReturnType<typeof lastState> }).state;
 }
+
+describe('a version list that cannot be built', () => {
+  // The scan is pure disk work, and it is the first thing the first paint asks
+  // for — so anything it threw left the panel's action-failure path holding a
+  // failure and no state ever posted. One unreadable folder cost the whole
+  // panel rather than the version list.
+  it('still posts a state, with no versions in it', async () => {
+    const deps = makeDeps() as unknown as {
+      versionManager: { getInstalledVersions: () => unknown; versionsFrom: () => unknown };
+    };
+    const unreadable = (): never => {
+      throw new Error("EACCES: permission denied, scandir '/root'");
+    };
+    deps.versionManager.getInstalledVersions = unreadable;
+    // The catalog path falls back to the same scan, and it falls back precisely
+    // because something already failed.
+    deps.versionManager.versionsFrom = unreadable;
+
+    DatabasesPanel.show(deps as unknown as Parameters<typeof DatabasesPanel.show>[0]);
+    await sendMessage({ command: 'ready' });
+
+    expect(lastState().versions).toEqual([]);
+  });
+});
 
 describe('session commands', () => {
   const SESSION = { id: 3 } as unknown as ReturnType<typeof Object>;

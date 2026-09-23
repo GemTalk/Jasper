@@ -425,7 +425,12 @@ export class DatabasesPanel {
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
-      (msg: Inbound) => void this.handleMessage(msg).catch((e) => this.failed(msg.command, e)),
+      // `ready` is the webview announcing itself, not something the reader did —
+      // so a failure answering it is the panel failing to open, in those words.
+      (msg: Inbound) =>
+        void this.handleMessage(msg).catch((e) =>
+          this.failed(msg.command === 'ready' ? 'open' : msg.command, e),
+        ),
       null,
       this.disposables,
     );
@@ -507,9 +512,12 @@ export class DatabasesPanel {
    */
   private failed(what: string, error: unknown): void {
     const detail = error instanceof Error ? error.message : String(error);
+    // The notification carries the `what` too. Without it the reader had to
+    // guess which of the things they pressed it was about — and on a first open
+    // they had pressed nothing.
     appendSysadmin(`Databases & Versions: ${what} failed: ${detail}`);
-    void vscode.window.showErrorMessage(`Databases & Versions: ${detail}`);
-    this.actionFailed(error);
+    void vscode.window.showErrorMessage(`Databases & Versions: ${what} failed: ${detail}`);
+    this.postFailure(detail);
   }
 
   /**
@@ -521,6 +529,15 @@ export class DatabasesPanel {
   private actionFailed(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     appendSysadmin(`Databases & Versions: ${message}`);
+    this.postFailure(message);
+  }
+
+  /**
+   * Hand the panel a failure to draw. The one way in, so a failure that came
+   * through `failed` — which has already written a fuller line, naming what was
+   * being attempted — is not logged a second time on its way here.
+   */
+  private postFailure(message: string): void {
     void this.panel.webview.postMessage({ command: 'actionFailed', message });
   }
 
@@ -1560,10 +1577,30 @@ export class DatabasesPanel {
     );
   }
 
+  /**
+   * What is installed, or nothing. Pure disk work, and the first thing a first
+   * paint asks for — so a rootPath that cannot be read used to cost the whole
+   * panel rather than the version list. The catalog's fallback calls it too,
+   * where it runs because something has already failed, which makes it the
+   * likeliest call here to fail again.
+   */
+  private installedVersions(): GemStoneVersion[] {
+    try {
+      return this.deps.versionManager.getInstalledVersions();
+    } catch (e) {
+      appendSysadmin(
+        `Databases & Versions: could not read the installed versions — ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return [];
+    }
+  }
+
   private async buildVersions(source: VersionSource): Promise<VersionRow[]> {
     let list: GemStoneVersion[];
     if (source === 'local') {
-      list = this.deps.versionManager.getInstalledVersions();
+      list = this.installedVersions();
     } else {
       try {
         if (this.catalog === undefined) {
@@ -1573,10 +1610,11 @@ export class DatabasesPanel {
         list = this.deps.versionManager.versionsFrom(this.catalog);
       } catch (e) {
         // Usually offline — but this catch also covers versionsFrom, which is
-        // pure disk work, so a scrape whose regex stopped matching or a malformed
-        // install would otherwise shrink the list to what's on disk with nothing
-        // said. Log the real reason before falling back, so "my versions
-        // disappeared" has something to go on.
+        // pure disk work, so a scrape whose regex stopped matching would
+        // otherwise shrink the list to what's on disk with nothing said. Log the
+        // real reason before falling back, so "my versions disappeared" has
+        // something to go on. A version number versionsFrom cannot read is not
+        // one of these: it costs its own row there and never reaches here.
         appendSysadmin(
           `Databases & Versions: could not read the version catalog, showing installed versions only — ${
             e instanceof Error ? e.message : String(e)
@@ -1585,7 +1623,7 @@ export class DatabasesPanel {
         // Fall back to what's installed / downloaded on disk, and drop the failed
         // fetch so a later pass can retry it.
         this.catalogFetch = undefined;
-        list = this.deps.versionManager.getInstalledVersions();
+        list = this.installedVersions();
       }
     }
     this.lastVersions = list;

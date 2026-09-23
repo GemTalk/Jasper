@@ -1165,6 +1165,17 @@
     </div>`;
   }
 
+  // The same failure with nothing behind it. Before the first state there is no
+  // screen for the banner to sit on, so the message was dropped and the skeleton
+  // stayed up for good. Dismiss would leave an empty tab, so this one carries the
+  // retry instead — the header's Refresh, which is unreachable from here.
+  function renderFailureOnly() {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${btn('refresh', 'Try Again', 'refresh', 'btn-secondary')}
+    </div>`;
+  }
+
   function renderVersionFirst() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>New Database needs a GemStone version to copy from — install one below first.</span></span>
@@ -1455,6 +1466,11 @@
   }
 
   function post(msg) {
+    // Pressing anything retires the last failure — it described the attempt
+    // before this one, and a panel still saying "permission denied" after the
+    // permission is back is worse than saying nothing. A new failure arrives
+    // with its own actionFailed, so the banner comes straight back if it has to.
+    lastFailure = '';
     vscode.postMessage(msg);
   }
 
@@ -1890,6 +1906,12 @@
         creating = false;
       }
       if (lastState) render(lastState);
+      // Nothing drawn yet, so nothing to draw it onto: the failure becomes the
+      // screen rather than being dropped behind the skeleton.
+      else {
+        hideTip();
+        els.root.innerHTML = renderFailureOnly();
+      }
     } else if (msg.command === 'pingResult') {
       setPingNotice(
         Number(msg.sessionId),
