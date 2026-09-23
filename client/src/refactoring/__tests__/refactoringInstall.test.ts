@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../browserQueries', () => ({
   executeFetchString: vi.fn(),
+  executeFetchStringNb: vi.fn(),
   checkRefactoringSupportAvailable: vi.fn(),
 }));
 
@@ -10,7 +11,11 @@ vi.mock('../../wslBridge', () => ({
 }));
 
 import { ActiveSession } from '../../sessionManager';
-import { executeFetchString, checkRefactoringSupportAvailable } from '../../browserQueries';
+import {
+  executeFetchString,
+  executeFetchStringNb,
+  checkRefactoringSupportAvailable,
+} from '../../browserQueries';
 import { needsWsl } from '../../wslBridge';
 import {
   installRefactoringSupport,
@@ -21,7 +26,28 @@ import {
 } from '../refactoringInstall';
 
 const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
+const executeFetchStringNbMock = executeFetchStringNb as ReturnType<typeof vi.fn>;
 const checkAvailableMock = checkRefactoringSupportAvailable as ReturnType<typeof vi.fn>;
+
+// The install's two long round trips — filing in the loader, then running it —
+// go through the NON-blocking helper. The synchronous one would freeze the
+// extension host for the whole load, which is what made a rowan3 login look like
+// two independent hangs (the install AND the class sync) with one cause. The
+// short gem-can-read probe stays synchronous.
+//
+// The two take their Smalltalk in different argument positions —
+// `executeFetchString(session, code)` vs `executeFetchStringNb(session, label,
+// code)` — so read the traffic through these rather than indexing `mock.calls`.
+function allCodes(): string[] {
+  return [
+    ...executeFetchStringMock.mock.calls.map((c) => String(c[1])),
+    ...executeFetchStringNbMock.mock.calls.map((c) => String(c[2])),
+  ];
+}
+
+function findCode(match: (code: string) => boolean): string {
+  return String(allCodes().find(match));
+}
 
 const PAYLOAD_DIR = '/payload/refactoring';
 
@@ -78,6 +104,20 @@ describe('installRefactoringSupport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     executeFetchStringMock.mockImplementation(happyPath);
+    // Tests configure behaviour on the synchronous mock; route the non-blocking
+    // one through it so one responder covers both.
+    // Call the synchronous mock's IMPLEMENTATION rather than the mock itself, so
+    // routing here does not also record a call on it — `allCodes()` would
+    // otherwise see every non-blocking round trip twice.
+    executeFetchStringNbMock.mockImplementation((s: unknown, _label: string, code: string) => {
+      // Looked up per call, not captured here: tests replace the synchronous
+      // implementation after this hook runs, and the bridge has to follow.
+      const respond = executeFetchStringMock.getMockImplementation() as (
+        s: unknown,
+        code: string,
+      ) => string;
+      return Promise.resolve(respond(s, code));
+    });
   });
 
   it('files in the loader, runs it, and reports success without committing on the client', async () => {
@@ -104,14 +144,28 @@ describe('installRefactoringSupport', () => {
     expect(order).toEqual(['file-in', 'run']);
   });
 
+  // A rowan3 login looked like two unrelated hangs — the install AND the class
+  // sync — because the synchronous GCI call blocked the extension host for the
+  // whole load. Both of the install's long round trips must be non-blocking.
+  it('makes both long round trips through the non-blocking helper', async () => {
+    const { session } = createMockSession();
+
+    await installRefactoringSupport(session, PAYLOAD_DIR);
+
+    const nbCodes = executeFetchStringNbMock.mock.calls.map((c) => String(c[2]));
+    expect(nbCodes.some((c) => c.includes('GsFileIn'))).toBe(true);
+    expect(nbCodes.some((c) => c.includes('loadFromServerDir'))).toBe(true);
+    // The synchronous helper is left for the short gem-can-read probe only.
+    const syncCodes = executeFetchStringMock.mock.calls.map((c) => String(c[1]));
+    expect(syncCodes.some((c) => c.includes('loadFromServerDir'))).toBe(false);
+  });
+
   it('drives the shared server-side loader rather than filing payloads one by one', async () => {
     const { session } = createMockSession();
 
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
-    const runCalls = executeFetchStringMock.mock.calls.filter((c) =>
-      String(c[1]).includes('loadFromServerDir'),
-    );
+    const runCalls = allCodes().filter((code) => code.includes('loadFromServerDir'));
     expect(runCalls).toHaveLength(1);
   });
 
@@ -120,9 +174,7 @@ describe('installRefactoringSupport', () => {
 
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
-    const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
-    );
+    const fileInCode = String(findCode((code) => code.includes('GsFileIn')));
     expect(fileInCode).toContain('on: #serverUtf8File to: nil');
     expect(fileInCode).toContain(REFACTORING_LOADER_FILE);
   });
@@ -132,9 +184,7 @@ describe('installRefactoringSupport', () => {
 
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
-    const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
-    );
+    const fileInCode = String(findCode((code) => code.includes('GsFileIn')));
     expect(fileInCode).toContain('fromServerPath:');
     expect(fileInCode).not.toContain('serverUtf8File');
   });
@@ -150,9 +200,7 @@ describe('installRefactoringSupport', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('cannot read');
-    const ranLoader = executeFetchStringMock.mock.calls.some((c) =>
-      String(c[1]).includes('loadFromServerDir'),
-    );
+    const ranLoader = allCodes().some((code) => code.includes('loadFromServerDir'));
     expect(ranLoader).toBe(false);
   });
 
@@ -162,17 +210,11 @@ describe('installRefactoringSupport', () => {
 
     await installRefactoringSupport(session, 'D:\\a\\Jasper\\Jasper\\resources\\refactoring');
 
-    const loaderCode = String(
-      executeFetchStringMock.mock.calls.find((c) =>
-        String(c[1]).includes('loadFromServerDir'),
-      )?.[1],
-    );
+    const loaderCode = String(findCode((code) => code.includes('loadFromServerDir')));
     expect(loaderCode).toContain('/mnt/d/a/Jasper/Jasper/resources/refactoring');
     expect(loaderCode).not.toContain('D:\\');
 
-    const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
-    );
+    const fileInCode = String(findCode((code) => code.includes('GsFileIn')));
     expect(fileInCode).toContain(
       '/mnt/d/a/Jasper/Jasper/resources/refactoring/refactoring-loader.gs',
     );
