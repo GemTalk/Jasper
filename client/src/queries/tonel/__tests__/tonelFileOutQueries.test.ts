@@ -12,7 +12,8 @@
 // See their comments before changing either.
 import { describe, it, expect, vi } from 'vitest';
 
-import { fileOutClassTonel, isTonelFileOutError, TONEL_NO_ROWAN } from '../fileOutClassTonel';
+import { fileOutClassTonel } from '../fileOutClassTonel';
+import { isTonelFileOutError, TONEL_NO_ROWAN } from '../rowanLookup';
 
 const exec = (result = 'Class { }') => vi.fn().mockReturnValue(result);
 const codeOf = (fn: ReturnType<typeof exec>): string => fn.mock.calls[0][0] as string;

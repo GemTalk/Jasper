@@ -70,7 +70,7 @@ import {
 } from './fileTransfer/fileOut';
 import { fileInCommand } from './fileTransfer/fileIn';
 import { isClassNotFound } from './queries/fileOutClass';
-import { isTonelFileOutError } from './queries/tonel/fileOutClassTonel';
+import { isTonelFileOutError } from './queries/tonel/rowanLookup';
 import { requireTonelAvailable } from './tonelAvailability';
 import {
   RenamePreview,

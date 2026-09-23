@@ -9,12 +9,8 @@
 // least constrained thing this feature ever sends to the stone.
 import { describe, it, expect, vi } from 'vitest';
 
-import {
-  readTonelClass,
-  TONEL_NO_ROWAN,
-  TONEL_ERROR_PREFIX,
-  MAX_TONEL_CHARACTERS,
-} from '../readTonelClass';
+import { readTonelClass, MAX_TONEL_CHARACTERS } from '../readTonelClass';
+import { TONEL_NO_ROWAN, TONEL_ERROR_PREFIX } from '../rowanLookup';
 
 const TONEL = `Class {\n\t#name : 'Widget'\n}\n`;
 

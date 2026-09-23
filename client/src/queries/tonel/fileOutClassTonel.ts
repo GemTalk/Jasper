@@ -61,26 +61,16 @@
 // restore the silent method loss above for every unloaded class.
 import { QueryExecutor } from '../types';
 import { classLookupExpr, escapeString } from '../util';
-import { ROWAN_LOOKUP_PRELUDE, rowanLookupExpr } from './rowanLookup';
-
-/** Answered when this session cannot reach the Tonel machinery at all. */
-export const TONEL_NO_ROWAN = '!NO_ROWAN';
-
-/** Prefix of an answer that reports a failure rather than carrying Tonel text. */
-export const TONEL_ERROR_PREFIX = '!ERR ';
-
-/**
- * Whether `answer` reports a failure instead of being Tonel source.
- *
- * Safe as a prefix test: Tonel starts with `Class {`, `Extension {` or the
- * class's comment, never with `!`.
- */
-export function isTonelFileOutError(answer: string): boolean {
-  return answer.startsWith(TONEL_ERROR_PREFIX) || answer === TONEL_NO_ROWAN;
-}
+import {
+  ROWAN_LOOKUP_PRELUDE,
+  rowanLookupExpr,
+  TONEL_ERROR_PREFIX,
+  TONEL_NO_ROWAN,
+} from './rowanLookup';
 
 /**
- * The Tonel source for one class, or a sentinel ({@link isTonelFileOutError}).
+ * The Tonel source for one class, or a sentinel (`isTonelFileOutError` in
+ * ./rowanLookup).
  *
  * `dict` scopes the lookup to one dictionary (1-based symbol-list index or
  * name), as the other class queries do; without it the name resolves as a

@@ -8,7 +8,8 @@
 // Full statement, and the reasoning: ./tonelCapability.ts
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The one way this feature names a Rowan class.
+// The one way this feature names a Rowan class, and the sentinels both of its
+// doits answer with when they cannot.
 //
 // Why a plain `symbolList objectNamed:` is not enough
 // ---------------------------------------------------
@@ -65,6 +66,32 @@ export const ROWAN_LOOKUP_PRELUDE = `rwLookup := [:aName |
        only, so a DataCurator session lands here for every Rw* class."
       [(AllUsers userWithId: 'SystemUser') symbolList objectNamed: aName]
         on: Error do: [:ignored | nil]]].`;
+
+/**
+ * The sentinels a Tonel doit answers instead of its real result, and the test for
+ * them. Here rather than beside either doit because BOTH sides emit them and one
+ * predicate reads them: declared twice they were two bindings holding equal
+ * strings, so changing one would leave the other doit still emitting the old
+ * value and the reader treating a failure as content -- with no type error and no
+ * failing test, because they are only strings.
+ */
+
+/** Answered when this session cannot reach the Tonel machinery at all. */
+export const TONEL_NO_ROWAN = '!NO_ROWAN';
+
+/** Prefix of an answer that reports a failure rather than carrying a result. */
+export const TONEL_ERROR_PREFIX = '!ERR ';
+
+/**
+ * Whether `answer` reports a failure instead of being a doit's real result.
+ *
+ * Safe as a prefix test on either side: Tonel source starts with `Class {`,
+ * `Extension {` or the class's comment, and the file-in wire format starts with a
+ * record name -- never with `!`.
+ */
+export function isTonelFileOutError(answer: string): boolean {
+  return answer.startsWith(TONEL_ERROR_PREFIX) || answer === TONEL_NO_ROWAN;
+}
 
 /** An expression that resolves `name` through {@link ROWAN_LOOKUP_PRELUDE}. */
 export function rowanLookupExpr(name: string): string {

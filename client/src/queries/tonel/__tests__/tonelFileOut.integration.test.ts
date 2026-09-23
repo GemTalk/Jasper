@@ -19,7 +19,8 @@ import { useIntegrationTest } from '../../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../../gciLibrary';
 import * as q from '../../../browserQueries';
 import type { ActiveSession } from '../../../sessionManager';
-import { fileOutClassTonel, isTonelFileOutError } from '../fileOutClassTonel';
+import { fileOutClassTonel } from '../fileOutClassTonel';
+import { isTonelFileOutError } from '../rowanLookup';
 import {
   headerOf,
   methodBlocksOf,

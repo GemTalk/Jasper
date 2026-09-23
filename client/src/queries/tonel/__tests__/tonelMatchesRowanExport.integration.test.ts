@@ -41,7 +41,8 @@ import * as q from '../../../browserQueries';
 import type { ActiveSession } from '../../../sessionManager';
 import { exportRowanProject } from '../../rowan/exportRowanProject';
 import { listRowanProjects } from '../../rowan/listRowanProjects';
-import { fileOutClassTonel, isTonelFileOutError } from '../fileOutClassTonel';
+import { fileOutClassTonel } from '../fileOutClassTonel';
+import { isTonelFileOutError } from '../rowanLookup';
 import { tonelCapability } from '../tonelCapability';
 
 const TIMEOUT = 300_000;

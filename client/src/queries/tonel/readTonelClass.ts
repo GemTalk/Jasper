@@ -35,14 +35,13 @@
 // listed it, so it says what it is.
 import { QueryExecutor } from '../types';
 import { escapeString } from '../util';
-import { ROWAN_LOOKUP_PRELUDE, rowanLookupExpr } from './rowanLookup';
+import {
+  ROWAN_LOOKUP_PRELUDE,
+  rowanLookupExpr,
+  TONEL_ERROR_PREFIX,
+  TONEL_NO_ROWAN,
+} from './rowanLookup';
 import { decodeTonelClass, TonelClass } from './tonelWire';
-
-/** Answered when this session cannot reach the Tonel machinery at all. */
-export const TONEL_NO_ROWAN = '!NO_ROWAN';
-
-/** Prefix of an answer that reports a failure rather than carrying a class. */
-export const TONEL_ERROR_PREFIX = '!ERR ';
 
 /** What the parse produced, or why it did not. */
 export type TonelReadResult =
