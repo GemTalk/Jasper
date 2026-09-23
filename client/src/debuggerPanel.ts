@@ -17,6 +17,7 @@ import { routeInspect, InspectorHandle } from './inspectRouter';
 import { logError, logInfo, logWarning } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
 import { extensionPathFrom } from './extensionPath';
+import { readWebviewScript } from './webviewAssets';
 import {
   CARVE_RETRY_DELAYS_MS,
   DEFAULT_SOURCE_RATIO,
@@ -38,6 +39,12 @@ const debuggerViewJs = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'debuggerView.js'),
   'utf8',
 );
+
+// The evaluate pane's keys and expression history, shared with the Inspector's
+// evaluate tab so the same gesture cannot mean two things (see
+// client/src/webview/evaluatePane.js). debuggerView.js wires its pane through the
+// global this registers, so it has to be injected first.
+const evaluatePaneJs = readWebviewScript('evaluatePane.js', 'webview');
 
 /**
  * Toolbar glyphs, keyed by `data-cmd`. These are the exact VS Code `codicon`
@@ -5063,6 +5070,7 @@ export class DebuggerPanel {
       <button id="busyCancel" class="busy-cancel" type="button" style="display:none;">Cancel</button>
     </div>
   </div>
+  <script nonce="${nonce}">${evaluatePaneJs}</script>
   <script nonce="${nonce}">${debuggerViewJs}</script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();

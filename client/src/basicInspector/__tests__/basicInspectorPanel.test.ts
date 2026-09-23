@@ -177,14 +177,14 @@ describe('opening the panel', () => {
   it('serves a page whose scripts are locked to a single nonce', () => {
     open();
 
-    // Three script tags: the shared column model, this panel's view, and the
-    // one-line bootstrap that wires them together. Counting them (rather than
-    // scanning for `<script`) keeps the assertion off the `<script>` mentions
-    // inside the injected files' own comments.
+    // Four script tags: the shared evaluate pane, the shared column model, this
+    // panel's view, and the one-line bootstrap that wires them together.
+    // Counting them (rather than scanning for `<script`) keeps the assertion off
+    // the `<script>` mentions inside the injected files' own comments.
     const nonce = /script-src 'nonce-([0-9a-f]{32})'/.exec(panel.webview.html)?.[1];
     expect(nonce).toBeDefined();
     expect(panel.webview.html).not.toContain('<script src');
-    expect(panel.webview.html.split(`<script nonce="${nonce}">`)).toHaveLength(4);
+    expect(panel.webview.html.split(`<script nonce="${nonce}">`)).toHaveLength(5);
   });
 
   it('loads no script the content-security-policy would block', () => {
@@ -192,7 +192,7 @@ describe('opening the panel', () => {
 
     // A `</script>` inside an injected file would close the block early and
     // strand the rest of it as page text, whatever the nonce says.
-    expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(3);
+    expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(4);
   });
 
   it('sends the inspected object once the webview says it is ready', () => {

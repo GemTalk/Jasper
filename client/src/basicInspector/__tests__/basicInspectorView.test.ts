@@ -5,8 +5,9 @@ import * as path from 'path';
 
 /**
  * The basic inspector's webview rendering, driven the way the real webview does:
- * millerColumns.js and basicInspectorView.js are evaluated in jsdom so they
- * register their globals, exactly as the two injected <script> tags do.
+ * evaluatePane.js, millerColumns.js and basicInspectorView.js are evaluated in
+ * jsdom so they register their globals, exactly as the three injected <script>
+ * tags do.
  *
  * What is pinned here is what the user sees and what the panel is asked for — a
  * tab appears only when the object has that structure, a page is appended rather
@@ -15,7 +16,11 @@ import * as path from 'path';
  * themselves belong to the queries module and its own tests.
  */
 beforeAll(() => {
-  for (const file of ['../../webview/millerColumns.js', '../basicInspectorView.js']) {
+  for (const file of [
+    '../../webview/evaluatePane.js',
+    '../../webview/millerColumns.js',
+    '../basicInspectorView.js',
+  ]) {
     new Function(fs.readFileSync(path.resolve(__dirname, file), 'utf8'))();
   }
 });

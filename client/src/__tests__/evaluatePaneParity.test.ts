@@ -2,10 +2,13 @@
 /**
  * The Inspector's evaluate tab and the debugger's evaluate pane, gesture by gesture.
  *
- * The two panes have drifted: the same gesture does different things depending on which one you are
- * in, and neither is a superset of the other. The wanted end state is one evaluate-pane UX, so what
- * you learn in one panel transfers to the other. See the "Make the Inspector's and the debugger's
- * evaluate panes behave the same way" item in https://github.com/GemTalk/Jasper/issues/622.
+ * The two panes once drifted: the same gesture did different things depending on which one you were
+ * in, and neither was a superset of the other. The behaviour below is now one module both webviews
+ * load (webview/evaluatePane.js, whose own tests drive it directly) — but SHARED code is not the
+ * claim this file makes. It makes the claim a user can check: the same gesture does the same thing
+ * in both panels, whatever each one had to do to get there. That is what has to stay true if some
+ * future pane grows a wrinkle of its own, and it is why these run against the real panels rather
+ * than against the module.
  *
  * Both views are evaluated in jsdom exactly as their webviews inject them, and each is wrapped in
  * the same small adapter (`Pane`), so every behaviour below is asserted against BOTH panes from one
@@ -20,9 +23,9 @@
  * against a hand-copied DOM the panel no longer emits. The Inspector's pane is opened through the
  * real view, which renders its own.
  *
- * Three gaps run the other way — the Inspector is the one missing something — and a fourth is
- * missing from both. They are all here rather than only the reported direction, because "one UX"
- * has to settle each of them and a fix aimed at only the debugger would leave the rest.
+ * The last describe is the exception, and the only place the sharing itself is asserted: two copies
+ * that happen to agree pass every behavioural test in this file, which is exactly the state that
+ * produced https://github.com/GemTalk/Jasper/issues/651.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -30,7 +33,9 @@ import * as path from 'path';
 import { evaluatePaneHtml } from '../debuggerEvalPane';
 
 beforeAll(() => {
+  // evaluatePane.js first: both views reach for the global it registers as they wire their pane.
   for (const file of [
+    '../webview/evaluatePane.js',
     '../debuggerView.js',
     '../webview/millerColumns.js',
     '../basicInspector/basicInspectorView.js',
@@ -73,6 +78,8 @@ interface Pane {
   newer(): void;
   /** Shift+Enter — Display It. */
   runKey(): void;
+  /** Take the focus out of the box, the way clicking elsewhere in the panel does. */
+  blur(): void;
 }
 
 // ── the debugger's evaluate pane ────────────────────────────────────────────
@@ -169,6 +176,7 @@ function debuggerPane(): Pane {
     older: () => press('ArrowUp', { ctrlKey: true }),
     newer: () => press('ArrowDown', { ctrlKey: true }),
     runKey: () => press('Enter', { shiftKey: true }),
+    blur: () => input.dispatchEvent(new FocusEvent('blur')),
   };
 }
 
@@ -266,6 +274,7 @@ function inspectorPane(): Pane {
     older: () => press('ArrowUp', { ctrlKey: true }),
     newer: () => press('ArrowDown', { ctrlKey: true }),
     runKey: () => press('Enter', { shiftKey: true }),
+    blur: () => box().dispatchEvent(new FocusEvent('blur')),
   };
 }
 
@@ -862,5 +871,153 @@ describe('the pane is there on demand, not unconditionally', () => {
 
     // A tab the user picks — not a bar that is merely collapsed.
     expect(document.querySelector('[data-tab="eval"]')).not.toBeNull();
+  });
+});
+
+describe('a chord left half-typed', () => {
+  it.each(PANES)('%s drops it on Escape, without touching the expression', (_name, open) => {
+    const pane = open();
+    pane.type('self balance');
+
+    pane.press('k', { ctrlKey: true });
+    pane.press('Escape');
+
+    expect(pane.input.value).toBe('self balance');
+    expect(pane.press('d').defaultPrevented).toBe(false); // the chord is gone, so `d` is typed
+  });
+
+  it.each(PANES)('%s drops it when the focus leaves the box', (_name, open) => {
+    // Coming back to the box is not resuming the chord: the second key would arrive minutes later,
+    // as an ordinary `d` the user means to type.
+    const pane = open();
+    pane.type('self');
+    pane.press('k', { ctrlKey: true });
+
+    pane.blur();
+
+    expect(pane.press('d').defaultPrevented).toBe(false);
+    expect(pane.runCount()).toBe(0);
+  });
+
+  it.each(PANES)('%s types a closing key that means none of the three', (_name, open) => {
+    // A stray Ctrl+K costs one keystroke and never a swallowed character.
+    const pane = open();
+    pane.type('self');
+    pane.press('k', { ctrlKey: true });
+
+    const ev = pane.press('x');
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(pane.runCount()).toBe(0);
+  });
+});
+
+describe('the history the walk steps through', () => {
+  it.each(PANES)('%s gives a repeated expression one entry, not two', (_name, open) => {
+    const pane = open();
+    pane.type('self balance');
+    pane.click('display');
+    pane.click('display');
+    pane.type('');
+
+    pane.older();
+    pane.older();
+
+    expect(pane.input.value).toBe('self balance');
+    expect(pane.status()).toMatch(/Oldest expression/);
+  });
+
+  it.each(PANES)('%s starts the next walk from the newest after a run', (_name, open) => {
+    // Running is what ends a walk: the expression you just ran is the newest, and the next Ctrl+Up
+    // means "the one before this", not "where I had got to".
+    const pane = open();
+    for (const expr of ['one', 'two']) {
+      pane.type(expr);
+      pane.click('display');
+    }
+    pane.older(); // -> one
+    pane.type('three');
+    pane.click('display');
+
+    pane.older();
+
+    expect(pane.input.value).toBe('two');
+  });
+
+  it.each(PANES)('%s carries the walk across an answer landing', (_name, open) => {
+    // The Inspector redraws its whole evaluate tab when a result arrives. A walk whose place lived
+    // in the drawing rather than in the column would be lost every time the stone answered.
+    const pane = open();
+    for (const expr of ['one', 'two', 'three']) {
+      pane.type(expr);
+      pane.click('display');
+    }
+    pane.older(); // -> two
+
+    pane.answer('42');
+    pane.older();
+
+    expect(pane.input.value).toBe('one');
+  });
+});
+
+describe('the two panes say the keys the same way', () => {
+  /**
+   * Not "both mention Shift+Enter" but the SAME STRING, because the wording is now one function
+   * both panes call. Anything less lets the two drift back into describing the same gesture
+   * differently, which is how a user learns a pane rather than a key.
+   */
+  const labels = (open: () => Pane) => {
+    const pane = open();
+    return {
+      placeholder: pane.input.getAttribute('placeholder') ?? '',
+      legend: pane.input.getAttribute('title') ?? '',
+      buttons: ['display', 'execute', 'inspect'].map(
+        (mode) =>
+          (pane.root().querySelector(`[data-eval="${mode}"]`) as HTMLElement).getAttribute(
+            'title',
+          ) ?? '',
+      ),
+    };
+  };
+
+  it('offers the same placeholder, legend and button tooltips in both', () => {
+    const inspector = labels(inspectorPane);
+    const debugger_ = labels(debuggerPane);
+
+    expect(debugger_.placeholder).toBe(inspector.placeholder);
+    expect(debugger_.legend).toBe(inspector.legend);
+    expect(debugger_.buttons).toEqual(inspector.buttons);
+  });
+});
+
+describe('the walk itself has one implementation', () => {
+  /**
+   * The point of the whole exercise: the behaviour above is shared code, not two copies that
+   * currently agree. PR 642 shipped a bug that existed in one copy and not the other, in the very
+   * change meant to unify the panes — the next divergence will not necessarily be caught in review.
+   *
+   * The behavioural tests above cannot see the difference: two copies that happen to agree pass
+   * every one of them. These two guards can — one says neither view has grown its own walk back,
+   * the other says the shared file actually reaches the shipping webviews, which the tests above
+   * cannot tell either, because they load all three scripts by hand.
+   */
+  const sourceOf = (file: string) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+
+  it.each([
+    ['the debugger', 'debuggerView.js'],
+    ['the Inspector', 'basicInspector/basicInspectorView.js'],
+  ])('%s keeps no copy of the walk of its own', (_name, file) => {
+    expect(sourceOf(file)).not.toMatch(/function\s+(recallPrevious|recallNext|walkLabel)\b/);
+  });
+
+  it.each([
+    ['the debugger', 'debuggerPanel.ts', 'evaluatePaneJs'],
+    ['the Inspector', 'basicInspector/basicInspector.ts', 'evaluatePaneJs'],
+  ])('%s injects the shared script into its webview', (_name, file, binding) => {
+    const source = sourceOf(file);
+
+    expect(source).toMatch(/readWebviewScript\(\s*'evaluatePane\.js',\s*'webview'\s*\)/);
+    expect(source).toContain(`\${${binding}}</script>`);
   });
 });
