@@ -36,9 +36,10 @@ What it does, in order:
         - a parse -> rewrite -> regenerate and a tiny rename preview succeed.
   4. commit on success; abort (nothing committed) on any failure, and print a
      readable report either way. The report also carries an informational row
-     (#noteAstDrift) saying whether the stone's own AST -- Rowan's, on a rowan3
-     extent -- still matches the copy we vendored, so a GemStone-side change shows
-     up as a prompt to re-vendor rather than as a surprise.
+     (#noteAstDrift) comparing the stone's own AST -- Rowan's, on a rowan3 extent
+     -- against the copy we vendored, so a GemStone-side change shows up as a
+     prompt to re-vendor rather than as a surprise. It compares per-class method
+     COUNTS, so it catches an added or removed method, not an edit inside one.
 
 This class is a load-time tool, so it files itself into UserGlobals (not the
 GsRefactoring dict, which stays pure engine). Requires a SystemUser session: the
@@ -256,9 +257,17 @@ GsRefactoringLoader >> verify [
 
 { #category : 'verifying' }
 GsRefactoringLoader >> noteAstDrift [
-	"Report whether the stone's OWN AST substrate still matches the copy we vendored.
+	"Compare the stone's OWN AST substrate against the copy we vendored, by per-class
+	 method count.
 
-	 Only a rowan3 extent has one: RowanKernel binds the same RB* names, from the
+	 Counts only, and the row says so: an added or removed method moves the count, an
+	 edit INSIDE an existing method does not. So this catches a class that gained or
+	 lost methods upstream, and is blind to a bug fix in a body -- arguably the more
+	 likely upstream change. Comparing content would mean carrying every method's
+	 source (or a digest) in the manifest; see #547, where that is being weighed
+	 alongside the rest of the engine versioning work.
+
+	 Only a rowan3 extent has another copy: RowanKernel binds the same RB* names, from the
 	 AST-Core package this payload was vendored from. The engine deliberately uses its
 	 own copy (so a GemStone-side AST change cannot alter a refactoring's behaviour
 	 between Jasper releases), which means a divergence is not an error -- it is the
@@ -291,8 +300,8 @@ GsRefactoringLoader >> noteAstDrift [
 		detail: (compared = 0
 			ifTrue: [ 'no other AST on this stone (base extent) -- nothing to compare' ]
 			ifFalse: [ drifted isEmpty
-				ifTrue: [ compared printString, ' shared classes match the vendored copy' ]
-				ifFalse: [ 'DRIFT in ', drifted size printString, ' of ', compared printString,
+				ifTrue: [ compared printString, ' shared classes: method counts match the vendored copy' ]
+				ifFalse: [ 'METHOD-COUNT DRIFT in ', drifted size printString, ' of ', compared printString,
 					' shared classes -- consider re-vendoring:', (self join: drifted) ] ])
 ]
 
