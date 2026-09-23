@@ -245,6 +245,97 @@ describe('GciLibrary', () => {
     expect(gciLibrary.executeAndFetchInteger(session, codeToEvaluate)).toBe(expectedResult);
   }
 
+  /** A call to a non-blocking GCI operation, paired with the integer its resulting oop decodes to. */
+  interface NonBlockingOperation {
+    run: () => Promise<bigint>;
+    expectedResult: bigint;
+  }
+
+  /**
+   * Registers the tests that every non-blocking GCI operation must pass:
+   * it keeps the event loop free while GemStone works, rejects a second
+   * operation started on the same session while it is still in progress,
+   * and falls back to waiting synchronously when readiness checks fail.
+   *
+   * @param operations.slow - An operation that takes about a second in
+   *   GemStone, long enough to observe the event loop and to overlap a
+   *   second operation.
+   * @param operations.quick - An operation that finishes right away. Its
+   *   result must differ from `slow`'s, so a test can tell which operation
+   *   a result came from.
+   */
+  function itBehavesLikeANonBlockingOperation(operations: {
+    slow: NonBlockingOperation;
+    quick: NonBlockingOperation;
+  }) {
+    const { slow, quick } = operations;
+
+    if (slow.expectedResult === quick.expectedResult) {
+      throw new Error('The slow and quick operations must resolve to different results.');
+    }
+
+    function expectOperationToReturn(operation: NonBlockingOperation, resultOop: bigint) {
+      expect(gciLibrary.oopToInteger(session, resultOop)).toBe(operation.expectedResult);
+    }
+
+    it('does not block the event loop while GemStone works on it', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, slow.run);
+    });
+
+    it('does not allow to start a new operation while another is in progress', async () => {
+      const firstOperation = slow.run();
+
+      try {
+        await expectToBeRejectedWithGciLibraryError(
+          quick.run(),
+          'session has a GciTsNb operation in progress',
+        );
+      } finally {
+        await firstOperation;
+      }
+    });
+
+    it('does not affect the result of an ongoing operation when trying to start another one', async () => {
+      const firstOperation = slow.run();
+
+      await quick.run().catch(() => {});
+
+      expectOperationToReturn(slow, await firstOperation);
+    });
+
+    it('returns the result when polling for it fails', async () => {
+      simulatePollFailure();
+
+      const result = await quick.run();
+
+      expectOperationToReturn(quick, result);
+    });
+
+    it('returns the result synchronously when polling for it fails', async () => {
+      simulatePollFailure();
+
+      await expectEventLoopToBeBlockedDuring(100, slow.run);
+    });
+
+    describe('Native socket error handling', () => {
+      beforeEach(skipUnlessRawSocketPolling);
+
+      it('returns the result when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        const result = await quick.run();
+
+        expectOperationToReturn(quick, result);
+      });
+
+      it('returns the result synchronously when the session socket cannot be identified', async () => {
+        simulateSessionSocketFailure();
+
+        await expectEventLoopToBeBlockedDuring(100, slow.run);
+      });
+    });
+  }
+
   describe('evaluating expressions', () => {
     it('returns the result of evaluating an expression', () => {
       const resultOop = gciLibrary.execute(session, `true`);
@@ -336,73 +427,15 @@ describe('GciLibrary', () => {
       );
     });
 
-    it('does not block the event loop while GemStone evaluates the code', async () => {
-      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
-        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
-      );
-    });
-
-    it('does not allow to execute a new operation while another is in progress', async () => {
-      const firstOperation = gciLibrary.executeAndFetchOop(
-        session,
-        `(Delay forSeconds: 1) wait. true`,
-      );
-
-      try {
-        await expectToBeRejectedWithGciLibraryError(
-          gciLibrary.executeAndFetchOop(session, ``),
-          'session has a GciTsNb operation in progress',
-        );
-      } finally {
-        await firstOperation;
-      }
-    });
-
-    it('does not affect the result of an ongoing operation when trying to execute another one', async () => {
-      const firstOperation = gciLibrary.executeAndFetchOop(
-        session,
-        `(Delay forSeconds: 1) wait. true`,
-      );
-
-      await gciLibrary.executeAndFetchOop(session, `false`).catch(() => {});
-
-      expectOopToBeTrue(await firstOperation);
-    });
-
-    it('returns the result when polling for it fails', async () => {
-      simulatePollFailure();
-
-      const result = await gciLibrary.executeAndFetchOop(session, `true`);
-
-      expectOopToBeTrue(result);
-    });
-
-    it('returns the result synchronously when polling for it fails', async () => {
-      simulatePollFailure();
-
-      await expectEventLoopToBeBlockedDuring(100, () =>
-        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
-      );
-    });
-
-    describe('Native socket error handling', () => {
-      beforeEach(skipUnlessRawSocketPolling);
-
-      it('returns the result when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-
-        const result = await gciLibrary.executeAndFetchOop(session, `true`);
-
-        expectOopToBeTrue(result);
-      });
-
-      it('returns the result synchronously when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-
-        await expectEventLoopToBeBlockedDuring(100, () =>
-          gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
-        );
-      });
+    itBehavesLikeANonBlockingOperation({
+      slow: {
+        run: () => gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. 1`),
+        expectedResult: 1n,
+      },
+      quick: {
+        run: () => gciLibrary.executeAndFetchOop(session, `2`),
+        expectedResult: 2n,
+      },
     });
   });
 
@@ -613,100 +646,40 @@ describe('GciLibrary', () => {
     });
 
     /**
-     * Returns a fresh instance of a class that understands
-     * `waitThenAnswerTrueSelector`, a method that waits one second and then
-     * answers `true`, so tests can send it a unary message that takes real,
-     * observable time to complete.
+     * A fresh instance of a class that understands `waitThenAnswerOne`, a
+     * method that waits one second and then answers `1`, so tests can send it
+     * a unary message that takes real, observable time to complete. Built
+     * outside `run` so defining the class does not land inside the window a
+     * test measures.
      */
-    function delayedReceiver(): { receiverOop: bigint; waitThenAnswerTrueSelector: string } {
-      const receiverOop = gciLibrary.execute(
+    let delayedReceiverOop: bigint;
+
+    beforeEach(() => {
+      delayedReceiverOop = gciLibrary.execute(
         session,
         `
                 | delayingClass |
                 delayingClass := Object subclass: #GciLibraryTestAsyncDelay instVarNames: {} inDictionary: UserGlobals.
-                delayingClass compileMethod: 'waitThenAnswerTrue (Delay forSeconds: 1) wait. ^ true'.
+                delayingClass compileMethod: 'waitThenAnswerOne (Delay forSeconds: 1) wait. ^ 1'.
                 delayingClass new
             `,
       );
-
-      return { receiverOop, waitThenAnswerTrueSelector: 'waitThenAnswerTrue' };
-    }
-
-    it('does not block the event loop while GemStone processes the send', async () => {
-      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
-
-      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
-        gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
-      );
     });
 
-    it('does not allow to send a new message while another is in progress', async () => {
-      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
-      const firstOperation = gciLibrary.performAsync(
-        session,
-        receiverOop,
-        waitThenAnswerTrueSelector,
-      );
-
-      try {
-        await expectToBeRejectedWithGciLibraryError(
-          gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not'),
-          'session has a GciTsNb operation in progress',
-        );
-      } finally {
-        await firstOperation;
-      }
-    });
-
-    it('does not affect the result of an ongoing send when trying to send another message', async () => {
-      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
-      const firstOperation = gciLibrary.performAsync(
-        session,
-        receiverOop,
-        waitThenAnswerTrueSelector,
-      );
-
-      await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not').catch(() => {});
-
-      expectOopToBeTrue(await firstOperation);
-    });
-
-    it('returns the result when polling for it fails', async () => {
-      simulatePollFailure();
-
-      const result = await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not');
-
-      expectOopToBeTrue(result);
-    });
-
-    it('returns the result synchronously when polling for it fails', async () => {
-      simulatePollFailure();
-      const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
-
-      await expectEventLoopToBeBlockedDuring(100, () =>
-        gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
-      );
-    });
-
-    describe('Native socket error handling', () => {
-      beforeEach(skipUnlessRawSocketPolling);
-
-      it('returns the result when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-
-        const result = await gciLibrary.performAsync(session, gciLibrary.falseOop(), 'not');
-
-        expectOopToBeTrue(result);
-      });
-
-      it('returns the result synchronously when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-        const { receiverOop, waitThenAnswerTrueSelector } = delayedReceiver();
-
-        await expectEventLoopToBeBlockedDuring(100, () =>
-          gciLibrary.performAsync(session, receiverOop, waitThenAnswerTrueSelector),
-        );
-      });
+    itBehavesLikeANonBlockingOperation({
+      slow: {
+        run: () => gciLibrary.performAsync(session, delayedReceiverOop, 'waitThenAnswerOne'),
+        expectedResult: 1n,
+      },
+      quick: {
+        run: () =>
+          gciLibrary.performAsync(
+            session,
+            gciLibrary.GciTsI64ToOop(session, 2n).result,
+            'yourself',
+          ),
+        expectedResult: 2n,
+      },
     });
   });
 
