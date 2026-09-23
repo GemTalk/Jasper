@@ -14,6 +14,7 @@
  * evaluation go through the kernel sends in `debugQueries.ts`.
  */
 import * as vscode from 'vscode';
+import { EvalMode } from '../evaluateMode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugQueries';
@@ -118,7 +119,7 @@ type BasicInspectorMessage =
       columnId: number;
       oop: string;
       expression: string;
-      mode: 'display' | 'execute' | 'inspect';
+      mode: EvalMode;
     }
   | {
       command: 'setSlot';
@@ -673,12 +674,7 @@ export class BasicInspector {
    * prints it, Execute It is silent bar a status-bar line, Inspect It opens it
    * in a new column.
    */
-  private evaluate(
-    columnId: number,
-    oop: bigint,
-    expression: string,
-    mode: 'display' | 'execute' | 'inspect',
-  ): void {
+  private evaluate(columnId: number, oop: bigint, expression: string, mode: EvalMode): void {
     const busy = this.busyError();
     if (busy) {
       this.panel.webview.postMessage({ command: 'evalResult', columnId, ok: false, text: busy });
@@ -1032,6 +1028,9 @@ export class BasicInspector {
     .eval-var-copy:hover { opacity: 1; }
     .eval-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
     .eval-hint.armed { color: var(--vscode-textLink-foreground); }
+    /* A transient answer that is not a result -- "there is nothing to recall". Tinted so it reads as
+       a reply to the keystroke rather than as the chord hint having changed wording. */
+    .eval-hint.flash { color: var(--vscode-foreground); font-style: italic; }
     .eval-out {
       flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; word-break: break-word;
       font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);

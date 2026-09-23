@@ -819,8 +819,9 @@
    *
    * These are the editor's own bindings — `ctrl+k d` / `e` / `i` for Display,
    * Execute and Inspect It — so the keys that run an expression against the
-   * stone are the same whether you typed it in a Smalltalk file or here against
-   * `self`. The contributed ones cannot serve: all three are `when:
+   * stone are the same whether you typed it in a Smalltalk file, here against
+   * `self`, or in the debugger's evaluate pane, which answers to the same three
+   * (see client/src/evaluateMode.ts). The contributed ones cannot serve: all three are `when:
    * editorTextFocus`, which a focused webview never satisfies, and the commands
    * behind them read the active text editor for their code. So the pane
    * recognises the chord itself, which is what `chordArmed` below is for — and
@@ -835,6 +836,46 @@
    * key would have nothing to open.
    */
   var EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
+
+  /** The plain modifier this platform writes for the arrow walk — Cmd on a Mac, Ctrl elsewhere.
+   *  (The pane accepts either, but the hint should name the one you actually have.) */
+  function ctrlLabel() {
+    var platform = (typeof navigator !== 'undefined' && navigator.platform) || '';
+    return platform.indexOf('Mac') === 0 ? 'Cmd' : 'Ctrl';
+  }
+
+  /**
+   * What the empty box says. A placeholder is the one piece of guidance that costs NO screen space —
+   * it lives where the expression will go, and is gone the moment you type.
+   *
+   * ONE key, not the full legend. A placeholder wider than the field makes the box scroll sideways,
+   * and in the debugger's one-line version the scrollbar ate most of the box — a pane nobody had
+   * touched yet looked broken. Both panes say the same short thing and carry the rest on the box's
+   * own tooltip, which costs nothing and cannot overflow.
+   */
+  function placeholderHint() {
+    return 'Shift+Enter to run';
+  }
+
+  /** The full key legend, for the hint's tooltip: everything the pane answers to, in one place,
+   *  again at no cost to the layout. */
+  function keyLegend() {
+    var c = ctrlLabel();
+    return (
+      'Shift+Enter or ' +
+      c +
+      '+Enter \u2014 Display It' +
+      '\n' +
+      chordLabel() +
+      ' then D / E / I \u2014 Display It, Execute It, Inspect It' +
+      '\n' +
+      c +
+      '+\u2191 / ' +
+      c +
+      '+\u2193 \u2014 earlier / later expression' +
+      '\nEscape \u2014 clear the box'
+    );
+  }
 
   /** The chord prefix as this platform writes it, for buttons and the hint. */
   function chordLabel() {
@@ -944,22 +985,30 @@
   function renderEval(col) {
     var pane = col.el.contentPane;
     var mod = chordLabel();
+    var ctrl = ctrlLabel();
     // A chord left half-typed when the tab was switched away is not still
     // waiting for its second key when the pane comes back.
     col.chordArmed = false;
     pane.innerHTML =
       '<div class="eval">' +
       '<div class="toolbar">' +
-      '<button class="btn" data-eval="display" title="' +
+      // Every key this pane answers to is advertised WITHOUT costing a pixel of layout: the
+      // chord legend already had a line, the rest ride on tooltips and on the placeholder, which
+      // occupies space the empty box was spending on nothing.
+      '<button class="btn" data-eval="display" title="Shift+Enter, ' +
       mod +
-      ' D">Display It</button>' +
+      ' D, or ' +
+      ctrl +
+      '+Enter">Display It</button>' +
       '<button class="btn" data-eval="execute" title="' +
       mod +
       ' E">Execute It</button>' +
       '<button class="btn" data-eval="inspect" title="' +
       mod +
       ' I">Inspect It</button>' +
-      '<span class="eval-hint">' +
+      '<span class="eval-hint" title="' +
+      keyLegend() +
+      '">' +
       mod +
       ' D &#183; E &#183; I</span>' +
       '</div>' +
@@ -969,7 +1018,11 @@
       // only once there is something to clear — the affordance the debugger's
       // eval bar and the list filters already use.
       '<div class="eval-input-wrap">' +
-      '<textarea class="eval-input" spellcheck="false"></textarea>' +
+      '<textarea class="eval-input" spellcheck="false" placeholder="' +
+      placeholderHint() +
+      '" title="' +
+      keyLegend() +
+      '"></textarea>' +
       '<button class="clear-btn" data-eval-clear="1" tabindex="-1" title="Clear">&#10005;</button>' +
       '</div>' +
       '<div class="eval-out' +
@@ -997,6 +1050,14 @@
     });
   }
 
+  /** Draw the answer (or the error) in place, leaving the box, its caret and its focus alone. */
+  function renderEvalOut(col) {
+    var out = col.el.contentPane.querySelector('.eval-out');
+    if (!out) return;
+    out.textContent = col.evalOut ? col.evalOut.text : '';
+    out.classList.toggle('error', !!(col.evalOut && !col.evalOut.ok));
+  }
+
   /**
    * Half-typed chords are the reason this is a state machine rather than a
    * modifier test: the closing key of `Ctrl+K D` arrives on its own, and would
@@ -1021,7 +1082,41 @@
       return;
     }
     if (ev.key === 'Escape') {
-      disarmChord(col);
+      // Escape empties the box, the way the debugger's evaluate pane and the list filters do —
+      // one evaluate-pane UX, so the key means the same thing in both panels. A half-typed chord
+      // is dropped first, since that is what Escape most immediately cancels.
+      if (col.chordArmed) {
+        disarmChord(col);
+        return;
+      }
+      ev.preventDefault();
+      clearEval(col);
+      return;
+    }
+    // Shift+Enter is Display It — the one-key way to run what is in the box. Plain Enter stays a
+    // newline: the box is multi-line on purpose, and with Shift+Enter running there has to be a
+    // key that does not.
+    if (ev.key === 'Enter' && ev.shiftKey) {
+      ev.preventDefault();
+      runEval(col, 'display');
+      return;
+    }
+    // Ctrl+Up / Ctrl+Down walk the expressions already RUN here (not merely typed), so a long doit
+    // can be brought back and edited rather than retyped.
+    //
+    // MODIFIED arrows, not bare ones. The box is multi-line, so bare Up/Down have to keep moving the
+    // caret; a shell can take them only because its input is one line. Recalling at the box's edges
+    // instead (Up on the first line, Down on the last) would work, but makes the same key mean two
+    // things depending on where the caret happens to be — which is the kind of thing you have to
+    // learn rather than guess. With Ctrl held it means one thing everywhere in the box.
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      recallPrevious(col);
+      return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      recallNext(col);
       return;
     }
     // Ctrl+Enter stays as it was: the one-key way to see a result, for anyone
@@ -1030,6 +1125,94 @@
       ev.preventDefault();
       runEval(col, 'display');
     }
+  }
+
+  /** Put `text` in the box, caret at the end, and keep the column's copy in step. */
+  function setEvalText(col, text) {
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (!input) return;
+    col.evalText = text;
+    input.value = text;
+    showClearWhenTyped(col);
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+  }
+
+  /**
+   * Step BACK through the expressions run in this pane, stopping at the oldest.
+   *
+   * Running an expression leaves it in the box, so stepping to the newest entry would put back the
+   * text already on screen and read as a dead key — the first press has to move. Whatever was in
+   * the box when the walk started is kept as `evalDraft`, so walking forward past the newest
+   * returns it rather than leaving you stranded in the history. `evalHistoryAt` is -1, or unset,
+   * when no walk is in progress.
+   */
+  function recallPrevious(col) {
+    var history = col.evalHistory || [];
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (!input) return;
+    if (history.length === 0) {
+      // Nothing has been RUN in this pane yet, so there is nothing to go back to. Silence here is
+      // indistinguishable from the key not being wired at all — which is exactly how it was read
+      // when the history was empty because the panel had just been opened. Say which it is.
+      flashEvalHint(col, 'No earlier expression yet');
+      return;
+    }
+    if (col.evalHistoryAt == null || col.evalHistoryAt < 0) {
+      col.evalDraft = input.value;
+      var start = history.length - 1;
+      // Trimmed on both sides, for the reason the debugger's copy gives: the history holds what
+      // was RUN, the box holds what was typed.
+      if (input.value.trim() === history[start]) start -= 1;
+      if (start < 0) {
+        flashEvalHint(col, 'Oldest expression');
+        return;
+      }
+      col.evalHistoryAt = start;
+    } else {
+      if (col.evalHistoryAt === 0) {
+        flashEvalHint(col, 'Oldest expression');
+        return;
+      }
+      col.evalHistoryAt -= 1;
+    }
+    setEvalText(col, history[col.evalHistoryAt]);
+    flashEvalHint(col, walkLabel(col));
+  }
+
+  /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
+  function recallNext(col) {
+    var history = col.evalHistory || [];
+    if (col.evalHistoryAt == null || col.evalHistoryAt < 0) return;
+    if (col.evalHistoryAt >= history.length - 1) {
+      col.evalHistoryAt = -1;
+      setEvalText(col, col.evalDraft || '');
+      flashEvalHint(col, 'Back to what you were typing');
+      return;
+    }
+    col.evalHistoryAt += 1;
+    setEvalText(col, history[col.evalHistoryAt]);
+    flashEvalHint(col, walkLabel(col));
+  }
+
+  /**
+   * Where you are in the walk, and how to get out of it.
+   *
+   * Walking into the history replaces what you were typing, and nothing on screen said so or said
+   * how to get it back — so the draft looked lost and the walk looked like a one-way trip. Naming
+   * the way out at the moment you step is what makes it a detour rather than a commitment.
+   */
+  function walkLabel(col) {
+    var history = col.evalHistory || [];
+    return (
+      'Earlier ' +
+      (history.length - col.evalHistoryAt) +
+      ' of ' +
+      history.length +
+      ' \u00b7 ' +
+      ctrlLabel() +
+      '+\u2193 for your draft'
+    );
   }
 
   function armChord(col) {
@@ -1041,6 +1224,25 @@
     if (!col.chordArmed) return;
     col.chordArmed = false;
     setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
+  }
+
+  /**
+   * Put a transient message where the chord hint lives, then put the hint back. Used for the
+   * answers that are not results -- "there is nothing to recall" -- which have nowhere else to go:
+   * the output area belongs to what the stone returned, and a toast is far too loud for a keystroke.
+   */
+  function flashEvalHint(col, text) {
+    var hint = col.el.contentPane.querySelector('.eval-hint');
+    if (!hint) return;
+    if (col.hintTimer) clearTimeout(col.hintTimer);
+    hint.textContent = text;
+    hint.classList.add('flash');
+    col.hintTimer = setTimeout(function () {
+      col.hintTimer = null;
+      hint.classList.remove('flash');
+      // Re-derive rather than remember: the chord may have been armed while this was showing.
+      setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
+    }, 1600);
   }
 
   function setChordHint(col, html) {
@@ -1088,6 +1290,8 @@
   function clearEval(col) {
     col.evalText = '';
     col.evalOut = null;
+    col.evalHistoryAt = -1; // clearing is a fresh start, not a step in the walk
+
     renderEval(col);
     var input = col.el.contentPane.querySelector('.eval-input');
     if (input) input.focus();
@@ -1095,11 +1299,22 @@
 
   function runEval(col, mode) {
     if (!col.evalText.trim()) return;
+    // Running is not leaving: whether it came from the keyboard or from a button, the next thing
+    // you do is almost always type again — edit the expression, or write the next one. A button
+    // click parks the focus on the button, so hand it back.
+    var box = col.el.contentPane.querySelector('.eval-input');
+    if (box) box.focus();
+    // The history is of what reached the stone, so an expression typed and thought better of is
+    // not in it. A repeat of the last one does not get a second entry.
+    var expr = col.evalText.trim();
+    if (!col.evalHistory) col.evalHistory = [];
+    if (col.evalHistory[col.evalHistory.length - 1] !== expr) col.evalHistory.push(expr);
+    col.evalHistoryAt = -1;
     post({
       command: 'evaluate',
       columnId: col.id,
       oop: col.oop,
-      expression: col.evalText,
+      expression: expr,
       mode: mode,
     });
   }
@@ -1464,7 +1679,12 @@
         col = Columns.get(msg.columnId);
         if (!col) return;
         col.evalOut = { ok: msg.ok, text: msg.text };
-        if (col.activeTab === 'eval') renderEval(col);
+        // Update the OUTPUT only. Re-rendering the whole pane here swapped the textarea out from
+        // under the user on every run, taking the caret and the focus with it — so after
+        // Shift+Enter the keyboard was nowhere and the next keystroke went to the panel rather than
+        // the box. This is the hazard refreshEvalVariables already avoids for the variables list;
+        // the result has the same claim on being drawn in place.
+        if (col.activeTab === 'eval') renderEvalOut(col);
         return;
       case 'setSlotResult':
         col = Columns.get(msg.columnId);

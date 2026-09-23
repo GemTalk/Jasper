@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { REFACTORING_APPLIED_COMMAND } from './refactoring/refactoringAppliedEvent';
 import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
 import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
@@ -4350,6 +4351,29 @@ export class ExplorerController {
       if (entry.sessionId !== sessionId || entry.className !== className) continue;
       if (selector !== undefined && entry.selector !== selector) continue;
       entry.refresh();
+    }
+  }
+
+  /**
+   * Refresh EVERY open method-history panel for a session, whatever class it shows.
+   *
+   * The per-method path above narrows by class and selector because a compile event names the one
+   * method that changed. A refactoring cannot: renaming a method rewrites its senders across the
+   * image, renaming an instance variable recompiles a class and its subclasses, and the toast that
+   * announces it is deliberately the one place every refactoring ends — it knows the session and
+   * nothing about the blast radius. So this refreshes them all, which is bounded by how many panels
+   * are open (usually one) and is the only answer that cannot miss a panel.
+   *
+   * A panel whose method the refactoring RENAMED now names a selector the class no longer has, and
+   * keeps showing every version recorded under it — the store is keyed by selector, and a rename
+   * moves the method, not its history. That is the useful answer rather than a loose end: those
+   * versions stay restorable, so a rename you regret can be undone from the panel that was already
+   * open on it. None of them is flagged current, because nothing is installed under that selector
+   * any more. Following a rename to its NEW name is a separate thing and not attempted.
+   */
+  refreshAllMethodHistoryPanels(sessionId: number): void {
+    for (const entry of this.methodHistoryPanels) {
+      if (entry.sessionId === sessionId) entry.refresh();
     }
   }
 
@@ -9036,6 +9060,12 @@ export function registerGemStoneExplorer(
       const sel = methodArg(arg);
       if (sel) ctl.subOverrides(sel.selector, sel.isMeta);
     }),
+    // Fired by refactoringAppliedToast — the single place every refactoring ends — so an open
+    // method-history panel updates itself after a refactoring exactly as it does after a Save.
+    // Deliberately not declared in package.json: it is internal plumbing, not a palette command.
+    vscode.commands.registerCommand(REFACTORING_APPLIED_COMMAND, (sessionId: number) =>
+      ctl.refreshAllMethodHistoryPanels(sessionId),
+    ),
     // Editor-focus → navigator: when a gemstone:// method/class editor gains
     // focus, cascade the panels to its location.
     vscode.window.onDidChangeActiveTextEditor((editor) => {
