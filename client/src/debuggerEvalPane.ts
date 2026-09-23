@@ -16,6 +16,10 @@
  * buttons. The placeholder previously said "Enter", which stopped being true when the box became
  * multi-line and Shift+Enter took over running it.
  *
+ * The keys are written `Ctrl` here, which is right everywhere but a Mac. Only the webview knows
+ * which platform it is on, so `labelKeysForPlatform` in debuggerView.js rewrites these titles to
+ * `Cmd` when it is one — the markup carries the one copy of the wording, the webview adjusts it.
+ *
  * It names ONE key rather than the full legend, because this box is a single line in a narrow
  * column: a placeholder wider than the field made the textarea scroll sideways, and the scrollbar
  * ate most of a 1.9rem box — so a pane nobody had touched yet looked broken. The full legend is on

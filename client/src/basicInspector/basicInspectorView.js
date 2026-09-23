@@ -1164,7 +1164,9 @@
     if (col.evalHistoryAt == null || col.evalHistoryAt < 0) {
       col.evalDraft = input.value;
       var start = history.length - 1;
-      if (input.value === history[start]) start -= 1;
+      // Trimmed on both sides, for the reason the debugger's copy gives: the history holds what
+      // was RUN, the box holds what was typed.
+      if (input.value.trim() === history[start]) start -= 1;
       if (start < 0) {
         flashEvalHint(col, 'Oldest expression');
         return;
@@ -1307,7 +1309,7 @@
     if (box) box.focus();
     // The history is of what reached the stone, so an expression typed and thought better of is
     // not in it. A repeat of the last one does not get a second entry.
-    var expr = col.evalText;
+    var expr = col.evalText.trim();
     if (!col.evalHistory) col.evalHistory = [];
     if (col.evalHistory[col.evalHistory.length - 1] !== expr) col.evalHistory.push(expr);
     col.evalHistoryAt = -1;
@@ -1315,7 +1317,7 @@
       command: 'evaluate',
       columnId: col.id,
       oop: col.oop,
-      expression: col.evalText,
+      expression: expr,
       mode: mode,
     });
   }

@@ -500,6 +500,25 @@ describe('going back to a previous expression', () => {
     },
   );
 
+  it.each(PANES)(
+    '%s moves on the first press when the run left trailing whitespace behind',
+    (_name, open) => {
+      // The box is multi-line, so a trailing space or newline is easy to leave in. The history
+      // holds what was RUN, which is trimmed, while the box still holds what was typed — comparing
+      // the two raw missed, and the first press handed back the expression just run.
+      const pane = open();
+      pane.type('first');
+      pane.click('display');
+      pane.type('second  ');
+      pane.click('display');
+      expect(pane.input.value).toBe('second  '); // the run leaves it exactly as typed
+
+      pane.older();
+
+      expect(pane.input.value).toBe('first');
+    },
+  );
+
   it.each(PANES)('%s walks back one per press', (_name, open) => {
     const pane = open();
     for (const expr of ['one', 'two', 'three']) {
@@ -767,6 +786,35 @@ describe('the pane says which keys it answers to, without spending layout on it'
     expect(legend).toMatch(/\u2191/);
     expect(legend).toMatch(/\u2193/);
     expect(legend).toMatch(/Escape/);
+  });
+
+  it.each(PANES)('%s writes the Mac modifier on a Mac, everywhere it names one', (_name, open) => {
+    /**
+     * The walk's status line has always derived `Cmd`, while the debugger's tooltips were written
+     * `Ctrl` into the markup — so one gesture was advertised under two modifiers, depending on
+     * which half of the pane you read. Both panes are checked, because the Inspector derives its
+     * legend and the debugger rewrites one, and only a Mac tells the two apart.
+     */
+    const real = Object.getOwnPropertyDescriptor(window.navigator, 'platform');
+    Object.defineProperty(window.navigator, 'platform', {
+      value: 'MacIntel',
+      configurable: true,
+    });
+    try {
+      const pane = open();
+      const surfaces = [pane.input.getAttribute('title') ?? ''].concat(
+        Array.from(pane.root().querySelectorAll('[data-eval]')).map(
+          (btn) => btn.getAttribute('title') ?? '',
+        ),
+      );
+
+      for (const text of surfaces) {
+        expect(text).not.toMatch(/\bCtrl\b/);
+        expect(text).toMatch(/\bCmd\b/);
+      }
+    } finally {
+      if (real) Object.defineProperty(window.navigator, 'platform', real);
+    }
   });
 
   it.each(PANES)('%s stops advertising the key that no longer runs anything', (_name, open) => {

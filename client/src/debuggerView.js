@@ -775,7 +775,11 @@
       if (historyAt < 0) {
         draft = evalInput.value;
         let start = history.length - 1;
-        if (evalInput.value === history[start]) start -= 1;
+        // Trimmed on both sides: the history holds what was RUN, which is trimmed, while the box
+        // still holds what was typed. Comparing them raw missed on a trailing space or newline —
+        // easy to leave in a multi-line box — and the first press handed back the expression just
+        // run instead of stepping past it.
+        if (evalInput.value.trim() === history[start]) start -= 1;
         if (start < 0) {
           setEvalStatus('Oldest expression');
           return;
@@ -814,11 +818,34 @@
      * the way out at the moment you step is what makes it a detour rather than a commitment.
      */
     function walkLabel() {
-      const mod =
-        ((typeof navigator !== 'undefined' && navigator.platform) || '').indexOf('Mac') === 0
-          ? 'Cmd'
-          : 'Ctrl';
-      return `Earlier ${history.length - historyAt} of ${history.length} \u00b7 ${mod}+\u2193 for your draft`;
+      return `Earlier ${history.length - historyAt} of ${history.length} \u00b7 ${ctrlLabel()}+\u2193 for your draft`;
+    }
+
+    /** The modifier this platform writes for the chords this pane answers to. */
+    function ctrlLabel() {
+      return ((typeof navigator !== 'undefined' && navigator.platform) || '').indexOf('Mac') === 0
+        ? 'Cmd'
+        : 'Ctrl';
+    }
+
+    /**
+     * Say the keys the way this platform writes them.
+     *
+     * The markup ships `Ctrl`, which is right everywhere but a Mac, and only the webview knows
+     * which this is — so a Mac user read `Ctrl+↑` on the box and `Cmd+↓` in the status line for
+     * the two halves of one walk. Rewriting the titles that are already there, rather than building
+     * a second copy of the legend here, keeps one wording to maintain. The keys themselves always
+     * worked: every handler takes either modifier.
+     */
+    function labelKeysForPlatform() {
+      const mod = ctrlLabel();
+      if (mod === 'Ctrl') return; // the markup already says so
+      const labelled = [evalInput].concat(
+        evalToolbar ? Array.prototype.slice.call(evalToolbar.querySelectorAll('[data-eval]')) : [],
+      );
+      labelled.forEach((elem) => {
+        if (elem && elem.title) elem.title = elem.title.replace(/\bCtrl\b/g, mod);
+      });
     }
 
     /**
@@ -926,6 +953,8 @@
       // The ✕ shows only when there's something to clear.
       evalInput.addEventListener('input', showClearWhenTyped);
     }
+
+    labelKeysForPlatform();
 
     // Display It / Execute It / Inspect It.
     if (evalToolbar) {
