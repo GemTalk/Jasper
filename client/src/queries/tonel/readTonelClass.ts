@@ -106,7 +106,7 @@ export function readTonelClass(execute: QueryExecutor, tonelText: string): Tonel
     };
   }
 
-  const code = `| rwLookup parserCls projectCls visitorCls proj pkg visitor defs clsDef ws emit names strm |
+  const code = `| rwLookup parserCls projectCls visitorCls proj pkg visitor defs clsDef ws emit names slots strm |
 ${ROWAN_LOOKUP_PRELUDE}
 parserCls := ${rowanLookupExpr('RwTonelParser')}.
 projectCls := ${rowanLookupExpr('RwResolvedProjectV2')}.
@@ -147,19 +147,29 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
         coll do: [:n | s nextPutAll: n asString] separatedBy: [s nextPut: $ ].
         s contents]].
 
+  "instvars, classvars, classinstvars and pools are the four definition accessors
+   that read their property with a bare at:, so a definition that is missing the
+   key raises KeyNotFound instead of answering empty. Every Rowan constructor sets
+   all four, so this guards a definition built some other way rather than a path we
+   expect; classType and gs_options need no guard because they read with
+   at:ifAbsent: and already answer 'normal' and #()."
+  slots := [:accessor | names value: ([accessor value] on: Error do: [:e | #()])].
+
   emit value: 'NAME' value: clsDef name asString.
   emit value: 'SUPER' value: (clsDef superclassName ifNil: ['nil']) asString.
-  emit value: 'TYPE' value: ([clsDef classType asString] on: Error do: [:e | 'normal']).
+  "asString is load bearing: the Tonel reader stores #type with asSymbol, so this
+   answers #normal rather than 'normal', and CREATION_SELECTOR is keyed on strings."
+  emit value: 'TYPE' value: clsDef classType asString.
   emit value: 'CATEGORY' value: (clsDef category ifNil: ['']) asString.
   emit value: 'COMMENT' value: (clsDef comment ifNil: ['']) asString.
-  emit value: 'IVARS' value: (names value: clsDef instVarNames).
-  emit value: 'CVARS' value: (names value: clsDef classVarNames).
-  emit value: 'CIVARS' value: (names value: clsDef classInstVarNames).
-  emit value: 'POOLS' value: (names value: ([clsDef poolDictionaryNames] on: Error do: [:e | #()])).
+  emit value: 'IVARS' value: (slots value: [clsDef instVarNames]).
+  emit value: 'CVARS' value: (slots value: [clsDef classVarNames]).
+  emit value: 'CIVARS' value: (slots value: [clsDef classInstVarNames]).
+  emit value: 'POOLS' value: (slots value: [clsDef poolDictionaryNames]).
 
   "GemStone class options (#gs_options): dbTransient and friends. They change what
    the class IS, so they are carried through to file in rather than dropped."
-  emit value: 'OPTIONS' value: (names value: ([clsDef gs_options] on: Error do: [:e | #()])).
+  emit value: 'OPTIONS' value: (names value: clsDef gs_options).
 
   "Header properties we understand but do not apply -- reported so the loss is
    stated rather than silent. See UNCARRIED_PROPERTIES in tonelWire.ts.
