@@ -119,8 +119,15 @@ cls ifNil: [^'${TONEL_ERROR_PREFIX}Class not found: ${escapeString(className)}']
    _rwOptionsArray is Rowan's own accessor for this, and agrees with the shipped
    corpus for loaded classes: Object answers #(selfCanBeSpecial) and its
    Object.class.st carries exactly that, so populating always keeps header
-   identity rather than breaking it."
-  [defn gs_options: cls _rwOptionsArray] on: Error do: [:ignored | nil].
+   identity rather than breaking it.
+   Sent unguarded: swallowing an error here would file a dbTransient class out as
+   an ordinary one, which is the silent loss this line exists to prevent. Nothing
+   to swallow, either -- on 3.7.5 _rwOptionsArray is ^self _optionsArrayForDefinition,
+   set arithmetic with no error path, and all 1127 classes in Globals answer it.
+   The receivers that do not understand it, a metaclass and a non-class, never
+   reach this line: rwClassDefinitionInSymbolDictionaryNamed: above rejects them
+   first, and the outer handler reports that as a failed file out."
+  defn gs_options: cls _rwOptionsArray.
   "Start from NO methods. For a Rowan-loaded class the definition already carries
    its own package's methods, and Rowan keys them by the #selector property -- as
    SYMBOLS. Adding ours alongside without clearing put each method in twice: a
