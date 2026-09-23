@@ -730,9 +730,9 @@
     const EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
     let chordArmed = false;
 
-    // Expressions already run here, newest last. Shift+Enter walks back through them, the way a
-    // shell's history does: the box is a place you come back to, and retyping a long doit to change
-    // one keyword is the thing that makes an evaluate pane tedious. What was merely TYPED is not in
+    // Expressions already run here, newest last. Ctrl+Up / Ctrl+Down walk them, the way a shell's
+    // history does: the box is a place you come back to, and retyping a long doit to change one
+    // keyword is the thing that makes an evaluate pane tedious. What was merely TYPED is not in
     // here — only what actually reached the stone.
     const history = [];
     let historyAt = -1; // -1 = not walking; otherwise an index into `history`

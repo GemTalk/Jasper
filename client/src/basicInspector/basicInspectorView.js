@@ -1127,10 +1127,6 @@
     }
   }
 
-  /**
-   * Step back through this column's run expressions, stopping at the oldest rather than emptying
-   * the box. `evalHistoryAt` is -1 when not walking, so the first press lands on the most recent.
-   */
   /** Put `text` in the box, caret at the end, and keep the column's copy in step. */
   function setEvalText(col, text) {
     var input = col.el.contentPane.querySelector('.eval-input');
@@ -1148,7 +1144,8 @@
    * Running an expression leaves it in the box, so stepping to the newest entry would put back the
    * text already on screen and read as a dead key — the first press has to move. Whatever was in
    * the box when the walk started is kept as `evalDraft`, so walking forward past the newest
-   * returns it rather than leaving you stranded in the history.
+   * returns it rather than leaving you stranded in the history. `evalHistoryAt` is -1, or unset,
+   * when no walk is in progress.
    */
   function recallPrevious(col) {
     var history = col.evalHistory || [];
