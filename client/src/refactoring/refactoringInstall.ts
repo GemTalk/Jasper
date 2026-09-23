@@ -15,7 +15,13 @@
  *
  * Why server-side `GsFileIn` rather than client-side per-method compilation: the
  * AST payload alone is ~60 classes / ~1,200 methods. `GsFileIn` compiles each
- * file inside the gem in ~one call, so the extension host stays responsive.
+ * file inside the gem in ~one call.
+ *
+ * That one call still takes tens of seconds, so both round trips here use
+ * `executeFetchStringNb`, not the synchronous `executeFetchString`. The
+ * synchronous form blocks the extension host for the whole load: the class sync
+ * and every other command sit behind it, which reads as two independent hangs on
+ * a fresh login when there is only one cause.
  *
  * The engine installs the compat backports as extensions on kernel classes, so
  * the session passed here must have write access to them — in practice a
@@ -32,7 +38,7 @@
  * used to file in the loader class itself (see `installRefactoringSupport`).
  */
 import { ActiveSession } from '../sessionManager';
-import { executeFetchString, checkRefactoringSupportAvailable } from '../browserQueries';
+import { executeFetchStringNb, checkRefactoringSupportAvailable } from '../browserQueries';
 import { compareGemStoneVersions } from '../gemStoneVersion';
 import { normalizeGemStoneVersion } from '../gemStoneVersionParsing';
 import {
@@ -141,10 +147,11 @@ export async function installRefactoringSupport(
   onProgress('Filing in the refactoring loader…', 25);
   await yieldToEventLoop();
   try {
-    executeFetchString(
+    await executeFetchStringNb(
       session,
-      // Must end in a byte object (a String): executeFetchString fetches the
-      // result via GciTsExecuteFetchBytes, so a non-byte result raises 2103.
+      'refactoring-filein-loader',
+      // Must end in a byte object (a String): the fetch helper reads the result
+      // via GciTsExecuteFetchBytes, so a non-byte result raises 2103.
       `${fileInExpr(session, serverPath(REFACTORING_LOADER_FILE))}. 'ok'`,
     );
   } catch (e: unknown) {
@@ -164,8 +171,9 @@ export async function installRefactoringSupport(
   await yieldToEventLoop();
   let raw: string;
   try {
-    raw = executeFetchString(
+    raw = await executeFetchStringNb(
       session,
+      'refactoring-load',
       '| ldr | ' +
         `ldr := GsRefactoringLoader loadFromServerDir: ${gsStringLiteral(gemPayloadDir)}. ` +
         "(ldr allOk ifTrue: ['OK'] ifFalse: ['FAIL']), (String with: Character lf), ldr reportString",

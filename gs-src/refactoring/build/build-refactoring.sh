@@ -8,7 +8,10 @@
 #
 #   ast-core.gs           vendored AST substrate (RB* parser/rewriter/nodes)
 #                         -- delegated to build-ast-payload.sh, which applies and
-#                            AUDITS the one documented de-Rowan adaptation.
+#                            AUDITS the one documented de-Rowan adaptation, and
+#                            gates the kernel extension methods on
+#                            includesSelector: so a stone that already has them
+#                            (a rowan3 extent) keeps its own.
 #   compat.gs             kernel-method backports, emitted as per-method
 #                         feature-detected doits (installed only where missing;
 #                         never shadow a method the base release already has).
@@ -19,7 +22,10 @@
 #                         load-time tool, so it stays out of the pure engine dict).
 #
 # All engine/AST classes are declared inDictionary: GsRefactoring; the loader
-# creates that dedicated dictionary before the first file-in.
+# creates that dedicated dictionary before the first file-in, and moves it to the
+# front of the symbol list while the payloads load so the chunk directives'
+# bareword class names resolve to our classes rather than a rowan3 extent's
+# RowanKernel ones (GsRefactoringLoader>>withDictionaryFirstDo:).
 #
 # Usage (from anywhere -- paths resolve relative to this script):
 #   gs-src/refactoring/build/build-refactoring.sh

@@ -26,13 +26,20 @@ post-load completeness check -- means the two paths never drift.
 
 What it does, in order:
   1. ensureDictionary  -- find or create the dedicated `GsRefactoring` symbol
-     dictionary and put it at the END of the installing user''s symbol list, so it
-     never shadows a base/kernel or later Rowan class. The engine resolves its
+     dictionary and put it at the END of the installing user''s symbol list, where
+     it cannot shadow a base/kernel or later Rowan class. The engine resolves its
      classes through the whole symbol list, so the dict is purely for isolation.
      The SAME dictionary object is then shared into every user''s symbol list (the
      Published/Globals mechanism) so the engine is visible to whoever uses the
      client -- not just the installing SystemUser.
-  2. file in the payloads in dependency order:
+  2. file in the payloads in dependency order, with the dictionary moved to the
+     FRONT of the symbol list for the duration (#withDictionaryFirstDo:) and put
+     back at the end afterwards. End position is right for normal use but wrong
+     while loading: the payload''s topaz directives (`method: RBArrayNode`, and the
+     superclass in each `subclass:`) name their class as a bareword, so on a
+     rowan3 extent they would resolve to RowanKernel''s RB classes instead of the
+     ones just created -- loading nothing into ours and stripping methods from
+     Rowan''s. The payloads, in order:
         ast-core.gs  -- vendored AST substrate (RB* parser/rewriter/nodes)
         compat.gs    -- kernel-method backports, each installed ONLY if the
                         target release lacks it (per-method feature detection,
@@ -46,7 +53,11 @@ What it does, in order:
         - the scanner/formatter class initializers ran (parse + format works),
         - a parse -> rewrite -> regenerate and a tiny rename preview succeed.
   4. commit on success; abort (nothing committed) on any failure, and print a
-     readable report either way.
+     readable report either way. The report also carries an informational row
+     (#noteAstDrift) comparing the stone''s own AST -- Rowan''s, on a rowan3 extent
+     -- against the copy we vendored, so a GemStone-side change shows up as a
+     prompt to re-vendor rather than as a surprise. It compares per-class method
+     COUNTS, so it catches an added or removed method, not an edit inside one.
 
 This class is a load-time tool, so it files itself into UserGlobals (not the
 GsRefactoring dict, which stays pure engine). Requires a SystemUser session: the
@@ -84,10 +95,11 @@ stageFromServerDir: aString
 	dir := aString.
 	report := OrderedCollection new.
 	[ self ensureDictionary.
-	  self fileIn: 'ast-core.gs'.
-	  self fileIn: 'compat.gs'.
-	  self fileIn: 'engine.gs'.
-	  self fileIn: 'manifest.gs' ]
+	  self withDictionaryFirstDo: [
+	    self fileIn: 'ast-core.gs'.
+	    self fileIn: 'compat.gs'.
+	    self fileIn: 'engine.gs'.
+	    self fileIn: 'manifest.gs' ] ]
 		on: Error
 		do: [:e |
 			self note: 'File-in' ok: false detail: e messageText.
@@ -98,13 +110,71 @@ stageFromServerDir: aString
 
 category: 'loading'
 method: GsRefactoringLoader
+withDictionaryFirstDo: aBlock
+	"Run aBlock with the GsRefactoring dictionary FIRST in the installing user's
+	 symbol list, then put it back at the end.
+
+	 Why it has to be first while the payload files in: topaz chunk directives
+	 name their target class as a bareword -- `removeallmethods RBArrayNode`,
+	 `method: RBArrayNode`, and the superclass in each `subclass:` -- and the
+	 file-in resolves that name through the symbol list. With GsRefactoring at the
+	 END, a rowan3 extent resolves every one of those to RowanKernel's RB class
+	 instead of the one this payload just created: our classes come up empty and
+	 Rowan's get their methods removed and partially overwritten. (Measured on
+	 3.7.5.1: RowanKernel's `RBScanner class` fell from 11 methods to 2, taking
+	 `initializeClassificationTable` with it.) Engine methods resolve their RB
+	 references at compile time too, so engine.gs must file in under the same
+	 ordering or it binds to Rowan's AST.
+
+	 Why it goes back to the end afterwards: first position is only safe while the
+	 payload is loading. Left there, GsRefactoring would shadow a base/kernel or
+	 Rowan class of the same name for every later lookup in this session. The
+	 restore runs under #ensure: so a failed file-in cannot leave it shadowing."
+
+	| prof dict |
+	prof := System myUserProfile.
+	dict := self dictionary.
+	self moveDictionary: dict to: 1.
+	^[ aBlock value ]
+		ensure: [ self moveDictionary: dict to: prof symbolList size ]
+%
+
+category: 'loading'
+method: GsRefactoringLoader
+moveDictionary: aDict to: anIndex
+	"Move aDict to anIndex in the installing user's symbol list. No-op when it is
+	 already there, so this is safe to call twice."
+
+	| prof current |
+	prof := System myUserProfile.
+	current := self indexOfDictionary: aDict.
+	current = anIndex ifTrue: [ ^self ].
+	current notNil ifTrue: [ prof removeDictionaryAt: current ].
+	prof insertDictionary: aDict at: (anIndex min: prof symbolList size + 1)
+%
+
+category: 'loading'
+method: GsRefactoringLoader
+indexOfDictionary: aDict
+	"The 1-based position of aDict in the installing user's symbol list, or nil."
+
+	| list |
+	list := System myUserProfile symbolList.
+	^(1 to: list size) detect: [:i | (list at: i) == aDict] ifNone: [nil]
+%
+
+category: 'loading'
+method: GsRefactoringLoader
 ensureDictionary
 	"Find or create the dedicated GsRefactoring dictionary. Position it at the END
-	 of the symbol list so it never shadows base/kernel or Rowan classes, and bind
-	 its own name inside it so the bareword `GsRefactoring` (used by the payload's
-	 class declarations) resolves. Then share the same dictionary object into every
-	 user's symbol list so the engine is visible beyond the installing SystemUser.
-	 Idempotent."
+	 of the symbol list -- the placement for NORMAL use, where it must not shadow a
+	 base/kernel or Rowan class -- and bind its own name inside it so the bareword
+	 `GsRefactoring` (used by the payload's class declarations) resolves. Then share
+	 the same dictionary object into every user's symbol list so the engine is
+	 visible beyond the installing SystemUser. Idempotent.
+
+	 The file-in itself runs with the dictionary at the FRONT instead; see
+	 #withDictionaryFirstDo: for why, and for the restore that puts it back here."
 
 	| sym prof list dict |
 	sym := self class dictionaryName.
@@ -193,7 +263,75 @@ verify
 	self checkCompat.
 	self checkInitializers.
 	self checkSmoke.
+	self noteAstDrift.
 	^self
+%
+
+category: 'verifying'
+method: GsRefactoringLoader
+noteAstDrift
+	"Compare the stone's OWN AST substrate against the copy we vendored, by per-class
+	 method count.
+
+	 Counts only, and the row says so: an added or removed method moves the count, an
+	 edit INSIDE an existing method does not. So this catches a class that gained or
+	 lost methods upstream, and is blind to a bug fix in a body -- arguably the more
+	 likely upstream change. Comparing content would mean carrying every method's
+	 source (or a digest) in the manifest; see #547, where that is being weighed
+	 alongside the rest of the engine versioning work.
+
+	 Only a rowan3 extent has another copy: RowanKernel binds the same RB* names, from the
+	 AST-Core package this payload was vendored from. The engine deliberately uses its
+	 own copy (so a GemStone-side AST change cannot alter a refactoring's behaviour
+	 between Jasper releases), which means a divergence is not an error -- it is the
+	 signal that re-vendoring gs-src/refactoring/vendor/rowanv3-ast/ is worth doing.
+	 A base extent has no other copy, so there is nothing to compare and the row says
+	 so. Always ok: this is information, never a reason to fail the install."
+
+	| drifted compared |
+	drifted := OrderedCollection new.
+	compared := 0.
+	[ | manifest |
+	  manifest := self dictionary at: #GsRefactoringManifest ifAbsent: [nil].
+	  manifest isNil ifTrue: [ ^self note: 'Stone AST vs vendored' ok: true detail: 'no manifest to compare' ].
+	  manifest do: [:row |
+		| name theirs |
+		name := (row at: 1) asSymbol.
+		theirs := self stoneOwnClassNamed: name.
+		theirs notNil ifTrue: [
+			| actual expected |
+			compared := compared + 1.
+			actual := theirs selectors size + theirs class selectors size.
+			expected := row at: 2.
+			actual = expected ifFalse: [
+				drifted add: name asString, ' (stone ', actual printString,
+					' vs vendored ', expected printString, ')' ] ] ] ]
+		on: Error
+		do: [:e | ^self note: 'Stone AST vs vendored' ok: true detail: 'not compared: ', e messageText ].
+	self note: 'Stone AST vs vendored'
+		ok: true
+		detail: (compared = 0
+			ifTrue: [ 'no other AST on this stone (base extent) -- nothing to compare' ]
+			ifFalse: [ drifted isEmpty
+				ifTrue: [ compared printString, ' shared classes: method counts match the vendored copy' ]
+				ifFalse: [ 'METHOD-COUNT DRIFT in ', drifted size printString, ' of ', compared printString,
+					' shared classes -- consider re-vendoring:', (self join: drifted) ] ])
+%
+
+category: 'verifying'
+method: GsRefactoringLoader
+stoneOwnClassNamed: aSymbol
+	"The class the STONE binds to aSymbol outside our own dictionary, or nil. Used
+	 only by #noteAstDrift, to find Rowan's copy of an AST class without picking up
+	 the one we just installed."
+
+	| ours |
+	ours := self dictionary.
+	^(System myUserProfile symbolList
+		detect: [:d | d ~~ ours and: [(d at: aSymbol ifAbsent: [nil]) notNil]]
+		ifNone: [nil])
+			ifNil: [nil]
+			ifNotNil: [:d | d at: aSymbol ifAbsent: [nil]]
 %
 
 category: 'verifying'
@@ -215,7 +353,7 @@ checkManifest
 		name := row at: 1.
 		expected := row at: 2.
 		total := total + 1.
-		cls := System myUserProfile symbolList objectNamed: name asSymbol.
+		cls := self resolve: name asSymbol.
 		cls isNil
 			ifTrue: [ missing add: name ]
 			ifFalse: [
@@ -259,12 +397,18 @@ checkCompat
 category: 'verifying'
 method: GsRefactoringLoader
 resolve: aSymbol
-	"Resolve a class the loader INSTALLS by name through the symbol list, rather
-	 than as a compile-time bareword. The loader is filed in before the AST and
-	 engine exist, so a bareword reference to (e.g.) RBParser would fail to
-	 compile on a clean stone -- resolving at runtime avoids that."
+	"Resolve a class the loader INSTALLS by name, rather than as a compile-time
+	 bareword. The loader is filed in before the AST and engine exist, so a bareword
+	 reference to (e.g.) RBParser would fail to compile on a clean stone -- resolving
+	 at runtime avoids that.
 
-	^System myUserProfile symbolList objectNamed: aSymbol
+	 Looks in the GsRefactoring dictionary FIRST, and only then through the symbol
+	 list. On a rowan3 extent RowanKernel also binds every RB* name and sits ahead of
+	 GsRefactoring, so a plain symbol-list lookup would verify Rowan's AST rather than
+	 the one just installed -- the checks would pass while our copy sat empty."
+
+	^(self dictionary at: aSymbol ifAbsent: [nil])
+		ifNil: [ System myUserProfile symbolList objectNamed: aSymbol ]
 %
 
 category: 'verifying'
