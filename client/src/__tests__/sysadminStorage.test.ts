@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { onSupportedPosixIt } from './platformGates';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
@@ -12,6 +16,7 @@ vi.mock('../wslBridge', () => ({
 }));
 
 import { SysadminStorage } from '../sysadminStorage';
+import { __setConfig, __resetConfig } from '../__mocks__/vscode';
 
 /** Run `fn` with process.platform/arch temporarily overridden, then restore. */
 function withPlatform(platform: NodeJS.Platform, arch: string, fn: () => void): void {
@@ -55,5 +60,58 @@ describe('SysadminStorage.getPlatformKey on Darwin', () => {
       expect(new SysadminStorage().getPlatformKey()).toBeUndefined();
       expect(new SysadminStorage().getCatalogPlatformKey()).toBe('x86_64.Linux');
     });
+  });
+});
+
+describe('a root path that cannot be read', () => {
+  /** A directory that exists and refuses to open. Root can read it anyway, so a
+   *  test run as root would prove nothing and is skipped. */
+  function unreadableRoot(): string | undefined {
+    if (process.getuid?.() === 0) return undefined;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-noperm-'));
+    fs.chmodSync(dir, 0o000);
+    __setConfig('gemstone', 'rootPath', dir);
+    return dir;
+  }
+
+  // One of these scans runs while the extension is activating, where a throw
+  // stopped every GemStone command from being registered — the panel that would
+  // have reported it included.
+  onSupportedPosixIt('lists nothing rather than throwing', () => {
+    const dir = unreadableRoot();
+    if (!dir) return;
+    try {
+      const storage = new SysadminStorage();
+      expect(storage.getExtractedVersionInfos(true)).toEqual([]);
+      expect(storage.getDownloadedFiles().size).toBe(0);
+      expect(storage.getDatabases()).toEqual([]);
+    } finally {
+      fs.chmodSync(dir, 0o755);
+      fs.rmSync(dir, { recursive: true, force: true });
+      __resetConfig();
+    }
+  });
+
+  // Listing nothing is the same answer an empty folder gives, and the panel
+  // cannot say "no versions installed" about a folder it never managed to read.
+  onSupportedPosixIt('can still be told apart from an empty one', () => {
+    const dir = unreadableRoot();
+    if (!dir) return;
+    try {
+      expect(new SysadminStorage().rootPathProblem()).toContain('EACCES');
+    } finally {
+      fs.chmodSync(dir, 0o755);
+      fs.rmSync(dir, { recursive: true, force: true });
+      __resetConfig();
+    }
+  });
+
+  it('reports no problem for a folder that is simply not there yet', () => {
+    __setConfig('gemstone', 'rootPath', path.join(os.tmpdir(), 'jasper-absent-root-xyz'));
+    try {
+      expect(new SysadminStorage().rootPathProblem()).toBeUndefined();
+    } finally {
+      __resetConfig();
+    }
   });
 });

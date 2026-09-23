@@ -230,6 +230,10 @@ interface PanelState {
   /** Windows with WSL — where the client install and Copy Host actions mean anything. */
   windows: boolean;
   rootPath: string;
+  /** Why the root path cannot be read, when it cannot. A folder Jasper cannot
+   *  open lists nothing, which is indistinguishable from an empty one until
+   *  this says otherwise. */
+  rootProblem?: string;
   versions: VersionRow[];
   databases: DatabaseRow[];
   /** Only used to mark which database the current session is working in. */
@@ -1517,6 +1521,7 @@ export class DatabasesPanel {
       platform: this.deps.storage.getPlatformKey() ?? process.platform,
       windows: needsWsl(),
       rootPath: this.deps.storage.getRootPath(),
+      rootProblem: this.deps.storage.rootPathProblem(),
       versions,
       databases,
       logins: this.buildLoginTargets(databases),

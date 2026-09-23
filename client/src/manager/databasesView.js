@@ -1176,6 +1176,16 @@
     </div>`;
   }
 
+  // The versions folder is there but cannot be opened. Every listing under it
+  // comes back empty, so without this the panel reads as a machine with nothing
+  // on it — and offers to make a database in a folder it cannot even read.
+  function renderRootProblem(state) {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>Cannot read <strong>${esc(state.rootPath)}</strong> — ${esc(state.rootProblem)}. Nothing in it can be listed until that is fixed.</span></span>
+      ${btn('chooseRoot', 'Choose another folder\u2026', 'folderOpen', 'btn-secondary')}
+    </div>`;
+  }
+
   function renderVersionFirst() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>New Database needs a GemStone version to copy from — install one below first.</span></span>
@@ -1395,6 +1405,8 @@
 
     els.root.innerHTML =
       renderHeader(state) +
+      // The standing condition leads: it explains every empty list below it.
+      (state.rootProblem ? renderRootProblem(state) : '') +
       (lastFailure ? renderFailure() : '') +
       (registering
         ? renderRegister(state)

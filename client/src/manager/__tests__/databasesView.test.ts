@@ -189,6 +189,22 @@ describe('what leads the panel', () => {
   });
 });
 
+describe('when the root path cannot be read', () => {
+  // Listing nothing is what an empty folder does too, so the panel would
+  // otherwise read as a machine with no versions and no databases on it.
+  it('says so, rather than showing an empty machine', () => {
+    mount(state({ rootProblem: "EACCES: permission denied, scandir '/root'", versions: [] }));
+    expect(root.textContent).toContain('Cannot read');
+    expect(root.textContent).toContain('/root');
+    expect(root.querySelector('[data-action="chooseRoot"]')).not.toBeNull();
+  });
+
+  it('says nothing about it when the folder reads fine', () => {
+    mount();
+    expect(root.textContent).not.toContain('Cannot read');
+  });
+});
+
 describe('when the host says an action failed', () => {
   // The message was posted and dropped: the panel cleared its busy flag and
   // redrew the unchanged state, so a refused action looked like one that had

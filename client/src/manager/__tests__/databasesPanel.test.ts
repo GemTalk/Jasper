@@ -84,6 +84,8 @@ const RELEASE: GemStoneVersion = {
 
 /** The disk, as the version list reports it. Tests drive it between commands. */
 let onDisk: GemStoneVersion[];
+/** Why the root cannot be read, when a test says it cannot. */
+let rootProblem: string | undefined;
 /** What DatabaseManager reports about NFS, and the create it performs. */
 let nfsRisk: { rootPath: string; fsType: string } | undefined;
 let createDatabaseDirect: ReturnType<typeof vi.fn>;
@@ -103,6 +105,7 @@ function makeDeps() {
     storage: {
       getPlatformKey: () => 'x86_64.Linux',
       getRootPath: () => '/root',
+      rootPathProblem: () => rootProblem,
       getDatabases: () => databases,
       getExtractedVersions: () => [],
       getAvailableExtents: () => [],
@@ -153,6 +156,7 @@ beforeEach(() => {
   vi.mocked(vscode.commands.executeCommand).mockClear();
   onDisk = [{ ...RELEASE }];
   databases = [];
+  rootProblem = undefined;
   nfsRisk = undefined;
   // Answers the config as it now stands, the way the real one does.
   recordNetldiPort = vi.fn((db: { config: Record<string, unknown> }, port: number) => ({
@@ -197,6 +201,7 @@ function lastState(): {
   }[];
   create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
   versions: { version: string }[];
+  rootProblem?: string;
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -204,6 +209,24 @@ function lastState(): {
   );
   return (states[states.length - 1][0] as { state: ReturnType<typeof lastState> }).state;
 }
+
+describe('a root path that cannot be read', () => {
+  // Every listing under it comes back empty, which is the same answer an empty
+  // folder gives — so the panel has to be told, or it reports a machine with
+  // nothing on it and offers a New Database in a folder it cannot read.
+  it('is carried in the state rather than read as an empty machine', async () => {
+    rootProblem = "EACCES: permission denied, scandir '/root'";
+    await openPanel();
+
+    expect(lastState().rootProblem).toContain('EACCES');
+  });
+
+  it('says nothing when the root reads fine', async () => {
+    await openPanel();
+
+    expect(lastState().rootProblem).toBeUndefined();
+  });
+});
 
 describe('a version list that cannot be built', () => {
   // The scan is pure disk work, and it is the first thing the first paint asks
