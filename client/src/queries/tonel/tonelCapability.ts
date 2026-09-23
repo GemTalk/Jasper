@@ -37,11 +37,9 @@
 // -------------------------------
 // It is not a rowan2 detector. Rowan 2 is not a supported configuration and is
 // not tested against, so whether this selector list happens to tell the two
-// generations apart is unknown and deliberately unasserted — an earlier version
-// of this comment claimed it was "the sharpest available discriminator", which
-// nothing here demonstrates. What the probe guarantees is narrower and is the
-// thing that matters: on a stone where these exact calls are not answerable, the
-// feature is hidden.
+// generations apart is unknown and deliberately unasserted. What the probe
+// guarantees is narrower and is the thing that matters: on a stone where these
+// exact calls are not answerable, the feature is hidden.
 //
 // The classes are resolved through `./rowanLookup`, NOT through the session's
 // symbol list directly: on a rowan3 stone the Rowan dictionaries are in

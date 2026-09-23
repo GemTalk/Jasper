@@ -114,8 +114,7 @@ const invalidSymbols = (values: string[]): string[] => values.filter((v) => !IDE
  * `byteSubclass:` takes NO `instVarNames:` — a byte class has no named instance
  * variables, and GemStone ships no such variant (verified on a 3.7.5 rowan3 stone:
  * `byteSubclass:instVarNames:…` is not understood, `byteSubclass:classVars:…` is).
- * Emitting the keyword anyway made every byte class fail to define, on top of the
- * type-key bug above.
+ * Emitting the keyword anyway makes every byte class fail to define.
  *
  * `options:` is appended only when the file carries `#gs_options`, because the
  * 6-keyword forms are the ones used everywhere else and the `options:` variants

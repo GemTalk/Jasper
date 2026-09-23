@@ -36,11 +36,8 @@
 // case that actually turns up. The reader therefore advances the declared number
 // of code points (see `endOfPayload`) rather than slicing by `length`.
 //
-// This was not theoretical: a comment containing a single 😀 made GemStone
-// declare 28 and JavaScript see 29, the terminator check failed, and file in
-// refused the entire file. The terminator check did its job — it turned the
-// disagreement into a loud error rather than corruption — but the format was
-// still unreadable for that file, so the counting itself is now right.
+// The terminator check is the backstop: a miscount fails the read loudly instead
+// of yielding a plausible-looking class with a truncated method.
 //
 // Unknown record kinds are an ERROR, not something to skip. Skipping is how a
 // field added on the server gets dropped on the floor by an older client with
@@ -268,8 +265,8 @@ export function decodeTonelClass(wire: string): TonelClass {
   // A class cannot define one selector twice on a side. A file that carries it
   // twice is malformed, and must not reach file in: REPLACE means the last one
   // silently wins, so the developer would never learn the file was wrong. This
-  // also backstops the file-out — it shipped duplicates for days because every
-  // comparison in the test suite collapsed them.
+  // also backstops the file-out, and is the only thing that can: every comparison
+  // in the test suite collapses duplicates, so none of them can see one.
   const seen = new Set<string>();
   for (const m of result.methods) {
     const key = `${m.isMeta ? 'class' : 'instance'}:${m.selector}`;
