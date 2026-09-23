@@ -4,8 +4,8 @@ Jasper writes diagnostics and activity logs to VS Code **Output channels**
 (the *Output* view; pick a channel from its dropdown). All but one are created
 during `activate()` so the set is discoverable up front — before any of
 them has produced a line — rather than appearing only the first time a feature
-runs; the exception is **GemStone Refactoring**, created lazily on the first
-refactoring-engine install.
+runs. Two are created lazily instead: **GemStone Refactoring**, on the first
+refactoring-engine install, and **GemStone File In**, on the first file in.
 
 | Channel | Created by | What it shows |
 |---|---|---|
@@ -17,6 +17,7 @@ refactoring-engine install.
 | **GemStone Enhanced Inspector Perf** | `extension.ts` (`activate`) | Enhanced Inspector round-trip counts, for perf tuning. Populated only while perf tracking is enabled. |
 | **GemStone Smalltalk Language Server** | `vscode-languageclient` (`client.start()`) | The LSP server's log/trace (parsing, completion, diagnostics). Named from the `LanguageClient` display name; its verbosity follows the `gemstoneSmalltalk.trace.server` setting. |
 | **GemStone Refactoring** | `refactoringInstallCommand.ts` (`getReportChannel`) | The refactoring-engine loader's completeness report. Created lazily on the first install rather than during `activate()`. |
+| **GemStone File In** | `fileTransfer/fileIn.ts` (`fileInChannel`) | Per-line outcome of a file in — chunk (`.gs`/`.tpz`) and Tonel (`.st`) both write here, so there is one place to look whichever format the file was in. Errors read `ERROR <file>:<line> — <message>`; the toast that reports a failure carries a **Show Log** button that reveals it. Created lazily on the first file in. |
 
 ## The GemStone GCI channel
 
