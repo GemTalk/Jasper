@@ -200,6 +200,41 @@ describe('tonel class file out (integration)', () => {
     },
   );
 
+  // The premise behind sending `_rwOptionsArray` UNGUARDED in the file-out doit.
+  //
+  // An error there now fails the file out rather than writing a header that
+  // silently describes an ordinary class. That rests on a claim about the image --
+  // every class answers the message -- which was measured once and would otherwise
+  // live only in a commit message. This makes re-checking it CI's job.
+  //
+  // It asserts only that, deliberately. Whether the options then reach the header
+  // is a different question, and the answer differs by class: for a Rowan-LOADED
+  // class `rwClassDefinitionInSymbolDictionaryNamed:` already fills `gs_options`,
+  // so the doit's own send changes nothing, and comparing headers across the base
+  // image would be a test of Rowan rather than of us -- one that passes with the
+  // send removed. The case the send exists for is an UNLOADED class, whose
+  // definition comes back with `gs_options` empty; that is covered by
+  // `#gs_options survives the round trip` in tonelFileInFidelity.
+  it('every class in Globals answers _rwOptionsArray', (ctx) => {
+    rowan3.skipUnlessAvailable(ctx);
+    // Unguarded on purpose: if the send raises, this doit fails and the test does
+    // too, which is the whole point. 1127 classes, 138 of them carrying options,
+    // measured on 3.7.5.
+    const counts = exec(`| answered withOptions |
+answered := 0. withOptions := 0.
+(Globals select: [:e | e isBehavior and: [e isClass]]) do: [:c | | o |
+  o := c _rwOptionsArray.
+  answered := answered + 1.
+  o isEmpty ifFalse: [withOptions := withOptions + 1]].
+answered printString, ' ', withOptions printString`);
+    const [answered, withOptions] = counts.trim().split(' ').map(Number);
+
+    expect(answered).toBeGreaterThan(1000);
+    // Not a round number: if this collapses, the message stopped reporting rather
+    // than the image changing, and an "at least one" assertion would not notice.
+    expect(withOptions).toBeGreaterThan(100);
+  });
+
   it('reports a class that does not resolve instead of writing a file', (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     const answer = fileOutClassTonel(exec, 'JasperNoSuchClassAnywhere');
