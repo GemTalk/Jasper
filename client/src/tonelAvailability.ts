@@ -106,10 +106,22 @@ export function refreshTonelAvailability(session: ActiveSession | undefined): bo
 }
 
 /**
+ * Whether this session can do Tonel, without saying anything to the user.
+ *
+ * For callers that report failures their own way -- file in records one log line
+ * per file and lets `fileIn.ts` raise a single toast at the end, so a guard that
+ * warned per file would stack one toast per selected file.
+ */
+export function isTonelAvailable(session: ActiveSession | undefined): boolean {
+  return probe(session).available;
+}
+
+/**
  * Guard for a Tonel command, for the palette route the menus cannot gate.
  *
  * Explains rather than merely refusing: a hidden command reached through the
- * palette gives the user no other clue why nothing happened.
+ * palette gives the user no other clue why nothing happened. Only for a command
+ * the user invoked ONCE -- inside a loop use {@link isTonelAvailable}.
  */
 export function requireTonelAvailable(session: ActiveSession | undefined): boolean {
   const { available, missing } = probe(session);

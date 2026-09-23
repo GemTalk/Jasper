@@ -45,7 +45,7 @@ import type { ActiveSession } from '../sessionManager';
 import * as fs from 'fs';
 import { FileInNote, FileInOutcome } from './fileIn';
 import { readTonelClass } from '../queries/tonel/readTonelClass';
-import { requireTonelAvailable } from '../tonelAvailability';
+import { isTonelAvailable } from '../tonelAvailability';
 import type { TonelClass } from '../queries/tonel/tonelWire';
 
 /** What applying one Tonel class did. */
@@ -345,8 +345,10 @@ export async function fileInTonelUri(
   const outcome = emptyTonelOutcome();
   outcome.files = 1;
 
-  if (!requireTonelAvailable(session)) {
-    // The guard has already explained itself; record it so the log agrees.
+  // Silent on purpose. This runs once per selected file, so a guard that raised its
+  // own warning would stack one toast per file; the error below reaches the user
+  // through the single toast and log fileIn.ts already owns.
+  if (!isTonelAvailable(session)) {
     outcome.errors.push({
       file: filePath,
       line: 1,

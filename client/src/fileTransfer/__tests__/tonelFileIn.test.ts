@@ -322,6 +322,51 @@ describe('applyTonelClass — what it must never do', () => {
   });
 });
 
+describe('fileInTonelUri — a stone that cannot do Tonel', () => {
+  // Filing in runs this once PER FILE. A guard that raised its own warning here
+  // would stack one toast per selected file -- ten .st files on a base extent,
+  // ten identical modal-ish toasts to dismiss, saying nothing the first did not.
+  // fileIn.ts raises one toast for the whole run, so this path stays silent and
+  // reports through the log like every other per-file failure.
+  const unavailable = (): void => {
+    vi.mocked(queries.tonelCapability).mockReturnValue({
+      available: false,
+      missing: ['RwTonelParser class>>on:filePath:forReader:'],
+    });
+  };
+
+  it('says so once per file, in the log', async () => {
+    unavailable();
+
+    const outcome = await fileInTonelUri(SESSION, '/tmp/Widget.class.st');
+
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0].file).toBe('/tmp/Widget.class.st');
+    expect(outcome.errors[0].message).toContain('3.7.5');
+  });
+
+  it('raises no warning of its own, however many files are filed in', async () => {
+    unavailable();
+
+    for (const file of ['/tmp/A.class.st', '/tmp/B.class.st', '/tmp/C.class.st']) {
+      await fileInTonelUri(SESSION, file);
+    }
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing and asks the stone nothing when it refuses', async () => {
+    // The refusal has to come before the file is read, or an unreadable file on an
+    // unsupported stone reports the wrong reason.
+    unavailable();
+
+    await fileInTonelUri(SESSION, '/tmp/Widget.class.st');
+
+    expect(fs.readFileSync).not.toHaveBeenCalled();
+    expect(queries.executeFetchString).not.toHaveBeenCalled();
+  });
+});
+
 describe('fileInTonelUri — reporting a parse failure', () => {
   it('reports the line the parse failed on, not the top of the file', async () => {
     // What the developer sees in the GemStone File In channel. `…:1` on a 500-line
