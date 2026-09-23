@@ -133,7 +133,11 @@ Any `[FAIL]` line means the load was **incomplete**; the transaction is aborted
 (nothing committed) and the line tells you what was missing — a dropped class, a
 short method count, a missing kernel dependency, or a broken initializer/smoke.
 Fix the cause (usually a stale or partial payload — rebuild) and re-run; the load
-is idempotent.
+is idempotent. One exception to be aware of: the `ast-core.gs` kernel extension
+methods are gated on `includesSelector:` (row 1 above), so a re-run leaves any
+already-present copy alone — including one an earlier install put there. If a
+re-vendor changes one of those bodies, an existing stone keeps the old one;
+neither a reinstall nor an uninstall replaces it.
 
 You can also confirm from the client: the Explorer's rename-instance-variable
 command lights up once the `rbSupportAvailable` probe sees the engine.

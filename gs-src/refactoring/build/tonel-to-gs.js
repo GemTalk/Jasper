@@ -249,8 +249,17 @@ function emitFeatureDetectedMethod(className, m) {
 // Why gate them at all: on a rowan3 extent Rowan has already installed this exact
 // family (AST-Kernel-Core is where we vendored them from — byte-identical), and
 // re-filing them would overwrite Rowan's copies with ours. Skipping leaves the
-// stone's own methods alone; on a base extent nothing is present and every one
-// installs, exactly as before.
+// stone's own methods alone; on a base extent nothing is present, so the FIRST
+// install compiles every one.
+//
+// The cost: from the second install on the selector is present because WE put it
+// there, so the gate protects our own older copy just as carefully as Rowan's. A
+// re-vendor that changes one of these bodies will not reach a stone that already
+// has the engine -- reinstall skips it, and uninstall clears only
+// `*ast-core-compat*`. Accepted: these vendored files are never hand-edited, so a
+// body changes only if GemStone changes it upstream. Recording what we installed,
+// so it can be compared and reversed, is part of the engine versioning work in
+// #547.
 function emitPresenceGatedMethod(className, m) {
   const receiver = m.side === 'class' ? `${className} class` : className;
   const selector = selectorFromPattern(m.source.split('\n')[0]);
