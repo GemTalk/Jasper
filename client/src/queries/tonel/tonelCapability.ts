@@ -60,13 +60,20 @@ import { escapeString, splitLines } from '../util';
 import { ROWAN_LOOKUP_PRELUDE, rowanLookupExpr } from './rowanLookup';
 
 /**
- * Every class-and-selector pair the Tonel feature actually sends, written as it
- * reads in Smalltalk: `Receiver>>selector` for a message to an instance,
+ * The class-and-selector pairs the gate probes, written as they read in
+ * Smalltalk: `Receiver>>selector` for a message to an instance,
  * `Receiver class>>selector` for one to the class itself.
  *
- * This list IS the capability contract. Adding a call to Rowan anywhere in the
- * feature means adding it here, or the gate stops covering the thing it claims
- * to cover.
+ * NOT every Rowan message the feature sends. The two doits send about thirty
+ * between them, and most carry no information: if `RwClassDefinition` resolves
+ * at all it answers `name` and `category`, so probing them tells us nothing the
+ * class lookup has not already told us, and a list nobody can keep complete is
+ * worse at its job than a short one that is true.
+ *
+ * What earns a place here is a call that could stop working while its class
+ * still resolves: the PRIVATE API (`_write…`, `_packageConvention:`), and the
+ * calls whose absence would otherwise surface as a mysterious runtime failure
+ * rather than a hidden command. When you add one of those, add it here.
  */
 export const TONEL_CAPABILITIES = [
   // File out: driving the writer directly, one class at a time.
@@ -80,8 +87,16 @@ export const TONEL_CAPABILITIES = [
   // File in: assembling a reader visitor by hand so the parser can be fed a
   // string, since Rowan's own entry point takes a file path.
   'RwRepositoryResolvedProjectTonelReaderVisitorV2>>currentProjectDefinition:',
+  'RwRepositoryResolvedProjectTonelReaderVisitorV2>>currentPackageDefinition:',
+  // Private, and the likeliest of these to be renamed. Without it the reader
+  // takes the wrong package convention and the parse goes wrong quietly.
+  'RwRepositoryResolvedProjectTonelReaderVisitorV2>>_packageConvention:',
   'RwTonelParser class>>on:filePath:forReader:',
+  // The parse itself. `on:filePath:forReader:` answers a parser; `start` is what
+  // makes it read, so losing it breaks file in with the writer still intact.
+  'RwTonelParser>>start',
   'RwResolvedProjectV2>>addPackageNamed:toComponentNamed:',
+  'RwResolvedProjectV2>>addLoadComponentNamed:comment:',
   // Building method definitions from a live class, for the file-out header's
   // methods (see fileOutClassTonel for why this is always needed).
   'RwMethodDefinition class>>newForSelector:protocol:source:',
