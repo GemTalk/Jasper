@@ -1,7 +1,7 @@
 import type { GciError } from './gciLibrary';
 import type { ActiveSession } from './sessionManager';
 import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
-import { logError, logInfo, logWarning } from './gciLog';
+import { logError, logInfo } from './gciLog';
 
 /**
  * Jade-style server-side Transcript sink.
@@ -250,16 +250,12 @@ export function decodeTranscriptForwarderSend(
   }
 }
 
-/** Warn at most once per window: the cause is global, not per session. */
-let warnedNoContinueWithAsync = false;
-
 /**
  * Read a non-blocking call's result, forwarding transcript sends as they
- * arrive: on 2336, display the text via `onTranscript` and resume with an
- * async GciTsContinueWith (worker thread where koffi offers one — the extension
- * host stays free even if the resumed code runs for minutes; otherwise the call
- * falls back to the blocking one, and says so in the log once), looping until a
- * real result or error.
+ * arrive: on 2336, display the text via `onTranscript` and resume with
+ * GciTsContinueWith on a koffi worker thread, so the extension host stays free
+ * even if the resumed code runs for minutes, looping until a real result or
+ * error.
  *
  * A 2336 that is NOT ours (unknown clientObject) is still continued — there is
  * no meaningful reply we can give, but abandoning it would strand the user's
@@ -285,14 +281,6 @@ export async function settleNbResult(
   session: ActiveSession,
   onTranscript: (text: string) => void,
 ): Promise<{ result: bigint; err: GciError }> {
-  if (!session.gci.isContinueWithAsyncAvailable() && !warnedNoContinueWithAsync) {
-    warnedNoContinueWithAsync = true;
-    logWarning(
-      'GciTsContinueWith.async is unavailable, so Transcript output resumes on the extension ' +
-        'host instead of a worker thread. Execution that writes to the Transcript will make the ' +
-        'window unresponsive while it runs, and Cancel will not work. Please report this.',
-    );
-  }
   let { result, err } = session.gci.GciTsNbResult(session.handle);
   while (isForwarderSendError(err)) {
     const suspended = toBigInt(err.context);

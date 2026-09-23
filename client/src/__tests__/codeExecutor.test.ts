@@ -55,9 +55,6 @@ const OOP_NIL = 0x14n;
 
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
-    // GciLibrary reports whether koffi gave it a worker-thread variant of
-    // GciTsContinueWith; settleNbResult warns once when it did not.
-    isContinueWithAsyncAvailable: vi.fn(() => true),
     utf8ClassOop: vi.fn(() => 100n),
     GciTsNbExecute: vi.fn((): Record<string, unknown> => ({
       success: true,

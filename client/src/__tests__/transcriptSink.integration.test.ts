@@ -211,32 +211,33 @@ tmps := SessionTemps current.
     expect(chunks).toEqual(['before', 'after']);
   });
 
-  it('completes a live write, twice, when koffi offers no worker thread', async () => {
-    // Steps 1 and 2 of the issue's own verification list, against the fallback
-    // path: a live write completes through the blocking binding, and a SECOND
-    // write in the same session still works -- which is what proves the first
-    // resume did not strand a process holding the mutex.
+  it('a live write with no worker thread fails loudly and strands nothing', async () => {
+    // Losing koffi's `.async` must be an error the user sees, not a window
+    // that silently freezes. And the error
+    // must not cost the session its Transcript: the write fails while the
+    // process sits inside the critical: block, so settleNbResult has to clear
+    // it. Live stays on across both writes, because switching it on is a
+    // repair of its own and would hide a stranded semaphore.
     const bindings = gci as unknown as Record<string, unknown>;
     const realBinding = bindings._GciTsContinueWith as (...args: unknown[]) => unknown;
+    setTranscriptLive(session(), true);
+
     bindings._GciTsContinueWith = (...args: unknown[]) => realBinding(...args);
     try {
-      expect(gci.isContinueWithAsyncAvailable()).toBe(false);
-      setTranscriptLive(session(), true);
-
-      for (const word of ['first', 'second']) {
-        const chunks: string[] = [];
-        const { result, err } = await executeLive(
-          `Transcript nextPutAll: '${word}'. 6 * 7`,
-          (text) => chunks.push(text),
-        );
-
-        expect(err.number).toBe(0);
-        expect(chunks).toEqual([word]);
-        expect(gci.oopToInteger(handle, result)).toBe(42n);
-      }
+      await expect(executeLive("Transcript nextPutAll: 'lost'. 6 * 7", () => {})).rejects.toThrow(
+        TypeError,
+      );
     } finally {
       bindings._GciTsContinueWith = realBinding;
     }
+
+    const chunks: string[] = [];
+    const { result, err } = await executeLive("Transcript nextPutAll: 'after'. 6 * 7", (text) =>
+      chunks.push(text),
+    );
+    expect(err.number).toBe(0);
+    expect(chunks).toEqual(['after']);
+    expect(gci.oopToInteger(handle, result)).toBe(42n);
   });
 
   it('captures kernel Transcript writes and drains them in buffered mode', () => {

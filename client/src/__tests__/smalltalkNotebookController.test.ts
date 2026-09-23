@@ -22,9 +22,6 @@ import { SMALLTALK_LANGUAGE } from '../languageIds';
 // live-toggle/drain calls go through executeAndFetchString.
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
-    // GciLibrary reports whether koffi gave it a worker-thread variant of
-    // GciTsContinueWith; settleNbResult warns once when it did not.
-    isContinueWithAsyncAvailable: vi.fn(() => true),
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
     GciTsNbExecute: vi.fn((..._args: unknown[]) => ({
       success: true,
