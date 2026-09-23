@@ -74,6 +74,12 @@ export interface TonelClass {
   instVars: string[];
   classVars: string[];
   classInstVars: string[];
+  /**
+   * Always empty in practice. Rowan's Tonel reader does not carry pool
+   * dictionaries -- `newClassDefinitionFrom:` passes `pools: #()` and leaves the
+   * header's own read commented out -- so nothing filed in through it ever has
+   * them. That is Rowan's decision about what Tonel represents, not a gap here.
+   */
   pools: string[];
   /**
    * GemStone class options from Tonel's `#gs_options` — `dbTransient`,

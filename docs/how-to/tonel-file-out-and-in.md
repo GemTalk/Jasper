@@ -125,7 +125,7 @@ Filing a class out and back in preserves its shape and its behaviour:
 
 | Carried | Notes |
 |---|---|
-| Superclass, instance / class / class-instance variables, pool dictionaries | |
+| Superclass, instance / class / class-instance variables | |
 | Class type | `normal`, `variable` and `byteSubclass`. `immediate` is refused — GemStone has no creation selector for it |
 | Class comment | Cleared if the file carries none: filing in REPLACES |
 | `#gs_options` | `dbTransient`, `subclassesDisallowed` and friends — these change what the class *is* |
@@ -139,6 +139,7 @@ File In log rather than dropping them quietly:
 |---|---|
 | `#gs_reservedoop` | An identity the base image assigns. Re-applying it to a class created from a file would at best fail and at worst collide with the object that already holds it |
 | `#gs_constraints`, `#gs_foreignKeys` | Per-instance-variable constraints. Expressible in GemStone, but not part of what Jasper shows you, and there is no tested path for applying them |
+| `#pools` | Rowan's reader does not carry pool dictionaries — file out writes them, filing in does not restore them. A class whose methods read a pool variable files in without its pool, and those methods fail to compile with `error 1001, undefined symbol`. This is Rowan's decision about what Tonel represents; Jasper reads Tonel through Rowan and inherits it |
 
 There is also a size limit: a single Tonel file above **2 MB** is refused. The whole
 file becomes one Smalltalk string inside one doit, and past roughly 5 MB the gem runs
