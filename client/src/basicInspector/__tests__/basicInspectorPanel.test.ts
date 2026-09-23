@@ -187,6 +187,23 @@ describe('opening the panel', () => {
     expect(panel.webview.html.split(`<script nonce="${nonce}">`)).toHaveLength(5);
   });
 
+  it('serves the shared evaluate-pane script, ahead of the view that uses it', () => {
+    open();
+
+    const html = panel.webview.html;
+
+    // The webview scripts are injected as raw text, so nothing links them: the view calls
+    // `EvaluatePane.create` while wiring the pane, and a page that never defined that global — or
+    // defined it after the view — throws there, leaving an evaluate pane that does nothing. Every
+    // jsdom test loads the three scripts by hand, so the page itself is the only thing that can be
+    // asked whether the real webview would have them, and in what order.
+    const defined = html.indexOf('root.EvaluatePane =');
+    const used = html.indexOf('EvaluatePane.create(');
+
+    expect(defined).toBeGreaterThanOrEqual(0);
+    expect(used).toBeGreaterThan(defined);
+  });
+
   it('loads no script the content-security-policy would block', () => {
     open();
 

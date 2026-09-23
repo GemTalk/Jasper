@@ -23,9 +23,10 @@
  * against a hand-copied DOM the panel no longer emits. The Inspector's pane is opened through the
  * real view, which renders its own.
  *
- * The last describe is the exception, and the only place the sharing itself is asserted: two copies
- * that happen to agree pass every behavioural test in this file, which is exactly the state that
- * produced https://github.com/GemTalk/Jasper/issues/651.
+ * Note what this file CANNOT tell you: it loads the three webview scripts by hand, so a panel that
+ * stopped injecting the shared one would still pass every test here while its real webview threw on
+ * the first keystroke. Each panel's own test asserts that its page carries the script — see
+ * "serves the shared evaluate-pane script" in debuggerPanel.test.ts and basicInspectorPanel.test.ts.
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -988,36 +989,5 @@ describe('the two panes say the keys the same way', () => {
     expect(debugger_.placeholder).toBe(inspector.placeholder);
     expect(debugger_.legend).toBe(inspector.legend);
     expect(debugger_.buttons).toEqual(inspector.buttons);
-  });
-});
-
-describe('the walk itself has one implementation', () => {
-  /**
-   * The point of the whole exercise: the behaviour above is shared code, not two copies that
-   * currently agree. PR 642 shipped a bug that existed in one copy and not the other, in the very
-   * change meant to unify the panes — the next divergence will not necessarily be caught in review.
-   *
-   * The behavioural tests above cannot see the difference: two copies that happen to agree pass
-   * every one of them. These two guards can — one says neither view has grown its own walk back,
-   * the other says the shared file actually reaches the shipping webviews, which the tests above
-   * cannot tell either, because they load all three scripts by hand.
-   */
-  const sourceOf = (file: string) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
-
-  it.each([
-    ['the debugger', 'debuggerView.js'],
-    ['the Inspector', 'basicInspector/basicInspectorView.js'],
-  ])('%s keeps no copy of the walk of its own', (_name, file) => {
-    expect(sourceOf(file)).not.toMatch(/function\s+(recallPrevious|recallNext|walkLabel)\b/);
-  });
-
-  it.each([
-    ['the debugger', 'debuggerPanel.ts', 'evaluatePaneJs'],
-    ['the Inspector', 'basicInspector/basicInspector.ts', 'evaluatePaneJs'],
-  ])('%s injects the shared script into its webview', (_name, file, binding) => {
-    const source = sourceOf(file);
-
-    expect(source).toMatch(/readWebviewScript\(\s*'evaluatePane\.js',\s*'webview'\s*\)/);
-    expect(source).toContain(`\${${binding}}</script>`);
   });
 });
