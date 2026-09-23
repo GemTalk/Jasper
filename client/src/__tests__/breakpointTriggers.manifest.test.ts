@@ -64,6 +64,21 @@ describe('triggered breakpoints: what the manifest offers', () => {
     expect(entry('view/item/context', FROM_ROW)?.group).toMatch(/^inline@/);
   });
 
+  it('orders the row actions, with Remove last', () => {
+    // Two inline actions sharing a group index leave their order to VS Code,
+    // which is how the trigger action first landed on top of Remove — a
+    // destructive button moving under the pointer is the one to keep pinned.
+    const inlineOrder = menus['view/item/context']
+      .filter((m) => m.when.includes('viewItem') && m.group?.startsWith('inline'))
+      .filter((m) => m.when.includes('gemstoneBreakpoints'))
+      .map((m) => [m.command, m.group] as const);
+    const index = (id: string): number =>
+      Number(inlineOrder.find(([c]) => c === id)?.[1]?.split('@')[1]);
+
+    expect(index('gemstone.breakpoints.editCondition')).toBeLessThan(index(FROM_ROW));
+    expect(index(FROM_ROW)).toBeLessThan(index('gemstone.breakpoints.remove'));
+  });
+
   it('hides the row command from the Command Palette', () => {
     // It takes a tree node; from the palette it would arrive with undefined.
     expect(entry('commandPalette', FROM_ROW)?.when).toBe('false');

@@ -2753,7 +2753,7 @@
         {
           "command": "gemstone.breakpoints.remove",
           "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
-          "group": "inline@2"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.breakpoints.enable",
