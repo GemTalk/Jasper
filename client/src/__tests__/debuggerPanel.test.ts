@@ -3315,6 +3315,108 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'evalResult')).toMatchObject({ value: '1764', isError: false });
     });
 
+    /**
+     * The three modes the evaluate pane can ask for. The webview side is covered in
+     * evaluatePaneParity.test.ts, which asserts only that the pane POSTS the right mode; what the
+     * host does with each one is here, because that is where they actually differ.
+     */
+    describe('the mode the evaluate pane asked for', () => {
+      it('shows the printString for Display It', async () => {
+        vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+        const panel = openPanel();
+        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42', mode: 'display' });
+        await tick();
+
+        expect(lastPosted(panel, 'evalResult')).toMatchObject({ value: '1764', isError: false });
+      });
+
+      it('treats a mode-less message as Display It, which is what bare Enter has always done', async () => {
+        vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+        const panel = openPanel();
+        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42' });
+        await tick();
+
+        expect(lastPosted(panel, 'evalResult')).toMatchObject({ value: '1764' });
+      });
+
+      it('acknowledges Execute It rather than printing the answer', async () => {
+        vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
+        const panel = openPanel();
+        sendMessage(panel, {
+          command: 'evalInFrame',
+          level: 3,
+          expr: 'self commit',
+          mode: 'execute',
+        });
+        await tick();
+
+        // Run-for-effect: printing the answer is what it is asking not to do, but silence would
+        // read as "nothing happened".
+        expect(lastPosted(panel, 'evalResult')).toMatchObject({
+          value: 'Executed.',
+          isError: false,
+        });
+      });
+
+      it('still shows an error in full for Execute It', async () => {
+        vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(new Error('doesNotUnderstand'));
+        const panel = openPanel();
+        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar', mode: 'execute' });
+        await tick();
+
+        // An error is not the answer — it is the reason there wasn't one.
+        expect(lastPosted(panel, 'evalResult').value).toContain('doesNotUnderstand');
+        expect(lastPosted(panel, 'evalResult')).toMatchObject({ isError: true });
+      });
+
+      it('opens the answer in an Inspector for Inspect It', () => {
+        vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(555n);
+        vi.mocked(EnhancedInspector.create).mockClear();
+        vi.mocked(BasicInspector.create).mockClear();
+        const panel = openPanel();
+
+        sendMessage(panel, {
+          command: 'evalInFrame',
+          level: 3,
+          expr: 'self class',
+          mode: 'inspect',
+        });
+
+        // Inspect needs the answer's OOP, not its printString, so it takes the blocking route the
+        // variables pane already uses.
+        expect(debug.evaluateInFrameToOop).toHaveBeenCalledWith(
+          session,
+          GS_PROCESS,
+          'self class',
+          3,
+        );
+        // WHICH inspector opens is the router's decision — it follows a setting and the session's
+        // capability, both covered by inspectRouter's own tests. What matters here is that this
+        // goes through that router at all, on the answer's oop and under the expression's name.
+        const opened = [
+          ...vi.mocked(EnhancedInspector.create).mock.calls,
+          ...vi.mocked(BasicInspector.create).mock.calls,
+        ];
+        expect(opened).toEqual([[session, 555n, 'self class']]);
+      });
+
+      it('reports an Inspect It that would not evaluate, and opens nothing', () => {
+        session.enhancedInspectorAvailable = true;
+        vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(() => {
+          throw new Error('doesNotUnderstand');
+        });
+        const panel = openPanel();
+        vi.mocked(EnhancedInspector.create).mockClear();
+        vi.mocked(BasicInspector.create).mockClear();
+
+        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar', mode: 'inspect' });
+
+        expect(EnhancedInspector.create).not.toHaveBeenCalled();
+        expect(BasicInspector.create).not.toHaveBeenCalled();
+        expect(lastPosted(panel, 'evalResult')).toMatchObject({ isError: true });
+      });
+    });
+
     it('reports an eval error without throwing', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(new Error('doesNotUnderstand'));
       const panel = openPanel();

@@ -19,13 +19,29 @@ import { logError, logInfo } from '../gciLog';
  * {timeStamp. userId. category. source}. Store writes ride the user's compile
  * transaction and are committed when the user commits — the helper never commits.
  *
- * Capture rides the compile path (see queries/compileMethod.ts): around each
- * (re)compile, `beforeCompileIn:…` seeds the about-to-be-replaced source the first
- * time a method is edited (so the original survives), and `afterCompileIn:…`
- * records the newly-compiled source, stamped with the time and userId. The
- * selector is parsed with the BASE-kernel compiler (compile into throwaway
- * dictionaries), so it needs no parser add-on and depends on nothing but the
- * base image.
+ * Capture rides TWO paths, because a method changes in two ways.
+ *
+ * An edit goes through the client's compile query (see queries/compileMethod.ts):
+ * around each (re)compile, `beforeCompileIn:…` seeds the about-to-be-replaced source
+ * the first time a method is edited (so the original survives), and `afterCompileIn:…`
+ * records the newly-compiled source, stamped with the time and userId. The selector is
+ * parsed with the BASE-kernel compiler (compile into throwaway dictionaries), so it
+ * needs no parser add-on and depends on nothing but the base image.
+ *
+ * A REFACTORING never goes near that query — its change set is applied entirely
+ * server-side by the engine — so it calls `recordRefactoredIn:…` from the two places those
+ * recompiles really pass through. A refactoring that only changes METHODS is caught in
+ * `GsRefactoringUndo>>recordMethodHistoryFrom:to:`, which already holds the before and after
+ * source of every method slot the change set touched. One that RE-VERSIONS a class never
+ * reaches that — each such engine calls its own `applyForToken:` — so those are caught in
+ * `GsRefactoringEnvironment>>copyMethod:from:to:source:meta:into:`, the copy-forward that
+ * carries a class's methods onto its new version. Between them, history is the record of what
+ * happened to a method rather than the record of what was typed into an editor.
+ *
+ * The two paths do not install the same KIND of string — an edit arrives over GCI as
+ * Unicode, the engine builds its source in-image as a byte String — and on 3.6.x
+ * comparing those with = raises rather than answering false. Every source comparison
+ * here therefore goes through `source:matches:`; see its comment.
  */
 
 // Each entry is one class-side method's full Smalltalk source (pattern + body).
@@ -63,9 +79,55 @@ const CLASS_METHODS: string[] = [
     store := self store.
     key := self keyFor: aBehavior selector: selector.
     list := store at: key ifAbsentPut: [OrderedCollection new].
-    (list notEmpty and: [(list last at: 4) = source]) ifTrue: [^self].
+    (list notEmpty and: [self source: (list last at: 4) matches: source]) ifTrue: [^self].
     list add: (self version: source category: category)
   ] on: Error do: [:e | ^self]`,
+
+  `recordRefactoredIn: aBehavior selector: aSelector oldSource: oldSource newSource: newSource category: category
+  "A REFACTORING just recompiled aBehavior>>aSelector: seed oldSource as the first
+   version if this method has no history yet, then record newSource as the new one.
+
+   The compile-path pair (beforeCompileIn:/afterCompileIn:) cannot serve here. Those
+   bracket a compile the CLIENT drives and derive the selector by parsing the source;
+   a refactoring's change set is applied entirely server-side by the engine, which
+   knows the selector already and holds both sources -- see GsRefactoringUndo, which
+   snapshots exactly this before/after pair to build its undo entry and calls this
+   for every method slot it saw change.
+
+   oldSource is nil when the method did not exist before (the new selector of a
+   rename), in which case there is nothing to seed. Best-effort and guarded, like
+   every other capture here: a refactoring must never fail because history could not
+   be written."
+  [ | store key list |
+    aSelector isNil ifTrue: [^self].
+    newSource isNil ifTrue: [^self].
+    store := self store.
+    key := self keyFor: aBehavior selector: aSelector asSymbol.
+    list := store at: key ifAbsentPut: [OrderedCollection new].
+    (list isEmpty and: [oldSource notNil]) ifTrue: [
+      list add: (self version: oldSource category: category)].
+    (list notEmpty and: [self source: (list last at: 4) matches: newSource]) ifTrue: [^self].
+    list add: (self version: newSource category: category)
+  ] on: Error do: [:e | ^self]`,
+
+  `source: a matches: b
+  "Whether two method sources are the same text, compared CHARACTER BY CHARACTER (a
+   GemStone Character is unique per code point, so == is exact).
+
+   Deliberately not a plain = comparison. The two compile paths that reach this store do not install
+   the same KIND of string: a method Jasper compiled answers a Unicode7 from
+   #sourceString (the source arrives over GCI as Unicode), while one the refactoring
+   engine recompiled answers a byte String (its source is built in-image by the AST
+   rewriter). On 3.6.x comparing those two with = RAISES ArgumentError 2718 (String
+   argument disallowed in Unicode comparison) rather than answering false -- so a
+   method touched by a refactoring could not have its history opened at all.
+
+   Mirrors GsRefactoringUndo>>source:matches:, which exists for the same reason on the
+   same pair of sources."
+  (a isNil or: [b isNil]) ifTrue: [^a isNil and: [b isNil]].
+  a size = b size ifFalse: [^false].
+  1 to: a size do: [:i | ((a at: i) == (b at: i)) ifFalse: [^false]].
+  ^true`,
 
   // --- reading ----------------------------------------------------------------
   `forClass: cls named: aName selector: aSelector meta: isMeta
@@ -89,7 +151,8 @@ const CLASS_METHODS: string[] = [
   curSrc := (behavior compiledMethodAt: aSelector asSymbol environmentId: 0 otherwise: nil)
     ifNil: [nil] ifNotNil: [:m | m sourceString].
   curIdx := 0.
-  curSrc isNil ifFalse: [1 to: list size do: [:i | ((list at: i) at: 4) = curSrc ifTrue: [curIdx := i]]].
+  curSrc isNil ifFalse: [1 to: list size do: [:i |
+    (self source: ((list at: i) at: 4) matches: curSrc) ifTrue: [curIdx := i]]].
   ws := WriteStream on: String new.
   ws nextPut: $[.
   first := true.
