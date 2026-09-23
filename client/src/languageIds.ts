@@ -123,3 +123,20 @@ export function gemstoneDocumentLanguage(uri: vscode.Uri): string {
   if (kind === 'comment') return CLASS_COMMENT_LANGUAGE;
   return isMethodSourceUri(uri) ? METHOD_LANGUAGE : SMALLTALK_LANGUAGE;
 }
+
+/**
+ * The documents the GCI-backed Definition, Hover and Completion providers are
+ * registered for — editors holding GemStone source that a live session can be
+ * asked about.
+ *
+ * Exported for countSurfaces.test.ts, which pins where the senders/implementors
+ * counts must be served.
+ */
+export const GCI_PROVIDER_SELECTORS: vscode.DocumentFilter[] = [
+  { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+  { scheme: 'gemstone', language: METHOD_LANGUAGE },
+  { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: 'gemstone-topaz' },
+  { scheme: 'file', language: 'gemstone-tonel' },
+];
