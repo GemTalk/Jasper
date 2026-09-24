@@ -274,7 +274,11 @@ describe('choosing the folder', () => {
   // nothing at all.
   it('writes back to the layer the value is coming from', async () => {
     __setConfig('gemstone', 'rootPath', '/from/the/workspace', 'workspace');
-    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file('/picked/here')]);
+    // Uri.file spells a path in the host's own separators, so the value written
+    // is `\picked\here` on Windows — the pick is compared to what the dialog
+    // would actually have handed over rather than to a literal.
+    const picked = vscode.Uri.file('/picked/here');
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([picked]);
     try {
       await openPanel();
       await sendMessage({ command: 'chooseRoot' });
@@ -282,7 +286,7 @@ describe('choosing the folder', () => {
       expect(__configUpdates.at(-1)).toEqual({
         section: 'gemstone',
         key: 'rootPath',
-        value: '/picked/here',
+        value: picked.fsPath,
         target: vscode.ConfigurationTarget.Workspace,
       });
     } finally {
