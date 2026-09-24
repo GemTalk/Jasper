@@ -596,8 +596,15 @@ export class DatabasesPanel {
     // guess which of the things they pressed it was about — and on a first open
     // they had pressed nothing.
     appendSysadmin(`Databases & Versions: ${what} failed: ${detail}`);
-    void vscode.window.showErrorMessage(`Databases & Versions: ${what} failed: ${detail}`);
+    void this.notifyFailure(`Databases & Versions: ${what} failed: ${detail}`);
     this.postFailure(detail);
+  }
+
+  /** The notification carries Show log as well as the banner: a panel scrolled
+   *  down to the row that was pressed has the banner out of sight above it. */
+  private async notifyFailure(text: string): Promise<void> {
+    const choice = await vscode.window.showErrorMessage(text, 'Show log');
+    if (choice === 'Show log') showSysadmin();
   }
 
   /**

@@ -338,6 +338,29 @@ describe('a version list that cannot be built', () => {
   });
 });
 
+describe('the notification for a failed action', () => {
+  // The banner is drawn at the top of the panel, and a panel scrolled down to
+  // the row that was pressed has it out of sight — the notification is what is
+  // on screen.
+  it('offers the log, and opens it when chosen', async () => {
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(
+      new Error('EACCES: permission denied'),
+    );
+    vi.mocked(vscode.window.showErrorMessage).mockResolvedValueOnce('Show log' as never);
+    vi.mocked(showSysadmin).mockClear();
+
+    await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('openSetting failed: EACCES'),
+      'Show log',
+    );
+    expect(showSysadmin).toHaveBeenCalled();
+  });
+});
+
 describe('session commands', () => {
   const SESSION = { id: 3 } as unknown as ReturnType<typeof Object>;
 
