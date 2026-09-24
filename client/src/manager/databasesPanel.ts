@@ -42,7 +42,7 @@ import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTyp
 import { ActiveSession, SessionManager } from '../sessionManager';
 import { canBegin, canCommit, transactionStateLabel } from '../queries/transactionMode';
 import { readWebviewScript } from '../webviewAssets';
-import { appendSysadmin } from '../sysadminChannel';
+import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 
@@ -237,11 +237,89 @@ interface CreateOptions {
   rootPath: string;
 }
 
+/**
+ * The settings this panel offers to open. `workbench.action.openSettings` takes
+ * a free-text query rather than an identifier, and the id arrives off the
+ * webview wire — so anything else is ignored rather than passed along.
+ */
+const OPENABLE_SETTINGS = ['gemstone.rootPath'];
+
+/**
+ * Which settings layer supplied a value — in the words the Settings editor uses
+ * — and the command that opens the editor on that layer.
+ *
+ * `openSettings` lands on whichever tab the editor was last left on, User by
+ * default. For a value that came from the workspace that showed a different
+ * value from the one the panel had just named, which reads as the two
+ * disagreeing rather than as two layers of the same key.
+ *
+ * There is no Folder layer: `getRootPath()` reads without a resource, so a
+ * folder-level value never wins, and an unscoped `inspect()` never reports one.
+ */
+function settingLayer(key: string): {
+  label: string;
+  command: string;
+  target: vscode.ConfigurationTarget;
+} {
+  const inspected = vscode.workspace.getConfiguration('gemstone').inspect(key);
+  if (inspected?.workspaceValue !== undefined) {
+    return {
+      label: 'Workspace settings',
+      command: 'workbench.action.openWorkspaceSettings',
+      target: vscode.ConfigurationTarget.Workspace,
+    };
+  }
+  if (inspected?.globalValue !== undefined) {
+    return {
+      label: 'User settings',
+      command: 'workbench.action.openSettings',
+      target: vscode.ConfigurationTarget.Global,
+    };
+  }
+  return {
+    label: 'default',
+    command: 'workbench.action.openSettings',
+    target: vscode.ConfigurationTarget.Global,
+  };
+}
+
+/**
+ * Choose the folder Jasper reads databases and versions from. Shared by the
+ * panel and by the link under the setting in the Settings editor, which is a
+ * text box: VS Code renders no folder picker for a string, and typing a path
+ * into it by hand is how a root ends up one character wrong.
+ *
+ * Written back to the layer the value is coming from. Always writing User
+ * settings would leave a workspace value winning over what was just chosen —
+ * the picker would look as though it had done nothing.
+ */
+export async function chooseRootFolder(): Promise<string | undefined> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: 'Use This Folder',
+    title: 'Where GemStone databases are created',
+  });
+  if (!picked || !picked.length) return undefined;
+  const { target, label } = settingLayer('rootPath');
+  await vscode.workspace.getConfiguration('gemstone').update('rootPath', picked[0].fsPath, target);
+  appendSysadmin(`Root path set to ${picked[0].fsPath} (${label})`);
+  return picked[0].fsPath;
+}
+
 interface PanelState {
   platform: string;
   /** Windows with WSL — where the client install and Copy Host actions mean anything. */
   windows: boolean;
   rootPath: string;
+  /** Why the root path cannot be read, when it cannot. A folder Jasper cannot
+   *  open lists nothing, which is indistinguishable from an empty one until
+   *  this says otherwise. */
+  rootProblem?: string;
+  /** Which settings layer the root path came from, so two windows reading
+   *  different folders can be told apart by more than the path. */
+  rootFrom: string;
   versions: VersionRow[];
   databases: DatabaseRow[];
   /** Only used to mark which database the current session is working in. */
@@ -253,6 +331,8 @@ interface PanelState {
 type Inbound =
   | { command: 'ready' }
   | { command: 'refresh' }
+  | { command: 'showLog' }
+  | { command: 'openSetting'; id: string }
   | { command: 'extractVersion'; version: string }
   | { command: 'deleteDownload'; version: string }
   | { command: 'uninstallVersion'; version: string }
@@ -437,7 +517,12 @@ export class DatabasesPanel {
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
-      (msg: Inbound) => void this.handleMessage(msg).catch((e) => this.failed(msg.command, e)),
+      // `ready` is the webview announcing itself, not something the reader did —
+      // so a failure answering it is the panel failing to open, in those words.
+      (msg: Inbound) =>
+        void this.handleMessage(msg).catch((e) =>
+          this.failed(msg.command === 'ready' ? 'open' : msg.command, e),
+        ),
       null,
       this.disposables,
     );
@@ -526,9 +611,19 @@ export class DatabasesPanel {
    */
   private failed(what: string, error: unknown): void {
     const detail = error instanceof Error ? error.message : String(error);
+    // The notification carries the `what` too. Without it the reader had to
+    // guess which of the things they pressed it was about — and on a first open
+    // they had pressed nothing.
     appendSysadmin(`Databases & Versions: ${what} failed: ${detail}`);
-    void vscode.window.showErrorMessage(`Databases & Versions: ${detail}`);
-    this.actionFailed(error);
+    void this.notifyFailure(`Databases & Versions: ${what} failed: ${detail}`);
+    this.postFailure(detail);
+  }
+
+  /** The notification carries Show log as well as the banner: a panel scrolled
+   *  down to the row that was pressed has the banner out of sight above it. */
+  private async notifyFailure(text: string): Promise<void> {
+    const choice = await vscode.window.showErrorMessage(text, 'Show log');
+    if (choice === 'Show log') showSysadmin();
   }
 
   /**
@@ -540,6 +635,15 @@ export class DatabasesPanel {
   private actionFailed(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     appendSysadmin(`Databases & Versions: ${message}`);
+    this.postFailure(message);
+  }
+
+  /**
+   * Hand the panel a failure to draw. The one way in, so a failure that came
+   * through `failed` — which has already written a fuller line, naming what was
+   * being attempted — is not logged a second time on its way here.
+   */
+  private postFailure(message: string): void {
     void this.panel.webview.postMessage({ command: 'actionFailed', message });
   }
 
@@ -604,6 +708,22 @@ export class DatabasesPanel {
           void this.panel.webview.postMessage({ command: 'beginCreate' });
         }
         await this.postState();
+        return;
+      case 'openSetting':
+        // The folder line names the setting behind it, and this is that name
+        // clicked. Only that one is reachable: logins are Jasper's own to keep,
+        // and are never edited by hand.
+        if (OPENABLE_SETTINGS.includes(msg.id)) {
+          // On the layer the panel named, not whichever tab was last open.
+          const { command } = settingLayer(msg.id.replace(/^gemstone\./, ''));
+          await vscode.commands.executeCommand(command, msg.id);
+        }
+        return;
+      case 'showLog':
+        // Offered only where something has failed. The reason a scan gives is
+        // longer than a banner should carry, so the banner says what happened
+        // and this opens the place that says the rest.
+        showSysadmin();
         return;
       case 'refresh':
         // Refresh is the one place that asks the network again: everything the
@@ -1333,18 +1453,7 @@ export class DatabasesPanel {
    * the override — and it is saved, so the next database starts there too.
    */
   private async chooseRootPath(): Promise<void> {
-    const picked = await vscode.window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Use This Folder',
-      title: 'Where GemStone databases are created',
-    });
-    if (!picked || !picked.length) return;
-    await vscode.workspace
-      .getConfiguration('gemstone')
-      .update('rootPath', picked[0].fsPath, vscode.ConfigurationTarget.Global);
-    appendSysadmin(`Root path set to ${picked[0].fsPath}`);
+    if (!(await chooseRootFolder())) return;
     this.deps.refreshAdminViews();
     await this.postState();
   }
@@ -1521,6 +1630,8 @@ export class DatabasesPanel {
       platform: this.deps.storage.getPlatformKey() ?? process.platform,
       windows: needsWsl(),
       rootPath: this.deps.storage.getRootPath(),
+      rootProblem: this.deps.storage.rootPathProblem(),
+      rootFrom: settingLayer('rootPath').label,
       versions,
       databases,
       logins: this.buildLoginTargets(databases),
@@ -1600,10 +1711,30 @@ export class DatabasesPanel {
     );
   }
 
+  /**
+   * What is installed, or nothing. Pure disk work, and the first thing a first
+   * paint asks for — so a rootPath that cannot be read used to cost the whole
+   * panel rather than the version list. The catalog's fallback calls it too,
+   * where it runs because something has already failed, which makes it the
+   * likeliest call here to fail again.
+   */
+  private installedVersions(): GemStoneVersion[] {
+    try {
+      return this.deps.versionManager.getInstalledVersions();
+    } catch (e) {
+      appendSysadmin(
+        `Databases & Versions: could not read the installed versions in ${this.deps.storage.getRootPath()} — ${
+          e instanceof Error ? e.message : String(e)
+        }. The Versions list is empty until that folder can be read; the path comes from the gemstone.rootPath setting.`,
+      );
+      return [];
+    }
+  }
+
   private async buildVersions(source: VersionSource): Promise<VersionRow[]> {
     let list: GemStoneVersion[];
     if (source === 'local') {
-      list = this.deps.versionManager.getInstalledVersions();
+      list = this.installedVersions();
     } else {
       try {
         if (this.catalog === undefined) {
@@ -1613,10 +1744,11 @@ export class DatabasesPanel {
         list = this.deps.versionManager.versionsFrom(this.catalog);
       } catch (e) {
         // Usually offline — but this catch also covers versionsFrom, which is
-        // pure disk work, so a scrape whose regex stopped matching or a malformed
-        // install would otherwise shrink the list to what's on disk with nothing
-        // said. Log the real reason before falling back, so "my versions
-        // disappeared" has something to go on.
+        // pure disk work, so a scrape whose regex stopped matching would
+        // otherwise shrink the list to what's on disk with nothing said. Log the
+        // real reason before falling back, so "my versions disappeared" has
+        // something to go on. A version number versionsFrom cannot read is not
+        // one of these: it costs its own row there and never reaches here.
         appendSysadmin(
           `Databases & Versions: could not read the version catalog, showing installed versions only — ${
             e instanceof Error ? e.message : String(e)
@@ -1625,7 +1757,7 @@ export class DatabasesPanel {
         // Fall back to what's installed / downloaded on disk, and drop the failed
         // fetch so a later pass can retry it.
         this.catalogFetch = undefined;
-        list = this.deps.versionManager.getInstalledVersions();
+        list = this.installedVersions();
       }
     }
     this.lastVersions = list;
@@ -1979,6 +2111,18 @@ th.v-num { text-align: right; }
 .gm-head-text { display: flex; align-items: baseline; gap: 10px; flex: 1 1 240px; min-width: 0; font-size: 0.96rem; }
 .gm-head-lead { font-weight: 600; }
 .gm-head-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+/* Where the panel is reading. Quiet enough to ignore, present enough to answer
+   "which folder is this?" without a click. */
+.gm-where { display: flex; align-items: center; gap: 6px; margin: -4px 0 2px; padding: 0 2px;
+  font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; }
+/* By class: the banners and forms that can follow are divs too, which
+   :last-of-type would count. */
+.gm-where-logins { margin-bottom: 10px; }
+.gm-where .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The setting behind the line, quieter again than the line itself. */
+.gm-where-src { opacity: 0.75; white-space: nowrap; }
+.gm-where .icon-btn { padding: 0 2px; opacity: 0.75; }
+.gm-where .icon-btn:hover { opacity: 1; }
 
 /* ── Tour: a spotlight on one section, and a callout beside it ─────────────── */
 /* Deliberately not a blocking modal — pointer events pass through the dim, so

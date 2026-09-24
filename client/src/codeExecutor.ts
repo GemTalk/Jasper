@@ -702,28 +702,36 @@ export class CodeExecutor {
     return new vscode.Range(pos, lineEnd);
   }
 
-  private pollForCompletion<T>(session: ActiveSession, onReady: () => Promise<T>): Promise<T> {
+  private pollForCompletion<T>(
+    session: ActiveSession,
+    onReady: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     // Delegates to the shared non-blocking poll loop (nbRunner) so Execute/Display
     // It and the debugger's step/trim share ONE cancel/break/backoff/progress
     // implementation (no divergence). The Nb call is already started by the caller
     // (GciTsNbExecute above), so we only poll it to completion here.
-    return pollNbToCompletion(session, onReady, { title: 'GemStone: Executing…' });
+    return pollNbToCompletion(session, onReady, {
+      title: 'GemStone: Executing…',
+      disposableProcess: true,
+    });
   }
 
   private pollForResult(session: ActiveSession): Promise<string> {
-    return this.pollForCompletion(session, () => this.fetchResultString(session));
+    return this.pollForCompletion(session, (signal) => this.fetchResultString(session, signal));
   }
 
   private pollForResultOop(session: ActiveSession): Promise<bigint> {
-    return this.pollForCompletion(session, () => this.fetchResultOop(session));
+    return this.pollForCompletion(session, (signal) => this.fetchResultOop(session, signal));
   }
 
-  private async fetchResultOop(session: ActiveSession): Promise<bigint> {
+  private async fetchResultOop(session: ActiveSession, signal?: AbortSignal): Promise<bigint> {
     // Transcript writes arrive here as forwarder sends (error 2336) while the
     // code is still running: settleNbResult displays each one and resumes the
     // execution, only returning when a real result or error arrives.
-    const { result: resultOop, err: resultErr } = await settleNbResult(session, (text) =>
-      appendTranscriptOutput(text),
+    const { result: resultOop, err: resultErr } = await settleNbResult(
+      session,
+      (text) => appendTranscriptOutput(text),
+      signal,
     );
     if (resultErr.number !== 0) {
       const msg = resultErr.message || `GemStone error ${resultErr.number}`;
@@ -737,8 +745,8 @@ export class CodeExecutor {
     return resultOop;
   }
 
-  private async fetchResultString(session: ActiveSession): Promise<string> {
-    const resultOop = await this.fetchResultOop(session);
+  private async fetchResultString(session: ActiveSession, signal?: AbortSignal): Promise<string> {
+    const resultOop = await this.fetchResultOop(session, signal);
 
     return session.gci.executeAndFetchString(
       session.handle,

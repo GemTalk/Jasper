@@ -10,6 +10,7 @@ vi.mock('vscode', () => ({
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as debug from '../debugQueries';
+import type { NbRunOptions } from '../nbRunner';
 import { homeDictionaryNameExpr } from '../queries/util';
 
 const noErr = {
@@ -1333,6 +1334,108 @@ describe('debugQueries', () => {
 
       const flags = perform.mock.calls[0][4] as number;
       expect(flags & FLAG_INTERPRETED).toBe(FLAG_INTERPRETED);
+    });
+  });
+
+  describe('what a cancelled call is allowed to throw away', () => {
+    // The shared nb runner clears the process an abandoned call stopped, which
+    // releases the Transcript semaphore a suspended writer holds -- and unwinds
+    // the user's stack if that process is the one the debugger is showing. Which
+    // it is depends on the receiver each call chose, so each caller declares it.
+    // Driven through the real runner rather than a mock of it, so these stay
+    // true of what actually reaches GemStone.
+    const STOPPED_PROCESS = 0x4242n;
+
+    function cancellableSession() {
+      const gci = {
+        GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
+        GciTsNewString: vi.fn(() => ({ result: 0xe0n, err: { ...noErr } })),
+        executeAndFetchString: vi.fn(() => 'self\t0x77\t0\n'),
+        GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
+        GciTsFetchOops: vi.fn(() => ({
+          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n, 0x77n],
+          err: { ...noErr },
+        })),
+        resolveSymbol: vi.fn(() => 0xd3n),
+        GciTsPerform: vi.fn(() => ({ result: 0xf0n, err: { ...noErr } })),
+        isAvailable: (n: string) => n === 'GciTsNbPoll',
+        GciTsNbPerform: vi.fn(() => ({ success: true, err: { ...noErr } })),
+        // Never ready, so the call is still in flight when the cancel lands.
+        GciTsNbPoll: vi.fn(() => ({ result: 0, err: { ...noErr } })),
+        GciTsNbResult: vi.fn(() => ({
+          result: 0n,
+          err: { ...noErr, number: 6004, context: STOPPED_PROCESS },
+        })),
+        GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { ...noErr } })),
+        GciTsBreak: vi.fn(() => ({ success: true, err: { ...noErr } })),
+        GciTsClearStack: vi.fn(() => ({ success: true, err: { ...noErr } })),
+      };
+      return {
+        id: 1,
+        handle: {},
+        login: { label: 'T' } as GemStoneLogin,
+        stoneVersion: '3.7.2',
+        gci: gci as unknown as ActiveSession['gci'],
+      } as ActiveSession;
+    }
+
+    /** Runs `start`, presses Cancel twice, and waits out the drain. */
+    async function cancelTwice(
+      session: ActiveSession,
+      start: (opts: NbRunOptions) => Promise<unknown>,
+    ): Promise<void> {
+      vi.useFakeTimers();
+      try {
+        let cancel: (() => void) | undefined;
+        const run = start({
+          suppressNotification: true,
+          onStart: (c: () => void) => {
+            cancel = c;
+          },
+        });
+        run.catch(() => {});
+        cancel!();
+        cancel!();
+        await vi.advanceTimersByTimeAsync(400);
+        await run.catch(() => {});
+        // The drain polls in the background; let it read its result.
+        (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({
+          result: 1,
+          err: { ...noErr },
+        });
+        await vi.advanceTimersByTimeAsync(500);
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+
+    it('keeps the process a cancelled step stopped, because the debugger owns it', async () => {
+      const session = cancellableSession();
+
+      await cancelTwice(session, (opts) => debug.stepOverNb(session, 0xaan, 1, opts));
+
+      expect(session.gci.GciTsClearStack).not.toHaveBeenCalled();
+    });
+
+    it('keeps the process a cancelled restart-frame trim stopped, for the same reason', async () => {
+      const session = cancellableSession();
+
+      await cancelTwice(session, (opts) => debug.trimStackToLevelNb(session, 0xaan, 2, opts));
+
+      expect(session.gci.GciTsClearStack).not.toHaveBeenCalled();
+    });
+
+    it('throws away the process a cancelled frame evaluation made for itself', async () => {
+      // The counter-case: the receiver here is the expression, not the process,
+      // so the evaluation gets a process of its own and nothing else holds it.
+      const session = cancellableSession();
+
+      await cancelTwice(session, (opts) =>
+        debug.evaluateInFrameNb(session, 0xaan, '3 + 4', 1, opts),
+      );
+
+      expect(session.gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, STOPPED_PROCESS);
     });
   });
 });

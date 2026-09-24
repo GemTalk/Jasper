@@ -97,6 +97,14 @@ function mount(s: Record<string, unknown> = state()): void {
   api().render(s);
 }
 
+/** The panel as it is before any state arrives: initialised, still a skeleton. */
+function mountBare(): void {
+  document.body.innerHTML = '<div id="root"></div>';
+  root = document.getElementById('root') as HTMLElement;
+  host = { postMessage: vi.fn() };
+  api().init({ root }, host);
+}
+
 /** Click the first element carrying this action, as a user would. */
 function click(action: string): void {
   const el = root.querySelector<HTMLElement>(`[data-action="${action}"]`);
@@ -181,6 +189,63 @@ describe('what leads the panel', () => {
   });
 });
 
+describe('where the panel says it is looking', () => {
+  // It used to appear only when the folder was empty or unreadable, so two
+  // windows pointed at different roots looked identical while all was well.
+  it('names the folder even when nothing is wrong', () => {
+    mount(state({ rootPath: '/somewhere/else', databases: [database()] }));
+    expect(root.querySelector('.gm-where')?.textContent).toContain('/somewhere/else');
+  });
+
+  // The same key can be written in User or Workspace settings, and which
+  // layer won is the difference between two windows reading two folders.
+  it('names the layer the folder setting came from, and opens it', () => {
+    mount(state({ rootFrom: 'Workspace settings' }));
+    const lines = Array.from(root.querySelectorAll('.gm-where')).map((l) => l.textContent);
+    expect(lines.join(' ')).toContain('gemstone.rootPath · Workspace settings');
+
+    root.querySelector<HTMLElement>('[data-setting="gemstone.rootPath"]')?.click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'openSetting', id: 'gemstone.rootPath' }),
+    );
+  });
+
+  // A root with no databases in it shows the login list in full beside "No
+  // databases yet", which reads as a contradiction until this says otherwise.
+  it('says logins are kept by Jasper rather than in that folder', () => {
+    mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
+    expect(root.querySelector('.gm-where-logins')?.textContent).toContain(
+      'kept by Jasper settings',
+    );
+  });
+
+  // Logins are added and edited from the rows here and in the sidebar. Where
+  // Jasper keeps them is its own business, and a reader sent to the raw JSON
+  // would be editing a list with a keychain flag and a password field in it.
+  it('never points at the setting behind them', () => {
+    mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
+    expect(root.textContent).not.toContain('gemstone.logins');
+    expect(root.querySelector('[data-setting="gemstone.logins"]')).toBeNull();
+  });
+});
+
+describe('when the root path cannot be read', () => {
+  // Listing nothing is what an empty folder does too, so the panel would
+  // otherwise read as a machine with no versions and no databases on it.
+  it('says so, rather than showing an empty machine', () => {
+    mount(state({ rootProblem: "EACCES: permission denied, scandir '/root'", versions: [] }));
+    expect(root.textContent).toContain('Cannot read');
+    expect(root.textContent).toContain('/root');
+    expect(root.querySelector('[data-action="chooseRoot"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="showLog"]')).not.toBeNull();
+  });
+
+  it('says nothing about it when the folder reads fine', () => {
+    mount();
+    expect(root.textContent).not.toContain('Cannot read');
+  });
+});
+
 describe('when the host says an action failed', () => {
   // The message was posted and dropped: the panel cleared its busy flag and
   // redrew the unchanged state, so a refused action looked like one that had
@@ -197,6 +262,64 @@ describe('when the host says an action failed', () => {
     // The host always posts state after a failure; it is the same state as before.
     api().render(state());
     expect(root.textContent).toContain('could not register');
+  });
+
+  // Before the first state there was nothing to redraw the banner onto, so the
+  // message was dropped and the tab kept its loading skeleton — with the reason
+  // shown nowhere in the panel.
+  it('shows the reason when nothing has been drawn yet', () => {
+    mountBare();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    expect(root.querySelector('.skeleton')).toBeNull();
+    expect(root.querySelector('.gm-blocked')?.textContent).toContain('Invalid version: 3.7');
+  });
+
+  // Dismiss would leave an empty tab, and the header's Refresh is part of a
+  // screen that never rendered — so this failure carries the way out itself.
+  it('offers a retry when it is the whole screen', () => {
+    mountBare();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    click('refresh');
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'refresh' }));
+  });
+
+  // It described the attempt before this one. A panel still saying "permission
+  // denied" after the permission is back is worse than one saying nothing.
+  it('retires it when the next attempt is made', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'EACCES: permission denied' });
+    expect(root.textContent).toContain('permission denied');
+
+    click('refresh');
+    api().render(state());
+
+    expect(root.textContent).not.toContain('permission denied');
+  });
+
+  // The banner has room for the reason and no more; the log carries which
+  // folder, what was being read and what would fix it.
+  it('offers the log beside it', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    click('showLog');
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'showLog' }));
+  });
+
+  // Show log is how a reader follows the banner up, and any state push while
+  // they are in the Output channel redraws the panel.
+  it('keeps it through the next render after Show log', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'EACCES: permission denied' });
+    click('showLog');
+    api().render(state());
+    expect(root.textContent).toContain('permission denied');
+  });
+
+  // A panel with nothing wrong has nothing in the log worth reading, so the way
+  // there appears with the trouble rather than sitting in the header.
+  it('does not offer it when nothing has gone wrong', () => {
+    mount();
+    expect(root.querySelector('[data-action="showLog"]')).toBeNull();
   });
 
   it('lets it be dismissed', () => {
@@ -1210,13 +1333,6 @@ describe('a Windows machine with no WSL', () => {
 
 describe('the form the host opens the panel into', () => {
   /** A panel whose script has loaded but which the host has not sent a state to yet. */
-  function mountBare(): void {
-    document.body.innerHTML = '<div id="root"></div>';
-    root = document.getElementById('root') as HTMLElement;
-    host = { postMessage: vi.fn() };
-    api().init({ root }, host);
-  }
-
   // The host posts `beginCreate` ahead of the first state now, so the form is not
   // held behind a call to the download site. Arriving first, it has nothing to
   // draw from — and a form built out of no state is a version dropdown with no
