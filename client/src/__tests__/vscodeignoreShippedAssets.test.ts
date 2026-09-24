@@ -101,6 +101,29 @@ describe('integration-test artifacts are excluded from the .vsix', () => {
   });
 });
 
+// USAGE_DATA.md is the privacy notice users are told to read from the Marketplace
+// listing and README.md, so it must ship in the .vsix. Nothing in .vscodeignore
+// currently excludes root-level markdown files, but this guards against a future
+// broad rule (e.g. an added `*.md` or `!docs/**`-style line) silently dropping it.
+describe('the privacy notice is shipped in the .vsix', () => {
+  const repoRoot = path.resolve(__dirname, '..', '..', '..');
+
+  it('exists at the repo root', () => {
+    expect(fs.existsSync(path.join(repoRoot, 'USAGE_DATA.md'))).toBe(true);
+  });
+
+  it('is not excluded by .vscodeignore', () => {
+    const ignores = fs
+      .readFileSync(path.join(repoRoot, '.vscodeignore'), 'utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'));
+
+    expect(ignores).not.toContain('USAGE_DATA.md');
+    expect(ignores).not.toContain('*.md');
+  });
+});
+
 // The acceptance/ Playwright harness, the scripts/ dev helpers, .dockerignore, and the
 // per-directory CLAUDE.md guides are contributor tooling — none of it is read at runtime,
 // so it should never ship in the .vsix. New top-level tooling directories are not covered

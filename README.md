@@ -476,6 +476,12 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 
 > **Tip:** VS Code's Quick Open file search (Cmd+P / Ctrl+P) and the title bar search respect `.gitignore` by default, so exported `.gs` files in gitignored directories won't appear in search results. To include them, set `"search.useIgnoreFiles": false` in your VS Code settings. If there are some ignored things you want to continue to exclude, you can tell VS Code to exclude certain paths with the `files.exclude` setting.
 
+## Privacy
+
+Jasper sends a minimal, non-identifying usage event, governed by VS Code's
+`telemetry.telemetryLevel` setting. See [USAGE_DATA.md](USAGE_DATA.md) for
+what is and isn't collected.
+
 ## GCI Library
 
 The extension communicates with GemStone databases using the GemStone C Interface (GCI) thread-safe library (`libgcits`), loaded at runtime via [koffi](https://koffi.dev/). The library path is resolved in this order:
