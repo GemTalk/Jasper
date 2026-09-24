@@ -52,7 +52,13 @@ export class SysadminStorage {
     try {
       return fs.readdirSync(dir);
     } catch (e) {
-      const line = `Could not read ${dir} — ${e instanceof Error ? e.message : String(e)}`;
+      // Every caller of this reads the root path, so the setting that names it is
+      // the thing to say: it is where a reader goes either to fix the folder or
+      // to point Jasper at another one.
+      const line =
+        `Could not read ${dir} — ${e instanceof Error ? e.message : String(e)}. ` +
+        `Jasper lists nothing in it: check the folder's permissions, or set ` +
+        `gemstone.rootPath to somewhere it can read.`;
       if (line !== SysadminStorage.lastUnreadable) {
         SysadminStorage.lastUnreadable = line;
         appendSysadmin(line);

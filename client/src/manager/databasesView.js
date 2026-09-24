@@ -1158,9 +1158,21 @@
   // dropped on arrival — the panel only stopped looking busy — so an action that
   // failed was indistinguishable from one that did nothing, which is how a
   // registration refused for an unwritable root read as "nothing happened".
+  // Only ever drawn beside something that went wrong. A banner has room for the
+  // reason and no more, and the log carries which folder, what was being read
+  // and what would fix it — so the panel offers the way there rather than
+  // leaving it to be known about. It is not in the header: a panel with nothing
+  // wrong has nothing there worth reading.
+  function logBtn() {
+    return btn('showLog', 'Show log', 'output', 'btn-secondary', {
+      title: 'Open Output \u2192 GemStone Admin, where the full reason is written',
+    });
+  }
+
   function renderFailure() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${logBtn()}
       ${btn('dismissFailure', 'Dismiss', 'close', 'btn-secondary')}
     </div>`;
   }
@@ -1172,6 +1184,7 @@
   function renderFailureOnly() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${logBtn()}
       ${btn('refresh', 'Try Again', 'refresh', 'btn-secondary')}
     </div>`;
   }
@@ -1182,6 +1195,7 @@
   function renderRootProblem(state) {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>Cannot read <strong>${esc(state.rootPath)}</strong> — ${esc(state.rootProblem)}. Nothing in it can be listed until that is fixed.</span></span>
+      ${logBtn()}
       ${btn('chooseRoot', 'Choose another folder\u2026', 'folderOpen', 'btn-secondary')}
     </div>`;
   }

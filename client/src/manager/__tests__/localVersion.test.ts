@@ -590,7 +590,7 @@ describe('a product directory whose version number cannot be read', () => {
 
     const said = vi
       .mocked(appendSysadmin)
-      .mock.calls.filter(([line]) => line.includes('not understood'));
+      .mock.calls.filter(([line]) => line.includes('could not read the version number'));
     expect(said).toHaveLength(1);
   });
 

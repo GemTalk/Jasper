@@ -41,7 +41,7 @@ import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from '../sysadminT
 import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTypes';
 import { SessionManager } from '../sessionManager';
 import { readWebviewScript } from '../webviewAssets';
-import { appendSysadmin } from '../sysadminChannel';
+import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 
 const databasesViewJs = readWebviewScript('databasesView.js', 'manager');
 
@@ -245,6 +245,7 @@ interface PanelState {
 type Inbound =
   | { command: 'ready' }
   | { command: 'refresh' }
+  | { command: 'showLog' }
   | { command: 'extractVersion'; version: string }
   | { command: 'deleteDownload'; version: string }
   | { command: 'uninstallVersion'; version: string }
@@ -606,6 +607,12 @@ export class DatabasesPanel {
           void this.panel.webview.postMessage({ command: 'beginCreate' });
         }
         await this.postState();
+        return;
+      case 'showLog':
+        // Offered only where something has failed. The reason a scan gives is
+        // longer than a banner should carry, so the banner says what happened
+        // and this opens the place that says the rest.
+        showSysadmin();
         return;
       case 'refresh':
         // Refresh is the one place that asks the network again: everything the
@@ -1594,9 +1601,9 @@ export class DatabasesPanel {
       return this.deps.versionManager.getInstalledVersions();
     } catch (e) {
       appendSysadmin(
-        `Databases & Versions: could not read the installed versions — ${
+        `Databases & Versions: could not read the installed versions in ${this.deps.storage.getRootPath()} — ${
           e instanceof Error ? e.message : String(e)
-        }`,
+        }. The Versions list is empty until that folder can be read; the path comes from the gemstone.rootPath setting.`,
       );
       return [];
     }

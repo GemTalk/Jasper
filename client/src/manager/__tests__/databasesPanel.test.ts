@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn() }));
+vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 // Windows takes a branch Linux does not: Refresh re-probes WSL before rebuilding,
 // and on a real Windows runner that shells out to wsl.exe and takes seconds — long
 // enough that a test driving two refreshes measures the probe rather than the panel.
@@ -33,6 +33,7 @@ import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
 import { needsWsl } from '../../wslBridge';
+import { showSysadmin } from '../../sysadminChannel';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -209,6 +210,18 @@ function lastState(): {
   );
   return (states[states.length - 1][0] as { state: ReturnType<typeof lastState> }).state;
 }
+
+describe('the way into the log', () => {
+  // The panel writes the full reason to the channel and then had no way to say
+  // where it was: showSysadmin was called from exactly one place in the
+  // extension, and none of them was here.
+  it('opens the channel the reasons are written to', async () => {
+    await openPanel();
+    await sendMessage({ command: 'showLog' });
+
+    expect(vi.mocked(showSysadmin)).toHaveBeenCalled();
+  });
+});
 
 describe('a root path that cannot be read', () => {
   // Every listing under it comes back empty, which is the same answer an empty

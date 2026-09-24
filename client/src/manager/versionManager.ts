@@ -199,7 +199,18 @@ export class VersionManager {
     const named = unreadable.map((v) => v.version).join(', ');
     if (named !== this.lastUnreadable) {
       this.lastUnreadable = named;
-      if (named) appendSysadmin(`Versions: version number not understood, listed last — ${named}`);
+      if (named) {
+        // Everything needed to act on it: which folder, which part of its name
+        // is the version, and what a version number is allowed to look like.
+        appendSysadmin(
+          `Versions: could not read the version number in ${named} — listed last, because a row ` +
+            `that cannot be compared cannot be ordered or checked against the minimum supported ` +
+            `version (${MINIMUM_SUPPORTED_GEMSTONE_VERSION}). A version is three or four numbers ` +
+            `with an optional pre-release tag: 3.7.5, 3.7.4.3, 4.0.0-a3. The name comes from the ` +
+            `folder GemStone64Bit<version>${this.storage.getPlatformSuffix()} in ` +
+            `${this.storage.getRootPath()}; renaming the folder is what changes it.`,
+        );
+      }
     }
 
     // Drop remote versions older than the minimum; local installs are always kept

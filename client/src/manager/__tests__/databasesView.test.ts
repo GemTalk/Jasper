@@ -197,6 +197,7 @@ describe('when the root path cannot be read', () => {
     expect(root.textContent).toContain('Cannot read');
     expect(root.textContent).toContain('/root');
     expect(root.querySelector('[data-action="chooseRoot"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="showLog"]')).not.toBeNull();
   });
 
   it('says nothing about it when the folder reads fine', () => {
@@ -253,6 +254,22 @@ describe('when the host says an action failed', () => {
     api().render(state());
 
     expect(root.textContent).not.toContain('permission denied');
+  });
+
+  // The banner has room for the reason and no more; the log carries which
+  // folder, what was being read and what would fix it.
+  it('offers the log beside it', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
+    click('showLog');
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'showLog' }));
+  });
+
+  // A panel with nothing wrong has nothing in the log worth reading, so the way
+  // there appears with the trouble rather than sitting in the header.
+  it('does not offer it when nothing has gone wrong', () => {
+    mount();
+    expect(root.querySelector('[data-action="showLog"]')).toBeNull();
   });
 
   it('lets it be dismissed', () => {
