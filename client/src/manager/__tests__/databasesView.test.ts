@@ -214,7 +214,9 @@ describe('where the panel says it is looking', () => {
   // databases yet", which reads as a contradiction until this says otherwise.
   it('says logins are kept by Jasper rather than in that folder', () => {
     mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
-    expect(root.querySelector('.gm-where:last-of-type')?.textContent).toContain('kept by Jasper');
+    expect(root.querySelector('.gm-where:last-of-type')?.textContent).toContain(
+      'kept by Jasper settings',
+    );
   });
 
   // Logins are added and edited from the rows here and in the sidebar. Where

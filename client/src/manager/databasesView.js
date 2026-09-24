@@ -1095,8 +1095,8 @@
       // sidebar, never by hand.
       `<div class="gm-where">${ICONS.login}<span>${
         logins
-          ? `${logins} login${logins === 1 ? '' : 's'}, kept by Jasper rather than in that folder`
-          : 'Logins are kept by Jasper, not in that folder'
+          ? `${logins} login${logins === 1 ? '' : 's'}, kept by Jasper settings rather than in that folder`
+          : 'Logins are kept by Jasper settings, not in that folder'
       }</span></div>`;
 
     return `<div class="gm-head">
