@@ -428,11 +428,55 @@ describe('after a hard break', () => {
     }
   });
 
-  it('clears the process the break stopped, so it cannot keep a lock', async () => {
+  it('clears the process the break stopped when the caller declared it disposable', async () => {
     // A process hard-broken inside a Transcript write still holds the session's
     // Transcript semaphore, and every later write fails until it is cleared --
     // measured on 3.6.2 and 3.7.5. Nobody else will clear it: the caller has
     // already been handed NbCancelledError.
+    vi.useFakeTimers();
+    try {
+      const session = makeSession([{ result: 0 }]);
+      const poll = session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      (session.gci.GciTsNbResult as ReturnType<typeof vi.fn>).mockReturnValue({
+        result: 1n,
+        err: { number: 6004, context: 0x4242n },
+      });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          disposableProcess: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(session.gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, 0x4242n);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the stopped process alone when the caller did not declare it disposable', async () => {
+    // What a debugger step is: the message is performed ON the process the panel
+    // is showing, so the process a break stops is the user's stack, not the
+    // call's own litter. Clearing it would unwind that stack to nothing while
+    // the panel still says "Step cancelled." and offers to step again. Same
+    // drain, same break -- only the caller's declaration differs.
     vi.useFakeTimers();
     try {
       const session = makeSession([{ result: 0 }]);
@@ -463,7 +507,10 @@ describe('after a hard break', () => {
       poll.mockReturnValue({ result: 1, err: noErr });
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(session.gci.GciTsClearStack).toHaveBeenCalledWith(session.handle, 0x4242n);
+      // Still drained -- the session has to go back to idle either way, or the
+      // next step is refused as "an operation is in progress".
+      expect(session.gci.GciTsNbResult).toHaveBeenCalled();
+      expect(session.gci.GciTsClearStack).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

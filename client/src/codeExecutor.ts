@@ -701,7 +701,10 @@ export class CodeExecutor {
     // It and the debugger's step/trim share ONE cancel/break/backoff/progress
     // implementation (no divergence). The Nb call is already started by the caller
     // (GciTsNbExecute above), so we only poll it to completion here.
-    return pollNbToCompletion(session, onReady, { title: 'GemStone: Executing…' });
+    return pollNbToCompletion(session, onReady, {
+      title: 'GemStone: Executing…',
+      disposableProcess: true,
+    });
   }
 
   private pollForResult(session: ActiveSession): Promise<string> {

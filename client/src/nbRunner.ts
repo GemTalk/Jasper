@@ -81,6 +81,19 @@ export interface NbRunOptions {
    * the notification toast. The fn is a no-op once the call has settled.
    */
   onStart?: (cancel: () => void) => void;
+  /**
+   * Whether the process this call stops is the call's own, to be thrown away
+   * with it. True for anything that starts a fresh execution: abandoned inside
+   * a Transcript write it holds the session's Transcript semaphore, and
+   * clearing its stack is what gives the semaphore back
+   * ([#646](https://github.com/GemTalk/Jasper/issues/646)).
+   *
+   * Off by default, because the two debugger ops that perform a message ON a
+   * GsProcess — step and restart-frame's trim — stop the very process the panel
+   * is showing. Clearing that unwinds the user's stack to nothing while the
+   * panel still says "Step cancelled." and offers to step it again.
+   */
+  disposableProcess?: boolean;
 }
 
 /**
@@ -119,16 +132,20 @@ const draining = new Map<number, Promise<void>>();
  *
  * A hard break stops the gem but does not, by itself, end the GCI call: until
  * something reads its result the session reports a call in progress and refuses
- * the next one. The result itself is thrown away, but the process it names is
- * cleared: one stopped inside a Transcript write holds the session's Transcript
- * semaphore, and every later write fails until it is cleared (measured on 3.6.2
- * and 3.7.5). Gives up after a bounded number of attempts rather than polling a
- * session that is never going to answer.
+ * the next one. The result itself is thrown away. Gives up after a bounded
+ * number of attempts rather than polling a session that is never going to
+ * answer.
+ *
+ * The process the result names is cleared only when the caller declared it
+ * disposable (see `NbRunOptions.disposableProcess`): clearing is what releases
+ * the Transcript semaphore a suspended writer holds, and is destructive to a
+ * process the user is debugging. This code cannot tell the two apart — the
+ * caller that chose the receiver can.
  *
  * Only for a call whose result has not been read yet. Once `onReady` has read
  * it, see {@link awaitAbandonedRead}.
  */
-function drainAbandonedCall(session: ActiveSession): Promise<void> {
+function drainAbandonedCall(session: ActiveSession, disposableProcess: boolean): Promise<void> {
   const existing = draining.get(session.id);
   if (existing) return existing;
 
@@ -138,7 +155,7 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
         const { result } = pollNbResultReady(session);
         if (result === 1) {
           const { err } = session.gci.GciTsNbResult(session.handle);
-          clearStoppedProcess(session, err?.context);
+          if (disposableProcess) clearStoppedProcess(session, err?.context);
           resolve();
           return;
         }
@@ -316,7 +333,7 @@ export function pollNbToCompletion<T>(
         // progress until its (aborted) result is collected. Drain it, or the very
         // next call on this session is refused with "session is busy" — which reads
         // as the next run silently doing nothing.
-        void drainAbandonedCall(session);
+        void drainAbandonedCall(session, opts.disposableProcess === true);
       }
       settle(() => reject(new NbCancelledError()));
     };
@@ -385,7 +402,7 @@ export function pollNbToCompletion<T>(
         // reporting a call in progress, and every later call on it refused. A
         // break that the gem turns into a poll error takes this path, so the
         // drain belongs here as much as on the hard-break path.
-        void drainAbandonedCall(session);
+        void drainAbandonedCall(session, opts.disposableProcess === true);
         settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
         return;
       }

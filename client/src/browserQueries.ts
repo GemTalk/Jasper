@@ -400,7 +400,12 @@ export async function executeFetchStringNb(
       }
       return fetched.data;
     },
-    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification, onStart },
+    {
+      title: progressTitle ?? `GemStone: ${label}…`,
+      suppressNotification,
+      onStart,
+      disposableProcess: true,
+    },
   );
 
   return data;

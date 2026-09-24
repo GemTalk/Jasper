@@ -88,7 +88,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         }
         return result;
       },
-      { title: 'GemStone: Running cell…' },
+      { title: 'GemStone: Running cell…', disposableProcess: true },
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
