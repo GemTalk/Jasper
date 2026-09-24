@@ -78,7 +78,7 @@ mcp-server/node_modules/**
 !node_modules/koffi/build/**
 
 client/src/**
-# listFilter.js, methodListView.js, debuggerView.js, and millerColumns.js are read at runtime
+# listFilter.js, methodListView.js, debuggerView.js, millerColumns.js, and evaluatePane.js are read at runtime
 # via fs.readFileSync and injected into webviews as <script> tags. They must ship as standalone files —
 # they cannot be compiled into the bundle. (debuggerView.js is read at module load by debuggerPanel.ts,
 # which extension.ts imports eagerly, so omitting it here makes loading the packaged extension.js throw
@@ -95,6 +95,7 @@ client/src/**
 !node_modules/@vscode/codicons/dist/codicon.css
 !node_modules/@vscode/codicons/dist/codicon.ttf
 !client/src/browserColumnResize.js
+!client/src/webview/evaluatePane.js
 !client/src/webview/millerColumns.js
 !client/src/basicInspector/basicInspectorView.js
 !client/src/refactoring/renameInstVarPanelView.js

@@ -724,151 +724,49 @@
       });
     }
 
-    // The three things the pane can do with an expression, and the editor's own chord that runs
-    // each — the SAME set and the same keys as the Inspector's evaluate tab, so what you learn in
-    // one panel transfers to the other. See client/src/evaluateMode.ts.
-    const EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
-    let chordArmed = false;
+    // The evaluate pane's keys, its chord, and the expression history Ctrl+Up / Ctrl+Down walk are
+    // shared with the Inspector's evaluate tab — one module, loaded by both webviews, so a gesture
+    // cannot come to mean two things depending on which panel you are in. See
+    // client/src/webview/evaluatePane.js; the modes themselves are in client/src/evaluateMode.ts.
+    //
+    // What stays here is the three things this panel does its own way: where the box is, where a
+    // message that is not a result goes, and how an expression reaches the host.
+    let lastAnswer = null; // {value, isError} — what the result row returns to
 
-    // Expressions already run here, newest last. Ctrl+Up / Ctrl+Down walk them, the way a shell's
-    // history does: the box is a place you come back to, and retyping a long doit to change one
-    // keyword is the thing that makes an evaluate pane tedious. What was merely TYPED is not in
-    // here — only what actually reached the stone.
-    const history = [];
-    let historyAt = -1; // -1 = not walking; otherwise an index into `history`
-    let draft = ''; // what was in the box when the walk started, to come back to
-    // The result row doubles as the status line, so a status message borrows it and hands it back.
-    const STATUS_MS = 1600; // matches the Inspector's chord-hint flash
-    let statusTimer = null;
-    let lastAnswer = null; // {value, isError} — what the row returns to
-
-    function rememberExpression(expr) {
-      if (history[history.length - 1] !== expr) history.push(expr);
-      historyAt = -1;
-    }
-
-    /** Put `text` in the box, caret at the end. */
-    function setEvalText(text) {
-      if (!evalInput) return;
-      evalInput.value = text;
-      showClearWhenTyped();
-      evalInput.focus();
-      if (evalInput.setSelectionRange) evalInput.setSelectionRange(text.length, text.length);
-    }
-
-    /**
-     * Step BACK through the expressions run in this pane, stopping at the oldest.
-     *
-     * Running an expression leaves it in the box, so stepping to the newest entry would put back the
-     * text already on screen and read as a dead key — the first press has to move. Whatever was in
-     * the box when the walk started is kept as `draft`, so walking forward past the newest returns
-     * it rather than leaving you stranded in the history.
-     */
-    function recallPrevious() {
-      if (!evalInput) return;
-      if (history.length === 0) {
-        // Nothing has been RUN in this pane yet. Silence reads as a dead key; the result row is
-        // this pane's only status surface, and clearEval wipes it like any other answer.
-        setEvalStatus('No earlier expression yet');
-        return;
-      }
-      if (historyAt < 0) {
-        draft = evalInput.value;
-        let start = history.length - 1;
-        // Trimmed on both sides: the history holds what was RUN, which is trimmed, while the box
-        // still holds what was typed. Comparing them raw missed on a trailing space or newline —
-        // easy to leave in a multi-line box — and the first press handed back the expression just
-        // run instead of stepping past it.
-        if (evalInput.value.trim() === history[start]) start -= 1;
-        if (start < 0) {
-          setEvalStatus('Oldest expression');
-          return;
+    const evalPane = EvaluatePane.create({
+      input: () => evalInput,
+      send: (expr, mode) => post({ command: 'evalInFrame', level: selectedLevel, expr, mode }),
+      syncText: () => showClearWhenTyped(),
+      /**
+       * The result row doubles as the status line, because it is this pane's only surface: one row,
+       * already shared between the expression and its answer. So a message borrows it — and hands it
+       * back, since writing into it permanently meant walking to the end of the history threw away
+       * the answer you were reading, a steep price for a navigation message.
+       */
+      showStatus: (text) => {
+        if (!evalResult) return;
+        evalResult.textContent = text;
+        evalResult.title = '';
+        evalResult.classList.remove('error');
+      },
+      restStatus: () => showAnswer(lastAnswer),
+      setChordArmed: (on) => {
+        if (evalbar) evalbar.classList.toggle('chord-armed', on);
+      },
+      clearPane: () => {
+        // A result outlives the expression it came from otherwise, which reads as the answer to
+        // whatever is typed next.
+        if (evalInput) {
+          evalInput.value = '';
+          evalInput.focus();
         }
-        historyAt = start;
-      } else {
-        if (historyAt === 0) {
-          setEvalStatus('Oldest expression');
-          return;
-        }
-        historyAt -= 1;
-      }
-      setEvalText(history[historyAt]);
-      setEvalStatus(walkLabel());
-    }
-
-    /** Step FORWARD toward what you were typing; past the newest entry, give the draft back. */
-    function recallNext() {
-      if (historyAt < 0) return;
-      if (historyAt >= history.length - 1) {
-        historyAt = -1;
-        setEvalText(draft || '');
-        setEvalStatus('Back to what you were typing');
-        return;
-      }
-      historyAt += 1;
-      setEvalText(history[historyAt]);
-      setEvalStatus(walkLabel());
-    }
-
-    /**
-     * Where you are in the walk, and how to get out of it.
-     *
-     * Walking into the history replaces what you were typing, and nothing on screen said so or said
-     * how to get it back — so the draft looked lost and the walk looked like a one-way trip. Naming
-     * the way out at the moment you step is what makes it a detour rather than a commitment.
-     */
-    function walkLabel() {
-      return `Earlier ${history.length - historyAt} of ${history.length} \u00b7 ${ctrlLabel()}+\u2193 for your draft`;
-    }
-
-    /** The modifier this platform writes for the chords this pane answers to. */
-    function ctrlLabel() {
-      return ((typeof navigator !== 'undefined' && navigator.platform) || '').indexOf('Mac') === 0
-        ? 'Cmd'
-        : 'Ctrl';
-    }
-
-    /**
-     * Say the keys the way this platform writes them.
-     *
-     * The markup ships `Ctrl`, which is right everywhere but a Mac, and only the webview knows
-     * which this is — so a Mac user read `Ctrl+↑` on the box and `Cmd+↓` in the status line for
-     * the two halves of one walk. Rewriting the titles that are already there, rather than building
-     * a second copy of the legend here, keeps one wording to maintain. The keys themselves always
-     * worked: every handler takes either modifier.
-     */
-    function labelKeysForPlatform() {
-      const mod = ctrlLabel();
-      if (mod === 'Ctrl') return; // the markup already says so
-      const labelled = [evalInput].concat(
-        evalToolbar ? Array.prototype.slice.call(evalToolbar.querySelectorAll('[data-eval]')) : [],
-      );
-      labelled.forEach((elem) => {
-        if (elem && elem.title) elem.title = elem.title.replace(/\bCtrl\b/g, mod);
-      });
-    }
-
-    /**
-     * Say something that is NOT a result, in the row the results use — "Oldest expression", "Back to
-     * what you were typing".
-     *
-     * Transient, and it puts the answer back. The result row is this pane's only status surface, so
-     * these messages have to borrow it; writing into it permanently meant walking to the end of the
-     * history threw away the answer you were looking at, which is a steep price for a navigation
-     * message. It also matches the Inspector, whose equivalent flashes in its chord-hint line and
-     * then restores it — same words, same duration, same return to rest.
-     */
-    function setEvalStatus(text) {
-      if (!evalResult) return;
-      if (statusTimer) clearTimeout(statusTimer);
-      evalResult.textContent = text;
-      evalResult.title = '';
-      evalResult.classList.remove('error');
-      statusTimer = setTimeout(() => {
-        statusTimer = null;
-        showAnswer(lastAnswer);
-      }, STATUS_MS);
-    }
+        showAnswer(null);
+        showClearWhenTyped();
+      },
+      // Escape on an already-empty box closes the pane — the same two-stage Escape the list filters
+      // use. The Inspector's evaluate tab has no closed state to reach, so it asks for nothing here.
+      escapeWhenEmpty: () => setEvalCollapsed(true),
+    });
 
     /** Put an answer (or the absence of one) in the result row, and remember it as what the row
      *  goes back to after a status message. */
@@ -880,88 +778,30 @@
       evalResult.classList.toggle('error', !!(answer && answer.isError));
     }
 
-    /** Run what's in the box, in `mode`. A blank expression is not worth a round trip. */
-    function runEval(mode) {
-      if (!evalInput) return;
-      const expr = evalInput.value.trim();
-      if (!expr) return;
-      // Running is not leaving: a button click parks the focus on the button, and the next thing
-      // you do is almost always type again. Hand it back, as the Inspector's pane does.
-      evalInput.focus();
-      rememberExpression(expr);
-      post({ command: 'evalInFrame', level: selectedLevel, expr, mode });
-    }
-
-    function setChordArmed(on) {
-      chordArmed = on;
-      if (evalbar) evalbar.classList.toggle('chord-armed', on);
-    }
-
-    // Eval-in-frame. Shift+Enter is Display It; Ctrl+Up / Ctrl+Down walk what you have already run;
-    // Escape clears what you typed, or closes the pane when it's already empty — the same two-stage
-    // Escape the list filters use. Ctrl+K D / E / I is the editor's own chord, handled here for the
-    // reason the Inspector handles it too: the contributed bindings are `when: editorTextFocus`,
-    // which a focused webview never satisfies, so they do not resolve here and cannot collide.
-    //
-    // Bare Enter used to evaluate. It cannot any more: this box is multi-line now, and a pane where
-    // Enter runs has no way to type a second line. Shift+Enter took over the job, in both panes.
+    // Eval-in-frame. The keys are the shared pane's — Shift+Enter is Display It, Ctrl+K D / E / I is
+    // the editor's own chord, Ctrl+Up / Ctrl+Down walk what has already been run, Escape clears the
+    // box or closes the pane. The contributed chord bindings are `when: editorTextFocus`, which a
+    // focused webview never satisfies, so they do not resolve here and cannot collide.
     if (evalInput) {
-      evalInput.addEventListener('keydown', (e) => {
-        if (chordArmed) {
-          setChordArmed(false);
-          const mode = EVAL_CHORD[String(e.key).toLowerCase()];
-          if (!mode) return; // not a chord key: disarm and let it be typed
-          e.preventDefault();
-          e.stopPropagation();
-          runEval(mode);
-          return;
-        }
-        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') {
-          e.preventDefault();
-          e.stopPropagation();
-          setChordArmed(true);
-          return;
-        }
-        if (e.key === 'Escape') {
-          setChordArmed(false);
-          if (evalInput.value) clearEval();
-          else setEvalCollapsed(true);
-          return;
-        }
-        // MODIFIED arrows, not bare ones: the box is multi-line, so bare Up/Down have to keep
-        // moving the caret. With Ctrl held the key means one thing wherever the caret is.
-        if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowUp') {
-          e.preventDefault();
-          recallPrevious();
-          return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === 'ArrowDown') {
-          e.preventDefault();
-          recallNext();
-          return;
-        }
-        if (e.key !== 'Enter') return;
-        // Shift+Enter, and Ctrl+Enter for anyone who reached for that first. Plain Enter is a
-        // newline, which is the whole point of the box being multi-line.
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          runEval('display');
-        }
-      });
+      evalInput.addEventListener('keydown', evalPane.keydown);
       // A chord left half-typed when focus leaves is not still waiting for its second key.
-      evalInput.addEventListener('blur', () => setChordArmed(false));
+      evalInput.addEventListener('blur', evalPane.disarm);
       // The ✕ shows only when there's something to clear.
       evalInput.addEventListener('input', showClearWhenTyped);
     }
 
-    labelKeysForPlatform();
+    // The keys this pane answers to are advertised without costing a pixel of layout: the
+    // placeholder occupies space the empty box was spending on nothing, and the rest rides on
+    // tooltips. The wording comes from the shared pane rather than the markup, so both panes say the
+    // same thing and a Mac reads `Cmd` everywhere rather than in whichever half derived it.
+    EvaluatePane.applyLabels(evalbar);
 
     // Display It / Execute It / Inspect It.
     if (evalToolbar) {
       evalToolbar.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-eval]');
         if (!btn) return;
-        runEval(btn.dataset.eval);
+        evalPane.run(btn.dataset.eval);
       });
     }
 
@@ -970,26 +810,10 @@
       if (evalbar && evalInput) evalbar.classList.toggle('has-text', evalInput.value.length > 0);
     }
 
-    /** Empty the expression AND its answer — a result outlives the expression it
-     *  came from otherwise, which reads as the answer to whatever you type next. */
-    function clearEval() {
-      historyAt = -1; // clearing is a fresh start, not a step in the walk
-      if (evalInput) {
-        evalInput.value = '';
-        evalInput.focus();
-      }
-      if (statusTimer) {
-        clearTimeout(statusTimer);
-        statusTimer = null;
-      }
-      showAnswer(null);
-      showClearWhenTyped();
-    }
-
     if (evalClear) {
       evalClear.addEventListener('click', (e) => {
         e.preventDefault();
-        clearEval();
+        evalPane.clear();
       });
     }
 
@@ -1131,10 +955,10 @@
         }
         // Clear stale variables / eval output; the default-select below re-fetches.
         if (variables) variables.innerHTML = '';
-        if (evalResult) {
-          evalResult.textContent = '';
-          evalResult.classList.remove('error');
-        }
+        // Through showAnswer, so the row also forgets what it would go BACK to: a status message
+        // after a fresh stack was restoring the previous halt's answer over an emptied row.
+        evalPane.settle();
+        showAnswer(null);
         currentStack = msg.stack || [];
         renderStack(list, msg.stack);
         // Default-select the top frame so the debugger opens focused on a frame.
@@ -1160,10 +984,7 @@
         // The answer shares one row with the expression, so a long printString scrolls sideways —
         // the tooltip is how you read the whole of it. It goes through showAnswer so the row knows
         // what to return to after a status message borrows it.
-        if (statusTimer) {
-          clearTimeout(statusTimer);
-          statusTimer = null;
-        }
+        evalPane.settle();
         showAnswer({ value: msg.value != null ? msg.value : '', isError: !!msg.isError });
       } else if (msg.command === 'savedNotice') {
         // #11: show the dumped file's path beside the buttons with a Copy-path
