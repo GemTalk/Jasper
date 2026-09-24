@@ -222,6 +222,34 @@ describe('references affordance — rendered HTML/CSS', () => {
       expect(html).toContain('#refindicator {');
     });
   }
+
+  /**
+   * WHERE the chip sits is the whole point of it, so it is asserted against the real markup rather
+   * than the hand-built SHELL above (which would keep passing wherever the chip moved to).
+   *
+   * Out at the end of the toolbar it was a sixth chip among five others that all say what the NEXT
+   * search will do, and it was missed — it is the only one that says what mode you are already IN.
+   * Inside the field it takes its room from the typing area, so the field visibly narrows when
+   * references come up, and it lands near the row's ↗ that was just clicked.
+   */
+  it('puts the chip inside the search field, not out with the toolbar chips', () => {
+    document.body.innerHTML = renderOmniHtml({ showPin: false });
+    const chip = document.getElementById('refindicator')!;
+
+    expect(chip.parentElement?.id).toBe('field');
+    // Before the clear button, so the ✕ stays hard against the field's right edge where it has
+    // always been.
+    expect(chip.nextElementSibling?.id).toBe('clear');
+  });
+
+  it('gives the chip an entrance, and drops it for reduced motion', () => {
+    // It appears mid-session in a bar the eye has stopped scanning; arriving on the next paint is
+    // how it went unnoticed.
+    const css = renderOmniHtml({ showPin: false });
+    expect(css).toContain('animation: refindicator-pop');
+    expect(css).toContain('@keyframes refindicator-pop');
+    expect(css).toContain('prefers-reduced-motion');
+  });
 });
 
 describe('the pivot breadcrumb carries its exit hint as a separate, quieter aside', () => {

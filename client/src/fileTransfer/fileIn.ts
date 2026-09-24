@@ -22,10 +22,22 @@ import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { parseTopazScript } from '../topazFileIn';
 import { rememberDirectory, rememberedDirectory } from './directory';
+import { fileInTonelUri } from './tonelFileIn';
 
-/** File types the open dialog offers. Topaz writes `.gs`; `.tpz` is the same syntax. */
+/**
+ * File types the open dialog offers.
+ *
+ * ONE entry covering both formats, because the user picks a FILE and Jasper works
+ * out which reader it needs (see {@link fileInOneUri}). Splitting Tonel into its own
+ * filter contradicted that: `.st` files were hidden until the user noticed the
+ * dropdown and switched it, which is exactly the "know which command reads which
+ * extension" problem this command exists to remove.
+ *
+ * The SAVE side is deliberately different — file out has two commands, one per
+ * format, and each offers only the extension it writes.
+ */
 export const FILE_IN_FILTERS: Record<string, string[]> = {
-  'GemStone Files': ['gs', 'tpz'],
+  'GemStone Files': ['gs', 'tpz', 'st'],
   'All Files': ['*'],
 };
 
@@ -63,6 +75,13 @@ export interface FileInOutcome {
    *  it — the rest of this file, the files it would have `input`, and any further
    *  files the user picked. */
   stopped: boolean;
+  /** Set when the USER cancelled — dismissing the Tonel dictionary prompt. Stops the
+   *  remaining files like {@link stopped}, but is reported as a cancellation rather
+   *  than as something the file said, and is not an error. Dismissing a prompt is
+   *  the only way to stop a multi-file file-in once it is under way, so it has to
+   *  mean "stop", and it has to say so — silently filing nothing for N files while
+   *  N prompts appear one after another is the behaviour this replaces. */
+  cancelled: boolean;
 }
 
 function emptyOutcome(): FileInOutcome {
@@ -76,6 +95,7 @@ function emptyOutcome(): FileInOutcome {
     skipped: [],
     errors: [],
     stopped: false,
+    cancelled: false,
   };
 }
 
@@ -90,9 +110,29 @@ function absorb(into: FileInOutcome, from: FileInOutcome): void {
   into.errors.push(...from.errors);
   into.askedToCommit ||= from.askedToCommit;
   into.stopped ||= from.stopped;
+  into.cancelled ||= from.cancelled;
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** Whether this file is Tonel, and so goes to Rowan's parser rather than the chunk reader. */
+export function isTonelFile(fsPath: string): boolean {
+  return path.extname(fsPath).toLowerCase() === '.st';
+}
+
+/**
+ * File one file in, by whichever reader its type needs.
+ *
+ * The two formats are read by completely different code — a `.gs` chunk by chunk,
+ * a `.st` through Rowan's Tonel parser — but that is Jasper's problem, not the
+ * user's: they pick a file and it goes in. It also means one mixed selection in the
+ * VS Code Explorer works, each file taking its own route, and reports once.
+ */
+async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
+  return isTonelFile(uri.fsPath)
+    ? fileInTonelUri(session, uri.fsPath)
+    : fileInFile(session, uri.fsPath);
+}
 
 /**
  * File one `.gs` file in, following any `input` lines it carries.
@@ -279,8 +319,8 @@ export async function fileInUris(
         // extension host while it goes in — this only keeps a multi-file pick from
         // looking like nothing is happening.
         await new Promise((resolve) => setTimeout(resolve, 0));
-        absorb(total, fileInFile(session, uri.fsPath));
-        if (total.stopped) break;
+        absorb(total, await fileInOneUri(session, uri));
+        if (total.stopped || total.cancelled) break;
       }
     },
   );
@@ -301,8 +341,14 @@ export async function fileInUris(
 
 let logChannel: vscode.OutputChannel | undefined;
 
-/** The "GemStone File In" output channel, created on first use. */
-function channel(): vscode.OutputChannel | undefined {
+/**
+ * The "GemStone File In" output channel, created on first use.
+ *
+ * Exported because Tonel file in writes here too (issue #616): a developer
+ * looking for why a file-in failed should have ONE place to look, whichever
+ * format the file was in.
+ */
+export function fileInChannel(): vscode.OutputChannel | undefined {
   if (!logChannel && vscode.window.createOutputChannel) {
     logChannel = vscode.window.createOutputChannel('GemStone File In');
   }
@@ -310,13 +356,14 @@ function channel(): vscode.OutputChannel | undefined {
 }
 
 function writeLog(uris: vscode.Uri[], outcome: FileInOutcome): void {
-  const log = channel();
+  const log = fileInChannel();
   if (!log) return;
   log.appendLine(`File In: ${uris.map((u) => u.fsPath).join(', ')}`);
   log.appendLine(
     `  ${outcome.files} file(s), ${outcome.executed} chunk(s) run, ` +
       `${outcome.compiled} method(s) compiled, ${outcome.removed} removeAllMethods` +
-      (outcome.stopped ? ', stopped at exit' : ''),
+      (outcome.stopped ? ', stopped at exit' : '') +
+      (outcome.cancelled ? ', cancelled' : ''),
   );
   for (const note of outcome.ignored) {
     log.appendLine(`  ignored ${note.file}:${note.line} — ${note.message}`);
@@ -344,12 +391,13 @@ async function report(outcome: FileInOutcome): Promise<void> {
         `First: ${path.basename(first.file)}:${first.line} ${first.message}`,
       SHOW_LOG,
     );
-    if (choice === SHOW_LOG) channel()?.show(true);
+    if (choice === SHOW_LOG) fileInChannel()?.show(true);
     return;
   }
 
   const notes: string[] = [];
   if (outcome.stopped) notes.push('Stopped where the file said exit.');
+  if (outcome.cancelled) notes.push('Cancelled — the remaining files were not filed in.');
   if (outcome.skipped.length > 0) {
     notes.push(`${outcome.skipped.length} directive(s) not recognised.`);
   }
@@ -369,5 +417,5 @@ async function report(outcome: FileInOutcome): Promise<void> {
     `Filed in ${counts}. ${notes.join(' ')}`,
     ...(hasDetail ? [SHOW_LOG] : []),
   );
-  if (choice === SHOW_LOG) channel()?.show(true);
+  if (choice === SHOW_LOG) fileInChannel()?.show(true);
 }
