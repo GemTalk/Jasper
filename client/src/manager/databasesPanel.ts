@@ -232,13 +232,27 @@ interface CreateOptions {
  */
 const OPENABLE_SETTINGS = ['gemstone.rootPath'];
 
-/** Which settings layer supplied a value, in the words the Settings editor uses. */
-function settingScope(key: string): string {
+/**
+ * Which settings layer supplied a value — in the words the Settings editor uses
+ * — and the command that opens the editor on that layer.
+ *
+ * `openSettings` lands on whichever tab the editor was last left on, User by
+ * default. For a value that came from the workspace that showed a different
+ * value from the one the panel had just named, which reads as the two
+ * disagreeing rather than as two layers of the same key.
+ */
+function settingLayer(key: string): { label: string; command: string } {
   const inspected = vscode.workspace.getConfiguration('gemstone').inspect(key);
-  if (inspected?.workspaceFolderValue !== undefined) return 'Folder settings';
-  if (inspected?.workspaceValue !== undefined) return 'Workspace settings';
-  if (inspected?.globalValue !== undefined) return 'User settings';
-  return 'default';
+  if (inspected?.workspaceFolderValue !== undefined) {
+    return { label: 'Folder settings', command: 'workbench.action.openFolderSettings' };
+  }
+  if (inspected?.workspaceValue !== undefined) {
+    return { label: 'Workspace settings', command: 'workbench.action.openWorkspaceSettings' };
+  }
+  if (inspected?.globalValue !== undefined) {
+    return { label: 'User settings', command: 'workbench.action.openSettings' };
+  }
+  return { label: 'default', command: 'workbench.action.openSettings' };
 }
 
 interface PanelState {
@@ -633,7 +647,9 @@ export class DatabasesPanel {
         // clicked. Only that one is reachable: logins are Jasper's own to keep,
         // and are never edited by hand.
         if (OPENABLE_SETTINGS.includes(msg.id)) {
-          await vscode.commands.executeCommand('workbench.action.openSettings', msg.id);
+          // On the layer the panel named, not whichever tab was last open.
+          const { command } = settingLayer(msg.id.replace(/^gemstone\./, ''));
+          await vscode.commands.executeCommand(command, msg.id);
         }
         return;
       case 'showLog':
@@ -1557,7 +1573,7 @@ export class DatabasesPanel {
       windows: needsWsl(),
       rootPath: this.deps.storage.getRootPath(),
       rootProblem: this.deps.storage.rootPathProblem(),
-      rootFrom: settingScope('rootPath'),
+      rootFrom: settingLayer('rootPath').label,
       versions,
       databases,
       logins: this.buildLoginTargets(databases),

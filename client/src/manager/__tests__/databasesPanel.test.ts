@@ -34,6 +34,7 @@ import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
 import { needsWsl } from '../../wslBridge';
 import { showSysadmin } from '../../sysadminChannel';
+import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -203,6 +204,7 @@ function lastState(): {
   create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
   versions: { version: string }[];
   rootProblem?: string;
+  rootFrom: string;
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -232,6 +234,25 @@ describe('the settings behind the panel', () => {
       'workbench.action.openSettings',
       'gemstone.rootPath',
     );
+  });
+
+  // The Settings editor opens on whichever tab it was last left on, User by
+  // default — which for a workspace-supplied value showed a different value
+  // from the one the panel had just named, and read as the two disagreeing.
+  it('opens the layer the panel named, not the last tab used', async () => {
+    __setConfig('gemstone', 'rootPath', '/from/the/workspace', 'workspace');
+    try {
+      await openPanel();
+      expect(lastState().rootFrom).toBe('Workspace settings');
+
+      await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        'workbench.action.openWorkspaceSettings',
+        'gemstone.rootPath',
+      );
+    } finally {
+      __resetConfig();
+    }
   });
 
   // The id arrives off the webview wire, and openSettings takes a free-text
