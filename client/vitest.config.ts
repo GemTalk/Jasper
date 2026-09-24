@@ -90,6 +90,7 @@ export default defineConfig({
             'src/__tests__/vitest.windowSetup.cjs',
             'src/__tests__/vitest.uriSetup.ts',
             'src/__tests__/vitest.customErrorMatchers.ts',
+            'src/__tests__/vitest.telemetrySetup.ts',
           ],
           sequence: {
             shuffle: true,
