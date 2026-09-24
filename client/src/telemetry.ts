@@ -120,10 +120,33 @@ export class Stopwatch {
 }
 
 /**
- * The extension host finished activating — once per window activation.
+ * The extension host finished activating — once per window activation that
+ * reaches the end of `activate()`. An activation that throws sends nothing.
  *
- * @param activationMs time since the first statement of `activate()`.
+ * @param activationMs time from `startActivationTelemetry` to the end of
+ *   `activate()`.
  */
 export function reportActivation(activationMs: number): void {
   send(EVENT.activated, undefined, { activationMs });
+}
+
+/**
+ * Starts timing activation and wires up the reporter, returning a `finish`
+ * callback for `activate()` to call on its way out.
+ *
+ * `finish` is idempotent — only its first call sends `activated` — so every
+ * exit path in `activate()` can call it unconditionally without worrying
+ * about double-counting an activation whose control flow passes through more
+ * than one exit.
+ */
+export function startActivationTelemetry(context: vscode.ExtensionContext): () => void {
+  const stopwatch = Stopwatch.start();
+  initTelemetry(context);
+
+  let finished = false;
+  return function finish(): void {
+    if (finished) return;
+    finished = true;
+    reportActivation(stopwatch.elapsedMs());
+  };
 }
