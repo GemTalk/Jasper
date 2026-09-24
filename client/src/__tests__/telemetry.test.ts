@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
-import { initTelemetry, reportActivation } from '../telemetry';
+import { initTelemetry, reportActivation, startActivationTelemetry } from '../telemetry';
 
 function fakeContext(mode: number = ExtensionMode.Production): vscode.ExtensionContext {
   return {
@@ -57,5 +57,24 @@ describe('telemetry', () => {
     reportActivation(0);
 
     expect(eventsNamed('activated')[0].properties).toMatchObject({ extensionMode: expected });
+  });
+
+  describe('startActivationTelemetry', () => {
+    it('sends a single activated event when finish is called', () => {
+      const finish = startActivationTelemetry(fakeContext());
+
+      finish();
+
+      expect(eventsNamed('activated')).toHaveLength(1);
+    });
+
+    it('sends nothing more on a second finish call', () => {
+      const finish = startActivationTelemetry(fakeContext());
+
+      finish();
+      finish();
+
+      expect(eventsNamed('activated')).toHaveLength(1);
+    });
   });
 });
