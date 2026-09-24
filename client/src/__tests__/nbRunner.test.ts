@@ -667,6 +667,34 @@ describe('a hard break while the result is being read', () => {
     }
   });
 
+  it('waits out a worker that is slow to hand the session back, not only a fast one', async () => {
+    // A hard-broken GciTsContinueWith normally returns within milliseconds, but
+    // a loaded machine has taken seconds. Starting the next call before the
+    // worker is done gets it refused by GemStone -- "session has call in
+    // progress by another C thread" -- which reads as the run after a stop
+    // failing for no reason at all. Seen on a CI runner against the drain's
+    // 2s budget, which this wait used to borrow.
+    vi.useFakeTimers();
+    try {
+      const { session, finishOnReady } = await hardBreakDuringOnReady();
+      const start = vi.fn(() => ({ success: true, err: noErr as never }));
+
+      const next = runNbCall(session, start, () => 'next', { suppressNotification: true });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const startedWhileReading = start.mock.calls.length;
+      finishOnReady();
+
+      await expect(next).resolves.toBe('next');
+      expect(startedWhileReading).toBe(0);
+      expect(start).toHaveBeenCalledTimes(1);
+    } finally {
+      // Run out, not cleared: the session's hold must lift, or every later
+      // test in this file waits on it.
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
   it('stops holding the session for a read that never finishes, and leaves no timer behind', async () => {
     // A worker that never comes back means a session that is gone anyway, and
     // GemStone refuses a new call cleanly while one is still in progress on

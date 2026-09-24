@@ -180,10 +180,19 @@ function drainAbandonedCall(session: ActiveSession, disposableProcess: boolean):
 
 /**
  * How long the next call on a session waits for an abandoned `onReady` to
- * finish. A hard break brings a worker-thread GciTsContinueWith back within
- * milliseconds; this is only the bound for a session that never answers.
+ * finish. Only a backstop for one that never finishes at all: the wait ends the
+ * moment `onReady`'s promise settles, which after a hard break is usually
+ * within milliseconds, so a generous bound costs nothing in the ordinary case.
+ *
+ * Generous because the alternative to waiting is worse than waiting. Give up
+ * while a koffi worker still owns the session and the call we start next is
+ * refused by GemStone outright — the user presses stop, and their next run
+ * fails with "session has call in progress by another C thread". This was the
+ * drain's own budget (2s) until a loaded CI runner took over that to hand a
+ * session back where a quiet machine takes 25ms. The drain bounds a different
+ * thing — polling a gem that may never answer — so it keeps its own number.
  */
-const ABANDONED_READ_WAIT_MS = DRAIN_ATTEMPTS * DRAIN_INTERVAL_MS;
+const ABANDONED_READ_WAIT_MS = 30_000;
 
 /**
  * Hold the session for an `onReady` whose run was hard-broken, until that
