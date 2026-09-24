@@ -162,7 +162,7 @@ import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
-import { DatabasesPanel } from './manager/databasesPanel';
+import { DatabasesPanel, chooseRootFolder } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
 import {
   isRegisteredDatabase,
@@ -4565,6 +4565,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
+    }),
+
+    // The folder everything under Databases & Versions is found in. Registered
+    // as a command because the Settings editor renders a string setting as a
+    // text box and offers no folder picker — the setting's own description
+    // links here, and the panel's buttons come through the same door.
+    vscode.commands.registerCommand('gemstone.chooseRootPath', async () => {
+      if (await chooseRootFolder()) refreshAdminViews();
     }),
 
     // ── Whole-database start/stop ─────────────────────────────────────────

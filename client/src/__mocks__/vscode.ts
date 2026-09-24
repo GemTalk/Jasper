@@ -11,6 +11,15 @@ export { Uri };
 // ── Configuration mock ─────────────────────────────────────
 
 const configStore: Record<string, Record<string, unknown>> = {};
+/** Which inspect() field a seeded value answers under, per key. */
+const scopeStore: Record<string, Record<string, string>> = {};
+/** Every configuration update the code under test made, newest last. */
+export const __configUpdates: {
+  section: string;
+  key: string;
+  value: unknown;
+  target?: number;
+}[] = [];
 
 function getConfiguration(section: string) {
   if (!configStore[section]) {
@@ -28,15 +37,20 @@ function getConfiguration(section: string) {
       workspaceFolderValue?: T;
     } {
       const val = configStore[section][key];
-      // A seeded value stands in for an explicitly-set (global-scope) value;
-      // otherwise all scope fields are absent, matching the real API's shape
-      // for a key the user never set.
-      return val !== undefined
-        ? { key: `${section}.${key}`, globalValue: val as T }
-        : { key: `${section}.${key}` };
+      // A seeded value stands in for an explicitly-set value, at the scope the
+      // seeding named — global unless a test said otherwise; otherwise all
+      // scope fields are absent, matching the real API's shape for a key the
+      // user never set.
+      if (val === undefined) return { key: `${section}.${key}` };
+      const field = scopeStore[section]?.[key] ?? 'globalValue';
+      return { key: `${section}.${key}`, [field]: val as T };
     },
-    update: vi.fn(async (key: string, value: unknown, _target?: number) => {
+    update: vi.fn(async (key: string, value: unknown, target?: number) => {
       configStore[section][key] = value;
+      // getConfiguration() hands back a fresh object each call, so a test
+      // cannot spy on this one: what was written, and at which layer, is
+      // recorded here instead.
+      __configUpdates.push({ section, key, value, target });
     }),
   };
 }
@@ -46,14 +60,28 @@ export function __resetConfig(): void {
   for (const key of Object.keys(configStore)) {
     delete configStore[key];
   }
+  for (const key of Object.keys(scopeStore)) {
+    delete scopeStore[key];
+  }
+  __configUpdates.length = 0;
 }
 
 /** Pre-seed a config section for testing. */
-export function __setConfig(section: string, key: string, value: unknown): void {
+export function __setConfig(
+  section: string,
+  key: string,
+  value: unknown,
+  /** Which layer the value is to look as though it came from. */
+  scope: 'global' | 'workspace' = 'global',
+): void {
   if (!configStore[section]) {
     configStore[section] = {};
   }
   configStore[section][key] = value;
+  if (!scopeStore[section]) {
+    scopeStore[section] = {};
+  }
+  scopeStore[section][key] = `${scope}Value`;
 }
 
 // ── TreeItem mock ──────────────────────────────────────────

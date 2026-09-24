@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DatabaseYaml, GemStoneDatabase } from './sysadminTypes';
 import { needsWsl, getWslInfo, wslPathToWindows, wslExecSync } from './wslBridge';
+import { appendSysadmin } from './sysadminChannel';
 import {
   wslExistsSync,
   wslIsDirectory,
@@ -35,6 +36,63 @@ function parseExtractedRows(out: string, prefix: string, suffix: string): Extrac
 }
 
 export class SysadminStorage {
+  /** The last unreadable-directory line written, so one that has not changed is
+   *  not written again on every rescan. A successful read clears it, so the
+   *  same failure coming back is written again. */
+  private lastUnreadable = '';
+
+  /**
+   * The names in a directory, or none. A directory that is there but cannot be
+   * opened answers the same as an empty one, and says why once in the log. It
+   * used to throw — and one of these scans runs while the extension is
+   * activating, so an unreadable root took every GemStone command down with it
+   * rather than the listing that wanted it. `existsSync` cannot stand in for
+   * this: it answers only whether the path is there.
+   */
+  private entriesIn(dir: string): string[] {
+    try {
+      const entries = fs.readdirSync(dir);
+      this.lastUnreadable = '';
+      return entries;
+    } catch (e) {
+      // Every caller of this reads the root path, so the setting that names it is
+      // the thing to say: it is where a reader goes either to fix the folder or
+      // to point Jasper at another one.
+      const line =
+        `Could not read ${dir} — ${e instanceof Error ? e.message : String(e)}. ` +
+        `Jasper lists nothing in it: check the folder's permissions, or set ` +
+        `gemstone.rootPath to somewhere it can read.`;
+      if (line !== this.lastUnreadable) {
+        this.lastUnreadable = line;
+        appendSysadmin(line);
+      }
+      return [];
+    }
+  }
+
+  /**
+   * Why the root path cannot be read, if it cannot. The scans answer "nothing
+   * here" for a folder they cannot open, which is what keeps the extension
+   * loading — so something has to be able to tell that apart from a folder that
+   * is genuinely empty, or the panel offers a New Database that cannot work.
+   *
+   * Absent is not unreadable: a root that does not exist yet is the ordinary
+   * state of a new machine, and creating it is what the panel already offers.
+   */
+  rootPathProblem(): string | undefined {
+    // Under WSL every listing goes through `ls` in the bridge, which answers an
+    // empty list for both cases and leaves nothing here to read.
+    if (needsWsl()) return undefined;
+    const rootPath = this.getRootPath();
+    if (!fs.existsSync(rootPath)) return undefined;
+    try {
+      fs.readdirSync(rootPath);
+      return undefined;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
+
   getRootPath(): string {
     const config = vscode.workspace.getConfiguration('gemstone');
     const raw = config.get<string>('rootPath', '~/Documents/GemStone');
@@ -243,7 +301,7 @@ export class SysadminStorage {
     const rootPath = this.getRootPath();
     if (!fs.existsSync(rootPath)) return [];
     const result: ExtractedVersionInfo[] = [];
-    for (const entry of fs.readdirSync(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
       const full = path.join(rootPath, entry);
       let isLocal: boolean;
@@ -344,7 +402,7 @@ export class SysadminStorage {
     const prefix = SysadminStorage.WIN_CLIENT_PREFIX;
     const suffix = SysadminStorage.WIN_CLIENT_SUFFIX;
     const versions: string[] = [];
-    for (const entry of fs.readdirSync(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(suffix)) {
         const dirPath = path.join(rootPath, entry);
         if (fs.statSync(dirPath).isDirectory()) {
@@ -364,7 +422,7 @@ export class SysadminStorage {
     const prefix = SysadminStorage.WIN_CLIENT_PREFIX;
     const suffix = SysadminStorage.WIN_CLIENT_SUFFIX;
     const files = new Map<string, number>();
-    for (const entry of fs.readdirSync(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(`${suffix}.zip`)) {
         const filePath = path.join(rootPath, entry);
         if (fs.statSync(filePath).isFile()) {
@@ -410,7 +468,7 @@ export class SysadminStorage {
 
     const rootPath = this.getRootPath();
     if (!fs.existsSync(rootPath)) return files;
-    for (const entry of fs.readdirSync(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(`${suffix}.${ext}`)) {
         const filePath = path.join(rootPath, entry);
         try {

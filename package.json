@@ -365,7 +365,8 @@
           "gemstone.rootPath": {
             "type": "string",
             "default": "~/Documents/GemStone",
-            "description": "Root directory for GemStone installations and databases. Supports ~ for home directory."
+            "description": "Root directory for GemStone installations and databases. Supports ~ for home directory.",
+            "markdownDescription": "Root directory for GemStone installations and databases. Supports `~` for your home directory. Everything the **Databases & Versions** panel lists is found here.\n\n▶ [Choose a folder…](command:gemstone.chooseRootPath) — picks it rather than typing the path, and writes it back to the settings layer this value is already coming from."
           },
           "jasper.mcp.enabled": {
             "type": "boolean",
@@ -2020,6 +2021,12 @@
         "title": "Refresh Databases",
         "category": "GemStone Admin",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.chooseRootPath",
+        "title": "Choose the GemStone Folder…",
+        "category": "GemStone Admin",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "gemstone.startDatabase",

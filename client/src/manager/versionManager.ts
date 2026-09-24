@@ -9,7 +9,7 @@ import { appendSysadmin } from '../sysadminChannel';
 import { needsWsl, wslSpawn, wslExecSync } from '../wslBridge';
 import { wslExistsSync } from '../wslFs';
 import { bundledWindowsClientVersions, bundledGciArchSupported } from '../bundledGci';
-import { compareGemStoneVersions } from '../gemStoneVersion';
+import { compareGemStoneVersions, isComparableGemStoneVersion } from '../gemStoneVersion';
 
 const WIN_CLIENT_BASE_URL = 'https://downloads.gemtalksystems.com/pub/GemStone64/';
 const MINIMUM_SUPPORTED_GEMSTONE_VERSION = '3.6.2';
@@ -25,6 +25,10 @@ export interface CatalogEntry {
 
 export class VersionManager {
   constructor(private storage: SysadminStorage) {}
+
+  /** The unreadable version numbers last written to the log, so a list that has
+   *  not changed is not written again. */
+  private lastUnreadable = '';
 
   /**
    * The versions present on disk, described from their `version.txt`. Reads the
@@ -181,8 +185,40 @@ export class VersionManager {
       });
     }
 
+    // A version number the comparison cannot read — a hand-built product
+    // directory, or a pre-release spelling this client does not know yet. It can
+    // be neither filtered nor ordered, and asking either of the two comparisons
+    // below to judge it threw, which cost the whole list rather than the one
+    // row. One on this disk was put there by someone, so it is listed last and
+    // named in the log rather than dropped. One only the catalog offers is
+    // dropped, the way the minimum filter drops an old one: it cannot be checked
+    // against that minimum, and nobody asked for it.
+    const readable = versions.filter((v) => isComparableGemStoneVersion(v.version));
+    const unreadable = versions.filter(
+      (v) => !isComparableGemStoneVersion(v.version) && (v.local || v.extracted || v.downloaded),
+    );
+    // Said once, not on every rebuild: the panel re-reads the disk on each
+    // refresh and twice on each open, and the same folder repeating down the log
+    // reads as something happening again rather than a state that has not moved.
+    const named = unreadable.map((v) => v.version).join(', ');
+    if (named !== this.lastUnreadable) {
+      this.lastUnreadable = named;
+      if (named) {
+        // Everything needed to act on it: which folder, which part of its name
+        // is the version, and what a version number is allowed to look like.
+        appendSysadmin(
+          `Versions: could not read the version number in ${named} — listed last, because a row ` +
+            `that cannot be compared cannot be ordered or checked against the minimum supported ` +
+            `version (${MINIMUM_SUPPORTED_GEMSTONE_VERSION}). A version is three or four numbers ` +
+            `with an optional pre-release tag: 3.7.5, 3.7.4.3, 4.0.0-a3. The name comes from the ` +
+            `folder GemStone64Bit<version>${this.storage.getPlatformSuffix()}, or the archive ` +
+            `of the same name, in ${this.storage.getRootPath()}; renaming it is what changes it.`,
+        );
+      }
+    }
+
     // Drop remote versions older than the minimum; local installs are always kept
-    const supportedVersions = versions.filter(
+    const supportedVersions = readable.filter(
       (version) =>
         version.local ||
         compareGemStoneVersions(version.version, MINIMUM_SUPPORTED_GEMSTONE_VERSION) >= 0,
@@ -195,7 +231,8 @@ export class VersionManager {
       return (b.local ? 1 : 0) - (a.local ? 1 : 0);
     });
 
-    return supportedVersions;
+    unreadable.sort((a, b) => a.version.localeCompare(b.version, undefined, { numeric: true }));
+    return [...supportedVersions, ...unreadable];
   }
 
   /** Download a version with progress reporting */

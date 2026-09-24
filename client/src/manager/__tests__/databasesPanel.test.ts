@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn() }));
+vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 // Windows takes a branch Linux does not: Refresh re-probes WSL before rebuilding,
 // and on a real Windows runner that shells out to wsl.exe and takes seconds — long
 // enough that a test driving two refreshes measures the probe rather than the panel.
@@ -33,6 +33,8 @@ import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
 import { needsWsl } from '../../wslBridge';
+import { showSysadmin } from '../../sysadminChannel';
+import { __setConfig, __resetConfig, __configUpdates } from '../../__mocks__/vscode';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -84,6 +86,8 @@ const RELEASE: GemStoneVersion = {
 
 /** The disk, as the version list reports it. Tests drive it between commands. */
 let onDisk: GemStoneVersion[];
+/** Why the root cannot be read, when a test says it cannot. */
+let rootProblem: string | undefined;
 /** What DatabaseManager reports about NFS, and the create it performs. */
 let nfsRisk: { rootPath: string; fsType: string } | undefined;
 let createDatabaseDirect: ReturnType<typeof vi.fn>;
@@ -103,6 +107,7 @@ function makeDeps() {
     storage: {
       getPlatformKey: () => 'x86_64.Linux',
       getRootPath: () => '/root',
+      rootPathProblem: () => rootProblem,
       getDatabases: () => databases,
       getExtractedVersions: () => [],
       getAvailableExtents: () => [],
@@ -153,6 +158,7 @@ beforeEach(() => {
   vi.mocked(vscode.commands.executeCommand).mockClear();
   onDisk = [{ ...RELEASE }];
   databases = [];
+  rootProblem = undefined;
   nfsRisk = undefined;
   // Answers the config as it now stands, the way the real one does.
   recordNetldiPort = vi.fn((db: { config: Record<string, unknown> }, port: number) => ({
@@ -196,6 +202,9 @@ function lastState(): {
     extentBackupFiles: unknown[];
   }[];
   create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
+  versions: { version: string }[];
+  rootProblem?: string;
+  rootFrom: string;
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -203,6 +212,154 @@ function lastState(): {
   );
   return (states[states.length - 1][0] as { state: ReturnType<typeof lastState> }).state;
 }
+
+describe('the way into the log', () => {
+  // The panel writes the full reason to the channel and then had no way to say
+  // where it was: showSysadmin was called from exactly one place in the
+  // extension, and none of them was here.
+  it('opens the channel the reasons are written to', async () => {
+    await openPanel();
+    await sendMessage({ command: 'showLog' });
+
+    expect(vi.mocked(showSysadmin)).toHaveBeenCalled();
+  });
+});
+
+describe('the settings behind the panel', () => {
+  it('opens the one behind the folder line when it is clicked', async () => {
+    await openPanel();
+    await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'workbench.action.openSettings',
+      'gemstone.rootPath',
+    );
+  });
+
+  // The Settings editor opens on whichever tab it was last left on, User by
+  // default — which for a workspace-supplied value showed a different value
+  // from the one the panel had just named, and read as the two disagreeing.
+  it('opens the layer the panel named, not the last tab used', async () => {
+    __setConfig('gemstone', 'rootPath', '/from/the/workspace', 'workspace');
+    try {
+      await openPanel();
+      expect(lastState().rootFrom).toBe('Workspace settings');
+
+      await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        'workbench.action.openWorkspaceSettings',
+        'gemstone.rootPath',
+      );
+    } finally {
+      __resetConfig();
+    }
+  });
+
+  // The id arrives off the webview wire, and openSettings takes a free-text
+  // query — so an unfiltered one would open Settings on anything asked for.
+  // gemstone.logins is deliberately not reachable: logins are edited through
+  // Jasper's own rows, never by hand.
+  it.each(['workbench.colorTheme', 'gemstone.logins'])('ignores %s', async (id) => {
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    await sendMessage({ command: 'openSetting', id });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('choosing the folder', () => {
+  // Always writing User settings would leave a workspace value winning over
+  // what was just picked, so the picker would look as though it had done
+  // nothing at all.
+  it('writes back to the layer the value is coming from', async () => {
+    __setConfig('gemstone', 'rootPath', '/from/the/workspace', 'workspace');
+    // Uri.file spells a path in the host's own separators, so the value written
+    // is `\picked\here` on Windows — the pick is compared to what the dialog
+    // would actually have handed over rather than to a literal.
+    const picked = vscode.Uri.file('/picked/here');
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([picked]);
+    try {
+      await openPanel();
+      await sendMessage({ command: 'chooseRoot' });
+
+      expect(__configUpdates.at(-1)).toEqual({
+        section: 'gemstone',
+        key: 'rootPath',
+        value: picked.fsPath,
+        target: vscode.ConfigurationTarget.Workspace,
+      });
+    } finally {
+      __resetConfig();
+      vi.mocked(vscode.window.showOpenDialog).mockReset();
+    }
+  });
+});
+
+describe('a root path that cannot be read', () => {
+  // Every listing under it comes back empty, which is the same answer an empty
+  // folder gives — so the panel has to be told, or it reports a machine with
+  // nothing on it and offers a New Database in a folder it cannot read.
+  it('is carried in the state rather than read as an empty machine', async () => {
+    rootProblem = "EACCES: permission denied, scandir '/root'";
+    await openPanel();
+
+    expect(lastState().rootProblem).toContain('EACCES');
+  });
+
+  it('says nothing when the root reads fine', async () => {
+    await openPanel();
+
+    expect(lastState().rootProblem).toBeUndefined();
+  });
+});
+
+describe('a version list that cannot be built', () => {
+  // The scan is pure disk work, and it is the first thing the first paint asks
+  // for — so anything it threw left the panel's action-failure path holding a
+  // failure and no state ever posted. One unreadable folder cost the whole
+  // panel rather than the version list.
+  it('still posts a state, with no versions in it', async () => {
+    const deps = makeDeps() as unknown as {
+      versionManager: { getInstalledVersions: () => unknown; versionsFrom: () => unknown };
+    };
+    const unreadable = (): never => {
+      throw new Error("EACCES: permission denied, scandir '/root'");
+    };
+    deps.versionManager.getInstalledVersions = unreadable;
+    // The catalog path falls back to the same scan, and it falls back precisely
+    // because something already failed.
+    deps.versionManager.versionsFrom = unreadable;
+
+    DatabasesPanel.show(deps as unknown as Parameters<typeof DatabasesPanel.show>[0]);
+    await sendMessage({ command: 'ready' });
+
+    expect(lastState().versions).toEqual([]);
+  });
+});
+
+describe('the notification for a failed action', () => {
+  // The banner is drawn at the top of the panel, and a panel scrolled down to
+  // the row that was pressed has it out of sight — the notification is what is
+  // on screen.
+  it('offers the log, and opens it when chosen', async () => {
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(
+      new Error('EACCES: permission denied'),
+    );
+    vi.mocked(vscode.window.showErrorMessage).mockResolvedValueOnce('Show log' as never);
+    vi.mocked(showSysadmin).mockClear();
+
+    await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('openSetting failed: EACCES'),
+      'Show log',
+    );
+    expect(showSysadmin).toHaveBeenCalled();
+  });
+});
 
 describe('session commands', () => {
   const SESSION = { id: 3 } as unknown as ReturnType<typeof Object>;
