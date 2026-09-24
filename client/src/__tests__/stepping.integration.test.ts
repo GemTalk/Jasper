@@ -199,7 +199,10 @@ cls compileMethod: 'outer ^ self inner' dictionaries: System myUserProfile symbo
       await waitForSessionFree().catch(() => {});
       clearStack(session(), gsProcess);
     }
-  });
+    // Same reason as the transcript sink's hard-break test: the cancel is
+    // followed by a drain the next call waits out, and a loaded runner makes
+    // that wait longer than the 5s default allows.
+  }, 30_000);
 
   it('continues a halted process to normal completion with its result', () => {
     const gsProcess = haltedProcess();

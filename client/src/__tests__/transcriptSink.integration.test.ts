@@ -282,7 +282,14 @@ tmps := SessionTemps current.
       await run.catch(() => {});
       await executeLive('nil', () => {}).catch(() => {});
     }
-  });
+    // Far past the 5s default, because the worst case here is slow rather than
+    // broken: the run's handler resumes the hard break, so the gem can carry on
+    // to the end of its wait loop, and the worker's GciTsContinueWith only
+    // returns then. The follow-up write waits for that worker by design. A
+    // quiet machine settles the break in ~25ms and finishes the whole test in
+    // ~325ms; a loaded CI runner has taken the full loop, which the default
+    // killed mid-wait and left the session busy for the rest of the file.
+  }, 30_000);
 
   it('a live write with no worker thread fails loudly and strands nothing', async () => {
     // Losing koffi's `.async` must be an error the user sees, not a window
