@@ -1028,6 +1028,11 @@ export class GciLibrary {
    * API is thread-safe (one call in progress per session, from any thread), so
    * a pool thread may own the call while the event loop stays free — and a
    * GciTsBreak from the main thread still interrupts it.
+   *
+   * No blocking fallback when koffi offers no `.async`: it would keep output
+   * arriving, and every correctness test green, while the window froze and
+   * Cancel became undeliverable. A missing `.async` throws instead, and
+   * `settleNbResult` clears the suspended writer on any throw.
    */
   GciTsContinueWithAsync(
     session: unknown,

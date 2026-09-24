@@ -1220,6 +1220,9 @@ function performStepNb(
       }
       return { completed: true, resultOop: result };
     },
+    // No `disposableProcess`: a hard break here stops the process the debugger
+    // is showing, and clearing it would unwind the stack the panel still offers
+    // to step. The step's caller resumes or terminates it instead.
     opts,
   );
 }
@@ -1360,6 +1363,8 @@ export function trimStackToLevelNb(
         throw new Error(err.message || `GemStone error ${err.number} in trimStackToLevel:`);
       }
     },
+    // No `disposableProcess`, for the reason in performStepNb: the trim runs in
+    // the process the debugger is showing.
     { title: 'GemStone: restarting frame…', ...opts },
   );
 }
@@ -1470,7 +1475,10 @@ export function evaluateInFrameNb(
       }
       return getObjectPrintString(session, result);
     },
-    opts,
+    // Disposable: the receiver is the expression, not the process. The
+    // evaluation gets a process of its own, with the frame's values bound, and
+    // the debugged process is untouched by it.
+    { ...opts, disposableProcess: true },
   );
 }
 
