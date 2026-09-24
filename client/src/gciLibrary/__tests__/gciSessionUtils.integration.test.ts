@@ -20,7 +20,8 @@ describe('GCI session utilities (integration)', () => {
 
   // GciTsKeyfilePermissions requires SystemUser. Runs after the harness's own
   // beforeAll, so this swaps its default login for a SystemUser one that the
-  // harness then keeps managing.
+  // harness then keeps managing. Only the shared session: withTransientSession
+  // still logs in as the default user.
   beforeAll(() => {
     logout();
     login({ user: 'SystemUser' });
