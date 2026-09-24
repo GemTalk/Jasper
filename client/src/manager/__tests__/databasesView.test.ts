@@ -189,6 +189,23 @@ describe('what leads the panel', () => {
   });
 });
 
+describe('where the panel says it is looking', () => {
+  // It used to appear only when the folder was empty or unreadable, so two
+  // windows pointed at different roots looked identical while all was well.
+  it('names the folder even when nothing is wrong', () => {
+    mount(state({ rootPath: '/somewhere/else', databases: [database()] }));
+    expect(root.querySelector('.gm-where')?.textContent).toContain('/somewhere/else');
+  });
+
+  // A root with no databases in it shows the login list in full beside "No
+  // databases yet", which reads as a contradiction until this says otherwise.
+  it('says logins come from the setting, not from that folder', () => {
+    mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
+    const desc = Array.from(root.querySelectorAll('.section-desc')).map((d) => d.textContent);
+    expect(desc.join(' ')).toContain('gemstone.logins');
+  });
+});
+
 describe('when the root path cannot be read', () => {
   // Listing nothing is what an empty folder does too, so the panel would
   // otherwise read as a machine with no versions and no databases on it.

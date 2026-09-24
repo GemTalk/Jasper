@@ -1011,7 +1011,10 @@
       {
         key: 'otherLogins',
         title: 'Other Logins',
-        desc: 'not tied to a database on this machine',
+        // Where they come from, because it is not the folder the header names:
+        // a root with no databases in it shows this list in full beside "No
+        // databases yet", and the two read as a contradiction otherwise.
+        desc: 'not tied to a database on this machine \u2014 from the gemstone.logins setting',
         count: logins.length,
         actions: add,
         open,
@@ -1069,6 +1072,14 @@
     // Registering does not: the installation it adopts brings its own version,
     // which is the case a machine with nothing installed is most likely in.
     const register = btn('beginRegister', 'Register Existing\u2026', 'link', 'btn-secondary');
+    // Where all of this was found, said quietly and always — not only when the
+    // folder is empty or unreadable, which is where it used to appear. Two
+    // checkouts pointed at different roots look identical without it, and
+    // "why is my version not listed?" has no answer on screen.
+    const where = `<div class="gm-where"${tipAttr(
+      'The folder Jasper reads databases and versions from \u2014 the gemstone.rootPath setting. Logins are not in it: they come from gemstone.logins.',
+    )}>${ICONS.folder}<span class="mono">${esc(state.rootPath || '')}</span></div>`;
+
     return `<div class="gm-head">
       <div class="gm-head-text"><span class="gm-head-lead">${esc(lead)}</span></div>
       <div class="gm-head-acts">
@@ -1076,7 +1087,7 @@
         ${register}
         ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new versions' })}
       </div>
-    </div>`;
+    </div>${where}`;
   }
 
   function orderedSections(state) {

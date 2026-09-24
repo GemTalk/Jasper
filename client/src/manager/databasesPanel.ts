@@ -1988,6 +1988,11 @@ th.v-num { text-align: right; }
 .gm-head-text { display: flex; align-items: baseline; gap: 10px; flex: 1 1 240px; min-width: 0; font-size: 0.96rem; }
 .gm-head-lead { font-weight: 600; }
 .gm-head-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+/* Where the panel is reading. Quiet enough to ignore, present enough to answer
+   "which folder is this?" without a click. */
+.gm-where { display: flex; align-items: center; gap: 6px; margin: -4px 0 10px; padding: 0 2px;
+  font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; }
+.gm-where .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Tour: a spotlight on one section, and a callout beside it ─────────────── */
 /* Deliberately not a blocking modal — pointer events pass through the dim, so
