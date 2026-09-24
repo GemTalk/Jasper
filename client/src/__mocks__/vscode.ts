@@ -500,12 +500,59 @@ export const window = {
   ),
 };
 
+/** Every event the fake telemetry logger has seen, in order. */
+export interface FakeTelemetryEvent {
+  name: string;
+  properties: Record<string, unknown>;
+  measurements: Record<string, number> | undefined;
+}
+export const __telemetry: FakeTelemetryEvent[] = [];
+
+/**
+ * Stands in for VS Code's `common.*` properties, which are merged into
+ * `data.properties` only when one was passed (see `send` in telemetry.ts).
+ * Its presence on a recorded event proves the call passed a properties object.
+ */
+const FAKE_COMMON_PROPERTIES: Record<string, string> = { 'common.fake': 'yes' };
+
 export const env = {
   clipboard: {
     writeText: vi.fn(async (_text: string) => {}),
     readText: vi.fn(async () => ''),
   },
+  createTelemetryLogger(
+    _sender: unknown,
+    _options?: unknown,
+  ): {
+    isUsageEnabled: boolean;
+    isErrorsEnabled: boolean;
+    onDidChangeEnableStates: (listener: () => void) => Disposable;
+    logUsage: (
+      name: string,
+      data?: { properties?: Record<string, unknown>; measurements?: Record<string, number> },
+    ) => void;
+    logError: (name: string) => void;
+    dispose: () => void;
+  } {
+    return {
+      isUsageEnabled: false,
+      isErrorsEnabled: false,
+      onDidChangeEnableStates: () => new Disposable(() => {}),
+      logUsage: (name, data) => {
+        const properties = data?.properties;
+        __telemetry.push({
+          name,
+          properties: properties ? { ...FAKE_COMMON_PROPERTIES, ...properties } : {},
+          measurements: data?.measurements,
+        });
+      },
+      logError: () => {},
+      dispose: () => {},
+    };
+  },
 };
+
+export const ExtensionMode = { Production: 1, Development: 2, Test: 3 } as const;
 
 // ── Workspace mock ─────────────────────────────────────────
 
