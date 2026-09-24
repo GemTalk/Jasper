@@ -1012,10 +1012,7 @@
       {
         key: 'otherLogins',
         title: 'Other Logins',
-        // Where they come from, because it is not the folder the header names:
-        // a root with no databases in it shows this list in full beside "No
-        // databases yet", and the two read as a contradiction otherwise.
-        desc: 'not tied to a database on this machine \u2014 from the gemstone.logins setting',
+        desc: 'not tied to a database on this machine',
         count: logins.length,
         actions: add,
         open,
@@ -1091,16 +1088,16 @@
         <span class="gm-where-src">gemstone.rootPath \u00b7 ${esc(state.rootFrom || 'default')}</span>
         ${settingLink('gemstone.rootPath', 'this folder is chosen')}
       </div>` +
-      // Logins have no folder to name: they are a setting, which is why a full
-      // list of them can sit beside a root holding no databases at all.
+      // Logins have no folder to name — that is the point of the line. Jasper
+      // keeps them itself, which is why a full list of them can sit beside a
+      // root holding no databases at all. Where it keeps them is Jasper's
+      // business: they are added and edited from the rows here and in the
+      // sidebar, never by hand.
       `<div class="gm-where">${ICONS.login}<span>${
         logins
-          ? `${logins} login${logins === 1 ? '' : 's'}, not from that folder`
-          : 'Logins are kept in a setting, not in that folder'
-      }</span>
-        <span class="gm-where-src">gemstone.logins \u00b7 ${esc(state.loginsFrom || 'default')}</span>
-        ${settingLink('gemstone.logins', 'they are kept')}
-      </div>`;
+          ? `${logins} login${logins === 1 ? '' : 's'}, kept by Jasper rather than in that folder`
+          : 'Logins are kept by Jasper, not in that folder'
+      }</span></div>`;
 
     return `<div class="gm-head">
       <div class="gm-head-text"><span class="gm-head-lead">${esc(lead)}</span></div>

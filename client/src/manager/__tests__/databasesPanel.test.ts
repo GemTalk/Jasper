@@ -224,22 +224,24 @@ describe('the way into the log', () => {
 });
 
 describe('the settings behind the panel', () => {
-  it('opens one of its own when the line beside it is clicked', async () => {
+  it('opens the one behind the folder line when it is clicked', async () => {
     await openPanel();
-    await sendMessage({ command: 'openSetting', id: 'gemstone.logins' });
+    await sendMessage({ command: 'openSetting', id: 'gemstone.rootPath' });
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'workbench.action.openSettings',
-      'gemstone.logins',
+      'gemstone.rootPath',
     );
   });
 
   // The id arrives off the webview wire, and openSettings takes a free-text
   // query — so an unfiltered one would open Settings on anything asked for.
-  it('ignores a setting that is not one of its own', async () => {
+  // gemstone.logins is deliberately not reachable: logins are edited through
+  // Jasper's own rows, never by hand.
+  it.each(['workbench.colorTheme', 'gemstone.logins'])('ignores %s', async (id) => {
     await openPanel();
     vi.mocked(vscode.commands.executeCommand).mockClear();
-    await sendMessage({ command: 'openSetting', id: 'workbench.colorTheme' });
+    await sendMessage({ command: 'openSetting', id });
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });

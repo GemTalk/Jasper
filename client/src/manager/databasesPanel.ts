@@ -230,7 +230,7 @@ interface CreateOptions {
  * a free-text query rather than an identifier, and the id arrives off the
  * webview wire — so anything else is ignored rather than passed along.
  */
-const OPENABLE_SETTINGS = ['gemstone.rootPath', 'gemstone.logins'];
+const OPENABLE_SETTINGS = ['gemstone.rootPath'];
 
 /** Which settings layer supplied a value, in the words the Settings editor uses. */
 function settingScope(key: string): string {
@@ -253,9 +253,6 @@ interface PanelState {
   /** Which settings layer the root path came from, so two windows reading
    *  different folders can be told apart by more than the path. */
   rootFrom: string;
-  /** The same for logins, which come from a setting rather than from the
-   *  folder — the reason a full login list can sit beside no databases. */
-  loginsFrom: string;
   versions: VersionRow[];
   databases: DatabaseRow[];
   /** Only used to mark which database the current session is working in. */
@@ -632,8 +629,9 @@ export class DatabasesPanel {
         await this.postState();
         return;
       case 'openSetting':
-        // Both lines under the header name the setting behind them, and this is
-        // that name clicked. Only this panel's own two are reachable.
+        // The folder line names the setting behind it, and this is that name
+        // clicked. Only that one is reachable: logins are Jasper's own to keep,
+        // and are never edited by hand.
         if (OPENABLE_SETTINGS.includes(msg.id)) {
           await vscode.commands.executeCommand('workbench.action.openSettings', msg.id);
         }
@@ -1560,7 +1558,6 @@ export class DatabasesPanel {
       rootPath: this.deps.storage.getRootPath(),
       rootProblem: this.deps.storage.rootPathProblem(),
       rootFrom: settingScope('rootPath'),
-      loginsFrom: settingScope('logins'),
       versions,
       databases,
       logins: this.buildLoginTargets(databases),

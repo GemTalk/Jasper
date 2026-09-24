@@ -197,26 +197,33 @@ describe('where the panel says it is looking', () => {
     expect(root.querySelector('.gm-where')?.textContent).toContain('/somewhere/else');
   });
 
-  // Both lines name a setting that can be written at more than one layer, and
-  // which layer won is the difference between two windows reading two folders.
-  it('names the layer each setting came from, and opens it', () => {
-    mount(state({ rootFrom: 'Workspace settings', loginsFrom: 'User settings' }));
+  // The same key can be written in User, Workspace or Folder settings, and which
+  // layer won is the difference between two windows reading two folders.
+  it('names the layer the folder setting came from, and opens it', () => {
+    mount(state({ rootFrom: 'Workspace settings' }));
     const lines = Array.from(root.querySelectorAll('.gm-where')).map((l) => l.textContent);
     expect(lines.join(' ')).toContain('gemstone.rootPath · Workspace settings');
-    expect(lines.join(' ')).toContain('gemstone.logins · User settings');
 
-    root.querySelector<HTMLElement>('[data-setting="gemstone.logins"]')?.click();
+    root.querySelector<HTMLElement>('[data-setting="gemstone.rootPath"]')?.click();
     expect(host.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ command: 'openSetting', id: 'gemstone.logins' }),
+      expect.objectContaining({ command: 'openSetting', id: 'gemstone.rootPath' }),
     );
   });
 
   // A root with no databases in it shows the login list in full beside "No
   // databases yet", which reads as a contradiction until this says otherwise.
-  it('says logins come from the setting, not from that folder', () => {
+  it('says logins are kept by Jasper rather than in that folder', () => {
     mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
-    const desc = Array.from(root.querySelectorAll('.section-desc')).map((d) => d.textContent);
-    expect(desc.join(' ')).toContain('gemstone.logins');
+    expect(root.querySelector('.gm-where:last-of-type')?.textContent).toContain('kept by Jasper');
+  });
+
+  // Logins are added and edited from the rows here and in the sidebar. Where
+  // Jasper keeps them is its own business, and a reader sent to the raw JSON
+  // would be editing a list with a keychain flag and a password field in it.
+  it('never points at the setting behind them', () => {
+    mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
+    expect(root.textContent).not.toContain('gemstone.logins');
+    expect(root.querySelector('[data-setting="gemstone.logins"]')).toBeNull();
   });
 });
 
