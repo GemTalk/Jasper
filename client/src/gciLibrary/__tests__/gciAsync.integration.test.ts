@@ -1,35 +1,23 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
+import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
+import { useIntegrationTest, type GciTestContext } from '../../__tests__/useIntegrationTest';
+import { requireGciCapability } from './requireGciCapability';
 
-const OOP_ILLEGAL = 0x01n;
-const OOP_NIL = 0x14n;
-
-describe('GCI Async Execution, Break, and Debugging', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
+describe('GCI async execution, break, and debugging (integration)', () => {
+  let gci: GciLibrary;
   let session: unknown;
+  let withTransientSession: GciTestContext['withTransientSession'];
 
-  let OOP_CLASS_STRING: bigint;
-
-  beforeAll(() => {
-    const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
-    expect(login.session).not.toBeNull();
-    session = login.session;
-
-    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
-  });
-
-  afterAll(() => {
-    if (session) {
-      gci.GciTsLogout(session);
-    }
-    gci.close();
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    session = testContext.session;
+    withTransientSession = testContext.withTransientSession;
   });
 
   describe('GciTsSocket', () => {
     it('returns a valid file descriptor for the session', () => {
       const { fd, err } = gci.GciTsSocket(session);
-      console.log('Socket - fd:', fd, 'err.number:', err.number);
       expect(err.number).toBe(0);
       expect(fd).toBeGreaterThanOrEqual(0);
     });
@@ -38,7 +26,6 @@ describe('GCI Async Execution, Break, and Debugging', () => {
   describe('GciTsCallInProgress', () => {
     it('returns 0 when no call is in progress', () => {
       const { result, err } = gci.GciTsCallInProgress(session);
-      console.log('CallInProgress - result:', result, 'err.number:', err.number);
       expect(err.number).toBe(0);
       expect(result).toBe(0);
     });
@@ -47,14 +34,12 @@ describe('GCI Async Execution, Break, and Debugging', () => {
   describe('GciTsBreak', () => {
     it('sends a soft break when no execution is in progress (no-op)', () => {
       const { success, err } = gci.GciTsBreak(session, false);
-      console.log('Break(soft) - success:', success, 'err.number:', err.number);
       expect(err.number).toBe(0);
       expect(success).toBe(true);
     });
 
     it('sends a hard break when no execution is in progress (no-op)', () => {
       const { success, err } = gci.GciTsBreak(session, true);
-      console.log('Break(hard) - success:', success, 'err.number:', err.number);
       expect(err.number).toBe(0);
       expect(success).toBe(true);
     });
@@ -62,7 +47,6 @@ describe('GCI Async Execution, Break, and Debugging', () => {
 
   describe('GciTsClearStack', () => {
     it('clears stack of a suspended process from an error', () => {
-      // Trigger an error that leaves a suspended process
       const { err: execErr } = gci.GciTsExecute(
         session,
         '1 / 0',
@@ -73,25 +57,18 @@ describe('GCI Async Execution, Break, and Debugging', () => {
         0,
       );
       expect(execErr.number).not.toBe(0);
-      console.log(
-        'ClearStack - triggered error:',
-        execErr.number,
-        'context:',
-        execErr.context.toString(),
-      );
 
       // The context field holds the GsProcess OOP of the suspended process
-      if (execErr.context !== OOP_NIL && execErr.context !== 0n) {
-        const { success, err } = gci.GciTsClearStack(session, execErr.context);
-        console.log('ClearStack - success:', success, 'err.number:', err.number);
-        expect(err.number).toBe(0);
-        expect(success).toBe(true);
-      }
+      expect(execErr.context).not.toBe(OOP_NIL);
+      expect(execErr.context).not.toBe(0n);
+
+      const { success, err } = gci.GciTsClearStack(session, execErr.context);
+      expect(err.number).toBe(0);
+      expect(success).toBe(true);
     });
 
     it('returns error for OOP_NIL (not a valid GsProcess)', () => {
       const { success, err } = gci.GciTsClearStack(session, OOP_NIL);
-      console.log('ClearStack(nil) - success:', success, 'err.number:', err.number);
       expect(err.number).not.toBe(0);
       expect(success).toBe(false);
     });
@@ -99,25 +76,23 @@ describe('GCI Async Execution, Break, and Debugging', () => {
 
   describe('GciTsGemTrace', () => {
     it('returns previous trace level and sets new level', () => {
-      // Get current level (should be 0)
-      const { previousLevel: prev0, err: err0 } = gci.GciTsGemTrace(session, 0);
-      console.log('GemTrace(0) - previousLevel:', prev0, 'err.number:', err0.number);
-      expect(err0.number).toBe(0);
+      withTransientSession((transientSession) => {
+        const { err: err0 } = gci.GciTsGemTrace(transientSession, 0);
+        expect(err0.number).toBe(0);
 
-      // Enable trace level 1
-      const { previousLevel: prev1, err: err1 } = gci.GciTsGemTrace(session, 1);
-      console.log('GemTrace(1) - previousLevel:', prev1, 'err.number:', err1.number);
-      expect(err1.number).toBe(0);
-      expect(prev1).toBe(0);
+        const { previousLevel: prev1, err: err1 } = gci.GciTsGemTrace(transientSession, 1);
+        expect(err1.number).toBe(0);
+        expect(prev1).toBe(0);
 
-      // Disable back to 0
-      const { previousLevel: prev2, err: err2 } = gci.GciTsGemTrace(session, 0);
-      console.log('GemTrace(0 again) - previousLevel:', prev2, 'err.number:', err2.number);
-      expect(err2.number).toBe(0);
-      expect(prev2).toBe(1);
+        const { previousLevel: prev2, err: err2 } = gci.GciTsGemTrace(transientSession, 0);
+        expect(err2.number).toBe(0);
+        expect(prev2).toBe(1);
+      });
     });
   });
 
+  // GciTsNbResult blocks on the session socket until the result arrives, so
+  // these don't need GciTsNbPoll (3.7.0+) to wait and run on every version.
   describe('GciTsNbExecute + GciTsNbResult', () => {
     it('executes "3 + 4" non-blocking and retrieves result', () => {
       const { success, err: startErr } = gci.GciTsNbExecute(
@@ -129,18 +104,10 @@ describe('GCI Async Execution, Break, and Debugging', () => {
         0,
         0,
       );
-      console.log('NbExecute - success:', success, 'err.number:', startErr.number);
       expect(startErr.number).toBe(0);
       expect(success).toBe(true);
 
-      // Poll until result is ready (with timeout)
-      const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
-      console.log('NbPoll - result:', pollResult);
-      expect(pollResult).toBe(1);
-
-      // Get the result
       const { result, err } = gci.GciTsNbResult(session);
-      console.log('NbResult - result:', result.toString(16), 'err.number:', err.number);
       expect(err.number).toBe(0);
 
       const { success: ok, value } = gci.GciTsOopToI64(session, result);
@@ -151,7 +118,7 @@ describe('GCI Async Execution, Break, and Debugging', () => {
     it('executes a string expression non-blocking and fetches result', () => {
       const { success } = gci.GciTsNbExecute(
         session,
-        "'hello' reversed",
+        "'hello' asUppercase",
         OOP_CLASS_STRING,
         OOP_ILLEGAL,
         OOP_NIL,
@@ -160,14 +127,11 @@ describe('GCI Async Execution, Break, and Debugging', () => {
       );
       expect(success).toBe(true);
 
-      const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
-      expect(pollResult).toBe(1);
-
       const { result, err } = gci.GciTsNbResult(session);
       expect(err.number).toBe(0);
 
       const fetched = gci.GciTsFetchUtf8(session, result, 1024);
-      expect(fetched.data).toBe('olleh');
+      expect(fetched.data).toBe('HELLO');
     });
   });
 
@@ -185,12 +149,8 @@ describe('GCI Async Execution, Break, and Debugging', () => {
         0,
         0,
       );
-      console.log('NbPerform(size) - success:', success, 'err.number:', startErr.number);
       expect(startErr.number).toBe(0);
       expect(success).toBe(true);
-
-      const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
-      expect(pollResult).toBe(1);
 
       const { result, err } = gci.GciTsNbResult(session);
       expect(err.number).toBe(0);
@@ -215,13 +175,9 @@ describe('GCI Async Execution, Break, and Debugging', () => {
       );
       expect(success).toBe(true);
 
-      const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
-      expect(pollResult).toBe(1);
-
       const { result, err } = gci.GciTsNbResult(session);
       expect(err.number).toBe(0);
 
-      // Verify the result is a 2-element array with 10 and 20
       const size = gci.GciTsFetchSize(session, result);
       expect(size.result).toBe(2n);
 
@@ -232,13 +188,36 @@ describe('GCI Async Execution, Break, and Debugging', () => {
   });
 
   describe('GciTsNbPoll', () => {
-    it('returns 0 with timeout when no NB call is pending', () => {
-      // No NB call in progress — poll should return an error or 0
+    it('answers -1 when no NB call is pending', (ctx) => {
+      requireGciCapability('GciTsNbPoll', ctx, gci);
+
       const { result, err } = gci.GciTsNbPoll(session, 0);
-      console.log('NbPoll(no call) - result:', result, 'err.number:', err.number);
-      // -1 means error (no NB call in progress)
       expect(result).toBe(-1);
       expect(err.number).not.toBe(0);
+    });
+
+    it('answers 1 once an NbExecute result is ready', (ctx) => {
+      requireGciCapability('GciTsNbPoll', ctx, gci);
+
+      const { success } = gci.GciTsNbExecute(
+        session,
+        '3 + 4',
+        OOP_CLASS_STRING,
+        OOP_ILLEGAL,
+        OOP_NIL,
+        0,
+        0,
+      );
+      expect(success).toBe(true);
+
+      // Drain before asserting: a failed assertion here would otherwise leave
+      // the session mid-call, failing the harness's afterEach abort and with
+      // it every later test in the file.
+      const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
+      const { err } = gci.GciTsNbResult(session);
+
+      expect(pollResult).toBe(1);
+      expect(err.number).toBe(0);
     });
   });
 });

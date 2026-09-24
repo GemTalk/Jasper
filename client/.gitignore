@@ -2,4 +2,3 @@ tmp
 .env.test
 .env*.local
 gci*trace.log
-.gci-trace-keep

@@ -1,27 +1,21 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH } from './gciTestConfig';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { requireGciCapability } from './requireGciCapability';
 
-describe('GCI Priority 8: Debug Functions', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
+describe('GCI debug functions (integration)', () => {
+  let gci: GciLibrary;
 
-  afterAll(() => {
-    gci.close();
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
   });
 
   describe('GciTsDebugConnectToGem', () => {
-    it('returns null session and error for a non-existent gem PID', () => {
+    it('returns null session and error for a non-existent gem PID', (ctx) => {
+      requireGciCapability('GciTsDebugConnectToGem', ctx, gci);
+
       // Use a PID that almost certainly doesn't correspond to a GemStone gem
       const { session, err } = gci.GciTsDebugConnectToGem(999999);
-      console.log(
-        'DebugConnectToGem(999999) - session:',
-        session,
-        'err.number:',
-        err.number,
-        'err.message:',
-        err.message,
-      );
-      // Should fail — no gem is listening on that PID
       expect(session).toBeNull();
       expect(err.number).not.toBe(0);
     });
