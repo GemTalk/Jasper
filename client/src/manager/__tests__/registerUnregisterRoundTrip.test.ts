@@ -80,7 +80,12 @@ function makeManager(): { storage: SysadminStorage; manager: DatabaseManager } {
   return { storage, manager: new DatabaseManager(storage, processManager) };
 }
 
-describe('registering and unregistering an existing installation', () => {
+// On Windows every wsl* helper below spawns wsl.exe to reach the guest, and the
+// heaviest case here (register then recursively unregister) makes a dozen such
+// round trips — enough to cross vitest's 5s default under CI load, where the whole
+// file already runs ~14s. The work always completes; a real hang never would. The
+// generous timeout buys headroom for that variance rather than masking a deadlock.
+describe('registering and unregistering an existing installation', { timeout: 30000 }, () => {
   beforeEach(() => {
     for (const entry of wslReaddirSync(HOST_ROOT)) {
       if (entry.startsWith('db-')) {
