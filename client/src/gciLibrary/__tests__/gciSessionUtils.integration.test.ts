@@ -36,7 +36,10 @@ describe('GCI session utilities (integration)', () => {
 
       // Once DirtyObjsInit has run, every commit or abort on that session raises
       // RT_ERR_COMMIT_ABORT_PENDING (gcits.hf), which breaks the abort the harness
-      // ends each test with. A transient session is only ever logged out.
+      // ends each test with. A transient session is only ever logged out, but that
+      // logout's implicit abort hits the same error: expect a `GciTsLogout failed
+      // [2231]` warning and a gci<pid>trace.log dump (swept by
+      // gciTraceLogs.globalSetup.ts).
       withTransientSession((transientSession) => {
         const { err: initErr } = gci.GciTsDirtyObjsInit(transientSession);
         expect(initErr.number).toBe(0);
