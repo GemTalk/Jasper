@@ -125,6 +125,20 @@ describe('the Actions & Navigation pane', () => {
     executeCommand.mockClear();
   });
 
+  it('offers File In, and only from the toolbar', () => {
+    // It was the Dictionaries pane's title-bar button, visible only while that pane
+    // was expanded and hovered — the problem this webview exists to solve. Moved
+    // here because it acts on the SESSION, like Commit and Abort, not on the pane
+    // it happened to sit in. Two buttons for it would be two ways to one thing.
+    expect(toolbarCommands()).toContain('gemstone.explorer.fileIn');
+    const titleEntries = (manifest().contributes as unknown as Record<string, unknown>)['menus'] as
+      Record<string, { command: string; when?: string }[]> | undefined;
+    const inTitleBars = (titleEntries?.['view/title'] ?? []).filter(
+      (e) => e.command === 'gemstone.explorer.fileIn',
+    );
+    expect(inTitleBars).toEqual([]);
+  });
+
   it('draws a button for every command it offers', () => {
     const html = renderNavigationViewHtml('test-nonce');
     for (const command of toolbarCommands()) {
@@ -132,7 +146,7 @@ describe('the Actions & Navigation pane', () => {
     }
   });
 
-  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, the label toggle, a workspace and undo last', () => {
+  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, the label toggle, file in, a workspace and undo last', () => {
     expect(toolbarCommands()).toEqual([
       'gemstone.navigateBack',
       'gemstone.navigateForward',
@@ -143,6 +157,7 @@ describe('the Actions & Navigation pane', () => {
       'gemstone.explorer.abort',
       'gemstone.explorer.showNavigationSelectorsOnly',
       'gemstone.explorer.showNavigationFullLocations',
+      'gemstone.explorer.fileIn',
       'gemstone.openWorkspace',
       // Last, at the far right: an edge target is easier to hit, and it keeps Undo away
       // from Abort, whose glyph it used to be mistaken for (#434, review of #507).

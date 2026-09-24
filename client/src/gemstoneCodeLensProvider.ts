@@ -46,9 +46,19 @@ interface CodeLensData {
 
 /** Files `gemstone.fileInFile` can act on — the same pair of terms its editor menus
  *  are gated on, so the lens and the title-bar button appear on exactly the files. A
- *  `gemstone://` method is not a file on disk; a `.gst`/`.st` is not Topaz. */
+ *  `gemstone://` method is not a file on disk; a `.st` is Tonel, not Topaz, and has
+ *  its own lens below. */
 function isFileInTarget(document: vscode.TextDocument): boolean {
   return document.uri.scheme === 'file' && document.languageId === 'gemstone-topaz';
+}
+
+/** Files `gemstone.fileInFile` can act on that are TONEL: a `.st` on disk, which
+ *  `languageIds.ts` maps to `gemstone-tonel` (issue #616). The command works out
+ *  which reader the file needs, so both kinds get the same COMMAND; the lens title
+ *  still names the format, so a developer with both kinds open can tell which
+ *  reader will run. */
+function isTonelFileInTarget(document: vscode.TextDocument): boolean {
+  return document.uri.scheme === 'file' && document.languageId === 'gemstone-tonel';
 }
 
 /** The "file this in" link, at the very top of the document. Names its own document
@@ -58,6 +68,21 @@ function fileInLens(document: vscode.TextDocument): vscode.CodeLens {
   const top = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
   return new vscode.CodeLens(top, {
     title: '$(desktop-download) File In to GemStone',
+    command: 'gemstone.fileInFile',
+    arguments: [document.uri],
+  });
+}
+
+/** The same link for a Tonel file, naming the format so a developer with both kinds
+ *  open can tell which reader will run. Same COMMAND as the Topaz lens -- there is one
+ *  File In, and it works out from the file which reader to use; only the title differs.
+ *  Unlike the Topaz lens it is NOT gated on the stone supporting Tonel: the command
+ *  itself refuses and explains, which is more use than a lens that silently is not
+ *  there. */
+function tonelFileInLens(document: vscode.TextDocument): vscode.CodeLens {
+  const top = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+  return new vscode.CodeLens(top, {
+    title: '$(desktop-download) File In Tonel to GemStone',
     command: 'gemstone.fileInFile',
     arguments: [document.uri],
   });
@@ -117,7 +142,8 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     // Topaz file — parse regions
     const text = document.getText();
 
-    // A `.gs`/`.tpz` on disk is the one thing File In reads, and a user looking at one
+    // A `.gs`/`.tpz` on disk is one of the two things File In reads (`.st` is the
+    // other, lensed just below), and a user looking at one
     // has nowhere obvious to go: the command is an icon in the title bar, an entry in
     // a right-click menu, or palette wording they have to already know (#539). One
     // lens at the top says it in words, in the document itself.
@@ -127,6 +153,9 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     // jiggle #432 took the senders/implementors lenses off `gemstone://` methods for.
     if (isFileInTarget(document) && text.trim().length > 0) {
       lenses.push(fileInLens(document));
+    }
+    if (isTonelFileInTarget(document) && text.trim().length > 0) {
+      lenses.push(tonelFileInLens(document));
     }
 
     const regions = parseTopazDocument(text);

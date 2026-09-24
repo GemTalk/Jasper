@@ -4,11 +4,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { evaluatePaneHtml } from '../debuggerEvalPane';
 
-// Evaluate debuggerView.js in jsdom so it registers the global DebuggerView,
-// exactly as the webview does when it injects the file as a <script> tag.
+// Evaluate the webview's scripts in jsdom so they register their globals, exactly as the panel does
+// when it injects them as <script> tags. evaluatePane.js comes first: it carries the evaluate pane's
+// keys and expression history, shared with the Inspector's tab, and debuggerView.js wires its pane
+// through the global it registers.
 beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../debuggerView.js'), 'utf8');
-  new Function(source)();
+  for (const file of ['../webview/evaluatePane.js', '../debuggerView.js']) {
+    new Function(fs.readFileSync(path.resolve(__dirname, file), 'utf8'))();
+  }
 });
 
 interface FrameSummary {
@@ -1233,6 +1236,38 @@ describe('DebuggerView.init — eval bar', () => {
     refs.evalInput.value = '   ';
     refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
     expect(vscode.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('forgets the previous halt’s answer when a fresh stack arrives', () => {
+    /**
+     * The result row doubles as the pane's status line: a message borrows it and hands it back to
+     * whatever the row shows at rest. A new stack empties the row, so rest is now nothing — and a
+     * row that still remembered the last halt's answer put THAT back a second and a half after the
+     * next navigation message, under a stack it did not belong to.
+     */
+    vi.useFakeTimers();
+    try {
+      const { refs } = setup();
+      refs.evalInput.value = '1 + 1';
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'evalResult', value: '2' } }),
+      );
+      expect(refs.evalResult.textContent).toBe('2');
+
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'init', errorMessage: '', stack: STACK } }),
+      );
+      // Ctrl+Up with the just-run expression still in the box has nowhere to step back to, so it
+      // borrows the row to say so.
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', ctrlKey: true }));
+      expect(refs.evalResult.textContent).toBe('Oldest expression');
+      vi.advanceTimersByTime(2000);
+
+      expect(refs.evalResult.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
