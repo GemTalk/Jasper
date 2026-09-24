@@ -225,6 +225,22 @@ interface CreateOptions {
   rootPath: string;
 }
 
+/**
+ * The settings this panel offers to open. `workbench.action.openSettings` takes
+ * a free-text query rather than an identifier, and the id arrives off the
+ * webview wire — so anything else is ignored rather than passed along.
+ */
+const OPENABLE_SETTINGS = ['gemstone.rootPath', 'gemstone.logins'];
+
+/** Which settings layer supplied a value, in the words the Settings editor uses. */
+function settingScope(key: string): string {
+  const inspected = vscode.workspace.getConfiguration('gemstone').inspect(key);
+  if (inspected?.workspaceFolderValue !== undefined) return 'Folder settings';
+  if (inspected?.workspaceValue !== undefined) return 'Workspace settings';
+  if (inspected?.globalValue !== undefined) return 'User settings';
+  return 'default';
+}
+
 interface PanelState {
   platform: string;
   /** Windows with WSL — where the client install and Copy Host actions mean anything. */
@@ -234,6 +250,12 @@ interface PanelState {
    *  open lists nothing, which is indistinguishable from an empty one until
    *  this says otherwise. */
   rootProblem?: string;
+  /** Which settings layer the root path came from, so two windows reading
+   *  different folders can be told apart by more than the path. */
+  rootFrom: string;
+  /** The same for logins, which come from a setting rather than from the
+   *  folder — the reason a full login list can sit beside no databases. */
+  loginsFrom: string;
   versions: VersionRow[];
   databases: DatabaseRow[];
   /** Only used to mark which database the current session is working in. */
@@ -246,6 +268,7 @@ type Inbound =
   | { command: 'ready' }
   | { command: 'refresh' }
   | { command: 'showLog' }
+  | { command: 'openSetting'; id: string }
   | { command: 'extractVersion'; version: string }
   | { command: 'deleteDownload'; version: string }
   | { command: 'uninstallVersion'; version: string }
@@ -607,6 +630,13 @@ export class DatabasesPanel {
           void this.panel.webview.postMessage({ command: 'beginCreate' });
         }
         await this.postState();
+        return;
+      case 'openSetting':
+        // Both lines under the header name the setting behind them, and this is
+        // that name clicked. Only this panel's own two are reachable.
+        if (OPENABLE_SETTINGS.includes(msg.id)) {
+          await vscode.commands.executeCommand('workbench.action.openSettings', msg.id);
+        }
         return;
       case 'showLog':
         // Offered only where something has failed. The reason a scan gives is
@@ -1529,6 +1559,8 @@ export class DatabasesPanel {
       windows: needsWsl(),
       rootPath: this.deps.storage.getRootPath(),
       rootProblem: this.deps.storage.rootPathProblem(),
+      rootFrom: settingScope('rootPath'),
+      loginsFrom: settingScope('logins'),
       versions,
       databases,
       logins: this.buildLoginTargets(databases),
@@ -1990,9 +2022,14 @@ th.v-num { text-align: right; }
 .gm-head-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
 /* Where the panel is reading. Quiet enough to ignore, present enough to answer
    "which folder is this?" without a click. */
-.gm-where { display: flex; align-items: center; gap: 6px; margin: -4px 0 10px; padding: 0 2px;
+.gm-where { display: flex; align-items: center; gap: 6px; margin: -4px 0 2px; padding: 0 2px;
   font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; }
+.gm-where:last-of-type { margin-bottom: 10px; }
 .gm-where .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The setting behind the line, quieter again than the line itself. */
+.gm-where-src { opacity: 0.75; white-space: nowrap; }
+.gm-where .icon-btn { padding: 0 2px; opacity: 0.75; }
+.gm-where .icon-btn:hover { opacity: 1; }
 
 /* ── Tour: a spotlight on one section, and a callout beside it ─────────────── */
 /* Deliberately not a blocking modal — pointer events pass through the dim, so

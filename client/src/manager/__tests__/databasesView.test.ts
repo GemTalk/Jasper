@@ -197,6 +197,20 @@ describe('where the panel says it is looking', () => {
     expect(root.querySelector('.gm-where')?.textContent).toContain('/somewhere/else');
   });
 
+  // Both lines name a setting that can be written at more than one layer, and
+  // which layer won is the difference between two windows reading two folders.
+  it('names the layer each setting came from, and opens it', () => {
+    mount(state({ rootFrom: 'Workspace settings', loginsFrom: 'User settings' }));
+    const lines = Array.from(root.querySelectorAll('.gm-where')).map((l) => l.textContent);
+    expect(lines.join(' ')).toContain('gemstone.rootPath · Workspace settings');
+    expect(lines.join(' ')).toContain('gemstone.logins · User settings');
+
+    root.querySelector<HTMLElement>('[data-setting="gemstone.logins"]')?.click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'openSetting', id: 'gemstone.logins' }),
+    );
+  });
+
   // A root with no databases in it shows the login list in full beside "No
   // databases yet", which reads as a contradiction until this says otherwise.
   it('says logins come from the setting, not from that folder', () => {

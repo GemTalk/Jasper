@@ -223,6 +223,28 @@ describe('the way into the log', () => {
   });
 });
 
+describe('the settings behind the panel', () => {
+  it('opens one of its own when the line beside it is clicked', async () => {
+    await openPanel();
+    await sendMessage({ command: 'openSetting', id: 'gemstone.logins' });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'workbench.action.openSettings',
+      'gemstone.logins',
+    );
+  });
+
+  // The id arrives off the webview wire, and openSettings takes a free-text
+  // query — so an unfiltered one would open Settings on anything asked for.
+  it('ignores a setting that is not one of its own', async () => {
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    await sendMessage({ command: 'openSetting', id: 'workbench.colorTheme' });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+});
+
 describe('a root path that cannot be read', () => {
   // Every listing under it comes back empty, which is the same answer an empty
   // folder gives — so the panel has to be told, or it reports a machine with

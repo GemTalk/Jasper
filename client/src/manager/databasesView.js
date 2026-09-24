@@ -241,7 +241,8 @@
       (a.login ? ` data-login="${esc(a.login)}"` : '') +
       (a.name ? ` data-name="${esc(a.name)}"` : '') +
       (a.session !== undefined ? ` data-session="${esc(String(a.session))}"` : '') +
-      (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '');
+      (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '') +
+      (a.setting ? ` data-setting="${esc(a.setting)}"` : '');
     const tip = tipAttr(a.title || label);
     const off = a.disabled ? ' disabled' : '';
     const extra = a.extraClass ? ` ${a.extraClass}` : '';
@@ -1074,11 +1075,32 @@
     const register = btn('beginRegister', 'Register Existing\u2026', 'link', 'btn-secondary');
     // Where all of this was found, said quietly and always — not only when the
     // folder is empty or unreadable, which is where it used to appear. Two
-    // checkouts pointed at different roots look identical without it, and
-    // "why is my version not listed?" has no answer on screen.
-    const where = `<div class="gm-where"${tipAttr(
-      'The folder Jasper reads databases and versions from \u2014 the gemstone.rootPath setting. Logins are not in it: they come from gemstone.logins.',
-    )}>${ICONS.folder}<span class="mono">${esc(state.rootPath || '')}</span></div>`;
+    // windows pointed at different roots look identical without it, and "why is
+    // my version not listed?" has no answer on screen. Each line names the
+    // setting behind it and opens it, because in both cases that setting is the
+    // whole of the answer and it can be written at more than one layer.
+    const settingLink = (key, what) =>
+      btn('openSetting', 'Edit', 'edit', null, {
+        iconOnly: true,
+        setting: key,
+        title: `Open the ${key} setting, which is where ${what}`,
+      });
+    const logins = (state.logins || []).length;
+    const where =
+      `<div class="gm-where">${ICONS.folder}<span class="mono">${esc(state.rootPath || '')}</span>
+        <span class="gm-where-src">gemstone.rootPath \u00b7 ${esc(state.rootFrom || 'default')}</span>
+        ${settingLink('gemstone.rootPath', 'this folder is chosen')}
+      </div>` +
+      // Logins have no folder to name: they are a setting, which is why a full
+      // list of them can sit beside a root holding no databases at all.
+      `<div class="gm-where">${ICONS.login}<span>${
+        logins
+          ? `${logins} login${logins === 1 ? '' : 's'}, not from that folder`
+          : 'Logins are kept in a setting, not in that folder'
+      }</span>
+        <span class="gm-where-src">gemstone.logins \u00b7 ${esc(state.loginsFrom || 'default')}</span>
+        ${settingLink('gemstone.logins', 'they are kept')}
+      </div>`;
 
     return `<div class="gm-head">
       <div class="gm-head-text"><span class="gm-head-lead">${esc(lead)}</span></div>
@@ -1740,6 +1762,7 @@
       version: el.dataset.version,
       dirName: el.dataset.dir,
       folder: el.dataset.folder,
+      id: el.dataset.setting,
       login: el.dataset.login,
       name: el.dataset.name,
       path: el.dataset.path,
