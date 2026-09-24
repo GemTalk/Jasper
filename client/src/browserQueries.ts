@@ -9,7 +9,7 @@ import { QueryExecutor } from './queries/types';
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
 import {
   TransactionConflicts,
-  transactionConflicts as sharedTransactionConflicts,
+  tryTransactionConflicts as sharedTryTransactionConflicts,
 } from './queries/transactionConflicts';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
@@ -533,11 +533,7 @@ export function abortSessionTransaction(session: ActiveSession): string {
  * conflict set at the start of the next commit, abort or continue.
  */
 export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
-  try {
-    return sharedTransactionConflicts(defaultQueryExecutorUsing(session));
-  } catch {
-    return undefined;
-  }
+  return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
 }
 
 /**

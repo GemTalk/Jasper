@@ -1,3 +1,4 @@
+import { VIEW_REFRESH_CODE } from '../../../client/src/queries/transactionMode';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { McpSession } from '../mcpSession';
 import { registerTools } from '../tools';
@@ -746,11 +747,7 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest', selector: 'testSize' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
   });
 
@@ -785,11 +782,7 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
   });
 
@@ -936,11 +929,7 @@ describe('tools', () => {
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
 
     // The Smalltalk side has to use AbstractException (not Exception) —
@@ -1016,11 +1005,7 @@ describe('tools', () => {
       await tool.handler({});
 
       const refreshCall = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
   });
 
@@ -1083,20 +1068,19 @@ describe('tools', () => {
       expect(result.content[0].text).toContain('gs64stone');
     });
 
-    // The snippet must auto-refresh-if-clean inline so the rest of the report
-    // reflects committed state, and so a single status call also primes the
-    // session for follow-up read tools. Skipping when needsCommit is true is
-    // load-bearing: discarding uncommitted work silently would be far worse
-    // than reporting slightly stale state.
+    // Stale-transaction guard: the snippet must auto-refresh when the abort would
+    // discard nothing, so the rest of the report (and any follow-up read tools in
+    // this session) sees committed state. Both stand-downs are load-bearing —
+    // silently discarding uncommitted work, or dropping the session out of a
+    // transaction it was told to begin, would each be far worse than reporting
+    // slightly stale state.
     it('auto-refreshes the view inline, and stands down where an abort would cost something', async () => {
       vi.mocked(session.executeFetchString).mockReturnValue('');
       const tool = server.getTool('status')!;
       await tool.handler({});
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toContain('System needsCommit');
-      expect(code).toContain('System abortTransaction');
-      expect(code).toContain('System transactionMode == #manualBegin');
+      expect(code).toContain(VIEW_REFRESH_CODE);
       expect(code).toContain('View: ');
       expect(code).toContain('skipped: uncommitted changes present');
       expect(code).toContain('skipped: session is inside a manual transaction');

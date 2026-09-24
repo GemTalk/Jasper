@@ -15,6 +15,7 @@ import {
 // The shape the doit emits: one record per line, tab-separated, R/K/O/T.
 const line = (...fields: string[]) => fields.join('\t');
 const raw = (...lines: string[]) => lines.join('\n') + '\n';
+const parse = (...lines: string[]) => parseTransactionConflicts(raw(...lines));
 
 const WRITE_WRITE = raw(
   line('R', 'failure'),
@@ -45,14 +46,12 @@ describe('parseTransactionConflicts', () => {
   });
 
   it('keeps each kind separate, and attaches objects to the kind above them', () => {
-    const parsed = parseTransactionConflicts(
-      raw(
-        line('R', 'failure'),
-        line('K', 'Write-Write', '1'),
-        line('O', '1', 'Account'),
-        line('K', 'Write-Dependency', '1'),
-        line('O', '2', 'IdentitySet'),
-      ),
+    const parsed = parse(
+      line('R', 'failure'),
+      line('K', 'Write-Write', '1'),
+      line('O', '1', 'Account'),
+      line('K', 'Write-Dependency', '1'),
+      line('O', '2', 'IdentitySet'),
     );
     expect(parsed.categories.map((c) => [c.key, c.objects.map((o) => o.className)])).toEqual([
       ['Write-Write', ['Account']],
@@ -64,8 +63,10 @@ describe('parseTransactionConflicts', () => {
   // sends back, so `total` is the stone's count and is deliberately allowed to
   // exceed the number of rows.
   it('keeps the stone’s total when more objects conflicted than were listed', () => {
-    const parsed = parseTransactionConflicts(
-      raw(line('R', 'failure'), line('K', 'Write-Write', '400'), line('O', '1', 'Account')),
+    const parsed = parse(
+      line('R', 'failure'),
+      line('K', 'Write-Write', '400'),
+      line('O', '1', 'Account'),
     );
     expect(parsed.categories[0]).toMatchObject({ total: 400 });
     expect(parsed.categories[0].objects).toHaveLength(1);
@@ -74,14 +75,14 @@ describe('parseTransactionConflicts', () => {
   // "If there are no conflicts for the transaction, the returned symbol
   // dictionary has no additional Associations" — a refusal with nothing named.
   it('reads a commit result that came with no conflict keys', () => {
-    expect(parseTransactionConflicts(raw(line('R', 'lockFailure')))).toEqual({
+    expect(parse(line('R', 'lockFailure'))).toEqual({
       commitResult: 'lockFailure',
       categories: [],
     });
   });
 
   it('treats a nil commit result as absent', () => {
-    expect(parseTransactionConflicts(raw(line('R', 'nil'))).commitResult).toBeUndefined();
+    expect(parse(line('R', 'nil')).commitResult).toBeUndefined();
   });
 
   it('survives an empty reply', () => {
@@ -89,24 +90,22 @@ describe('parseTransactionConflicts', () => {
   });
 
   it('leaves printString off an object whose printOn: gave nothing back', () => {
-    const parsed = parseTransactionConflicts(
-      raw(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account', '')),
-    );
+    const parsed = parse(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account', ''));
     expect(parsed.categories[0].objects[0]).toEqual({ oop: '12200449', className: 'Account' });
   });
 
   it('keeps a printString that contains tabs', () => {
-    const parsed = parseTransactionConflicts(
-      raw(line('K', 'Write-Write', '1'), line('O', '1', 'Account', 'a\tb')),
-    );
+    const parsed = parse(line('K', 'Write-Write', '1'), line('O', '1', 'Account', 'a\tb'));
     expect(parsed.categories[0].objects[0].printString).toBe('a\tb');
   });
 
   // Table 9.1's #'Synchronized-Commit' is "details of the synchronized commit
   // failure", not an Array, so the doit renders it as text instead.
   it('carries a non-collection value through as text', () => {
-    const parsed = parseTransactionConflicts(
-      raw(line('R', 'failure'), line('K', 'Synchronized-Commit', '0'), line('T', 'peer timed out')),
+    const parsed = parse(
+      line('R', 'failure'),
+      line('K', 'Synchronized-Commit', '0'),
+      line('T', 'peer timed out'),
     );
     expect(parsed.categories[0]).toEqual({
       key: 'Synchronized-Commit',
@@ -117,22 +116,20 @@ describe('parseTransactionConflicts', () => {
   });
 
   it('keeps tabs inside a rendered text value', () => {
-    const parsed = parseTransactionConflicts(
-      raw(line('K', 'Synchronized-Commit', '0'), line('T', 'a\tb')),
-    );
+    const parsed = parse(line('K', 'Synchronized-Commit', '0'), line('T', 'a\tb'));
     expect(parsed.categories[0].text).toBe('a\tb');
   });
 
   // An O or T record with no K before it would otherwise index off the end.
   it('ignores an object record that names no kind', () => {
-    expect(parseTransactionConflicts(raw(line('O', '1', 'Account'), line('T', 'x')))).toEqual({
+    expect(parse(line('O', '1', 'Account'), line('T', 'x'))).toEqual({
       commitResult: undefined,
       categories: [],
     });
   });
 
   it('defaults an unreadable count to zero rather than NaN', () => {
-    expect(parseTransactionConflicts(raw(line('K', 'Write-Write', 'lots'))).categories[0]).toEqual({
+    expect(parse(line('K', 'Write-Write', 'lots')).categories[0]).toEqual({
       key: 'Write-Write',
       total: 0,
       objects: [],
@@ -148,41 +145,28 @@ describe('transactionConflicts', () => {
     expect(result.categories[0].key).toBe('Write-Write');
   });
 
-  it('asks for the oop, the class and an abbreviated printString', () => {
+  // The doit is built once; each row below is one constraint on it, with the
+  // reason that constraint exists. Splitting them keeps the failure message
+  // naming the constraint that broke rather than "the doit changed".
+  it.each([
+    ['asks for the oop', 'each asOop printString'],
+    ['asks for the class', 'each class name asString'],
+    ['asks for a printString', 'each printString'],
+    // printString runs application code on objects two sessions are fighting
+    // over. A raise must cost that one object its printString, not the report.
+    ['guards each printString against a bad printOn:', 'on: Error do:'],
+    [
+      'cuts each printString down in the gem, not on the way back',
+      `t size > ${CONFLICT_PRINT_STRING_LIMIT}`,
+    ],
+    // §9.2: "If you save a reference to the conflict set, be sure to clear this
+    // reference to avoid making the conflict set persistent."
+    ['drops the doit\u2019s own reference to the conflict set', 'conflicts := nil'],
+    ['caps how many objects come back', `shown <= ${CONFLICT_OBJECT_LIMIT}`],
+  ])('%s', (_why, fragment) => {
     const execute = vi.fn((_code: string) => WRITE_WRITE);
     transactionConflicts(execute);
-    const code = execute.mock.calls[0][0];
-    expect(code).toContain('each asOop printString');
-    expect(code).toContain('each class name asString');
-    expect(code).toContain('each printString');
-  });
-
-  // printString runs application code on objects two sessions are fighting over.
-  // A raise must cost that one object its printString, not cost the report.
-  it('guards each printString so one bad printOn: cannot lose the report', () => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    transactionConflicts(execute);
-    expect(execute.mock.calls[0][0]).toContain('on: Error do:');
-  });
-
-  it('cuts each printString down in the gem rather than on the way back', () => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    transactionConflicts(execute);
-    expect(execute.mock.calls[0][0]).toContain(`t size > ${CONFLICT_PRINT_STRING_LIMIT}`);
-  });
-
-  // §9.2: "If you save a reference to the conflict set, be sure to clear this
-  // reference to avoid making the conflict set persistent."
-  it('drops the doit’s own reference to the conflict set', () => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    transactionConflicts(execute);
-    expect(execute.mock.calls[0][0]).toContain('conflicts := nil');
-  });
-
-  it('caps how many objects the doit sends back', () => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    transactionConflicts(execute);
-    expect(execute.mock.calls[0][0]).toContain(`shown <= ${CONFLICT_OBJECT_LIMIT}`);
+    expect(execute.mock.calls[0][0]).toContain(fragment);
   });
 });
 
@@ -209,23 +193,17 @@ describe('conflictSummary', () => {
   });
 
   it('says "1 object" rather than "1 objects"', () => {
-    expect(conflictSummary(parseTransactionConflicts(raw(line('K', 'Write-Write', '1'))))).toBe(
-      'Write-Write on 1 object',
-    );
+    expect(conflictSummary(parse(line('K', 'Write-Write', '1')))).toBe('Write-Write on 1 object');
   });
 
   it('joins several kinds', () => {
     expect(
-      conflictSummary(
-        parseTransactionConflicts(
-          raw(line('K', 'Write-Write', '2'), line('K', 'Write-Dependency', '1')),
-        ),
-      ),
+      conflictSummary(parse(line('K', 'Write-Write', '2'), line('K', 'Write-Dependency', '1'))),
     ).toBe('Write-Write on 2 objects, Write-Dependency on 1 object');
   });
 
   it('is empty when the refusal named no kinds', () => {
-    expect(conflictSummary(parseTransactionConflicts(raw(line('R', 'failure'))))).toBe('');
+    expect(conflictSummary(parse(line('R', 'failure')))).toBe('');
   });
 });
 
@@ -247,11 +225,7 @@ describe('conflictReason', () => {
   });
 
   it('leads with the gloss when the result says something the kinds do not', () => {
-    expect(
-      conflictReason(
-        parseTransactionConflicts(raw(line('R', 'lockFailure'), line('K', 'Write-ReadLock', '1'))),
-      ),
-    ).toBe(
+    expect(conflictReason(parse(line('R', 'lockFailure'), line('K', 'Write-ReadLock', '1')))).toBe(
       `a lock held by another session blocked the commit. Write-ReadLock on 1 object. ${ADVICE}`,
     );
   });
@@ -274,7 +248,7 @@ describe('conflictReason', () => {
 describe('hasConflictDetail', () => {
   it('is true once there is a kind or a commit result to show', () => {
     expect(hasConflictDetail(parseTransactionConflicts(WRITE_WRITE))).toBe(true);
-    expect(hasConflictDetail(parseTransactionConflicts(raw(line('R', 'failure'))))).toBe(true);
+    expect(hasConflictDetail(parse(line('R', 'failure')))).toBe(true);
   });
 
   it('is false when the stone named nothing', () => {
@@ -313,25 +287,19 @@ describe('conflictReport', () => {
   });
 
   it('offers no such line when the stone named no objects', () => {
-    expect(conflictReport(parseTransactionConflicts(raw(line('R', 'failure'))))).not.toContain(
-      '_objectForOop',
-    );
+    expect(conflictReport(parse(line('R', 'failure')))).not.toContain('_objectForOop');
   });
 
   it('still lists an object whose printString did not come back', () => {
     const report = conflictReport(
-      parseTransactionConflicts(
-        raw(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account')),
-      ),
+      parse(line('K', 'Write-Write', '1'), line('O', '12200449', 'Account')),
     );
     expect(report.split('\n').at(-1)).toBe('  12200449  Account');
   });
 
   it('says how many objects it did not list', () => {
     const report = conflictReport(
-      parseTransactionConflicts(
-        raw(line('R', 'failure'), line('K', 'Write-Write', '400'), line('O', '1', 'Account')),
-      ),
+      parse(line('R', 'failure'), line('K', 'Write-Write', '400'), line('O', '1', 'Account')),
     );
     expect(report).toContain('… and 399 objects not listed');
   });
@@ -342,9 +310,7 @@ describe('conflictReport', () => {
 
   it('renders a text-valued kind instead of an empty object list', () => {
     const report = conflictReport(
-      parseTransactionConflicts(
-        raw(line('K', 'Synchronized-Commit', '0'), line('T', 'peer timed out')),
-      ),
+      parse(line('K', 'Synchronized-Commit', '0'), line('T', 'peer timed out')),
     );
     expect(report).toContain('Synchronized-Commit — peer timed out');
     expect(report).not.toContain('0 objects');

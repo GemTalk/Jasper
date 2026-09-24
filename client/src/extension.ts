@@ -23,7 +23,7 @@ import {
   transactionStateLabel,
 } from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
-import { sessionTransactionCommand } from './sessionTransactionCommand';
+import { resolveCommandSession, sessionTransactionCommand } from './sessionTransactionCommand';
 import {
   DEFAULT_GS_PW,
   GemStoneLogin,
@@ -390,19 +390,26 @@ export function abortConfirmMessage(
  * no way to ask it not to — so the dialog always says that, and then says how
  * much the abort would actually cost. `needsCommit` is the tri-state
  * `sessionNeedsCommit` answer, where `undefined` (couldn't tell) is treated like
- * `true`: a failed probe is not evidence that there is nothing to lose.
+ * `true`: a failed probe is not evidence that there is nothing to lose. The switch
+ * runs the same post-abort refresh an abort does, so it carries
+ * {@link UNSAVED_EXPORT_EDITS_WARNING} on the same terms too.
  *
  * Exported, like {@link abortConfirmMessage}, so the wording is testable without
  * a live session behind a modal.
  */
-export function transactionModeSwitchDetail(needsCommit: boolean | undefined): string {
+export function transactionModeSwitchDetail(
+  needsCommit: boolean | undefined,
+  hasUnsavedEditors = false,
+): string {
   const stake =
     needsCommit === true
       ? 'This session has uncommitted changes; switching discards them.'
       : needsCommit === undefined
         ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
         : 'This session has no uncommitted changes, so nothing is lost.';
-  return `Changing the transaction mode aborts the current transaction.\n\n${stake}`;
+  const parts = ['Changing the transaction mode aborts the current transaction.', stake];
+  if (hasUnsavedEditors) parts.push(UNSAVED_EXPORT_EDITS_WARNING);
+  return parts.join('\n\n');
 }
 
 /**
@@ -1793,10 +1800,29 @@ export function activate(context: vscode.ExtensionContext) {
 
   /**
    * Begin a transaction on a session that is outside one — the manualBegin mode's
-   * way back in. Nothing is at stake (no uncommitted work can exist outside a
-   * transaction), so there is nothing to confirm.
+   * way back in.
+   *
+   * `GciTsBegin` is `System beginTransaction`, which moves the session onto a
+   * newer view: it discards whatever the session wrote while it was outside a
+   * transaction, and the refresh that follows rewrites the exported `.gs` mirror.
+   * GemStone lets a between-transactions session write, and `System needsCommit`
+   * duly reports it, so both losses are real here on exactly the terms they are
+   * real for an abort — and it asks with the same wording, via
+   * {@link abortConfirmMessage}. Nothing to lose means no modal, as before.
    */
   const beginSession = async (session: ActiveSession): Promise<void> => {
+    const warning = abortConfirmMessage(
+      queries.sessionNeedsCommit(session),
+      fileInManager.hasUnsavedChanges(session),
+    );
+    if (warning) {
+      const choice = await vscode.window.showWarningMessage(
+        `Begin a transaction on session ${session.id}?`,
+        { modal: true, detail: warning },
+        'Begin Transaction',
+      );
+      if (choice !== 'Begin Transaction') return;
+    }
     try {
       const { success, err } = sessionManager.begin(session.id);
       if (!success) {
@@ -1845,7 +1871,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     const choice = await vscode.window.showWarningMessage(
       `Switch session ${session.id} to ${modeLabel(pick.mode)}?`,
-      { modal: true, detail: transactionModeSwitchDetail(queries.sessionNeedsCommit(session)) },
+      {
+        modal: true,
+        detail: transactionModeSwitchDetail(
+          queries.sessionNeedsCommit(session),
+          fileInManager.hasUnsavedChanges(session),
+        ),
+      },
       'Switch Mode',
     );
     if (choice !== 'Switch Mode') return;
@@ -1923,20 +1955,11 @@ export function activate(context: vscode.ExtensionContext) {
    * stale row would otherwise raise a confirmation naming what is at stake and
    * then fail with "Session not found".
    */
-  const sessionForTransactionModeCommand = (
-    item?: GemStoneSessionItem,
-  ): ActiveSession | undefined => {
-    if (!item) {
-      const current = sessionManager.getSelectedSession();
-      if (!current) vscode.window.showErrorMessage('No active GemStone session.');
-      return current;
-    }
-    const session = sessionManager.getSession(item.activeSession.id);
-    if (!session) {
-      vscode.window.showErrorMessage(`Session ${item.activeSession.id} is no longer logged in.`);
-    }
-    return session;
-  };
+  const sessionForTransactionModeCommand = (item?: GemStoneSessionItem) =>
+    resolveCommandSession(sessionManager, item, {
+      gone: (id) => `Session ${id} is no longer logged in.`,
+      none: 'No active GemStone session.',
+    })?.session;
 
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(

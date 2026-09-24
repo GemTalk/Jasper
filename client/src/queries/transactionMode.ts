@@ -14,7 +14,7 @@
 import { QueryExecutor } from './types';
 
 /**
- * The mode a session is in, as `System transactionMode` answers it.
+ * The three modes a session can be in, as `System transactionMode` answers them.
  *
  * - `autoBegin` — a new transaction starts automatically after every commit or
  *   abort, so the session is always inside one. GemStone's default, and what
@@ -23,17 +23,15 @@ import { QueryExecutor } from './types';
  * - `manualBegin` — commit and abort leave the session *outside* a transaction;
  *   it takes an explicit begin to get back in. While outside, the stone sends a
  *   SigAbort when it wants its commit record back — see {@link setGemAutoServiceSigAbort}.
- * - `transactionless` — like manualBegin, except the gem services any SigAbort
- *   itself, unconditionally and with no client-side help. The right mode for
- *   read-only browsing: it costs the repository nothing.
+ * - `transactionless` — the session is never inside a transaction at all, where a
+ *   `manualBegin` one can be, and the gem services any SigAbort itself with no
+ *   client-side help. The cheapest mode for the repository, but its view can move
+ *   at any moment, so what it shows may change under the reader: meant for a
+ *   session left idle, not for reading something that needs to stay still.
  */
-export type TransactionMode = 'autoBegin' | 'manualBegin' | 'transactionless';
+export const TRANSACTION_MODES = ['autoBegin', 'manualBegin', 'transactionless'] as const;
 
-export const TRANSACTION_MODES: readonly TransactionMode[] = [
-  'autoBegin',
-  'manualBegin',
-  'transactionless',
-];
+export type TransactionMode = (typeof TRANSACTION_MODES)[number];
 
 /** GemStone raises this when a primitive that requires a transaction runs outside one. */
 export const ERR_NOT_IN_TRANSACTION = 2030;
@@ -47,6 +45,11 @@ export const ERR_NOT_IN_TRANSACTION = 2030;
  */
 export const ERR_GEM_AUTO_ABORT = 3007;
 export const ERR_GEM_AUTO_LOST_OT = 3008;
+
+/** `printString` of a Boolean, or `undefined` for anything else. */
+function parseBoolean(text: string): boolean | undefined {
+  return text === 'true' ? true : text === 'false' ? false : undefined;
+}
 
 /** Whether `value` is one of the three modes GemStone recognizes. */
 export function isTransactionMode(value: string): value is TransactionMode {
@@ -91,10 +94,7 @@ export function setTransactionMode(
  * read alongside the mode everywhere the mode is read.
  */
 export function isInTransaction(execute: QueryExecutor): boolean | undefined {
-  const answer = execute('System inTransaction printString').trim();
-  if (answer === 'true') return true;
-  if (answer === 'false') return false;
-  return undefined;
+  return parseBoolean(execute('System inTransaction printString').trim());
 }
 
 /** Read the mode and the in-transaction flag together, in one round trip. */
@@ -108,8 +108,7 @@ export function getTransactionState(execute: QueryExecutor): {
   const [modeText = '', inTransactionText = ''] = answer.split(/\s+/);
   return {
     mode: isTransactionMode(modeText) ? modeText : undefined,
-    inTransaction:
-      inTransactionText === 'true' ? true : inTransactionText === 'false' ? false : undefined,
+    inTransaction: parseBoolean(inTransactionText),
   };
 }
 
@@ -138,10 +137,9 @@ export function setGemAutoServiceSigAbort(execute: QueryExecutor, enabled: boole
 
 /** Whether the gem is currently servicing SigAborts on the session's behalf. */
 export function getGemAutoServiceSigAbort(execute: QueryExecutor): boolean | undefined {
-  const answer = execute('(System gemConfigurationAt: #GemAutoServiceSigAbort) printString').trim();
-  if (answer === 'true') return true;
-  if (answer === 'false') return false;
-  return undefined;
+  return parseBoolean(
+    execute('(System gemConfigurationAt: #GemAutoServiceSigAbort) printString').trim(),
+  );
 }
 
 /**
@@ -271,7 +269,7 @@ export function modeDescription(mode: TransactionMode | undefined): string {
     case 'manualBegin':
       return 'Commit and abort leave this session outside a transaction; Begin Transaction puts it back in. Nothing can be committed while it is outside one.';
     case 'transactionless':
-      return 'This session is never in a transaction and cannot commit. The cheapest mode for the repository — but its view can move at any moment, so what you are looking at may change under you. Good for a session left idle; not for reading something you need to stay still.';
+      return 'This session is not in a transaction and cannot commit until one is begun by hand. The cheapest mode for the repository — but its view can move at any moment, so what you are looking at may change under you. Good for a session left idle; not for reading something you need to stay still.';
     default:
       return 'This session’s transaction mode could not be read from the stone.';
   }

@@ -718,7 +718,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(buttons).toEqual(['Commit & Logout', 'Logout Anyway']);
   });
 
-  it('prompts as usual for a session that is in a transaction', async () => {
+  it('logs out without committing when the user picks Logout Anyway', async () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Logout Anyway' as unknown as vscode.MessageItem,
     );
@@ -734,6 +734,8 @@ describe('confirmLogoutWithUncommittedChanges', () => {
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
     expect(decision).toBe('proceed');
+    // The whole point of the other button: this one must not commit.
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('keeps the commit button when the transaction state could not be read', async () => {

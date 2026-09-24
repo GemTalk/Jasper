@@ -2,6 +2,7 @@
 // out-of-extension counterpart to client/src/mcpTools.ts, wrapping its own GCI
 // session (mcpSession.ts) for AI tool calls.
 // Full design: docs/mcp-server.md
+import { REFRESH_TOOL_DESCRIPTION, SESSION_STATUS_CODE } from '../../client/src/mcpSharedText';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { McpSession } from './mcpSession';
@@ -832,28 +833,17 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
   );
 
-  server.tool(
-    'refresh',
-    "Refresh this session's view of committed state by aborting, when the abort " +
-      "would discard nothing. GemStone's GCI pins the session's read view " +
-      'until it aborts or commits, so a commit landed by another process (e.g. install.sh) ' +
-      'is invisible until refresh runs. This is a no-op — and reports back, so the caller ' +
-      'can decide whether to abort or commit first — when the session has uncommitted work, ' +
-      'or when it is inside a transaction it began by hand under the manualBegin transaction ' +
-      'mode, which the abort would end.',
-    {},
-    async () => {
-      try {
-        const result = session.executeFetchString(VIEW_REFRESH_CODE);
-        return { content: [{ type: 'text' as const, text: result }] };
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
-          isError: true,
-        };
-      }
-    },
-  );
+  server.tool('refresh', REFRESH_TOOL_DESCRIPTION, {}, async () => {
+    try {
+      const result = session.executeFetchString(VIEW_REFRESH_CODE);
+      return { content: [{ type: 'text' as const, text: result }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  });
 
   server.tool(
     'remove_dictionary',
@@ -990,17 +980,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         // VIEW_REFRESH_CODE says when it is safe — uncommitted work, or a
         // hand-opened manualBegin transaction — and reports why it stood down
         // rather than silently discarding either.
-        const code = `| ws viewState |
-viewState := ${VIEW_REFRESH_CODE}.
-ws := WriteStream on: String new.
-ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.
-ws nextPutAll: 'Stone: '; nextPutAll: System stoneName asString; lf.
-ws nextPutAll: 'Session ID: '; nextPutAll: System session printString; lf.
-ws nextPutAll: 'Transaction mode: '; nextPutAll: System transactionMode asString; lf.
-ws nextPutAll: 'Transaction: '; nextPutAll: (System inTransaction ifTrue: ['active'] ifFalse: ['none']); lf.
-ws nextPutAll: 'Uncommitted changes: '; nextPutAll: (System needsCommit ifTrue: ['yes'] ifFalse: ['no']); lf.
-ws nextPutAll: 'View: '; nextPutAll: viewState; lf.
-ws contents`;
+        const code = SESSION_STATUS_CODE;
         const result = session.executeFetchString(code);
         return { content: [{ type: 'text' as const, text: result }] };
       } catch (err) {

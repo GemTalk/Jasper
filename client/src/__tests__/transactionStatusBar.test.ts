@@ -88,21 +88,24 @@ describe('the status bar tooltip', () => {
 });
 
 describe('registering the status bar', () => {
-  let handlers: Array<() => void>;
+  // One list per event, not one shared list: the item has to be redrawn on each
+  // of the four, and a single list lets any one subscription be deleted while the
+  // other three keep every assertion green.
+  let handlers: Record<string, Array<() => void>>;
   let selected: ActiveSession | undefined;
 
   function stubSessionManager(): SessionManager {
-    handlers = [];
-    const subscribe = (h: () => void) => {
-      handlers.push(h);
+    handlers = { selection: [], add: [], remove: [], transactionState: [] };
+    const subscribe = (event: string) => (h: () => void) => {
+      handlers[event].push(h);
       return { dispose: vi.fn() };
     };
     return {
       getSelectedSession: () => selected,
-      onDidChangeSelection: subscribe,
-      onDidAddSession: subscribe,
-      onDidRemoveSession: subscribe,
-      onDidChangeTransactionState: subscribe,
+      onDidChangeSelection: subscribe('selection'),
+      onDidAddSession: subscribe('add'),
+      onDidRemoveSession: subscribe('remove'),
+      onDidChangeTransactionState: subscribe('transactionState'),
     } as unknown as SessionManager;
   }
 
@@ -137,17 +140,26 @@ describe('registering the status bar', () => {
     expect(item.text).toBe('$(circle-outline) Manual · not in transaction');
 
     selected = session('manualBegin', true);
-    // Every subscription drives the same redraw; firing one is enough to prove
-    // the item is not drawn once and left behind.
-    handlers.forEach((h) => h());
+    // Only the transaction-state subscription, so this fails if that one is the
+    // one that goes missing. A commit under manualBegin moves the state without
+    // moving the selection, and nothing else would redraw the item.
+    handlers.transactionState.forEach((h) => h());
     expect(item.text).toBe('$(circle-filled) Manual · in transaction');
+  });
+
+  it.each(['selection', 'add', 'remove'] as const)('redraws on %s too', (event) => {
+    selected = session('manualBegin', false);
+    const item = register();
+    selected = session('autoBegin', true);
+    handlers[event].forEach((h) => h());
+    expect(item.text).toBe('$(circle-filled) Auto-Begin');
   });
 
   it('hides again when the last session goes away', () => {
     selected = session('autoBegin', true);
     const item = register();
     selected = undefined;
-    handlers.forEach((h) => h());
+    handlers.remove.forEach((h) => h());
     expect(item.hide).toHaveBeenCalled();
   });
 });

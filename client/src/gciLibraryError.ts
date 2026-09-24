@@ -1,3 +1,8 @@
+import {
+  ERR_GEM_AUTO_ABORT,
+  ERR_GEM_AUTO_LOST_OT,
+  ERR_NOT_IN_TRANSACTION,
+} from './queries/transactionMode';
 import { GciError } from './gciLibrary';
 
 /**
@@ -9,11 +14,6 @@ import { GciError } from './gciLibrary';
  */
 export type ReportedGciError = Pick<GciError, 'number' | 'message'> &
   Partial<Pick<GciError, 'reason'>>;
-import {
-  ERR_GEM_AUTO_ABORT,
-  ERR_GEM_AUTO_LOST_OT,
-  ERR_NOT_IN_TRANSACTION,
-} from './queries/transactionMode';
 
 /**
  * Rewrite the stone's wording for the two errors that are not failures, and for

@@ -1,3 +1,4 @@
+import { VIEW_REFRESH_CODE } from '../queries/transactionMode';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
@@ -666,11 +667,7 @@ describe('registerMcpTools', () => {
       });
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
 
     it('run_test_class auto-discovers the dictionary and formats results', async () => {
@@ -729,11 +726,7 @@ describe('registerMcpTools', () => {
       await server.getTool('run_test_class')!.handler({ className: 'ArrayTest' });
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
 
     it('list_failing_tests returns "All tests passed." when nothing failed', async () => {
@@ -795,11 +788,7 @@ describe('registerMcpTools', () => {
       await server.getTool('list_failing_tests')!.handler({});
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(refreshCall).toContain('System needsCommit');
-      expect(refreshCall).toContain('System abortTransaction');
-      // ...and stands down inside a hand-opened manualBegin transaction, which
-      // the abort would end with nothing to start another one.
-      expect(refreshCall).toContain('System transactionMode == #manualBegin');
+      expect(refreshCall).toContain(VIEW_REFRESH_CODE);
     });
 
     it('list_test_classes returns dictName\\tclassName rows', async () => {
@@ -918,9 +907,7 @@ describe('registerMcpTools', () => {
       const result = await server.getTool('refresh')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(code).toContain('System needsCommit');
-      expect(code).toContain('System abortTransaction');
-      expect(code).toContain('System transactionMode == #manualBegin');
+      expect(code).toContain(VIEW_REFRESH_CODE);
       expect(code).toContain('skipped: uncommitted changes present');
       expect(code).toContain('skipped: session is inside a manual transaction');
       expect(result.content[0].text).toBe('refreshed');
@@ -949,9 +936,7 @@ describe('registerMcpTools', () => {
       await server.getTool('status')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
-      expect(code).toContain('System needsCommit');
-      expect(code).toContain('System abortTransaction');
-      expect(code).toContain('System transactionMode == #manualBegin');
+      expect(code).toContain(VIEW_REFRESH_CODE);
       expect(code).toContain('View: ');
       expect(code).toContain('skipped: uncommitted changes present');
       expect(code).toContain('skipped: session is inside a manual transaction');

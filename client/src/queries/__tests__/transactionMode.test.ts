@@ -191,10 +191,19 @@ describe('how the state reads', () => {
     expect(modeDescription(undefined)).toContain('could not be read');
   });
 
-  it('describes every mode it offers', () => {
-    for (const mode of TRANSACTION_MODES) {
-      expect(modeLabel(mode)).not.toBe('Unknown');
-      expect(modeDescription(mode).length).toBeGreaterThan(0);
-    }
+  it.each([
+    ['autoBegin', 'starts automatically'],
+    ['manualBegin', 'Begin Transaction puts it back in'],
+    ['transactionless', 'cheapest mode for the repository'],
+  ] as const)('describes %s in its own words', (mode, phrase) => {
+    expect(modeLabel(mode)).not.toBe('Unknown');
+    expect(modeDescription(mode)).toContain(phrase);
+    expect(modeDescription(mode)).not.toContain('could not be read');
+  });
+
+  // The mode's own live-stone test walks a transactionless session into a
+  // transaction and commits there, so the tooltip must not say it never can.
+  it('does not tell a transactionless session it can never commit', () => {
+    expect(modeDescription('transactionless')).not.toContain('never in a transaction');
   });
 });

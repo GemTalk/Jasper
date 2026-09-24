@@ -4,7 +4,8 @@ GemStone gives every session one of three transaction modes. The mode decides
 whether the session is inside a transaction, and therefore what Commit, Abort and
 Begin Transaction do — so Jasper reads it, shows it, and lets you change it.
 
-Everything below was verified against live **3.6.2** and **3.7.5** stones. Where
+The mode and commit-enablement behaviour below was verified against live **3.6.2**
+and **3.7.5** stones; the two exceptions are called out where they arise. Where
 that disagrees with the obvious reading of the manuals, this document records what
 the stone actually does, and `client/src/queries/__tests__/transactionMode.integration.test.ts`
 pins it so a future release cannot change it quietly.
@@ -19,7 +20,7 @@ pins it so a future release cannot change it quietly.
 
 The mode a session lands in at login is the stone's `STN_GEM_INITIAL_TRANSACTION_MODE`,
 which accepts all three values — so Jasper reads the mode from the server at login
-rather than assuming `autoBegin`, as every prior GemStone IDE does.
+rather than assuming `autoBegin`, which every prior GemStone IDE does.
 
 ## What decides whether Commit works
 
@@ -202,25 +203,13 @@ the next transaction. Under `transactionless` there is nothing to end.
 
 ## Where it shows up in Jasper
 
-- **Status bar** (left) — the selected session's state, with a filled circle when
-  a commit can land, a hollow one when it cannot, and an eye for `transactionless`.
-  Clicking it changes the mode.
-- **Logins & Sessions** — each session row says its mode beside its number, and its
-  hover explains what the mode means and what the session can do right now.
-- **Databases & Versions** — the same string on the same sessions, so the two
-  surfaces cannot describe one session differently.
+The user-facing side — status bar, session rows, the mode switch, the refused-commit
+toast — is described in [the README](../../README.md#transaction-modes). Two pieces of
+mechanism belong here rather than there:
+
 - **Begin Transaction** and **Commit** appear only on a session that can use them.
   That is decided per row (in the row's `contextValue`) rather than by a context
   key, so in multiple-session mode each row answers for itself.
-- Switching modes **aborts** — GemStone does that as part of switching and there is
-  no way to ask it not to — so the confirmation says so, names how much is at
-  stake, and on confirm runs the same refresh cascade an abort runs.
-- **A refused Commit names what collided** — `Commit refused — Write-Write on 2
-  objects. Abort for a fresh view, then try again.` — with **Show Conflicts** on
-  the toast, which writes each conflicting object's oop, class and abbreviated
-  `printString` to the **GemStone GCI** output channel, in aligned columns, over a
-  pasteable `Object _objectForOop:`. The MCP `commit` tool answers with the same
-  wording and the same list, through the same shared query.
 - **Claude's tools count too.** The in-window MCP `commit`, `abort` and
   `execute_code` tools move the same session the rows are drawn from, so they tell
   `SessionManager` to re-read the state afterwards. Without that, a commit from

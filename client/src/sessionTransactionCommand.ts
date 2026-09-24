@@ -32,6 +32,48 @@ export interface SessionTransactionDeps {
   abort: (session: ActiveSession, options?: { ask?: boolean }) => Promise<void>;
 }
 
+/**
+ * Which session the user meant, for a command contributed both on a session row
+ * and in the Command Palette.
+ *
+ * A row names one session, but by id rather than by the `ActiveSession` hanging
+ * off the tree item: a tree item outlives the session it was built from, so a row
+ * left over from a logged-out session would otherwise act over a dead handle —
+ * the GCI call fails, and the user meets a warning modal followed by "Session not
+ * found". Same rule `showConfigurationCommand` writes down, and the same one the
+ * Databases & Versions panel applies on its side.
+ *
+ * The palette names no session, so it acts in the current one. While anything is
+ * logged in there is always a current session, so the only way to arrive there
+ * empty is with nothing logged in at all — which the palette's
+ * `gemstone.hasActiveSession` clause already withholds these commands for.
+ *
+ * `fromRow` is what the caller needs to decide whether to put the session in a
+ * modal first: a row already showed which session this is, the palette did not.
+ * Callers supply their own wording for the two misses, because a message that
+ * names the action ("nothing to abort") reads better than a generic one.
+ */
+export function resolveCommandSession(
+  sessionManager: Pick<SessionManager, 'getSession' | 'getSelectedSession'>,
+  item: GemStoneSessionItem | undefined,
+  messages: { gone: (id: number) => string; none: string },
+): { session: ActiveSession; fromRow: boolean } | undefined {
+  if (item) {
+    const session = sessionManager.getSession(item.activeSession.id);
+    if (!session) {
+      vscode.window.showErrorMessage(messages.gone(item.activeSession.id));
+      return undefined;
+    }
+    return { session, fromRow: true };
+  }
+  const session = sessionManager.getSelectedSession();
+  if (!session) {
+    vscode.window.showErrorMessage(messages.none);
+    return undefined;
+  }
+  return { session, fromRow: false };
+}
+
 export async function sessionTransactionCommand(
   deps: SessionTransactionDeps,
   action: SessionTransaction,
@@ -40,42 +82,16 @@ export async function sessionTransactionCommand(
   const { sessionManager } = deps;
   const run = action === 'Commit' ? deps.commit : deps.abort;
 
-  if (item) {
-    // Resolved by id rather than taken from the row: a tree item outlives the
-    // session it was built from, so a row left over from a logged-out session
-    // would otherwise commit or abort over a dead handle — the GCI call fails,
-    // and the user meets a "may discard uncommitted changes" modal followed by
-    // "Session not found". Same rule `showConfigurationCommand` writes down, and
-    // the same one the Databases & Versions panel already applies on its side.
-    const session = sessionManager.getSession(item.activeSession.id);
-    if (!session) {
-      vscode.window.showErrorMessage(
-        `Session ${item.activeSession.id} is no longer logged in, so there is nothing to ` +
-          `${action.toLowerCase()}.`,
-      );
-      return;
-    }
-    // The row named the session, so there is nothing to tell the user about
-    // which one this is; only a warning (uncommitted work, unsaved editors) can
-    // raise a modal from here.
-    return run(session, { ask: false });
-  }
-
-  // The current session, with no picker behind it. While any session is logged
-  // in there is always a current one — login selects the first, and logging out
-  // of the current session hands the selection to the one worked in before it — so
-  // the only way to arrive here empty is with nothing logged in at all, which
-  // the palette's `gemstone.hasActiveSession` clause already withholds these
-  // commands for. (`resolveSession` would put up a QuickPick in the middle of a
-  // Commit; there is no state left where that question has an answer the current
-  // session does not already give.)
-  const session = sessionManager.getSelectedSession();
-  if (!session) {
-    vscode.window.showErrorMessage(`No active GemStone session to ${action.toLowerCase()}.`);
-    return;
-  }
-  // `ask` puts the session in a modal first: the palette shows nothing about
-  // which session is current, and "whichever one is current" is how work lands
-  // in the wrong stone.
-  return run(session, { ask: true });
+  const resolved = resolveCommandSession(sessionManager, item, {
+    gone: (id) =>
+      `Session ${id} is no longer logged in, so there is nothing to ${action.toLowerCase()}.`,
+    none: `No active GemStone session to ${action.toLowerCase()}.`,
+  });
+  if (!resolved) return;
+  // `ask` puts the session in a modal first, and only the palette needs it: a row
+  // already showed which session this is, so only a warning (uncommitted work,
+  // unsaved editors) can raise a modal from there. The palette shows nothing
+  // about which session is current, and "whichever one is current" is how work
+  // lands in the wrong stone.
+  return run(resolved.session, { ask: !resolved.fromRow });
 }

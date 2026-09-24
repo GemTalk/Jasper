@@ -570,10 +570,14 @@ export class SessionManager {
         s.gci.executeAndFetchString(s.handle, code),
       );
       if (mode === undefined && inTransaction === undefined) return;
-      const enteredManualBegin = mode === 'manualBegin' && s.transactionMode !== 'manualBegin';
-      const changed = s.transactionMode !== mode || s.inTransaction !== inTransaction;
-      s.transactionMode = mode;
-      s.inTransaction = inTransaction;
+      // Each half is kept independently: a read that parses one and not the other
+      // must not blank the half it did read, which is what the promise above says.
+      const nextMode = mode ?? s.transactionMode;
+      const nextInTransaction = inTransaction ?? s.inTransaction;
+      const enteredManualBegin = nextMode === 'manualBegin' && s.transactionMode !== 'manualBegin';
+      const changed = s.transactionMode !== nextMode || s.inTransaction !== nextInTransaction;
+      s.transactionMode = nextMode;
+      s.inTransaction = nextInTransaction;
       if (enteredManualBegin) this.armGemAutoServiceSigAbort(s);
       if (changed) this._onDidChangeTransactionState.fire(id);
     } catch (e: unknown) {

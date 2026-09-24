@@ -132,6 +132,19 @@ conflicts := nil.
 stream contents`;
 
 /**
+ * {@link transactionConflicts}, or `undefined` when it could not be read. A failed
+ * read must not turn a refused commit into a thrown error: the refusal is what is
+ * worth reporting, and the conflict list is detail on top of it.
+ */
+export function tryTransactionConflicts(execute: QueryExecutor): TransactionConflicts | undefined {
+  try {
+    return transactionConflicts(execute);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Read the conflict set left by the commit that was just refused.
  *
  * The doit drops its own reference before answering: "If you save a reference to

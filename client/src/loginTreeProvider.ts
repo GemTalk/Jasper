@@ -134,13 +134,20 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
     // Both the MCP marker and the transaction state are in the id, because VS Code
     // reuses a node whose id is unchanged — which would leave the old text, and
-    // the old set of inline buttons, on screen after either one moves. The price
-    // is that the row is a new node whenever they move, so a selection on it is
-    // dropped; the transaction half of the id only changes when a session gains
-    // or loses Begin/Commit, which under autoBegin (almost everyone) is never, and
-    // under manualBegin is the moment the user pressed one of those buttons.
-    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}`;
+    // the old set of inline buttons, on screen after either one moves.
+    //
+    // The id carries the rendered description, not just the contextValue: the
+    // buttons and the text do not move together. `sessionContextValue` answers
+    // only canCommit/canBegin, and both are unchanged across the two transitions
+    // that matter most — undefined → autoBegin at login (the row gains `· Auto-
+    // Begin`), and autoBegin → manualBegin while in a transaction (the row must
+    // stop saying Auto-Begin). Keying on what is drawn covers the buttons too,
+    // since a change in either flag changes the label the row shows.
+    //
+    // The price is that the row is a new node whenever its text moves, so a
+    // selection on it is dropped — under autoBegin that is once, at login.
     this.description = sessionDescription(activeSession, mcp);
+    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}-${this.description}`;
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(
       `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,

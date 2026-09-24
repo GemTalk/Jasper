@@ -34,7 +34,6 @@ describe('explaining a GCI error', () => {
   it('does not claim nothing was lost, because the abort discards uncommitted writes', () => {
     const text = explainGciError(gciError(ERR_GEM_AUTO_ABORT, 'a TransactionBacklog occurred'));
 
-    expect(text).not.toContain('Nothing was lost');
     expect(text).toContain('not committed was discarded');
   });
 

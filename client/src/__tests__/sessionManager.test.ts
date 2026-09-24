@@ -50,6 +50,14 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
 const gciTsLogout = vi.fn((..._args: unknown[]) => undefined);
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
+const gciTsBegin = vi.fn((..._args: unknown[]) => ({
+  success: true,
+  err: { number: 0, message: '' },
+}));
+const gciTsCommit = vi.fn((..._args: unknown[]) => ({
+  success: true,
+  err: { number: 0, message: '' },
+}));
 const gciTsAbort = vi.fn((..._args: unknown[]) => ({
   success: true,
   err: { number: 0, message: '' },
@@ -98,6 +106,12 @@ vi.mock('../gciLibrary', () => ({
     }
     GciTsAbort(...args: unknown[]) {
       return gciTsAbort(...(args as []));
+    }
+    GciTsBegin(...args: unknown[]) {
+      return gciTsBegin(...(args as []));
+    }
+    GciTsCommit(...args: unknown[]) {
+      return gciTsCommit(...(args as []));
     }
     GciTsLogout(...args: unknown[]) {
       return gciTsLogout(...(args as []));
@@ -294,6 +308,27 @@ describe('SessionManager', () => {
 
       manager.setTransactionMode(session.id, 'manualBegin');
 
+      expect(seen).toEqual([session.id]);
+    });
+
+    // Under manualBegin a commit or abort drops the session out of its
+    // transaction and nothing starts another one, so the cached state is stale
+    // the moment the call returns — which is what leaves a row offering Commit
+    // where only Begin can work.
+    it.each<[string, (m: SessionManager, id: number) => unknown, boolean]>([
+      ['begin', (m, id) => m.begin(id), true],
+      ['commit', (m, id) => m.commit(id), false],
+      ['abort', (m, id) => m.abort(id), false],
+    ])('re-reads the state after %s, so the row stops describing the old one', (_n, act, after) => {
+      transactionStateAnswer = `manualBegin ${!after}`;
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const seen: number[] = [];
+      manager.onDidChangeTransactionState((id) => seen.push(id));
+      transactionStateAnswer = `manualBegin ${after}`;
+
+      act(manager, session.id);
+
+      expect(session.inTransaction).toBe(after);
       expect(seen).toEqual([session.id]);
     });
 

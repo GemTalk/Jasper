@@ -1,3 +1,4 @@
+import { applies, inlineRank } from './menuWhenClause';
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,24 +20,6 @@ const pkg = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf-8'),
 );
 const itemContext: MenuItem[] = pkg.contributes.menus['view/item/context'];
-
-function inlineRank(group: string): number {
-  const match = /inline@(\d+)/.exec(group);
-  return match ? Number(match[1]) : 0;
-}
-
-// Whether a `when` clause fires for a row carrying this context value. Session
-// clauses are `viewItem =~ /.../` now that each row says in its own context value
-// what that session can do (see sessionContextValue in loginTreeProvider.ts), so
-// the clause is EVALUATED rather than matched as text: a substring test passes
-// for any clause that merely fails to contain the literal, which is every clause
-// once one is reworded. Same helper, same reason, as databaseMenuOrder.test.ts.
-function applies(when: string, viewItem: string): boolean {
-  const literal = /viewItem == ([A-Za-z]+)/.exec(when);
-  if (literal) return literal[1] === viewItem;
-  const pattern = /viewItem =~ \/(.+?)\//.exec(when);
-  return pattern ? new RegExp(pattern[1]).test(viewItem) : false;
-}
 
 // The context value each kind of session row carries, from sessionContextValue.
 const AUTO_BEGIN_ROW = 'gemstoneSession.canCommit';
