@@ -241,18 +241,63 @@ const OPENABLE_SETTINGS = ['gemstone.rootPath'];
  * value from the one the panel had just named, which reads as the two
  * disagreeing rather than as two layers of the same key.
  */
-function settingLayer(key: string): { label: string; command: string } {
+function settingLayer(key: string): {
+  label: string;
+  command: string;
+  target: vscode.ConfigurationTarget;
+} {
   const inspected = vscode.workspace.getConfiguration('gemstone').inspect(key);
   if (inspected?.workspaceFolderValue !== undefined) {
-    return { label: 'Folder settings', command: 'workbench.action.openFolderSettings' };
+    return {
+      label: 'Folder settings',
+      command: 'workbench.action.openFolderSettings',
+      target: vscode.ConfigurationTarget.WorkspaceFolder,
+    };
   }
   if (inspected?.workspaceValue !== undefined) {
-    return { label: 'Workspace settings', command: 'workbench.action.openWorkspaceSettings' };
+    return {
+      label: 'Workspace settings',
+      command: 'workbench.action.openWorkspaceSettings',
+      target: vscode.ConfigurationTarget.Workspace,
+    };
   }
   if (inspected?.globalValue !== undefined) {
-    return { label: 'User settings', command: 'workbench.action.openSettings' };
+    return {
+      label: 'User settings',
+      command: 'workbench.action.openSettings',
+      target: vscode.ConfigurationTarget.Global,
+    };
   }
-  return { label: 'default', command: 'workbench.action.openSettings' };
+  return {
+    label: 'default',
+    command: 'workbench.action.openSettings',
+    target: vscode.ConfigurationTarget.Global,
+  };
+}
+
+/**
+ * Choose the folder Jasper reads databases and versions from. Shared by the
+ * panel and by the link under the setting in the Settings editor, which is a
+ * text box: VS Code renders no folder picker for a string, and typing a path
+ * into it by hand is how a root ends up one character wrong.
+ *
+ * Written back to the layer the value is coming from. Always writing User
+ * settings would leave a workspace value winning over what was just chosen —
+ * the picker would look as though it had done nothing.
+ */
+export async function chooseRootFolder(): Promise<string | undefined> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: 'Use This Folder',
+    title: 'Where GemStone databases are created',
+  });
+  if (!picked || !picked.length) return undefined;
+  const { target, label } = settingLayer('rootPath');
+  await vscode.workspace.getConfiguration('gemstone').update('rootPath', picked[0].fsPath, target);
+  appendSysadmin(`Root path set to ${picked[0].fsPath} (${label})`);
+  return picked[0].fsPath;
 }
 
 interface PanelState {
@@ -1384,18 +1429,7 @@ export class DatabasesPanel {
    * the override — and it is saved, so the next database starts there too.
    */
   private async chooseRootPath(): Promise<void> {
-    const picked = await vscode.window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Use This Folder',
-      title: 'Where GemStone databases are created',
-    });
-    if (!picked || !picked.length) return;
-    await vscode.workspace
-      .getConfiguration('gemstone')
-      .update('rootPath', picked[0].fsPath, vscode.ConfigurationTarget.Global);
-    appendSysadmin(`Root path set to ${picked[0].fsPath}`);
+    if (!(await chooseRootFolder())) return;
     this.deps.refreshAdminViews();
     await this.postState();
   }

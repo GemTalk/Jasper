@@ -13,6 +13,13 @@ export { Uri };
 const configStore: Record<string, Record<string, unknown>> = {};
 /** Which inspect() field a seeded value answers under, per key. */
 const scopeStore: Record<string, Record<string, string>> = {};
+/** Every configuration update the code under test made, newest last. */
+export const __configUpdates: {
+  section: string;
+  key: string;
+  value: unknown;
+  target?: number;
+}[] = [];
 
 function getConfiguration(section: string) {
   if (!configStore[section]) {
@@ -38,8 +45,12 @@ function getConfiguration(section: string) {
       const field = scopeStore[section]?.[key] ?? 'globalValue';
       return { key: `${section}.${key}`, [field]: val as T };
     },
-    update: vi.fn(async (key: string, value: unknown, _target?: number) => {
+    update: vi.fn(async (key: string, value: unknown, target?: number) => {
       configStore[section][key] = value;
+      // getConfiguration() hands back a fresh object each call, so a test
+      // cannot spy on this one: what was written, and at which layer, is
+      // recorded here instead.
+      __configUpdates.push({ section, key, value, target });
     }),
   };
 }
@@ -52,6 +63,7 @@ export function __resetConfig(): void {
   for (const key of Object.keys(scopeStore)) {
     delete scopeStore[key];
   }
+  __configUpdates.length = 0;
 }
 
 /** Pre-seed a config section for testing. */

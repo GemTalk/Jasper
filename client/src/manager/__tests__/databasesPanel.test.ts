@@ -34,7 +34,7 @@ import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
 import { needsWsl } from '../../wslBridge';
 import { showSysadmin } from '../../sysadminChannel';
-import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
+import { __setConfig, __resetConfig, __configUpdates } from '../../__mocks__/vscode';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -265,6 +265,30 @@ describe('the settings behind the panel', () => {
     await sendMessage({ command: 'openSetting', id });
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('choosing the folder', () => {
+  // Always writing User settings would leave a workspace value winning over
+  // what was just picked, so the picker would look as though it had done
+  // nothing at all.
+  it('writes back to the layer the value is coming from', async () => {
+    __setConfig('gemstone', 'rootPath', '/from/the/workspace', 'workspace');
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file('/picked/here')]);
+    try {
+      await openPanel();
+      await sendMessage({ command: 'chooseRoot' });
+
+      expect(__configUpdates.at(-1)).toEqual({
+        section: 'gemstone',
+        key: 'rootPath',
+        value: '/picked/here',
+        target: vscode.ConfigurationTarget.Workspace,
+      });
+    } finally {
+      __resetConfig();
+      vi.mocked(vscode.window.showOpenDialog).mockReset();
+    }
   });
 });
 
