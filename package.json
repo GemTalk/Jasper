@@ -3432,12 +3432,12 @@
         {
           "command": "gemstone.breakpoints.clearMethod",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
-          "group": "3_gemstoneBreakpoints@4"
+          "group": "3_gemstoneBreakpoints@5"
         },
         {
           "command": "gemstone.breakpoints.toggleStepPoints",
           "when": "editorTextFocus && resourceLangId == gemstone-method",
-          "group": "3_gemstoneBreakpoints@4"
+          "group": "3_gemstoneBreakpoints@6"
         },
         {
           "command": "gemstone.fileInFile",

@@ -64,6 +64,22 @@ describe('triggered breakpoints: what the manifest offers', () => {
     expect(entry('view/item/context', FROM_ROW)?.group).toMatch(/^inline@/);
   });
 
+  it('gives every breakpoint entry in the editor menu its own slot', () => {
+    // Entries sharing a group index render in an order VS Code picks. Three of
+    // these were tied on @4 at one point, which is how a menu silently reshuffles
+    // between builds.
+    const slots = menus['editor/context']
+      .filter((m) => m.group?.startsWith('3_gemstoneBreakpoints'))
+      .map((m) => m.group);
+    expect(new Set(slots).size).toBe(slots.length);
+  });
+
+  it('puts the trigger entry directly after the condition entry', () => {
+    const slot = (id: string): number =>
+      Number(menus['editor/context'].find((m) => m.command === id)?.group?.split('@')[1]);
+    expect(slot(AT_CURSOR)).toBe(slot('gemstone.breakpoints.editConditionAtCursor') + 1);
+  });
+
   it('orders the row actions, with Remove last', () => {
     // Two inline actions sharing a group index leave their order to VS Code,
     // which is how the trigger action first landed on top of Remove — a
