@@ -105,36 +105,47 @@ describe('where File In is offered', () => {
     expect(command(PICK)?.icon).toBeDefined();
   });
 
-  it("offers it on a .gs or .tpz file in VS Code's own Explorer", () => {
+  it("offers it on a .gs, .tpz or .st file in VS Code's own Explorer", () => {
     const when = entriesIn('explorer/context', RESOURCE)[0]?.when ?? '';
 
     expect(when).toContain('resourceExtname == .gs');
     // A hand-written topaz script is filed in the same way a file-out is.
     expect(when).toContain('resourceExtname == .tpz');
+    // And a Tonel class file, same entry and same wording (issue #616): here the
+    // clause is on the EXTENSION, not the language id, so it needs its own term --
+    // widening the editor clauses does nothing for the VS Code Explorer.
+    expect(when).toContain('resourceExtname == .st');
   });
 
-  it('offers it on an open Topaz file, in the title bar and the editor menu', () => {
+  it('offers it on an open Topaz OR Tonel file, in the title bar and the editor menu', () => {
     const clauses = ['editor/title', 'editor/context'].map(
       (menu) => `${menu}: ${entriesIn(menu, RESOURCE)[0]?.when ?? ''}`,
     );
 
-    // A `gemstone://` method editor is not a file that can be filed in, hence the
-    // scheme term alongside the language one.
-    expect(clauses).toEqual([
-      'editor/title: resourceLangId == gemstone-topaz && resourceScheme == file',
-      'editor/context: resourceLangId == gemstone-topaz && resourceScheme == file',
-    ]);
+    // Both formats, one entry: the command works out which reader the file needs, so
+    // the user picks a file rather than a format (issue #616). A `gemstone://` method
+    // editor is not a file that can be filed in, hence the scheme term alongside.
+    const expected =
+      '(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && ' +
+      'resourceScheme == file';
+    expect(clauses).toEqual([`editor/title: ${expected}`, `editor/context: ${expected}`]);
   });
 
   it('offers it in the GemStone Explorer, where File Out is', () => {
     // File Out lives on Explorer rows and File In did not live in that view at all, so
-    // the way back in was in another view entirely. A pane button (always visible) and
-    // a dictionary-row entry (where the right-click habit already goes).
-    const title = entriesIn('view/title', EXPLORER);
+    // the way back in was in another view entirely. Now: a button in the Actions &
+    // Navigation toolbar, and a dictionary-row entry (where the right-click habit
+    // already goes).
+    //
+    // NOT a pane title-bar button any more. VS Code renders those only while the pane
+    // is expanded AND hovered, so the button vanished exactly when a collapsed
+    // Dictionaries pane made it most needed — which is the whole reason that toolbar is
+    // a webview. It also reads a file into the SESSION rather than acting on the pane
+    // it sat in, so it belongs beside Commit and Abort. The button itself is asserted
+    // in explorerNavigationView.test.ts, which owns that toolbar.
     const row = entriesIn('view/item/context', EXPLORER);
 
-    expect(title.map((e) => e.when)).toEqual(['view == gemstoneExplorerDicts']);
-    expect(title[0]?.group).toMatch(/^navigation@/);
+    expect(entriesIn('view/title', EXPLORER)).toEqual([]);
     expect(row.map((e) => e.when)).toEqual([
       'view == gemstoneExplorerDicts && viewItem == explorerDict',
     ]);
@@ -169,11 +180,15 @@ describe('where File In is offered', () => {
     expect(command(EXPLORER)?.icon).toBe(command(PICK)?.icon);
   });
 
-  it('gates on the language id that .gs and .tpz actually map to', () => {
+  it('gates on the language ids that .gs, .tpz and .st actually map to', () => {
     const topaz = pkg.contributes.languages.find((l) => l.id === 'gemstone-topaz');
+    const tonel = pkg.contributes.languages.find((l) => l.id === 'gemstone-tonel');
 
-    // The editor clauses name gemstone-topaz; if either extension ever moved to
-    // another language the command would vanish from the very files it exists for.
+    // The editor clauses name gemstone-topaz and gemstone-tonel; if any of these
+    // extensions ever moved to another language the command would vanish from the
+    // very files it exists for -- silently, since a `when` clause that matches
+    // nothing looks exactly like a menu entry that was never contributed.
     expect(topaz?.extensions).toEqual(expect.arrayContaining(['.gs', '.tpz']));
+    expect(tonel?.extensions).toEqual(expect.arrayContaining(['.st']));
   });
 });

@@ -35,6 +35,12 @@ import { getStoredClassComment as sharedGetStoredClassComment } from './queries/
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
+import {
+  tonelCapability as sharedTonelCapability,
+  TonelCapabilityResult,
+} from './queries/tonel/tonelCapability';
+import { fileOutClassTonel as sharedFileOutClassTonel } from './queries/tonel/fileOutClassTonel';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
 import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
@@ -796,6 +802,25 @@ export function getSiblingClassNames(
   return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
+/** One class as Tonel source, or a sentinel (see `isTonelFileOutError`). */
+export function fileOutClassTonel(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** Which parts of the Tonel machinery this session can reach. */
+export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
+  return sharedTonelCapability(defaultQueryExecutorUsing(session));
+}
+
+/** Which symbol dictionaries hold a class of this name, in symbol-list order. */
+export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
+  return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
+}
+
 export function fileOutClass(
   session: ActiveSession,
   className: string,
@@ -846,8 +871,9 @@ export function removeAllMethods(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
 }
 
 export function describeClass(

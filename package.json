@@ -1573,7 +1573,13 @@
       },
       {
         "command": "gemstone.explorer.fileOutClass",
-        "title": "File Out Class...",
+        "title": "File Out Class (.gs)...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClassTonel",
+        "title": "File Out Class (.st)...",
         "category": "GemStone",
         "icon": "$(export)"
       },
@@ -2146,7 +2152,7 @@
       "explorer/context": [
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceExtname == .gs || resourceExtname == .tpz",
+          "when": "resourceExtname == .gs || resourceExtname == .tpz || resourceExtname == .st",
           "group": "gemstone@0"
         }
       ],
@@ -2289,6 +2295,10 @@
         },
         {
           "command": "gemstone.explorer.fileOutClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassTonel",
           "when": "false"
         },
         {
@@ -2642,11 +2652,6 @@
           "group": "navigation@7"
         },
         {
-          "command": "gemstone.explorer.fileIn",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@7"
-        },
-        {
           "command": "gemstone.explorer.newClassCategory",
           "when": "view == gemstoneExplorerCategories",
           "group": "navigation@2"
@@ -2774,9 +2779,19 @@
           "group": "4_fileout@0"
         },
         {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClasses && gemstone.tonelAvailable && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_fileout@1"
+        },
+        {
           "command": "gemstone.explorer.fileOutClass",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass/",
           "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClassHierarchy && gemstone.tonelAvailable && viewItem =~ /^explorerHierClass/",
+          "group": "4_fileout@1"
         },
         {
           "command": "gemstone.explorer.fileOutProtocol",
@@ -3302,7 +3317,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "navigation@0"
         },
         {
@@ -3384,7 +3399,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "1_gemstone@6"
         }
       ]
@@ -3579,6 +3594,9 @@
     "hooks:uninstall": "lefthook uninstall",
     "test": "npm run test --workspaces",
     "test:server:start": "npm run test:server:start --workspace client",
+    "//test:server:start:rowan3": "Starts a 3.7.5 stone on the rowan3 extent. The Tonel file out/in suites run ONLY against this stone and skip everywhere else, so verifying that feature means starting this and re-running the suite; a green `npm test` on the default stone says nothing about it.",
+    "test:server:start:rowan3": "npm run test:server:start:rowan3 --workspace client",
+    "test:server:stop:rowan3": "npm run test:server:stop:rowan3 --workspace client",
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
@@ -3607,7 +3625,7 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^4.0.0",
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
@@ -3636,11 +3654,11 @@
     "js-yaml": "^4.3.2"
   },
   "allowScripts": {
-    "@vscode/vsce-sign@2.0.9": true,
     "keytar@7.9.0": true,
     "fsevents": false,
     "esbuild@0.28.2": true,
     "koffi@2.16.3": true,
-    "lefthook": false
+    "lefthook": false,
+    "@vscode/vsce-sign@2.1.0": true
   }
 }

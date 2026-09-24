@@ -22,6 +22,9 @@
     "//test:coverage": "Line/branch coverage for the default project, v8 provider. Takes a path prefix to scope the report, e.g. `npm run test:coverage --workspace client -- src/undo`; with no argument it reports on everything the suite loaded. The whole suite runs either way — a file is only reported as uncovered if no test anywhere exercised it.",
     "test:coverage": "vitest run --project default --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.exclude='**/__tests__/**' --coverage.exclude='**/__mocks__/**' --coverage.include",
     "test:server:start": "./bin/gs-test-server.sh --start",
+    "//test:server:start:rowan3": "Starts a 3.7.5 stone on the rowan3 extent — the configuration the Tonel file out/in suites require (see src/queries/tonel/tonelCapability.ts). Those suites SKIP on any other stone, so a green `npm test` against the default stone says nothing about that feature. Repoints .env.test at this stone.",
+    "test:server:start:rowan3": "./bin/gs-test-server.sh --start 3.7.5 jasper-rowan3 --extent extent0.rowan3.dbf",
+    "test:server:stop:rowan3": "./bin/gs-test-server.sh --stop 3.7.5 jasper-rowan3",
     "test:server:stop": "./bin/gs-test-server.sh --stop",
     "test:server:list": "./bin/gs-test-server.sh --list"
   }

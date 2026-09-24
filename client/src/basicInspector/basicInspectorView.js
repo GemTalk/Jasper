@@ -815,31 +815,75 @@
   // ── Evaluate pane ─────────────────────────
 
   /**
-   * The chord the pane answers to, and what each closing key runs.
+   * The pane's keys, its chord and the expressions it has run are shared with the debugger's
+   * evaluate pane — one module, loaded by both webviews, so a gesture cannot come to mean two things
+   * depending on which panel you are in. See client/src/webview/evaluatePane.js; the modes
+   * themselves are in client/src/evaluateMode.ts.
    *
-   * These are the editor's own bindings — `ctrl+k d` / `e` / `i` for Display,
-   * Execute and Inspect It — so the keys that run an expression against the
-   * stone are the same whether you typed it in a Smalltalk file or here against
-   * `self`. The contributed ones cannot serve: all three are `when:
-   * editorTextFocus`, which a focused webview never satisfies, and the commands
-   * behind them read the active text editor for their code. So the pane
-   * recognises the chord itself, which is what `chordArmed` below is for — and
-   * because those bindings do not resolve here, the chord runs the pane's own
-   * action rather than colliding with a command.
+   * ONE per column, created once and kept there. This tab is redrawn whenever an answer lands, so a
+   * walk whose place lived in the drawing would be lost every time the stone replied; the pane looks
+   * its box up through the column, which is what survives the redraw.
    *
-   * `ctrl+k r`, Debug It, is deliberately absent. Debug It works by compiling
-   * the expression and starting it with the single-step flag set, so the halt
-   * on its first statement carries a process for the debugger to attach to. The
-   * pane evaluates through `evaluateInContext:symbolList:`, an ordinary perform
-   * that runs to completion — there is no halted process to hand over, so the
-   * key would have nothing to open.
+   * What stays here is the three things this panel does its own way: the box lives in a column's
+   * content pane, a message that is not a result borrows the chord-hint line, and an expression
+   * reaches the host as `evaluate` against the inspected object.
    */
-  var EVAL_CHORD = { d: 'display', e: 'execute', i: 'inspect' };
+  function evalPaneFor(col) {
+    if (col.evalPane) return col.evalPane;
+    col.evalPane = EvaluatePane.create({
+      input: function () {
+        return col.el.contentPane.querySelector('.eval-input');
+      },
+      send: function (expr, mode) {
+        post({
+          command: 'evaluate',
+          columnId: col.id,
+          oop: col.oop,
+          expression: expr,
+          mode: mode,
+        });
+      },
+      syncText: function (text) {
+        col.evalText = text;
+        showClearWhenTyped(col);
+      },
+      /**
+       * The chord hint is the pane's status surface: the output area belongs to what the stone
+       * returned, and a toast is far too loud for a keystroke. It is borrowed and handed back.
+       */
+      showStatus: function (text) {
+        var hint = col.el.contentPane.querySelector('.eval-hint');
+        if (!hint) return;
+        hint.textContent = text;
+        hint.classList.add('flash');
+      },
+      restStatus: function () {
+        var hint = col.el.contentPane.querySelector('.eval-hint');
+        if (!hint) return;
+        hint.classList.remove('flash');
+        setChordHint(col, chordLegend());
+      },
+      setChordArmed: function (armed) {
+        // Mirrored on the column because setChordHint styles the line from it.
+        col.chordArmed = armed;
+        setChordHint(col, armed ? EvaluatePane.chordLabel() + '&#8230;' : chordLegend());
+      },
+      clearPane: function () {
+        col.evalText = '';
+        col.evalOut = null;
+        renderEval(col);
+        var input = col.el.contentPane.querySelector('.eval-input');
+        if (input) input.focus();
+      },
+      // Escape on an already-empty box: the debugger's pane closes on it, but this one is a tab in a
+      // column and has no closed state to reach, so there is nothing to do.
+    });
+    return col.evalPane;
+  }
 
-  /** The chord prefix as this platform writes it, for buttons and the hint. */
-  function chordLabel() {
-    var platform = (typeof navigator !== 'undefined' && navigator.platform) || '';
-    return platform.indexOf('Mac') === 0 ? 'Cmd+K' : 'Ctrl+K';
+  /** What the chord-hint line says when nothing is half-typed. */
+  function chordLegend() {
+    return EvaluatePane.chordLabel() + ' D &#183; E &#183; I';
   }
 
   /**
@@ -943,25 +987,18 @@
 
   function renderEval(col) {
     var pane = col.el.contentPane;
-    var mod = chordLabel();
     // A chord left half-typed when the tab was switched away is not still
     // waiting for its second key when the pane comes back.
-    col.chordArmed = false;
+    evalPaneFor(col).disarm();
     pane.innerHTML =
       '<div class="eval">' +
       '<div class="toolbar">' +
-      '<button class="btn" data-eval="display" title="' +
-      mod +
-      ' D">Display It</button>' +
-      '<button class="btn" data-eval="execute" title="' +
-      mod +
-      ' E">Execute It</button>' +
-      '<button class="btn" data-eval="inspect" title="' +
-      mod +
-      ' I">Inspect It</button>' +
+      '<button class="btn" data-eval="display">Display It</button>' +
+      '<button class="btn" data-eval="execute">Execute It</button>' +
+      '<button class="btn" data-eval="inspect">Inspect It</button>' +
       '<span class="eval-hint">' +
-      mod +
-      ' D &#183; E &#183; I</span>' +
+      chordLegend() +
+      '</span>' +
       '</div>' +
       '<div class="eval-body">' +
       '<div class="eval-editor">' +
@@ -981,6 +1018,11 @@
       renderEvalVariables(col) +
       '</div>' +
       '</div>';
+    // Every key this pane answers to is advertised WITHOUT costing a pixel of layout: the chord
+    // legend already had a line, the rest ride on tooltips and on the placeholder, which occupies
+    // space the empty box was spending on nothing. The wording is the shared pane's, so this tab and
+    // the debugger's cannot describe the same gesture differently.
+    EvaluatePane.applyLabels(pane);
     ensureEvalVariables(col);
     var input = pane.querySelector('.eval-input');
     input.value = col.evalText;
@@ -990,57 +1032,19 @@
       showClearWhenTyped(col);
     });
     pane.querySelector('.eval').addEventListener('keydown', function (ev) {
-      evalKeydown(col, ev);
+      evalPaneFor(col).keydown(ev);
     });
     input.addEventListener('blur', function () {
-      disarmChord(col);
+      evalPaneFor(col).disarm();
     });
   }
 
-  /**
-   * Half-typed chords are the reason this is a state machine rather than a
-   * modifier test: the closing key of `Ctrl+K D` arrives on its own, and would
-   * otherwise be a `d` typed into the expression. Anything that isn't a chord
-   * key disarms and is typed as usual, so a stray Ctrl+K costs one keystroke
-   * and never a swallowed character.
-   */
-  function evalKeydown(col, ev) {
-    if (col.chordArmed) {
-      disarmChord(col);
-      var action = EVAL_CHORD[String(ev.key).toLowerCase()];
-      if (!action) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      runEval(col, action);
-      return;
-    }
-    if ((ev.ctrlKey || ev.metaKey) && String(ev.key).toLowerCase() === 'k') {
-      ev.preventDefault();
-      ev.stopPropagation();
-      armChord(col);
-      return;
-    }
-    if (ev.key === 'Escape') {
-      disarmChord(col);
-      return;
-    }
-    // Ctrl+Enter stays as it was: the one-key way to see a result, for anyone
-    // who never reaches for the chord.
-    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      runEval(col, 'display');
-    }
-  }
-
-  function armChord(col) {
-    col.chordArmed = true;
-    setChordHint(col, chordLabel() + '&#8230;');
-  }
-
-  function disarmChord(col) {
-    if (!col.chordArmed) return;
-    col.chordArmed = false;
-    setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
+  /** Draw the answer (or the error) in place, leaving the box, its caret and its focus alone. */
+  function renderEvalOut(col) {
+    var out = col.el.contentPane.querySelector('.eval-out');
+    if (!out) return;
+    out.textContent = col.evalOut ? col.evalOut.text : '';
+    out.classList.toggle('error', !!(col.evalOut && !col.evalOut.ok));
   }
 
   function setChordHint(col, html) {
@@ -1082,26 +1086,6 @@
   function showClearWhenTyped(col) {
     var wrap = col.el.contentPane.querySelector('.eval-input-wrap');
     if (wrap) wrap.classList.toggle('has-text', col.evalText.length > 0);
-  }
-
-  /** Empty the expression and whatever the last one answered. */
-  function clearEval(col) {
-    col.evalText = '';
-    col.evalOut = null;
-    renderEval(col);
-    var input = col.el.contentPane.querySelector('.eval-input');
-    if (input) input.focus();
-  }
-
-  function runEval(col, mode) {
-    if (!col.evalText.trim()) return;
-    post({
-      command: 'evaluate',
-      columnId: col.id,
-      oop: col.oop,
-      expression: col.evalText,
-      mode: mode,
-    });
   }
 
   // ── Context menu ──────────────────────────
@@ -1306,12 +1290,12 @@
         return;
       }
       if (ev.target.closest('[data-eval-clear]')) {
-        clearEval(col);
+        evalPaneFor(col).clear();
         return;
       }
       var evalBtn = ev.target.closest('[data-eval]');
       if (evalBtn) {
-        runEval(col, evalBtn.dataset.eval);
+        evalPaneFor(col).run(evalBtn.dataset.eval);
         return;
       }
     });
@@ -1464,7 +1448,12 @@
         col = Columns.get(msg.columnId);
         if (!col) return;
         col.evalOut = { ok: msg.ok, text: msg.text };
-        if (col.activeTab === 'eval') renderEval(col);
+        // Update the OUTPUT only. Re-rendering the whole pane here swapped the textarea out from
+        // under the user on every run, taking the caret and the focus with it — so after
+        // Shift+Enter the keyboard was nowhere and the next keystroke went to the panel rather than
+        // the box. This is the hazard refreshEvalVariables already avoids for the variables list;
+        // the result has the same claim on being drawn in place.
+        if (col.activeTab === 'eval') renderEvalOut(col);
         return;
       case 'setSlotResult':
         col = Columns.get(msg.columnId);

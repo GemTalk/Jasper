@@ -2,12 +2,16 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { evaluatePaneHtml } from '../debuggerEvalPane';
 
-// Evaluate debuggerView.js in jsdom so it registers the global DebuggerView,
-// exactly as the webview does when it injects the file as a <script> tag.
+// Evaluate the webview's scripts in jsdom so they register their globals, exactly as the panel does
+// when it injects them as <script> tags. evaluatePane.js comes first: it carries the evaluate pane's
+// keys and expression history, shared with the Inspector's tab, and debuggerView.js wires its pane
+// through the global it registers.
 beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../debuggerView.js'), 'utf8');
-  new Function(source)();
+  for (const file of ['../webview/evaluatePane.js', '../debuggerView.js']) {
+    new Function(fs.readFileSync(path.resolve(__dirname, file), 'utf8'))();
+  }
 });
 
 interface FrameSummary {
@@ -89,7 +93,8 @@ interface Refs {
   toolbar: HTMLElement;
   runToCursorBtn?: HTMLButtonElement;
   variables: HTMLElement;
-  evalInput: HTMLInputElement;
+  evalInput: HTMLTextAreaElement;
+  evalToolbar?: HTMLElement;
   evalResult: HTMLElement;
   evalToggle?: HTMLElement;
   evalClear?: HTMLElement;
@@ -144,7 +149,7 @@ function setup(
     <div id="error"></div>
     <div id="dnuBar"></div>
     <div class="main"><ul id="stack"></ul><div id="variables"></div></div>
-    <div id="evalbar"><div id="evalToggle">Evaluate…</div><input id="evalInput"><button id="evalClear">✕</button><div id="evalResult"></div></div>
+    ${evaluatePaneHtml()}
     <div id="ctxmenu"><div id="copyFrameItem">Copy Frame</div><div id="browseFrameItem" style="display:none;">Browse</div><div id="homeFrameItem" style="display:none;">Go to home method</div><div id="frameImplItem" style="display:none;">Implement in receiver</div><div id="frameEvalItem">Evaluate in this frame</div></div>
     <div id="varctxmenu"><div id="varInspectItem">Inspect</div></div>
     <div id="busyOverlay" class="busy-overlay" style="display:none;"><div class="busy-box"><div class="busy-spinner"></div><button id="busyCancel" style="display:none;">Cancel</button></div></div>`;
@@ -170,7 +175,8 @@ function setup(
     toolbar: document.getElementById('toolbar')!,
     runToCursorBtn: document.getElementById('runToCursorBtn') as HTMLButtonElement,
     variables: document.getElementById('variables')!,
-    evalInput: document.getElementById('evalInput') as HTMLInputElement,
+    evalInput: document.getElementById('evalInput') as HTMLTextAreaElement,
+    evalToolbar: document.getElementById('evalToolbar')!,
     evalResult: document.getElementById('evalResult')!,
     evalToggle: document.getElementById('evalToggle')!,
     evalClear: document.getElementById('evalClear')!,
@@ -697,7 +703,7 @@ describe('DebuggerView.init — progress indicator (#9)', () => {
       const { refs } = setupIdle();
 
       refs.evalInput.value = '3 + 4';
-      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
       vi.advanceTimersByTime(500);
 
       expect(refs.busyOverlay!.style.display).toBe('');
@@ -1209,23 +1215,59 @@ describe('DebuggerView.init — Run to Cursor (#2)', () => {
 });
 
 describe('DebuggerView.init — eval bar', () => {
-  it('posts evalInFrame for the selected frame on Enter (trimmed, non-empty)', () => {
+  it('posts evalInFrame for the selected frame on Shift+Enter (trimmed, non-empty)', () => {
     const { refs, vscode } = setup();
     refs.evalInput.value = '  amount * 2  ';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+    // Shift+Enter is Display It, and the pane carries the mode so the host does not have to guess
+    // which of the three the gesture meant (see evaluateMode.ts). It took the job over from bare
+    // Enter when this box became multi-line: a pane where Enter runs cannot type a second line.
     expect(vscode.postMessage).toHaveBeenCalledWith({
       command: 'evalInFrame',
       level: 1,
       expr: 'amount * 2',
+      mode: 'display',
     });
   });
 
-  it('does not post on Enter when the input is blank', () => {
+  it('does not post on Shift+Enter when the input is blank', () => {
     const { refs, vscode } = setup();
     vi.mocked(vscode.postMessage).mockClear();
     refs.evalInput.value = '   ';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
     expect(vscode.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('forgets the previous halt’s answer when a fresh stack arrives', () => {
+    /**
+     * The result row doubles as the pane's status line: a message borrows it and hands it back to
+     * whatever the row shows at rest. A new stack empties the row, so rest is now nothing — and a
+     * row that still remembered the last halt's answer put THAT back a second and a half after the
+     * next navigation message, under a stack it did not belong to.
+     */
+    vi.useFakeTimers();
+    try {
+      const { refs } = setup();
+      refs.evalInput.value = '1 + 1';
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'evalResult', value: '2' } }),
+      );
+      expect(refs.evalResult.textContent).toBe('2');
+
+      window.dispatchEvent(
+        new MessageEvent('message', { data: { command: 'init', errorMessage: '', stack: STACK } }),
+      );
+      // Ctrl+Up with the just-run expression still in the box has nowhere to step back to, so it
+      // borrows the row to say so.
+      refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', ctrlKey: true }));
+      expect(refs.evalResult.textContent).toBe('Oldest expression');
+      vi.advanceTimersByTime(2000);
+
+      expect(refs.evalResult.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -1331,11 +1373,13 @@ describe('DebuggerView.init — collapsible eval bar', () => {
     expect(document.body.classList.contains('eval-collapsed')).toBe(true);
   });
 
-  it('still evaluates on Enter once open', () => {
+  it('still evaluates on Shift+Enter once open', () => {
     const { refs, vscode } = setup();
     refs.evalToggle!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     refs.evalInput.value = 'self foo';
-    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    refs.evalInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
 
     expect(vscode.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'evalInFrame', expr: 'self foo' }),
@@ -1620,7 +1664,8 @@ describe('DebuggerView.init — resizable splitter', () => {
       error: document.getElementById('error')!,
       toolbar: document.getElementById('toolbar')!,
       variables: document.getElementById('variables')!,
-      evalInput: document.getElementById('evalInput') as HTMLInputElement,
+      evalInput: document.getElementById('evalInput') as HTMLTextAreaElement,
+      evalToolbar: document.getElementById('evalToolbar')!,
       evalResult: document.getElementById('evalResult')!,
       main,
       splitter: document.getElementById('splitter')!,

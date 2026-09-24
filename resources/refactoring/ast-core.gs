@@ -11764,59 +11764,76 @@ stop
 
 ! Extension methods
 
-category: '*ast-kernel-core'
-method: Behavior
-parseTreeFor: aSymbol
-	^ RBParser parseMethod: (self sourceCodeAt: aSymbol) onError: [ :msg :pos | ^ nil ]
+doit
+(Behavior includesSelector: #'parseTreeFor:') ifFalse: [
+  Behavior
+    compileMethod: 'parseTreeFor: aSymbol
+	^ RBParser parseMethod: (self sourceCodeAt: aSymbol) onError: [ :msg :pos | ^ nil ]'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: Boolean
-rbStoreOn: aStream
+doit
+(Boolean includesSelector: #'rbStoreOn:') ifFalse: [
+  Boolean
+    compileMethod: 'rbStoreOn: aStream
   aStream nextPutAll: self asString
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: CharacterCollection
-rbStoreOn: aStream
+doit
+(CharacterCollection includesSelector: #'rbStoreOn:') ifFalse: [
+  CharacterCollection
+    compileMethod: 'rbStoreOn: aStream
   "Print inside string quotes, doubling inbedded quotes."
 
   | x |
-  aStream nextPut: $'.
+  aStream nextPut: $''.
   1 to: self size do: [ :i | 
     aStream nextPut: (x := self at: i).
-    x = $'
+    x = $''
       ifTrue: [ aStream nextPut: x ] ].
-  aStream nextPut: $'
-
+  aStream nextPut: $''
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: DoubleByteSymbol
-rbStoreOn: aStream
+doit
+(DoubleByteSymbol includesSelector: #'rbStoreOn:') ifFalse: [
+  DoubleByteSymbol
+    compileMethod: 'rbStoreOn: aStream
   aStream nextPut: $#.
   super rbStoreOn: aStream
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-classmethod: Number
-rwFromStream: aStream
-  "BinaryExponent = ( 'e' | 'E' | 'd' | 'D' | 'q') ['-' | '+'] Digits
-   DecimalExponent = ( 'f' | 'F' ) ['-' | '+'] Digits
-   Digit = '0' | '1' | '2' | ... | '9'
+doit
+(Number class includesSelector: #'rwFromStream:') ifFalse: [
+  Number class
+    compileMethod: 'rwFromStream: aStream
+  "BinaryExponent = ( ''e'' | ''E'' | ''d'' | ''D'' | ''q'') [''-'' | ''+''] Digits
+   DecimalExponent = ( ''f'' | ''F'' ) [''-'' | ''+''] Digits
+   Digit = ''0'' | ''1'' | ''2'' | ... | ''9''
    Digits = Digit {Digit}
    Exponent = BinaryExponent | DecimalExponent | ScaledDecimalExponent | FixedPointExponent
-   FractionalPart = '.' Digits [Exponent]
-   FixedPointExponent = 'p' [ ['-' | '+'] Digits ]
-   Number = [ - ] RadixedLiteral | [ '-' ] NumericLiteral | RadixedLiteralNegBody
-   Numeric = Digit | 'A' | 'B' | ... e 'Z'
+   FractionalPart = ''.'' Digits [Exponent]
+   FixedPointExponent = ''p'' [ [''-'' | ''+''] Digits ]
+   Number = [ - ] RadixedLiteral | [ ''-'' ] NumericLiteral | RadixedLiteralNegBody
+   Numeric = Digit | ''A'' | ''B'' | ... e ''Z''
    NumericLiteral = Digits ( [FractionalPart] | [Exponent] )
    Numerics = Numeric { Numeric }
-   RadixedLiteral = Digits ( '#' | 'r' ) Numerics
-   RadixedLiteralNegBody =  Digits ( '#' | 'r' ) '-' Numerics
-   ScaledDecimalExponent = 's' [ ['-' | '+'] Digits ]
+   RadixedLiteral = Digits ( ''#'' | ''r'' ) Numerics
+   RadixedLiteralNegBody =  Digits ( ''#'' | ''r'' ) ''-'' Numerics
+   ScaledDecimalExponent = ''s'' [ [''-'' | ''+''] Digits ]
 "
   | ch integerPart sign dCount |
   self _checkReadStream: aStream forClass: CharacterCollection.
@@ -11859,40 +11876,60 @@ rwFromStream: aStream
     ^ BinaryFloat _finishFromStream: aStream sign: sign integerPart: integerPart .
   ].
   sign == $- ifTrue:[ ^ 0 - integerPart ].
-  ^ integerPart
+  ^ integerPart'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: Number
-rbStoreOn: aStream
+doit
+(Number includesSelector: #'rbStoreOn:') ifFalse: [
+  Number
+    compileMethod: 'rbStoreOn: aStream
   self printOn: aStream
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: Object
-acceptVisitor: aVisitor
-
+doit
+(Object includesSelector: #'acceptVisitor:') ifFalse: [
+  Object
+    compileMethod: 'acceptVisitor: aVisitor
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: Object
-isValue
+doit
+(Object includesSelector: #'isValue') ifFalse: [
+  Object
+    compileMethod: 'isValue
 
-	^false
+	^false'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: QuadByteSymbol
-rbStoreOn: aStream
+doit
+(QuadByteSymbol includesSelector: #'rbStoreOn:') ifFalse: [
+  QuadByteSymbol
+    compileMethod: 'rbStoreOn: aStream
   aStream nextPut: $#.
   super rbStoreOn: aStream
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: SequenceableCollection
-rbStoreElementsFrom: firstIndex to: lastIndex on: aStream
+doit
+(SequenceableCollection includesSelector: #'rbStoreElementsFrom:to:on:') ifFalse: [
+  SequenceableCollection
+    compileMethod: 'rbStoreElementsFrom: firstIndex to: lastIndex on: aStream
   | noneYet defaultElement arrayElement |
   noneYet := true.
   defaultElement := nil.
@@ -11903,41 +11940,56 @@ rbStoreElementsFrom: firstIndex to: lastIndex on: aStream
         noneYet
           ifTrue: [ noneYet := false ]
           ifFalse: [ aStream nextPut: $; ].
-        aStream nextPutAll: ' at: '.
+        aStream nextPutAll: '' at: ''.
         index rbStoreOn: aStream.
-        aStream nextPutAll: ' put: '.
+        aStream nextPutAll: '' put: ''.
         arrayElement rbStoreOn: aStream] ].
   ^ noneYet
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: SequenceableCollection
-rbStoreOn: aStream
-  aStream nextPutAll: '(('.
+doit
+(SequenceableCollection includesSelector: #'rbStoreOn:') ifFalse: [
+  SequenceableCollection
+    compileMethod: 'rbStoreOn: aStream
+  aStream nextPutAll: ''((''.
   aStream nextPutAll: self class name.
-  aStream nextPutAll: ' new: '.
+  aStream nextPutAll: '' new: ''.
   self size rbStoreOn: aStream.
   aStream nextPut: $).
   (self rbStoreElementsFrom: 1 to: self size on: aStream)
-    ifFalse: [ aStream nextPutAll: '; yourself' ].
+    ifFalse: [ aStream nextPutAll: ''; yourself'' ].
   aStream nextPut: $)
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: Symbol
-rbStoreOn: aStream
+doit
+(Symbol includesSelector: #'rbStoreOn:') ifFalse: [
+  Symbol
+    compileMethod: 'rbStoreOn: aStream
   aStream nextPut: $#.
   super rbStoreOn: aStream
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
-category: '*ast-kernel-core'
-method: UndefinedObject
-rbStoreOn: aStream
+doit
+(UndefinedObject includesSelector: #'rbStoreOn:') ifFalse: [
+  UndefinedObject
+    compileMethod: 'rbStoreOn: aStream
   aStream nextPutAll: self asString
-
+'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-kernel-core' ].
+true.
 %
 
 ! Class-side initializers (topaz file-in does not auto-run them)
