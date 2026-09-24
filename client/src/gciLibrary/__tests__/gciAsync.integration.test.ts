@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { useIntegrationTest, type GciTestContext } from '../../__tests__/useIntegrationTest';
@@ -15,22 +13,6 @@ describe('GCI async execution, break, and debugging (integration)', () => {
     gci = testContext.gciLibrary;
     session = testContext.session;
     withTransientSession = testContext.withTransientSession;
-  });
-
-  // The GemTrace test makes the GCI write gci<client pid>trace.log, flushed on
-  // logout. Not into cwd: 3.7.2+ writes under $GEMSTONE_GLOBAL_DIR/log/, older
-  // releases under a hardcoded /opt/gemstone/log/ (and dump to stdout when that
-  // doesn't exist). Only this process's own file is removed, so a trace another
-  // run left behind for debugging survives. The env var is unset when
-  // .env.test is missing; the harness already fails for that, so skip its dir
-  // rather than throw a second, unrelated error from path.join.
-  afterAll(() => {
-    const traceLog = `gci${process.pid}trace.log`;
-    const globalDir = process.env.VITE_GEMSTONE_GLOBAL_DIR;
-    const dirs = [...(globalDir ? [path.join(globalDir, 'log')] : []), '/opt/gemstone/log'];
-    for (const dir of dirs) {
-      fs.rmSync(path.join(dir, traceLog), { force: true });
-    }
   });
 
   describe('GciTsSocket', () => {
