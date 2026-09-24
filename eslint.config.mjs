@@ -63,6 +63,8 @@ const GCI_LIBRARY_LOGIN =
   'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. `GciLibrary.login` returns a session the harness never armed with the commit guard.';
 const LOGIN_CREDENTIALS =
   'Prefer letting `useIntegrationTest` read the connection environment. A test reaching for the password is assembling its own login, and that session is not armed with the commit guard.';
+const TELEMETRY_OUTSIDE_EXTENSION_HOST =
+  "telemetry.ts (and the @vscode/extension-telemetry package it wraps) must not reach the server or MCP server. Neither runs inside the extension host, so there is nothing there to enforce the user's telemetry setting.";
 // Every name the connection helpers give the password. Shared by the two
 // selectors below, which differ only in the syntax they read it with.
 const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
@@ -131,6 +133,18 @@ const TS_EXTENSION_IMPORT = {
   message:
     'Import the module without the `.ts` extension. An explicit `.ts` specifier is for modules that must also load under Node type-stripping, and the exceptions are listed in eslint.config.mjs.',
 };
+
+// telemetry.ts constructs a `@vscode/extension-telemetry` reporter, which
+// requires the `vscode` module and exists to funnel every event through the
+// extension host's telemetry setting. Neither the LSP server nor the MCP
+// server runs inside that host -- there is nothing there to read the user's
+// setting -- so an import of either one must never reach those workspaces.
+// The esbuild metafile check in esbuild.mjs backs this up, and is the one a
+// re-export or facade module cannot get past.
+const NO_TELEMETRY_IN_SERVER_OR_MCP = [
+  { group: ['**/telemetry'], message: TELEMETRY_OUTSIDE_EXTENSION_HOST },
+  { group: ['@vscode/extension-telemetry'], message: TELEMETRY_OUTSIDE_EXTENSION_HOST },
+];
 
 // Production code must not call a `GciTs*` binding that may be absent from the
 // loaded library. Those bind through `optionalFunc`, so Jasper still *loads*
@@ -649,6 +663,24 @@ export default tseslint.config(
             TS_EXTENSION_IMPORT,
           ],
         },
+      ],
+    },
+  },
+  {
+    // Keeps telemetry out of the workspaces that can't enforce the user's
+    // setting for it (see NO_TELEMETRY_IN_SERVER_OR_MCP above). Placed after
+    // every other block configuring this rule, since flat config replaces a
+    // rule's options per matching file rather than merging them (see
+    // TS_EXTENSION_IMPORT above for why) -- so this restates TS_EXTENSION_IMPORT
+    // to keep that ban alive here too. It does not restate the forkGem/GCI
+    // capability patterns from the test-confinement blocks above: those
+    // concern client/src/gciLibrary, which neither server/ nor mcp-server/
+    // reference, so dropping them here bans nothing that could otherwise fire.
+    files: ['server/**/*.ts', 'mcp-server/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        { patterns: [...NO_TELEMETRY_IN_SERVER_OR_MCP, TS_EXTENSION_IMPORT] },
       ],
     },
   },
