@@ -189,10 +189,14 @@ export class VersionManager {
     // directory, or a pre-release spelling this client does not know yet. It can
     // be neither filtered nor ordered, and asking either of the two comparisons
     // below to judge it threw, which cost the whole list rather than the one
-    // row. Someone put it on this disk, so it is listed last and named in the
-    // log rather than dropped.
+    // row. One on this disk was put there by someone, so it is listed last and
+    // named in the log rather than dropped. One only the catalog offers is
+    // dropped, the way the minimum filter drops an old one: it cannot be checked
+    // against that minimum, and nobody asked for it.
     const readable = versions.filter((v) => isComparableGemStoneVersion(v.version));
-    const unreadable = versions.filter((v) => !isComparableGemStoneVersion(v.version));
+    const unreadable = versions.filter(
+      (v) => !isComparableGemStoneVersion(v.version) && (v.local || v.extracted || v.downloaded),
+    );
     // Said once, not on every rebuild: the panel re-reads the disk on each
     // refresh and twice on each open, and the same folder repeating down the log
     // reads as something happening again rather than a state that has not moved.
@@ -207,8 +211,8 @@ export class VersionManager {
             `that cannot be compared cannot be ordered or checked against the minimum supported ` +
             `version (${MINIMUM_SUPPORTED_GEMSTONE_VERSION}). A version is three or four numbers ` +
             `with an optional pre-release tag: 3.7.5, 3.7.4.3, 4.0.0-a3. The name comes from the ` +
-            `folder GemStone64Bit<version>${this.storage.getPlatformSuffix()} in ` +
-            `${this.storage.getRootPath()}; renaming the folder is what changes it.`,
+            `folder GemStone64Bit<version>${this.storage.getPlatformSuffix()}, or the archive ` +
+            `of the same name, in ${this.storage.getRootPath()}; renaming it is what changes it.`,
         );
       }
     }

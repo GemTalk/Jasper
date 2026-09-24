@@ -37,8 +37,9 @@ function parseExtractedRows(out: string, prefix: string, suffix: string): Extrac
 
 export class SysadminStorage {
   /** The last unreadable-directory line written, so one that has not changed is
-   *  not written again on every rescan. */
-  private static lastUnreadable = '';
+   *  not written again on every rescan. A successful read clears it, so the
+   *  same failure coming back is written again. */
+  private lastUnreadable = '';
 
   /**
    * The names in a directory, or none. A directory that is there but cannot be
@@ -48,9 +49,11 @@ export class SysadminStorage {
    * rather than the listing that wanted it. `existsSync` cannot stand in for
    * this: it answers only whether the path is there.
    */
-  private static entriesIn(dir: string): string[] {
+  private entriesIn(dir: string): string[] {
     try {
-      return fs.readdirSync(dir);
+      const entries = fs.readdirSync(dir);
+      this.lastUnreadable = '';
+      return entries;
     } catch (e) {
       // Every caller of this reads the root path, so the setting that names it is
       // the thing to say: it is where a reader goes either to fix the folder or
@@ -59,8 +62,8 @@ export class SysadminStorage {
         `Could not read ${dir} — ${e instanceof Error ? e.message : String(e)}. ` +
         `Jasper lists nothing in it: check the folder's permissions, or set ` +
         `gemstone.rootPath to somewhere it can read.`;
-      if (line !== SysadminStorage.lastUnreadable) {
-        SysadminStorage.lastUnreadable = line;
+      if (line !== this.lastUnreadable) {
+        this.lastUnreadable = line;
         appendSysadmin(line);
       }
       return [];
@@ -298,7 +301,7 @@ export class SysadminStorage {
     const rootPath = this.getRootPath();
     if (!fs.existsSync(rootPath)) return [];
     const result: ExtractedVersionInfo[] = [];
-    for (const entry of SysadminStorage.entriesIn(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) continue;
       const full = path.join(rootPath, entry);
       let isLocal: boolean;
@@ -399,7 +402,7 @@ export class SysadminStorage {
     const prefix = SysadminStorage.WIN_CLIENT_PREFIX;
     const suffix = SysadminStorage.WIN_CLIENT_SUFFIX;
     const versions: string[] = [];
-    for (const entry of SysadminStorage.entriesIn(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(suffix)) {
         const dirPath = path.join(rootPath, entry);
         if (fs.statSync(dirPath).isDirectory()) {
@@ -419,7 +422,7 @@ export class SysadminStorage {
     const prefix = SysadminStorage.WIN_CLIENT_PREFIX;
     const suffix = SysadminStorage.WIN_CLIENT_SUFFIX;
     const files = new Map<string, number>();
-    for (const entry of SysadminStorage.entriesIn(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(`${suffix}.zip`)) {
         const filePath = path.join(rootPath, entry);
         if (fs.statSync(filePath).isFile()) {
@@ -465,7 +468,7 @@ export class SysadminStorage {
 
     const rootPath = this.getRootPath();
     if (!fs.existsSync(rootPath)) return files;
-    for (const entry of SysadminStorage.entriesIn(rootPath)) {
+    for (const entry of this.entriesIn(rootPath)) {
       if (entry.startsWith(prefix) && entry.endsWith(`${suffix}.${ext}`)) {
         const filePath = path.join(rootPath, entry);
         try {

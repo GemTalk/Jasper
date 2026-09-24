@@ -562,6 +562,8 @@ describe('a product directory whose version number cannot be read', () => {
   // filter threw on one it could not parse — taking the whole list, and the
   // panel built from it, rather than the single row.
   onSupportedPosixIt('costs its own place in the order, not the whole list', () => {
+    // The mock is shared by every test in this file and nothing resets it.
+    vi.mocked(appendSysadmin).mockClear();
     const storage = new SysadminStorage();
     const manager = new VersionManager(storage);
     const suffix = storage.getPlatformSuffix();
@@ -573,7 +575,27 @@ describe('a product directory whose version number cannot be read', () => {
 
     // Readable rows keep their order, newest first; the unreadable one goes last.
     expect(versions.map((v) => v.version)).toEqual(['3.7.5', '3.6.6', '3.7']);
-    expect(appendSysadmin).toHaveBeenCalledWith(expect.stringContaining('3.7'));
+    expect(appendSysadmin).toHaveBeenCalledWith(
+      expect.stringContaining('could not read the version number in 3.7 '),
+    );
+  });
+
+  // Nothing on this disk vouches for it, and it cannot be checked against the
+  // minimum — so it is dropped the way an old catalog version is.
+  onSupportedPosixIt('is dropped when only the catalog offers it', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const entry = (version: string) => ({
+      version,
+      fileName: `GemStone64Bit${version}-x86_64.Linux.zip`,
+      url: '',
+      date: '01-Jan-2026',
+      size: 1,
+    });
+
+    const versions = manager.versionsFrom([entry('3.7.5'), entry('3.7')]);
+
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5']);
   });
 
   // The panel re-reads the disk twice onevery open and again on every refresh, so a

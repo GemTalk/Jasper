@@ -72,7 +72,7 @@ export function __setConfig(
   key: string,
   value: unknown,
   /** Which layer the value is to look as though it came from. */
-  scope: 'global' | 'workspace' | 'workspaceFolder' = 'global',
+  scope: 'global' | 'workspace' = 'global',
 ): void {
   if (!configStore[section]) {
     configStore[section] = {};

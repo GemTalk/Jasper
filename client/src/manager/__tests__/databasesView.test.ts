@@ -197,7 +197,7 @@ describe('where the panel says it is looking', () => {
     expect(root.querySelector('.gm-where')?.textContent).toContain('/somewhere/else');
   });
 
-  // The same key can be written in User, Workspace or Folder settings, and which
+  // The same key can be written in User or Workspace settings, and which
   // layer won is the difference between two windows reading two folders.
   it('names the layer the folder setting came from, and opens it', () => {
     mount(state({ rootFrom: 'Workspace settings' }));
@@ -214,7 +214,7 @@ describe('where the panel says it is looking', () => {
   // databases yet", which reads as a contradiction until this says otherwise.
   it('says logins are kept by Jasper rather than in that folder', () => {
     mount(state({ logins: [{ label: 'DataCurator on gs64stone', stone: 'gs64stone' }] }));
-    expect(root.querySelector('.gm-where:last-of-type')?.textContent).toContain(
+    expect(root.querySelector('.gm-where-logins')?.textContent).toContain(
       'kept by Jasper settings',
     );
   });
@@ -303,6 +303,16 @@ describe('when the host says an action failed', () => {
     fromHost({ command: 'actionFailed', message: 'Invalid version: 3.7' });
     click('showLog');
     expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'showLog' }));
+  });
+
+  // Show log is how a reader follows the banner up, and any state push while
+  // they are in the Output channel redraws the panel.
+  it('keeps it through the next render after Show log', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'EACCES: permission denied' });
+    click('showLog');
+    api().render(state());
+    expect(root.textContent).toContain('permission denied');
   });
 
   // A panel with nothing wrong has nothing in the log worth reading, so the way

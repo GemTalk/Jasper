@@ -240,6 +240,9 @@ const OPENABLE_SETTINGS = ['gemstone.rootPath'];
  * default. For a value that came from the workspace that showed a different
  * value from the one the panel had just named, which reads as the two
  * disagreeing rather than as two layers of the same key.
+ *
+ * There is no Folder layer: `getRootPath()` reads without a resource, so a
+ * folder-level value never wins, and an unscoped `inspect()` never reports one.
  */
 function settingLayer(key: string): {
   label: string;
@@ -247,13 +250,6 @@ function settingLayer(key: string): {
   target: vscode.ConfigurationTarget;
 } {
   const inspected = vscode.workspace.getConfiguration('gemstone').inspect(key);
-  if (inspected?.workspaceFolderValue !== undefined) {
-    return {
-      label: 'Folder settings',
-      command: 'workbench.action.openFolderSettings',
-      target: vscode.ConfigurationTarget.WorkspaceFolder,
-    };
-  }
   if (inspected?.workspaceValue !== undefined) {
     return {
       label: 'Workspace settings',
@@ -2071,7 +2067,9 @@ th.v-num { text-align: right; }
    "which folder is this?" without a click. */
 .gm-where { display: flex; align-items: center; gap: 6px; margin: -4px 0 2px; padding: 0 2px;
   font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; }
-.gm-where:last-of-type { margin-bottom: 10px; }
+/* By class: the banners and forms that can follow are divs too, which
+   :last-of-type would count. */
+.gm-where-logins { margin-bottom: 10px; }
 .gm-where .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The setting behind the line, quieter again than the line itself. */
 .gm-where-src { opacity: 0.75; white-space: nowrap; }

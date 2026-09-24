@@ -1093,7 +1093,7 @@
       // root holding no databases at all. Where it keeps them is Jasper's
       // business: they are added and edited from the rows here and in the
       // sidebar, never by hand.
-      `<div class="gm-where">${ICONS.login}<span>${
+      `<div class="gm-where gm-where-logins">${ICONS.login}<span>${
         logins
           ? `${logins} login${logins === 1 ? '' : 's'}, kept by Jasper settings rather than in that folder`
           : 'Logins are kept by Jasper settings, not in that folder'
@@ -1521,12 +1521,17 @@
     createForm.allowNfs = false;
   }
 
+  /** Commands that only look at something — the log, a setting, the clipboard.
+   *  Pressing one is how a reader follows up a failure, not a new attempt. */
+  const LOOK_ONLY_COMMANDS = new Set(['showLog', 'openSetting', 'copyText', 'copyNetldiHost']);
+
   function post(msg) {
-    // Pressing anything retires the last failure — it described the attempt
-    // before this one, and a panel still saying "permission denied" after the
+    // A new attempt retires the last failure — it described the attempt before
+    // this one, and a panel still saying "permission denied" after the
     // permission is back is worse than saying nothing. A new failure arrives
     // with its own actionFailed, so the banner comes straight back if it has to.
-    lastFailure = '';
+    // Following the banner's own Show log must not take it away mid-read.
+    if (!LOOK_ONLY_COMMANDS.has(msg.command)) lastFailure = '';
     vscode.postMessage(msg);
   }
 

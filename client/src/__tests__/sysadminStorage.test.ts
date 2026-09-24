@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -16,6 +16,7 @@ vi.mock('../wslBridge', () => ({
 }));
 
 import { SysadminStorage } from '../sysadminStorage';
+import { appendSysadmin } from '../sysadminChannel';
 import { __setConfig, __resetConfig } from '../__mocks__/vscode';
 
 /** Run `fn` with process.platform/arch temporarily overridden, then restore. */
@@ -64,54 +65,68 @@ describe('SysadminStorage.getPlatformKey on Darwin', () => {
 });
 
 describe('a root path that cannot be read', () => {
-  /** A directory that exists and refuses to open. Root can read it anyway, so a
-   *  test run as root would prove nothing and is skipped. */
-  function unreadableRoot(): string | undefined {
-    if (process.getuid?.() === 0) return undefined;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-noperm-'));
+  /** Root can read a folder whatever its mode, so a run as root would prove
+   *  nothing — and should say it was skipped rather than report a pass. */
+  const unreadableRootIt = process.getuid?.() === 0 ? it.skip : onSupportedPosixIt;
+  let dir: string | undefined;
+
+  /** A directory that exists and refuses to open, named as the root path. */
+  function unreadableRoot(): string {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-noperm-'));
     fs.chmodSync(dir, 0o000);
     __setConfig('gemstone', 'rootPath', dir);
     return dir;
   }
 
+  afterEach(() => {
+    if (dir) {
+      fs.chmodSync(dir, 0o755);
+      fs.rmSync(dir, { recursive: true, force: true });
+      dir = undefined;
+    }
+    __resetConfig();
+  });
+
   // One of these scans runs while the extension is activating, where a throw
   // stopped every GemStone command from being registered — the panel that would
   // have reported it included.
-  onSupportedPosixIt('lists nothing rather than throwing', () => {
-    const dir = unreadableRoot();
-    if (!dir) return;
-    try {
-      const storage = new SysadminStorage();
-      expect(storage.getExtractedVersionInfos(true)).toEqual([]);
-      expect(storage.getDownloadedFiles().size).toBe(0);
-      expect(storage.getDatabases()).toEqual([]);
-    } finally {
-      fs.chmodSync(dir, 0o755);
-      fs.rmSync(dir, { recursive: true, force: true });
-      __resetConfig();
-    }
+  unreadableRootIt('lists nothing rather than throwing', () => {
+    unreadableRoot();
+    const storage = new SysadminStorage();
+    expect(storage.getExtractedVersionInfos(true)).toEqual([]);
+    expect(storage.getDownloadedFiles().size).toBe(0);
+    expect(storage.getDatabases()).toEqual([]);
   });
 
   // Listing nothing is the same answer an empty folder gives, and the panel
   // cannot say "no versions installed" about a folder it never managed to read.
-  onSupportedPosixIt('can still be told apart from an empty one', () => {
-    const dir = unreadableRoot();
-    if (!dir) return;
-    try {
-      expect(new SysadminStorage().rootPathProblem()).toContain('EACCES');
-    } finally {
-      fs.chmodSync(dir, 0o755);
-      fs.rmSync(dir, { recursive: true, force: true });
-      __resetConfig();
-    }
+  unreadableRootIt('can still be told apart from an empty one', () => {
+    unreadableRoot();
+    expect(new SysadminStorage().rootPathProblem()).toContain('EACCES');
+  });
+
+  // Said once while it stays broken, but a folder that is fixed and then breaks
+  // again is news, and the log has to say so.
+  unreadableRootIt('is named again when it breaks a second time', () => {
+    const root = unreadableRoot();
+    vi.mocked(appendSysadmin).mockClear();
+    const storage = new SysadminStorage();
+    const said = () =>
+      vi.mocked(appendSysadmin).mock.calls.filter(([line]) => line.startsWith('Could not read'));
+
+    storage.getDownloadedFiles();
+    storage.getDownloadedFiles();
+    expect(said()).toHaveLength(1);
+
+    fs.chmodSync(root, 0o755);
+    storage.getDownloadedFiles();
+    fs.chmodSync(root, 0o000);
+    storage.getDownloadedFiles();
+    expect(said()).toHaveLength(2);
   });
 
   it('reports no problem for a folder that is simply not there yet', () => {
     __setConfig('gemstone', 'rootPath', path.join(os.tmpdir(), 'jasper-absent-root-xyz'));
-    try {
-      expect(new SysadminStorage().rootPathProblem()).toBeUndefined();
-    } finally {
-      __resetConfig();
-    }
+    expect(new SysadminStorage().rootPathProblem()).toBeUndefined();
   });
 });
