@@ -3,7 +3,7 @@ import { GciLibrary, GciError } from './gciLibrary';
 import { OOP_NIL } from './gciConstants';
 import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes';
 import { logInfo } from './gciLog';
-import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
+import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 
@@ -163,7 +163,7 @@ export class SessionManager {
   private getGciLibrary(libraryPath: string): GciLibrary {
     let gci = this.gciInstances.get(libraryPath);
     if (!gci) {
-      gci = wrapWithEnhancedInspectorPerfProxy(new GciLibrary(libraryPath));
+      gci = createSessionGciLibrary(libraryPath);
       this.gciInstances.set(libraryPath, gci);
     }
     return gci;

@@ -1,6 +1,6 @@
 import type { GciError } from './gciLibrary';
 import type { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL } from './gciConstants';
+import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { logError, logInfo } from './gciLog';
 
 /**
@@ -127,9 +127,37 @@ const DRAIN_CODE = `| sink |
 sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
 sink == nil ifTrue: [''] ifFalse: [sink jasperDrain encodeAsUTF8]`;
 
+/**
+ * Switching live mode ON also drops `TranscriptStreamPortable`'s per-session
+ * mutex, because this runs at the start of every interactive execute and is
+ * therefore the one place that reliably precedes a Transcript write.
+ *
+ * That semaphore guards every `Transcript` write. A GsProcess left suspended
+ * inside its `critical:` block holds it for the life of the session, and from
+ * then on every write raises 2366 (rtErrSchedulerDeadlocked) rather than
+ * printing — [#646](https://github.com/GemTalk/Jasper/issues/646).
+ * {@link settleNbResult} clears such a process as it goes, which releases the
+ * semaphore properly; this is the backstop for the states that cannot reach,
+ * chiefly a write that already queued behind the dead holder, after which the
+ * signal goes to that dead waiter and clearing the stack no longer helps.
+ * Dropping the key is the only repair verified to work from there.
+ *
+ * Deliberately NOT done at login: SessionTemps is empty in a fresh session, so
+ * the key does not exist yet and removing it there is a no-op (verified). The
+ * repair is only ever needed mid-session.
+ *
+ * What a reset can cost, given it now runs while the session may be busy: a
+ * process still *waiting* on the old semaphore is left waiting on an object
+ * nothing will signal, and a holder that later completes signals an orphan.
+ * Both were already deadlocked against the holder, so neither loses anything
+ * that was going to work. Writes racing the swap can interleave.
+ */
 function setLiveCode(live: boolean): string {
+  const resetMutex = live
+    ? 'SessionTemps current removeKey: #TranscriptStream_SessionMutex ifAbsent: [nil].\n'
+    : '';
   return `| sink |
-sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
+${resetMutex}sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
 sink == nil ifTrue: [''] ifFalse: [(sink jasperLive: ${live}) encodeAsUTF8]`;
 }
 
@@ -224,9 +252,10 @@ export function decodeTranscriptForwarderSend(
 
 /**
  * Read a non-blocking call's result, forwarding transcript sends as they
- * arrive: on 2336, display the text via `onTranscript` and resume with an
- * async GciTsContinueWith (worker thread — the extension host stays free even
- * if the resumed code runs for minutes), looping until a real result or error.
+ * arrive: on 2336, display the text via `onTranscript` and resume with
+ * GciTsContinueWith on a koffi worker thread, so the extension host stays free
+ * even if the resumed code runs for minutes, looping until a real result or
+ * error.
  *
  * A 2336 that is NOT ours (unknown clientObject) is still continued — there is
  * no meaningful reply we can give, but abandoning it would strand the user's
@@ -234,22 +263,74 @@ export function decodeTranscriptForwarderSend(
  *
  * Errors other than 2336 are returned to the caller untouched, preserving the
  * DebuggableError flow (halts, breaks) of the calling path.
+ *
+ * A throw anywhere in the loop clears the suspended process's stack before
+ * rethrowing. The process we are resuming is, by construction, stopped INSIDE
+ * `TranscriptStreamPortable`'s `critical:` block, holding the session's
+ * Transcript semaphore. Left suspended it holds that semaphore for the life of
+ * the session and every later Transcript write raises 2366
+ * (rtErrSchedulerDeadlocked) — the failure mode of
+ * [#646](https://github.com/GemTalk/Jasper/issues/646). GciTsClearStack runs
+ * the process's `ensure:` blocks, and `critical:` releases the semaphore in
+ * one, so clearing it here is what makes the semaphore come back. Verified on
+ * a live stone: clear immediately and the next write succeeds; let one other
+ * write queue on the semaphore first and clearing is no longer enough, because
+ * the signal is handed to that now-dead waiter. Hence "immediately".
+ *
+ * `abandoned` is the runner's hard-break signal (see `pollNbToCompletion`).
+ * Once it fires the caller already has NbCancelledError, so nobody else will
+ * clear what the break stopped: a writer caught between sends is cleared
+ * rather than resumed, and the process a hard break stops is cleared too —
+ * stopped inside a write, it holds the semaphore just the same (measured on
+ * 3.6.2 and 3.7.5).
  */
 export async function settleNbResult(
   session: ActiveSession,
   onTranscript: (text: string) => void,
+  abandoned?: AbortSignal,
 ): Promise<{ result: bigint; err: GciError }> {
   let { result, err } = session.gci.GciTsNbResult(session.handle);
   while (isForwarderSendError(err)) {
-    const text = decodeTranscriptForwarderSend(session, err);
-    if (text !== null && text.length > 0) onTranscript(text);
-    ({ result, err } = await session.gci.GciTsContinueWithAsync(
-      session.handle,
-      toBigInt(err.context),
-      OOP_ILLEGAL,
-      null,
-      0,
-    ));
+    const suspended = toBigInt(err.context);
+    if (abandoned?.aborted) {
+      clearSuspendedWriter(session, suspended);
+      return { result, err };
+    }
+    try {
+      const text = decodeTranscriptForwarderSend(session, err);
+      if (text !== null && text.length > 0) onTranscript(text);
+      ({ result, err } = await session.gci.GciTsContinueWithAsync(
+        session.handle,
+        suspended,
+        OOP_ILLEGAL,
+        null,
+        0,
+      ));
+    } catch (e) {
+      clearSuspendedWriter(session, suspended);
+      throw e;
+    }
+  }
+  if (abandoned?.aborted && err.number !== 0) {
+    clearSuspendedWriter(session, toBigInt(err.context));
   }
   return { result, err };
+}
+
+/**
+ * Release the Transcript semaphore held by a process we are about to abandon.
+ * Best-effort: the session may already be unusable, and the caller is on its
+ * way out with the real error, which must not be replaced by this one.
+ */
+function clearSuspendedWriter(session: ActiveSession, gsProcess: bigint): void {
+  if (gsProcess === OOP_NIL || gsProcess === 0n) return;
+  try {
+    session.gci.GciTsClearStack(session.handle, gsProcess);
+  } catch (e) {
+    logError(
+      session.id,
+      `Could not clear the suspended Transcript writer; later Transcript writes in this ` +
+        `session may deadlock until logout: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
