@@ -210,11 +210,13 @@ describe('GCI async execution, break, and debugging (integration)', () => {
       );
       expect(success).toBe(true);
 
+      // Drain before asserting: a failed assertion here would otherwise leave
+      // the session mid-call, failing the harness's afterEach abort and with
+      // it every later test in the file.
       const { result: pollResult } = gci.GciTsNbPoll(session, 5000);
-      expect(pollResult).toBe(1);
-
-      // Drain the pending result so the session isn't left mid-call.
       const { err } = gci.GciTsNbResult(session);
+
+      expect(pollResult).toBe(1);
       expect(err.number).toBe(0);
     });
   });
