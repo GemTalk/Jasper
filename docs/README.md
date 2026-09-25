@@ -25,3 +25,4 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 
 - [npm supply-chain controls](reference/supply-chain-controls.md) — this repo's `.npmrc` keys, `allowScripts` verdicts, CI-only checks, and sunset conditions.
 - [Integration test harness](reference/integration-test-harness.md) — the `useIntegrationTest` `GciTestContext`, hook order, and the commit invariant.
+- [Telemetry events](reference/telemetry.md) — every event Jasper sends, its properties and measures, and a sample query over the data.

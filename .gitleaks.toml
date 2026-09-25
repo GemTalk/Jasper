@@ -88,6 +88,28 @@ description = "A PEM private-key header followed by actual base64 key material"
 regex = '''-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[\s\S]{0,40}?[A-Za-z0-9+/]{40,}'''
 tags = ["private-key", "key-material"]
 
+# ---------------------------------------------------------------------------
+# Jasper's own telemetry endpoint
+# ---------------------------------------------------------------------------
+# `generic-api-key` fires on the Application Insights connection string in
+# `client/src/telemetry.ts`, which esbuild inlines into `client/out/extension.js`.
+# It is allowlisted rather than removed because it is not a credential in the
+# sense the rule means: an ingestion connection string says where events land,
+# it cannot read telemetry back, and it grants nothing but the ability to send
+# events to a firehose GemTalk owns. It is also already public — committed in
+# this repository, as it must be, since a client cannot report telemetry to an
+# endpoint it does not carry.
+#
+# Scoped as narrowly as gitleaks allows: this one rule, and the one literal
+# GUID, matched against the secret rather than the line. Deliberately no
+# `paths` entry — conditions inside an allowlist are OR'd, so naming
+# `client/out/extension.js` here would exempt the whole bundle, which is the
+# file most worth scanning.
+[[allowlists]]
+description = "Jasper's own Application Insights ingestion connection string, which has to ship for telemetry to work"
+targetRules = ["generic-api-key"]
+regexes = ['''^6065b12b-2a05-4908-8777-f09bb9158ac2$''']
+
 # What this cannot do, stated plainly so the job is not mistaken for a
 # guarantee: gitleaks matches TEXT, not program semantics. Every rule and
 # every allowlist here is defeated by string concatenation —
