@@ -10,10 +10,13 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 // An install failure is routed to gciLog, whose output channel here is the
 // vscode mock's discarding `appendLine`. Console logging keeps failures
-// diagnosable -- the install runs in `beforeEach` for every test below.
+// diagnosable -- the install runs in `beforeEach` for every test below -- and
+// logInfo carries nbRunner's account of a cancel (whether the hard break was
+// accepted, whether the cancelled call was ever collected).
 vi.mock('../gciLog', async (orig) => ({
   ...(await orig()),
   logError: vi.fn((...args: unknown[]) => console.error(...args)),
+  logInfo: vi.fn((...args: unknown[]) => console.error(...args)),
 }));
 
 import { useIntegrationTest } from './useIntegrationTest';
@@ -589,10 +592,15 @@ tmps := SessionTemps current.
           cancel?.();
           await run.catch(() => {});
           await sessionFree().catch(() => {});
-          // Release the fork even when an assertion failed before go().
-          go();
-          blockingSeries(2, 50);
-          drainTranscript(session());
+          // Release the fork even when an assertion failed before go(). Best
+          // effort: a throw here would replace the assertion that failed.
+          try {
+            go();
+            blockingSeries(2, 50);
+            drainTranscript(session());
+          } catch (e) {
+            console.error('hard-break test cleanup failed:', e);
+          }
         }
       },
       30_000,

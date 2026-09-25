@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 
 import * as vscode from 'vscode';
+import { logInfo } from '../gciLog';
 import { runNbCall, pollNbResultReady, NbCancelledError, MIN_HARD_BREAK_GAP_MS } from '../nbRunner';
 import { ActiveSession } from '../sessionManager';
 
@@ -627,6 +629,11 @@ describe('after a hard break', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(session.gci.GciTsNbResult).not.toHaveBeenCalled();
+      // Silently giving up leaves a session that refuses every call with no
+      // trace of why.
+      expect(vi.mocked(logInfo)).toHaveBeenCalledWith(
+        expect.stringContaining('Gave up collecting a cancelled call'),
+      );
       const pollsAfterGivingUp = (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mock.calls
         .length;
       await vi.advanceTimersByTimeAsync(60_000);

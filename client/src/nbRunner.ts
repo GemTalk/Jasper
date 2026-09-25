@@ -163,10 +163,18 @@ function drainAbandonedCall(
   const existing = draining.get(session.id);
   if (existing) return existing;
 
+  const startedAt = Date.now();
+  // Giving up leaves the session refusing every call until logout, with
+  // nothing to show why, so say so.
+  const giveUp = (reason: string): void =>
+    logInfo(
+      `[Session ${session.id}] Gave up collecting a cancelled call after ` +
+        `${Date.now() - startedAt}ms (${reason}); the session stays busy until it is collected.`,
+    );
   const done = new Promise<void>((resolve) => {
     const attempt = (n: number): void => {
       try {
-        const { result } = pollNbResultReady(session);
+        const { result, err } = pollNbResultReady(session);
         if (result === 1) {
           const { err } = session.gci.GciTsNbResult(session.handle);
           if (disposableProcess) clearStoppedProcess(session, err?.context);
@@ -175,10 +183,16 @@ function drainAbandonedCall(
           return;
         }
         if (result === -1 || n >= DRAIN_ATTEMPTS) {
+          giveUp(
+            result === -1
+              ? `poll error ${err?.number ?? ''} ${err?.message ?? ''}`.trim()
+              : `no result after ${n + 1} polls`,
+          );
           resolve();
           return;
         }
-      } catch {
+      } catch (e) {
+        giveUp(e instanceof Error ? e.message : String(e));
         resolve();
         return;
       }
