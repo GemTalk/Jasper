@@ -7,27 +7,16 @@
 // comments on `canCommit` and `canBegin`, which record where the observed
 // behaviour differs from the obvious reading of the documentation.
 //
-// `getTransactionMode`, `isInTransaction` and `getGemAutoServiceSigAbort` have no
-// caller in the extension — `getTransactionState` answers for both halves in one
-// round trip. They are the single-fact probes the live-stone suite asks its
-// questions with, and are kept for that.
+// `getGemAutoServiceSigAbort` has no caller in the extension: it is how the
+// live-stone suite checks that `setGemAutoServiceSigAbort` landed.
 import { QueryExecutor } from './types';
 
 /**
  * The three modes a session can be in, as `System transactionMode` answers them.
- *
- * - `autoBegin` — a new transaction starts automatically after every commit or
- *   abort, so the session is always inside one. GemStone's default, and what
- *   Jasper did unconditionally before this existed. The cost is that an idle
- *   session holds a commit record open, which holds back the repository's reclaim.
- * - `manualBegin` — commit and abort leave the session *outside* a transaction;
- *   it takes an explicit begin to get back in. While outside, the stone sends a
- *   SigAbort when it wants its commit record back — see {@link setGemAutoServiceSigAbort}.
- * - `transactionless` — the session is never inside a transaction at all, where a
- *   `manualBegin` one can be, and the gem services any SigAbort itself with no
- *   client-side help. The cheapest mode for the repository, but its view can move
- *   at any moment, so what it shows may change under the reader: meant for a
- *   session left idle, not for reading something that needs to stay still.
+ * What each means for the user is {@link modeDescription}'s — the wording that
+ * ships. `autoBegin` is GemStone's default and what Jasper did unconditionally
+ * before modes could be chosen; for the SigAbort side of the other two, see
+ * {@link setGemAutoServiceSigAbort}.
  */
 export const TRANSACTION_MODES = ['autoBegin', 'manualBegin', 'transactionless'] as const;
 
@@ -57,18 +46,6 @@ export function isTransactionMode(value: string): value is TransactionMode {
 }
 
 /**
- * The session's current mode, or `undefined` when the stone answered something
- * this doesn't recognize.
- *
- * `asString` rather than `printString`: the latter answers `#'autoBegin'`, quotes
- * and all, which would have to be unwrapped here for no gain.
- */
-export function getTransactionMode(execute: QueryExecutor): TransactionMode | undefined {
-  const answer = execute('System transactionMode asString').trim();
-  return isTransactionMode(answer) ? answer : undefined;
-}
-
-/**
  * Put the session into `mode`. **This aborts the current transaction** — every
  * uncommitted change in it is discarded — so callers must have said so and had
  * the user agree first.
@@ -87,17 +64,13 @@ export function setTransactionMode(
 }
 
 /**
- * Whether the session is inside a transaction right now, or `undefined` when the
- * stone answered something unrecognized.
+ * Read the mode and the in-transaction flag together, in one round trip. Either
+ * half is `undefined` when the stone answered something this doesn't recognize.
  *
- * This — not the mode — is what decides whether a commit can succeed, so it is
- * read alongside the mode everywhere the mode is read.
+ * The flag — not the mode — is what decides whether a commit can succeed (see
+ * {@link canCommit}). `asString` rather than `printString` for the mode: the
+ * latter answers `#'autoBegin'`, quotes and all.
  */
-export function isInTransaction(execute: QueryExecutor): boolean | undefined {
-  return parseBoolean(execute('System inTransaction printString').trim());
-}
-
-/** Read the mode and the in-transaction flag together, in one round trip. */
 export function getTransactionState(execute: QueryExecutor): {
   mode: TransactionMode | undefined;
   inTransaction: boolean | undefined;
@@ -151,19 +124,20 @@ export function getGemAutoServiceSigAbort(execute: QueryExecutor): boolean | und
  * aborts or commits. Two things make an abort unsafe:
  *
  *  - uncommitted changes — it would discard them; and
- *  - being inside a `manualBegin` transaction — the abort would end a transaction
- *    the user explicitly began, and under manualBegin nothing starts another one.
+ *  - being inside a transaction outside `autoBegin` — under `manualBegin` or
+ *    `transactionless` a session is only in one because someone began it by hand,
+ *    the abort would end it, and nothing in either mode starts another.
  *
  * Under `autoBegin` the second case cannot bite: the abort immediately opens a
- * fresh transaction. Under `transactionless` there is nothing to end.
+ * fresh transaction.
  *
  * Answers `'refreshed'` or `'skipped: …'` so the caller can report which happened.
  */
 export const VIEW_REFRESH_CODE = `(System needsCommit
-  or: [System transactionMode == #manualBegin and: [System inTransaction]])
+  or: [System inTransaction and: [System transactionMode ~~ #autoBegin]])
     ifTrue: [System needsCommit
       ifTrue: ['skipped: uncommitted changes present']
-      ifFalse: ['skipped: session is inside a manual transaction']]
+      ifFalse: ['skipped: session is inside a transaction begun by hand']]
     ifFalse: [System abortTransaction. 'refreshed']`;
 
 // ── Pure enablement rules ────────────────────────────────────────────────────
@@ -261,6 +235,17 @@ export function transactionStateLabel(
   return modeLabel(mode);
 }
 
+/**
+ * {@link transactionStateLabel}, or `undefined` while the mode has not been read
+ * — for a row that should drop the segment rather than announce "Unknown".
+ */
+export function transactionStateLabelIfKnown(
+  mode: TransactionMode | undefined,
+  inTransaction: boolean | undefined,
+): string | undefined {
+  return mode === undefined ? undefined : transactionStateLabel(mode, inTransaction);
+}
+
 /** A sentence explaining what the current mode means, for a tooltip. */
 export function modeDescription(mode: TransactionMode | undefined): string {
   switch (mode) {
@@ -269,7 +254,7 @@ export function modeDescription(mode: TransactionMode | undefined): string {
     case 'manualBegin':
       return 'Commit and abort leave this session outside a transaction; Begin Transaction puts it back in. Nothing can be committed while it is outside one.';
     case 'transactionless':
-      return 'This session is not in a transaction and cannot commit until one is begun by hand. The cheapest mode for the repository — but its view can move at any moment, so what you are looking at may change under you. Good for a session left idle; not for reading something you need to stay still.';
+      return 'This session is not in a transaction, so it cannot commit; switch to Manual or Auto-Begin to write. The cheapest mode for the repository — but its view can move at any moment, so what you are looking at may change under you. Good for a session left idle; not for reading something you need to stay still.';
     default:
       return 'This session’s transaction mode could not be read from the stone.';
   }

@@ -121,13 +121,8 @@ function searchWithEnvFallback<T>(
   return search(1);
 }
 
-// Refresh the session's view of committed state if (and only if) it's safe to
-// do so. GemStone's GCI pins read-only operations to the session's transaction
-// view: a commit landed by another process (e.g. install.sh) is invisible
-// until this session aborts or commits. Auto-refresh closes the silent-stale
-// gap; VIEW_REFRESH_CODE skips the abort when the session has uncommitted work,
-// and also when it is inside a manualBegin transaction — there, the abort would
-// end a transaction someone opened by hand and nothing would start another one.
+// Refresh the session's view of committed state if it's safe to do so — when,
+// and why, is VIEW_REFRESH_CODE's doc-comment.
 function refreshIfClean(session: McpSession): void {
   try {
     session.executeFetchString(VIEW_REFRESH_CODE);
@@ -976,10 +971,8 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         //
         // Auto-refresh: abort first, when the abort would discard nothing, so
         // the rest of the report (and any follow-up read tool calls in this
-        // session) sees committed state landed by other processes.
-        // VIEW_REFRESH_CODE says when it is safe — uncommitted work, or a
-        // hand-opened manualBegin transaction — and reports why it stood down
-        // rather than silently discarding either.
+        // session) sees committed state landed by other processes. See
+        // VIEW_REFRESH_CODE.
         const code = SESSION_STATUS_CODE;
         const result = session.executeFetchString(code);
         return { content: [{ type: 'text' as const, text: result }] };

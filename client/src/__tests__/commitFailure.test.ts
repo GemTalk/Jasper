@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 
 import { COMMIT_CONFLICTS_REASON, commitFailureMessage, isCommitConflict } from '../commitFailure';
 import { GciError } from '../gciLibrary';
-import { parseTransactionConflicts } from '../queries/transactionConflicts';
+import { conflictReport, parseTransactionConflicts } from '../queries/transactionConflicts';
+import { WRITE_WRITE_ANSWER } from '../queries/__tests__/conflictFixtures';
 
 /** GemStone's whole TransactionError family (`ERR_TransactionError`, gcierr.ht). */
 const ERR_TRANSACTION_ERROR = 2738;
@@ -33,17 +34,10 @@ const REFUSED = gciError(
   COMMIT_CONFLICTS_REASON,
 );
 
-const WRITE_WRITE = parseTransactionConflicts(
-  [
-    'R\tfailure',
-    'K\tWrite-Write\t2',
-    "O\t12086785\tSymbolDictionary\taSymbolDictionary( name: #'UserGlobals' )",
-    'O\t12200449\tAccount\tan Account',
-  ].join('\n'),
-);
+const WRITE_WRITE = parseTransactionConflicts(WRITE_WRITE_ANSWER);
 
 describe('isCommitConflict', () => {
-  it.each<[string, GciError | undefined, boolean]>([
+  it.each<[string, GciError, boolean]>([
     // The shape a live 3.7.5 stone actually sends. This is the case the feature
     // exists for, and the one that used to read as an unexplained failure.
     ['a TransactionError whose reason is commitConflicts', REFUSED, true],
@@ -60,7 +54,6 @@ describe('isCommitConflict', () => {
     // The GCI need not touch the out-struct when it has nothing to report, so the
     // object koffi hands back can be missing `number` entirely.
     ['an untouched error struct', {} as GciError, true],
-    ['no error struct at all', undefined, true],
     ['an ordinary error', gciError(2030, 'not inside of a transaction'), false],
     // The harness's own commit guard, and the proof that a populated struct is
     // not treated as a refusal just for being populated.
@@ -99,10 +92,9 @@ describe('commitFailureMessage, on a commit the stone refused', () => {
     );
   });
 
-  it('carries the conflicting objects as details for the output channel', () => {
-    const details = commitFailureMessage(REFUSED, WRITE_WRITE).details;
-    expect(details).toContain('12086785  SymbolDictionary');
-    expect(details).toContain('12200449  Account  ');
+  // Its layout is conflictReport's, and pinned there.
+  it('carries the full conflict report as details for the output channel', () => {
+    expect(commitFailureMessage(REFUSED, WRITE_WRITE).details).toBe(conflictReport(WRITE_WRITE));
   });
 
   // The toast stays one line; what the objects ARE belongs in the channel.

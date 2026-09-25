@@ -203,18 +203,11 @@ describe('GemStoneSessionItem', () => {
     expect((idle.iconPath as { id: string }).id).toBe('plug');
   });
 
-  it('says which transaction mode the session is in, and whether it is in a transaction', () => {
-    expect(new GemStoneSessionItem(sessionInMode('autoBegin', true), true).description).toBe(
-      'Session 3 (3.7.2) · Auto-Begin',
-    );
-    expect(new GemStoneSessionItem(sessionInMode('manualBegin', true), true).description).toBe(
-      'Session 3 (3.7.2) · Manual · in transaction',
-    );
+  // The label's own wording is transactionStateLabel's, pinned in
+  // transactionMode.test.ts; what the row owns is where it goes.
+  it('says which transaction mode the session is in, after its number', () => {
     expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
       'Session 3 (3.7.2) · Manual · not in transaction',
-    );
-    expect(new GemStoneSessionItem(sessionInMode('transactionless', false), true).description).toBe(
-      'Session 3 (3.7.2) · Transactionless',
     );
   });
 

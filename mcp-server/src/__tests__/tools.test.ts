@@ -1,4 +1,6 @@
 import { VIEW_REFRESH_CODE } from '../../../client/src/queries/transactionMode';
+import { SESSION_STATUS_CODE } from '../../../client/src/mcpSharedText';
+import { WRITE_WRITE_ANSWER } from '../../../client/src/queries/__tests__/conflictFixtures';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { McpSession } from '../mcpSession';
 import { registerTools } from '../tools';
@@ -672,12 +674,12 @@ describe('tools', () => {
     it('names the conflict when the stone refuses the commit', async () => {
       vi.mocked(session.executeFetchString)
         .mockReturnValueOnce('refused')
-        .mockReturnValueOnce('R\tfailure\nK\tWrite-Write\t1\nO\t12200193\tAccount\n');
+        .mockReturnValueOnce(WRITE_WRITE_ANSWER);
       const tool = server.getTool('commit')!;
       const result = await tool.handler({});
 
-      expect(result.content[0].text).toContain('Commit refused — Write-Write on 1 object');
-      expect(result.content[0].text).toContain('12200193  Account');
+      expect(result.content[0].text).toContain('Commit refused — Write-Write on 2 objects');
+      expect(result.content[0].text).toContain('12086785  SymbolDictionary');
     });
   });
 
@@ -1035,9 +1037,7 @@ describe('tools', () => {
       const tool = server.getTool('refresh')!;
       const result = await tool.handler({});
 
-      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toContain('System needsCommit');
-      expect(code).toContain('System abortTransaction');
+      expect(vi.mocked(session.executeFetchString).mock.calls[0][0]).toBe(VIEW_REFRESH_CODE);
       expect(result.content[0].text).toBe('refreshed');
     });
 
@@ -1051,72 +1051,18 @@ describe('tools', () => {
     });
   });
 
+  // What the report contains is pinned once, next to the constant, in
+  // client/src/__tests__/mcpSharedText.test.ts; the contract here is only that
+  // this server sends it.
   describe('status', () => {
-    it('reports session information', async () => {
+    it('sends SESSION_STATUS_CODE and returns what it answered', async () => {
       const statusOutput =
         'User: DataCurator\nStone: gs64stone\nSession ID: 1\nTransaction: active\nUncommitted changes: no\nView: refreshed\n';
       vi.mocked(session.executeFetchString).mockReturnValue(statusOutput);
-      const tool = server.getTool('status')!;
-      const result = await tool.handler({});
+      const result = await server.getTool('status')!.handler({});
 
-      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toContain('myUserProfile');
-      expect(code).toContain('stoneName');
-      expect(code).toContain('inTransaction');
-      expect(code).toContain('needsCommit');
-      expect(result.content[0].text).toContain('DataCurator');
-      expect(result.content[0].text).toContain('gs64stone');
-    });
-
-    // Stale-transaction guard: the snippet must auto-refresh when the abort would
-    // discard nothing, so the rest of the report (and any follow-up read tools in
-    // this session) sees committed state. Both stand-downs are load-bearing —
-    // silently discarding uncommitted work, or dropping the session out of a
-    // transaction it was told to begin, would each be far worse than reporting
-    // slightly stale state.
-    it('auto-refreshes the view inline, and stands down where an abort would cost something', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
-      const tool = server.getTool('status')!;
-      await tool.handler({});
-
-      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toContain(VIEW_REFRESH_CODE);
-      expect(code).toContain('View: ');
-      expect(code).toContain('skipped: uncommitted changes present');
-      expect(code).toContain('skipped: session is inside a manual transaction');
-      expect(code).toContain('refreshed');
-    });
-
-    it('names the transaction mode, which decides what commit and abort mean', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
-      await server.getTool('status')!.handler({});
-
-      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toContain('Transaction mode: ');
-      expect(code).toContain('System transactionMode asString');
-    });
-
-    // Regression: nextPutAll: sends do: to its argument. If any value passed
-    // is a SmallInteger (as System stoneVersionReport was observed returning),
-    // GemStone raises "SmallInteger does not understand #do:". Every value
-    // must be coerced to a CharacterCollection first.
-    it('coerces every streamed value to a CharacterCollection', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
-      const tool = server.getTool('status')!;
-      await tool.handler({});
-      const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-
-      // Each System-call result must be wrapped in asString or printString
-      // so a non-String return (SmallInteger, Array, ...) doesn't blow up.
-      expect(code).toMatch(/myUserProfile userId (asString|printString)/);
-      expect(code).toMatch(/stoneName (asString|printString)/);
-      expect(code).toMatch(/session printString/);
-      expect(code).toContain('needsCommit');
-      // stoneVersionReport returned a SmallInteger in 3.7.x (SmallInteger DNU
-      // do:); modifiedObjects isn't defined on System class in that version
-      // (System class DNU #modifiedObjects). Neither should be re-introduced.
-      expect(code).not.toContain('stoneVersionReport');
-      expect(code).not.toContain('modifiedObjects');
+      expect(vi.mocked(session.executeFetchString).mock.calls[0][0]).toBe(SESSION_STATUS_CODE);
+      expect(result.content[0].text).toBe(statusOutput);
     });
   });
 });

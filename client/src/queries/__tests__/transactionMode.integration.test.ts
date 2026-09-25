@@ -17,12 +17,8 @@ import {
   TRANSACTION_MODES,
   TransactionMode,
   VIEW_REFRESH_CODE,
-  canBegin,
-  canCommit,
   getGemAutoServiceSigAbort,
-  getTransactionMode,
   getTransactionState,
-  isInTransaction,
   setGemAutoServiceSigAbort,
   setTransactionMode,
 } from '../transactionMode';
@@ -45,6 +41,11 @@ describe('transaction modes on a live stone', () => {
     setTransactionMode(execute, 'autoBegin');
   });
 
+  // Read through the one query production uses, so this suite's evidence is
+  // evidence about that query too.
+  const currentMode = () => getTransactionState(execute).mode;
+  const inTransaction = () => getTransactionState(execute).inTransaction;
+
   /** The error number `code` raises, or 0 when it raises nothing. */
   function errorNumberFrom(code: string): number {
     return Number(execute(`([${code}. 0] on: Error do: [:ex | ex number]) printString`).trim());
@@ -53,7 +54,7 @@ describe('transaction modes on a live stone', () => {
   it('reads back every mode it sets, exactly as GemStone spells it', () => {
     for (const mode of TRANSACTION_MODES) {
       expect(setTransactionMode(execute, mode)).toBe(mode);
-      expect(getTransactionMode(execute)).toBe(mode);
+      expect(currentMode()).toBe(mode);
     }
   });
 
@@ -61,28 +62,28 @@ describe('transaction modes on a live stone', () => {
     // Not asserted to be autoBegin: STN_GEM_INITIAL_TRANSACTION_MODE can hand
     // out any of the three, which is exactly why Jasper reads it rather than
     // assuming. What must hold is that the answer is one Jasper recognizes.
-    expect(TRANSACTION_MODES).toContain(getTransactionMode(execute));
+    expect(TRANSACTION_MODES).toContain(currentMode());
   });
 
   it('leaves the session outside a transaction under manualBegin, and a begin puts it back in', () => {
     setTransactionMode(execute, 'manualBegin');
-    expect(isInTransaction(execute)).toBe(false);
+    expect(inTransaction()).toBe(false);
 
     gci.beginTransaction(session);
-    expect(isInTransaction(execute)).toBe(true);
+    expect(inTransaction()).toBe(true);
 
     gci.abortTransaction(session);
-    expect(isInTransaction(execute)).toBe(false);
+    expect(inTransaction()).toBe(false);
   });
 
   it('keeps the session inside a transaction under autoBegin, whatever it does', () => {
     setTransactionMode(execute, 'autoBegin');
-    expect(isInTransaction(execute)).toBe(true);
+    expect(inTransaction()).toBe(true);
 
     // An abort under autoBegin immediately opens the next transaction, which is
     // why Commit is always available there.
     gci.abortTransaction(session);
-    expect(isInTransaction(execute)).toBe(true);
+    expect(inTransaction()).toBe(true);
   });
 
   it('reads the mode and the transaction state together consistently', () => {
@@ -97,8 +98,7 @@ describe('transaction modes on a live stone', () => {
   it('refuses a commit outside a transaction, in every mode that allows being outside one', () => {
     for (const mode of ['manualBegin', 'transactionless'] as TransactionMode[]) {
       setTransactionMode(execute, mode);
-      expect(isInTransaction(execute)).toBe(false);
-      expect(canCommit(false)).toBe(false);
+      expect(inTransaction()).toBe(false);
       expect(errorNumberFrom('System commitTransaction')).toBe(ERR_NOT_IN_TRANSACTION);
     }
   });
@@ -116,13 +116,11 @@ describe('transaction modes on a live stone', () => {
   // UI still does not *offer* Begin there (see canBegin).
   it('still enters a transaction on an explicit begin under transactionless', () => {
     setTransactionMode(execute, 'transactionless');
-    expect(isInTransaction(execute)).toBe(false);
-    expect(canBegin('transactionless', false)).toBe(false);
+    expect(inTransaction()).toBe(false);
 
     gci.beginTransaction(session);
 
-    expect(isInTransaction(execute)).toBe(true);
-    expect(canCommit(true)).toBe(true);
+    expect(inTransaction()).toBe(true);
     // ...and the stone agrees: no 2030 from a commit attempt in this state. The
     // harness's own commit guard stops it going further, which is its job.
     expect(errorNumberFrom('System commitTransaction')).not.toBe(ERR_NOT_IN_TRANSACTION);
@@ -160,16 +158,19 @@ describe('transaction modes on a live stone', () => {
       expect(execute(VIEW_REFRESH_CODE).trim()).toBe('refreshed');
     });
 
-    it('stands down inside a transaction the user began by hand', () => {
-      setTransactionMode(execute, 'manualBegin');
-      gci.beginTransaction(session);
+    it.each(['manualBegin', 'transactionless'] as const)(
+      'stands down inside a transaction the user began by hand under %s',
+      (mode) => {
+        setTransactionMode(execute, mode);
+        gci.beginTransaction(session);
 
-      expect(execute(VIEW_REFRESH_CODE).trim()).toBe(
-        'skipped: session is inside a manual transaction',
-      );
-      // ...and really did not end it.
-      expect(isInTransaction(execute)).toBe(true);
-    });
+        expect(execute(VIEW_REFRESH_CODE).trim()).toBe(
+          'skipped: session is inside a transaction begun by hand',
+        );
+        // ...and really did not end it.
+        expect(inTransaction()).toBe(true);
+      },
+    );
 
     it('stands down when the session holds uncommitted changes', () => {
       setTransactionMode(execute, 'autoBegin');

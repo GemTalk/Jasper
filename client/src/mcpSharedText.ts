@@ -16,8 +16,8 @@ export const REFRESH_TOOL_DESCRIPTION =
   'until it aborts or commits, so a commit landed by another process (e.g. install.sh) ' +
   'is invisible until refresh runs. This is a no-op — and reports back, so the caller ' +
   'can decide whether to abort or commit first — when the session has uncommitted work, ' +
-  'or when it is inside a transaction it began by hand under the manualBegin transaction ' +
-  'mode, which the abort would end.';
+  'or when it is inside a transaction begun by hand (under the manualBegin or ' +
+  'transactionless mode), which the abort would end.';
 
 /**
  * The `status` report's doit. Opens with VIEW_REFRESH_CODE so a single status

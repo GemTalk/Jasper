@@ -17,12 +17,7 @@
 // reworded release to release, which is why the message is only consulted when the
 // struct's own `reason` field is empty.
 import { ReportedGciError, explainGciError } from './gciLibraryError';
-import {
-  TransactionConflicts,
-  conflictReason,
-  conflictReport,
-  hasConflictDetail,
-} from './queries/transactionConflicts';
+import { TransactionConflicts, describeRefusal } from './queries/transactionConflicts';
 
 /** The reason GemStone gives a TransactionError raised by conflicting commits. */
 export const COMMIT_CONFLICTS_REASON = 'commitConflicts';
@@ -34,8 +29,8 @@ export const COMMIT_CONFLICTS_REASON = 'commitConflicts';
  * An unfilled out-struct counts as a refusal: the GCI need not touch it when
  * there is nothing to report, so a missing `number` reads the same as a zero one.
  */
-export function isCommitConflict(err: ReportedGciError | undefined): boolean {
-  if (!err?.number) return true;
+export function isCommitConflict(err: ReportedGciError): boolean {
+  if (!err.number) return true;
   const reason = err.reason?.trim();
   // The struct's own field wins when it has one; only fall back to the message,
   // which carries the same token inside the stone's sentence about it.
@@ -67,9 +62,5 @@ export function commitFailureMessage(
   if (!isCommitConflict(err)) {
     return { verb: 'failed', reason: explainGciError(err) || `error ${err.number}` };
   }
-  return {
-    verb: 'refused',
-    reason: conflictReason(conflicts),
-    details: conflicts && hasConflictDetail(conflicts) ? conflictReport(conflicts) : undefined,
-  };
+  return { verb: 'refused', ...describeRefusal(conflicts) };
 }

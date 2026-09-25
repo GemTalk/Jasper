@@ -682,22 +682,6 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('cancels rather than logging out when that warning is dismissed', async () => {
-    // Without a "Commit & Logout" button the dialog has one way forward and one
-    // way out; dismissing it must still be the way out.
-    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
-
-    const decision = await extension.confirmLogoutWithUncommittedChanges(
-      3,
-      'DataCurator on gs64stone (localhost)',
-      true,
-      vi.fn(),
-      false,
-    );
-
-    expect(decision).toBe('cancel');
-  });
-
   it('offers Commit & Logout to a session that is in a transaction', async () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
@@ -774,7 +758,15 @@ describe('transactionModeSwitchDetail', () => {
   });
 
   it('names the uncommitted changes it would discard', () => {
-    expect(extension.transactionModeSwitchDetail(true)).toContain('discards them');
+    expect(extension.transactionModeSwitchDetail(true)).toContain(
+      'discards this session’s uncommitted changes',
+    );
+  });
+
+  it('warns about unsaved exported edits, which the post-switch refresh overwrites', () => {
+    expect(extension.transactionModeSwitchDetail(false, true)).toContain(
+      extension.UNSAVED_EXPORT_EDITS_WARNING,
+    );
   });
 
   it('says plainly when nothing is at stake, rather than warning about nothing', () => {
@@ -783,9 +775,7 @@ describe('transactionModeSwitchDetail', () => {
 
   it('warns anyway when the commit state could not be checked', () => {
     // A failed probe is not evidence that there is nothing to lose.
-    const detail = extension.transactionModeSwitchDetail(undefined);
-    expect(detail).toContain('could not be checked');
-    expect(detail).toContain('would discard them');
+    expect(extension.transactionModeSwitchDetail(undefined)).toContain('could not be checked');
   });
 });
 

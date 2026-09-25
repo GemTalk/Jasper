@@ -20,7 +20,12 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import { QueryExecutor } from '../types';
 import { commitTransaction } from '../commitTransaction';
-import { describeCommitResult, transactionConflicts } from '../transactionConflicts';
+import {
+  conflictsCode,
+  describeCommitResult,
+  parseTransactionConflicts,
+  transactionConflicts,
+} from '../transactionConflicts';
 import { commitFailureMessage, isCommitConflict } from '../../commitFailure';
 
 describe('transaction conflicts on a live stone', () => {
@@ -34,20 +39,12 @@ describe('transaction conflicts on a live stone', () => {
     execute = (code) => gci.executeAndFetchString(session, code);
   });
 
-  it('runs the conflict doit and parses what the stone answers', () => {
-    const conflicts = transactionConflicts(execute);
-
-    expect(conflicts).toHaveProperty('categories');
-    expect(Array.isArray(conflicts.categories)).toBe(true);
-  });
-
   // §9.2: the dictionary "contains an Association whose key is #commitResult".
   // If a release stops answering one, or spells it differently, the parser goes
   // quiet rather than wrong — so pin it here.
   it('answers a #commitResult that GemStone documents', () => {
     const { commitResult } = transactionConflicts(execute);
 
-    expect(commitResult).toBeDefined();
     expect(describeCommitResult(commitResult)).toBeDefined();
   });
 
@@ -55,6 +52,31 @@ describe('transaction conflicts on a live stone', () => {
   // transaction, the returned symbol dictionary has no additional Associations."
   it('names no conflicts for a transaction that has had none', () => {
     expect(transactionConflicts(execute).categories).toEqual([]);
+  });
+
+  // No conflict this suite can provoke answers a text value, and a String is a
+  // Collection in GemStone — so the doit is fed a dictionary of its own shape to
+  // prove a text value comes back as one T record, not a Character per object.
+  it('renders a text-valued kind as text and a collection as its objects', () => {
+    const source =
+      'SymbolKeyValueDictionary new at: #commitResult put: #failure; ' +
+      "at: #'Synchronized-Commit' put: 'peer timed out'; " +
+      "at: #'Write-Write' put: (Array with: #jasperProbe); yourself";
+    const { commitResult, categories } = parseTransactionConflicts(execute(conflictsCode(source)));
+
+    expect(commitResult).toBe('failure');
+    expect(categories).toHaveLength(2);
+    expect(categories).toContainEqual({
+      key: 'Synchronized-Commit',
+      total: 0,
+      objects: [],
+      text: "'peer timed out'",
+    });
+    expect(categories).toContainEqual({
+      key: 'Write-Write',
+      total: 1,
+      objects: [expect.objectContaining({ className: 'Symbol' })],
+    });
   });
 
   it('can be read twice without the first read disturbing the second', () => {

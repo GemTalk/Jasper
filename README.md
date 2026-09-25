@@ -172,7 +172,7 @@ GemStone gives a session one of three transaction modes, and the mode decides wh
 
 - **Auto-Begin** — a new transaction starts automatically after every commit or abort, so the session is always inside one. This is GemStone's default. It is convenient, but an idle session holds a commit record open and holds back the repository's reclaim.
 - **Manual** — commit and abort leave the session *outside* a transaction; **Begin Transaction** puts it back in. Nothing can be committed while it is outside one.
-- **Transactionless** — the session is never in a transaction and cannot commit. The cheapest mode for the repository, but its view is refreshed automatically at any moment, so what it shows can change under you. GemStone intends it for idle sessions.
+- **Transactionless** — the session is not in a transaction, so it cannot commit; switch it to Manual or Auto-Begin to write. The cheapest mode for the repository, but its view is refreshed automatically at any moment, so what it shows can change under you. GemStone intends it for idle sessions.
 
 The **status bar** carries the selected session's mode on the left: a filled circle when the session is inside a transaction, a hollow one when it is outside, an eye for transactionless, and a question mark when the state could not be read. Hovering it says what the mode means and what the session can do; **clicking it changes the mode**. It is also **GemStone: Set Transaction Mode** in the Command Palette, and on a session row's context menu.
 

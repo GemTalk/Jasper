@@ -11,18 +11,14 @@ import {
   parseTransactionConflicts,
   transactionConflicts,
 } from '../transactionConflicts';
+import { WRITE_WRITE_ANSWER } from './conflictFixtures';
 
 // The shape the doit emits: one record per line, tab-separated, R/K/O/T.
 const line = (...fields: string[]) => fields.join('\t');
 const raw = (...lines: string[]) => lines.join('\n') + '\n';
 const parse = (...lines: string[]) => parseTransactionConflicts(raw(...lines));
 
-const WRITE_WRITE = raw(
-  line('R', 'failure'),
-  line('K', 'Write-Write', '2'),
-  line('O', '12086785', 'SymbolDictionary', "aSymbolDictionary( name: #'UserGlobals' )"),
-  line('O', '12200449', 'Account', 'an Account'),
-);
+const WRITE_WRITE = WRITE_WRITE_ANSWER;
 
 describe('parseTransactionConflicts', () => {
   it('reads the commit result and each kind with its objects', () => {
@@ -100,7 +96,7 @@ describe('parseTransactionConflicts', () => {
   });
 
   // Table 9.1's #'Synchronized-Commit' is "details of the synchronized commit
-  // failure", not an Array, so the doit renders it as text instead.
+  // failure", not a collection of objects, so the doit renders it as text.
   it('carries a non-collection value through as text', () => {
     const parsed = parse(
       line('R', 'failure'),
@@ -149,6 +145,8 @@ describe('transactionConflicts', () => {
   // reason that constraint exists. Splitting them keeps the failure message
   // naming the constraint that broke rather than "the doit changed".
   it.each([
+    // Only the live-stone suite hands the doit a dictionary of its own.
+    ['reads the conflict set GemStone left', 'conflicts := System transactionConflicts.'],
     ['asks for the oop', 'each asOop printString'],
     ['asks for the class', 'each class name asString'],
     ['asks for a printString', 'each printString'],
@@ -205,6 +203,12 @@ describe('conflictSummary', () => {
   it('is empty when the refusal named no kinds', () => {
     expect(conflictSummary(parse(line('R', 'failure')))).toBe('');
   });
+
+  it('carries a text-valued kind’s text in place of a count', () => {
+    expect(
+      conflictSummary(parse(line('K', 'Synchronized-Commit', '0'), line('T', 'peer timed out'))),
+    ).toBe('Synchronized-Commit (peer timed out)');
+  });
 });
 
 describe('conflictReason', () => {
@@ -257,6 +261,11 @@ describe('hasConflictDetail', () => {
 });
 
 describe('conflictReport', () => {
+  // Pinned whole, so this one case covers the parts worth stating: each object's
+  // printString (so you can tell which one the other session wrote without
+  // leaving the log), an `_objectForOop:` line over a real oop from this very
+  // report (something to paste, not a template), and no "not listed" line when
+  // every object was listed.
   it('lists every kind with its objects, in aligned columns', () => {
     expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toBe(
       [
@@ -267,22 +276,6 @@ describe('conflictReport', () => {
         "  12086785  SymbolDictionary  aSymbolDictionary( name: #'UserGlobals' )",
         '  12200449  Account           an Account',
       ].join('\n'),
-    );
-  });
-
-  // The whole point of bringing printStrings back: you can tell which object the
-  // other session wrote without leaving the log.
-  it('shows what each conflicting object is', () => {
-    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toContain(
-      "aSymbolDictionary( name: #'UserGlobals' )",
-    );
-  });
-
-  // Named over a real oop from this very report, so it is something to paste
-  // rather than a template to fill in.
-  it('names the expression that opens one of these in a live session', () => {
-    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).toContain(
-      'Object _objectForOop: 12086785',
     );
   });
 
@@ -302,10 +295,6 @@ describe('conflictReport', () => {
       parse(line('R', 'failure'), line('K', 'Write-Write', '400'), line('O', '1', 'Account')),
     );
     expect(report).toContain('… and 399 objects not listed');
-  });
-
-  it('does not claim objects were withheld when they were all listed', () => {
-    expect(conflictReport(parseTransactionConflicts(WRITE_WRITE))).not.toContain('not listed');
   });
 
   it('renders a text-valued kind instead of an empty object list', () => {

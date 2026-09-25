@@ -4,9 +4,7 @@ import {
   canBegin,
   canCommit,
   getGemAutoServiceSigAbort,
-  getTransactionMode,
   getTransactionState,
-  isInTransaction,
   isTransactionMode,
   modeDescription,
   modeLabel,
@@ -17,38 +15,11 @@ import {
   VIEW_REFRESH_CODE,
 } from '../transactionMode';
 
-describe('reading the transaction mode', () => {
-  it('answers the mode the stone reports', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'manualBegin\n');
-
-    expect(getTransactionMode(execute)).toBe('manualBegin');
-    // asString, not printString: the latter answers #'manualBegin', quotes and all.
-    expect(execute.mock.calls[0][0]).toContain('System transactionMode asString');
-  });
-
-  it('answers undefined for a mode it does not recognize, rather than passing it on', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'someFutureMode');
-
-    expect(getTransactionMode(execute)).toBeUndefined();
-  });
-
+describe('recognizing a transaction mode', () => {
   it('recognizes exactly the three modes GemStone defines', () => {
     expect([...TRANSACTION_MODES]).toEqual(['autoBegin', 'manualBegin', 'transactionless']);
     expect(isTransactionMode('autoBegin')).toBe(true);
     expect(isTransactionMode('manual')).toBe(false);
-  });
-});
-
-describe('reading whether the session is in a transaction', () => {
-  it.each([
-    ['true', true],
-    ['false', false],
-  ])('reads %s as %s', (answer, expected) => {
-    expect(isInTransaction(vi.fn<QueryExecutor>(() => answer))).toBe(expected);
-  });
-
-  it('answers undefined when the stone says something else', () => {
-    expect(isInTransaction(vi.fn<QueryExecutor>(() => 'nil'))).toBeUndefined();
   });
 });
 
@@ -61,6 +32,15 @@ describe('reading mode and transaction state together', () => {
       inTransaction: false,
     });
     expect(execute).toHaveBeenCalledTimes(1);
+    // asString, not printString: the latter answers #'manualBegin', quotes and all.
+    expect(execute.mock.calls[0][0]).toContain('System transactionMode asString');
+  });
+
+  it('reads true as in a transaction', () => {
+    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'autoBegin true'))).toEqual({
+      mode: 'autoBegin',
+      inTransaction: true,
+    });
   });
 
   it('leaves each half undefined on its own when the stone answers oddly', () => {
@@ -122,13 +102,13 @@ describe('the view-refresh guard', () => {
     expect(VIEW_REFRESH_CODE).toContain('skipped: uncommitted changes present');
   });
 
-  it('also skips it inside a manual transaction, which the abort would end', () => {
-    // Under autoBegin the abort immediately opens a fresh transaction, so only
-    // manualBegin can lose one this way.
+  it('also skips it inside a transaction begun by hand, which the abort would end', () => {
+    // Under autoBegin the abort immediately opens a fresh transaction; under
+    // manualBegin and transactionless nothing would, so both lose one this way.
     expect(VIEW_REFRESH_CODE).toContain(
-      'System transactionMode == #manualBegin and: [System inTransaction]',
+      'System inTransaction and: [System transactionMode ~~ #autoBegin]',
     );
-    expect(VIEW_REFRESH_CODE).toContain('skipped: session is inside a manual transaction');
+    expect(VIEW_REFRESH_CODE).toContain('skipped: session is inside a transaction begun by hand');
   });
 
   it('aborts to refresh when neither applies', () => {
@@ -202,8 +182,10 @@ describe('how the state reads', () => {
   });
 
   // The mode's own live-stone test walks a transactionless session into a
-  // transaction and commits there, so the tooltip must not say it never can.
-  it('does not tell a transactionless session it can never commit', () => {
+  // transaction and commits there, so the tooltip must not say it never can; and
+  // Jasper never offers Begin in that mode, so the way out it names is a switch.
+  it('points a transactionless session at a mode switch, not at "never"', () => {
     expect(modeDescription('transactionless')).not.toContain('never in a transaction');
+    expect(modeDescription('transactionless')).toContain('switch to Manual or Auto-Begin');
   });
 });

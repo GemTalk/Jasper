@@ -7,6 +7,7 @@ import {
   canCommit,
   modeDescription,
   transactionStateLabel,
+  transactionStateLabelIfKnown,
 } from './queries/transactionMode';
 import { McpOwnership } from './mcpServerTreeProvider';
 
@@ -55,7 +56,7 @@ export class GemStoneLoginItem extends vscode.TreeItem {
  * row's buttons about that row. The `when` clauses match with `=~` rather than
  * `==` for the same reason — see the session entries in package.json.
  */
-export function sessionContextValue(session: ActiveSession): string {
+function sessionContextValue(session: ActiveSession): string {
   const { transactionMode, inTransaction } = session;
   return (
     'gemstoneSession' +
@@ -79,12 +80,11 @@ export function sessionContextValue(session: ActiveSession): string {
  * announcing an absence. The tooltip still says the mode could not be read, for
  * anyone who goes looking.
  */
-export function sessionDescription(session: ActiveSession, mcp: SessionMcpState = 'off'): string {
+function sessionDescription(session: ActiveSession, mcp: SessionMcpState = 'off'): string {
   let text = `Session ${session.id} (${session.stoneVersion})`;
   if (mcp === 'serving') text += ' · MCP';
-  if (session.transactionMode !== undefined) {
-    text += ` · ${transactionStateLabel(session.transactionMode, session.inTransaction)}`;
-  }
+  const state = transactionStateLabelIfKnown(session.transactionMode, session.inTransaction);
+  if (state) text += ` · ${state}`;
   return text;
 }
 
@@ -141,8 +141,9 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     // only canCommit/canBegin, and both are unchanged across the two transitions
     // that matter most — undefined → autoBegin at login (the row gains `· Auto-
     // Begin`), and autoBegin → manualBegin while in a transaction (the row must
-    // stop saying Auto-Begin). Keying on what is drawn covers the buttons too,
-    // since a change in either flag changes the label the row shows.
+    // stop saying Auto-Begin). Neither half covers the other: under
+    // transactionless, an unread and a false in-transaction flag both draw
+    // `Transactionless` while Commit's button comes and goes, so both are keyed.
     //
     // The price is that the row is a new node whenever its text moves, so a
     // selection on it is dropped — under autoBegin that is once, at login.

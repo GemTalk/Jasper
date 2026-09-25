@@ -5,18 +5,18 @@ whether the session is inside a transaction, and therefore what Commit, Abort an
 Begin Transaction do — so Jasper reads it, shows it, and lets you change it.
 
 The mode and commit-enablement behaviour below was verified against live **3.6.2**
-and **3.7.5** stones; the two exceptions are called out where they arise. Where
-that disagrees with the obvious reading of the manuals, this document records what
-the stone actually does, and `client/src/queries/__tests__/transactionMode.integration.test.ts`
-pins it so a future release cannot change it quietly.
+and **3.7.5** stones. Where that disagrees with the obvious reading of the manuals,
+this document records what the stone actually does, and
+`client/src/queries/__tests__/transactionMode.integration.test.ts` pins the mode
+and commit-enablement behaviour so a future release cannot change it quietly.
 
 ## The three modes
 
 | Mode | After commit / abort | While the session sits idle |
 | --- | --- | --- |
 | `autoBegin` | A new transaction starts automatically, so the session is always inside one. | It holds a commit record open, which holds back the repository's reclaim. GemStone's default, and what Jasper did unconditionally before this existed. |
-| `manualBegin` | The session is left **outside** a transaction. Begin Transaction puts it back in. | The stone sends a SigAbort. A gem that does not answer within `STN_GEM_ABORT_TIMEOUT` (60 s by default) is forcibly aborted — error 3031, every object cache reinitialized. Jasper arms the gem to answer for itself; see below. |
-| `transactionless` | Never in a transaction. | The gem services any SigAbort itself, unconditionally. The cheapest mode for the repository — and the only one whose snapshot view is updated *automatically, at any time*, so the data it shows can be inconsistent. The manual intends it for idle sessions; treat "good for browsing" with care. |
+| `manualBegin` | The session is left **outside** a transaction. Begin Transaction puts it back in. | The stone sends a SigAbort, and a gem that does not answer is forcibly aborted. Jasper arms the gem to answer for itself; see below. |
+| `transactionless` | Outside a transaction, and nothing starts one. | The gem services any SigAbort itself, unconditionally. The cheapest mode for the repository — and the only one whose snapshot view is updated *automatically, at any time*, so the data it shows can be inconsistent. The manual intends it for idle sessions; treat "good for browsing" with care. |
 
 The mode a session lands in at login is the stone's `STN_GEM_INITIAL_TRANSACTION_MODE`,
 which accepts all three values — so Jasper reads the mode from the server at login
@@ -37,33 +37,15 @@ canBegin(mode, inTransaction)     // mode === 'manualBegin' && inTransaction ===
 **What 2030 does *not* mean is that nothing was written.** GemStone lets a session
 outside a transaction modify objects exactly as it would inside one — it refuses
 only the commit (the Programming Guide says so under "Reading and Writing Outside
-of Transactions", and `System needsCommit` duly answers `true`). So `canCommit` is
-the wrong question to ask before discarding anything; `System needsCommit` is the
-right one, and Jasper asks it before every abort, mode switch and logout. A
-`manualBegin` session that has written outside a transaction is warned at logout
-like any other — only the dialog's **Commit & Logout** button is dropped, because
-that is the one thing that could only fail.
+of Transactions", and `System needsCommit` duly answers `true`). So Jasper asks
+`System needsCommit`, not `canCommit`, before every abort, mode switch and logout.
 
-Under `autoBegin` the session is always inside a transaction, so `canCommit` is
-always true there — which is where this agrees with Jadeite for Dolphin's
-mode-shaped rule (`autoBegin or: [manualBegin and: [inTransaction]]`).
-
-**Where it deliberately disagrees:** under `transactionless`, an explicit
-`System beginTransaction` really does enter a transaction, and a commit from
-inside it is accepted and lands. The mode's name and the manual both suggest
-otherwise; both stones say it works. Jadeite's rule would refuse to let the user
-commit work the stone would have taken, so Jasper's rule follows the session's
-state rather than its mode.
-
-Begin is still **not offered** under `transactionless`, and that is a product
-decision rather than a technical one: the mode exists to pin no commit record, and
-a transaction opened under it pins one the gem has already been told to give back
-on demand. Switching to `manualBegin` first is one click away.
-
-An unknown transaction state — the probe failed, or the stone answered something
-unrecognized — leaves Commit enabled and Begin hidden. A failed probe is not
-evidence that a commit would fail, and taking a working button away on no evidence
-is worse than letting the stone say no.
+The one place the rule departs from Jadeite for Dolphin's mode-shaped one is
+`transactionless`: an explicit `System beginTransaction` there really does enter a
+transaction, and a commit from inside it lands — the mode's name and the manual
+both suggest otherwise. Why Commit follows the state, why Begin is still not
+offered in that mode, and why an unreadable state leaves Commit enabled are the
+doc-comments on `canCommit` and `canBegin` in `client/src/queries/transactionMode.ts`.
 
 ## Surviving SigAbort
 
@@ -86,7 +68,9 @@ System gemConfigurationAt: #GemAutoServiceSigAbort put: true
 
 It is never disarmed. GemStone raises the auto-service errors only in
 `manualBegin`, and an `autoBegin` session is never outside a transaction for the
-stone to signal, so leaving it armed after a switch back is inert.
+stone to signal, so leaving it armed after a switch back is inert. What happens
+without it, and the `System clientIsRemote` condition it depends on, are
+`setGemAutoServiceSigAbort`'s doc-comment.
 
 The next GCI call then reports **3007** (`ABORT_ERR_GemAutoAbort`), or **3008**
 (`ABORT_ERR_GemAutoLostOt`) for a LostOt. Neither is a failure: the call did not
@@ -94,40 +78,20 @@ run, and the session's view moved forward to the newest committed state.
 `explainGciError` in `client/src/gciLibraryError.ts` rewords both so they read
 that way rather than as "a TransactionBacklog occurred" — and says plainly that
 what the gem serviced was an abort, so any writes the session was holding went
-with it. The same function names **Begin Transaction** when the stone raises 2030,
-which is the failure a `manualBegin` session meets on its first save.
-
-The one caveat is that the option applies only where `System clientIsRemote` is
-true. Jasper logs in through a netldi `gemnetobject` task, which qualifies — the
-integration suite asserts this, because a linked login would not, and that is the
-case that would need the `GciTsWaitForEvent` thread this design avoids.
-
-`DelayAutoServiceSigAbort` exists to make 3007 delivery testable, but it only
-*delays* the delivery of a signal the stone still has to send — which takes a
-commit-record backlog, hundreds of commits from a second session, and a stone
-config this suite does not control. That end-to-end test is deliberately not in
-the default suite; what is covered is that the option arms, that the session is a
-remote client, and that 3007/3008 are classified as a refreshed view.
+with it. The same function names the way back in when the stone raises 2030.
 
 ## A commit the stone refuses
 
 A commit can fail two ways, and GemStone reports them differently: an error, or a
 **refusal** — another session committed over an object this transaction touched.
-`isCommitConflict` in `client/src/commitFailure.ts` tells them apart, and it has
-two shapes to recognize because the two commit calls do not agree.
+A refusal is not a malfunction, and repeating it cannot work — "You must abort the
+transaction in order to get a new snapshot view of the repository" (Programming
+Guide §9.2) — so Jasper words it as a refusal and every one carries that advice.
 
 GemBuilder for C documents the older `GciCommit` as answering false with **no
-error set**:
-
-```c
-if ( ! GciCommit()) {
-  if (GciErr(&errInfo)) { /* an error */ } else { /* a concurrency conflict */ }
-}
-```
-
-`GciTsCommit` — the call Jasper actually makes — does **not** behave that way.
-Verified against a live 3.7.5 stone with two sessions colliding on one
-`UserGlobals` entry, a refusal arrives as:
+error set**. `GciTsCommit` — the call Jasper actually makes — does not. Against a
+live 3.7.5 stone with two sessions colliding on one `UserGlobals` entry, a
+refusal arrives as:
 
 ```
 number  2738   (ERR_TransactionError, vendor/gci-headers/*/gcierr.ht)
@@ -135,71 +99,26 @@ reason  commitConflicts
 message a TransactionError occurred (error 2738), reason:commitConflicts, commit conflicts
 ```
 
-Both shapes count as refusals. The **reason** is what is matched, not the number:
-2738 is the whole TransactionError family, so gating on it would call every
-TransactionError somebody else's fault — `commitDisallowed` among them. And
-`commitConflicts` is a Smalltalk symbol rather than prose, so it survives the
-rewording the manual warns the surrounding English is subject to. The message is
-consulted only when the struct's own `reason` field comes back empty.
-
-That distinction is the whole reason the wording differs. A refusal is not a
-malfunction, and repeating it cannot work — "You must abort the transaction in
-order to get a new snapshot view of the repository and, along with it, an empty
-read set and an empty write set" (Programming Guide §9.2) — so every refusal
-carries that advice.
+Both shapes count as refusals. How they are told apart from an error — the
+reason is matched, never the number — is the header of `client/src/commitFailure.ts`.
 
 `System transactionConflicts` says what collided: `#commitResult` plus one
-Association per kind of conflict, each value an Array of the objects
-(Table 9.1 — `Write-Write`, `Write-Dependency`, `Write-ReadLock`, `Rc-Write-Write`
-and the rest). `client/src/queries/transactionConflicts.ts` reads it. Three
-constraints shape that query:
-
-- **Read it before anything else touches the transaction.** "Conflict sets are
-  cleared at the beginning of a commit or abort and thus can be examined until the
-  next commit, continue, or abort."
-- **Guard every `printString`.** Each object comes back as its oop, its class and
-  an abbreviated `printString` — `aSymbolDictionary( name: #'UserGlobals' )` tells
-  you which object the other session wrote without leaving the log. That runs
-  application code inside the doit, on the objects two sessions are fighting over,
-  so a raise costs that one object its `printString` rather than costing the
-  report, the string is cut to `CONFLICT_PRINT_STRING_LIMIT` in the gem, and
-  separators are flattened so one object cannot spill across the line format. The
-  cost that remains is time, on an object whose `printOn:` walks a large
-  collection — the same bargain `getGlobalsForDictionary` makes, and only ever
-  paid on a commit that has already been refused.
-- **Drop the reference before answering.** "If you save a reference to the
-  conflict set, be sure to clear this reference to avoid making the conflict set
-  persistent."
-
-Only the first `CONFLICT_OBJECT_LIMIT` objects per kind come back; a conflict on
-an indexed collection can name thousands, and the stone's own count is reported
-either way. The report names `Object _objectForOop:` over the first oop it lists,
-so the full object is one paste away in a workspace when the abbreviation is not
-enough.
-
-A genuine refusal cannot be reproduced in the integration suite: it needs a second
-session to really commit, and the harness arms GemStone's commit guard on every
-session it opens. What the live suite does cover is that the doit compiles and
-parses on each stone in the matrix, and that a *guarded* commit — which leaves
-error 2249 — is classified as an error rather than a conflict. The refusal shape
-itself came from a by-hand run of two Jasper windows on one stone, which is also
-how the next release's shape should be checked.
+Association per kind of conflict (Table 9.1 — `Write-Write`, `Write-Dependency`,
+`Write-ReadLock`, `Rc-Write-Write` and the rest), each naming the objects. The
+refused-commit toast names the kinds; **Show Conflicts** puts each object's oop,
+class and abbreviated `printString` in the output channel, with an
+`Object _objectForOop:` line to paste into a workspace. The rules the query that
+reads it has to follow — when it must run, how each `printString` is guarded, why
+it drops its own reference — are in `client/src/queries/transactionConflicts.ts`.
 
 ## Refreshing a view without losing anything
 
 GemStone's GCI pins a session's read view until it aborts or commits, so a commit
 landed by another process is invisible until this session does one. Jasper's
 background reads (the MCP tools) abort to pull those in — but only when the abort
-would discard nothing. `VIEW_REFRESH_CODE` in `client/src/queries/transactionMode.ts`
-is the single piece of Smalltalk that decides, and it stands down twice:
-
-- the session holds uncommitted changes — the abort would discard them;
-- the session is inside a `manualBegin` transaction — the abort would end a
-  transaction the user opened by hand, and under `manualBegin` nothing would start
-  another one.
-
-Under `autoBegin` the second case cannot bite, because the abort immediately opens
-the next transaction. Under `transactionless` there is nothing to end.
+would discard nothing: not while the session holds uncommitted changes, and not
+while it is inside a transaction someone began by hand. `VIEW_REFRESH_CODE` in
+`client/src/queries/transactionMode.ts` is the one piece of Smalltalk that decides.
 
 ## Where it shows up in Jasper
 

@@ -8,7 +8,6 @@ import {
   transactionStatusIcon,
   transactionStatusText,
   transactionStatusTooltip,
-  SET_MODE_COMMAND,
 } from '../transactionStatusBar';
 import type { ActiveSession, SessionManager } from '../sessionManager';
 
@@ -40,6 +39,9 @@ describe('what the status bar says', () => {
 
   it('does not guess when the state could not be read', () => {
     expect(transactionStatusIcon(session(undefined, undefined))).toBe('question');
+    // Nor for a transactionless session whose in-transaction probe failed: the
+    // eye would claim "outside a transaction" while Commit stays enabled.
+    expect(transactionStatusIcon(session('transactionless', undefined))).toBe('question');
     expect(transactionStatusText(session(undefined, undefined))).toBe('$(question) Unknown');
   });
 
@@ -131,7 +133,7 @@ describe('registering the status bar', () => {
     const item = register();
     expect(item.show).toHaveBeenCalled();
     expect(item.text).toBe('$(circle-filled) Manual · in transaction');
-    expect(item.command).toBe(SET_MODE_COMMAND);
+    expect(item.command).toBe('gemstone.setTransactionMode');
   });
 
   it('redraws when the transaction state moves, without a session change', () => {

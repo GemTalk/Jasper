@@ -16,10 +16,6 @@ import {
 // no row, and it is one click from switching. It follows the *selected* session,
 // which is the one Display It, Inspect It and the Explorer all act in, and hides
 // itself entirely when nothing is logged in.
-//
-// Modelled on openEditorsStatusBar.ts.
-
-export const SET_MODE_COMMAND = 'gemstone.setTransactionMode';
 
 /**
  * The glyph for a session's state, chosen so the shape alone carries the part
@@ -31,7 +27,7 @@ export const SET_MODE_COMMAND = 'gemstone.setTransactionMode';
  * scan rather than study, and the two circles differ in shape as well as fill.
  */
 export function transactionStatusIcon(session: ActiveSession): string {
-  if (session.transactionMode === 'transactionless' && session.inTransaction !== true) {
+  if (session.transactionMode === 'transactionless' && session.inTransaction === false) {
     return 'eye';
   }
   if (session.inTransaction === true) return 'circle-filled';
@@ -94,7 +90,7 @@ export function registerTransactionStatusBar(
   // Priority 1 so it sits to the left of the open-editors tally, which is about
   // editors rather than the session and is the less consequential of the two.
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1);
-  item.command = SET_MODE_COMMAND;
+  item.command = 'gemstone.setTransactionMode';
 
   const refresh = () => {
     const session = sessionManager.getSelectedSession();

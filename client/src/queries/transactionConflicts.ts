@@ -1,8 +1,8 @@
 // `System transactionConflicts` — what GemStone refused a commit over.
 //
 // The dictionary it answers holds `#commitResult` plus one Association per kind
-// of conflict detected, each value an Array of the objects that collided
-// (Programming Guide 3.7 §9.2, "Transaction Conflicts", Table 9.1).
+// of conflict detected, each value normally an Array of the objects that
+// collided (Programming Guide 3.7 §9.2, "Transaction Conflicts", Table 9.1).
 //
 // Read it BEFORE anything else touches the transaction: "Conflict sets are
 // cleared at the beginning of a commit or abort and thus can be examined until
@@ -19,16 +19,11 @@ import { QueryExecutor } from './types';
 export const CONFLICT_OBJECT_LIMIT = 25;
 
 /**
- * How much of each conflicting object's `printString` to bring back. Enough to
- * recognize the object at a glance; the report names the expression that shows
- * the whole of it in a live session.
+ * How much of each `printString` to bring back — a conflicting object's, or a
+ * text-valued kind's. Enough to recognize it at a glance; the report names the
+ * expression that shows the whole of an object in a live session.
  */
 export const CONFLICT_PRINT_STRING_LIMIT = 100;
-
-/** The workspace expression that turns an OOP in the report back into its object. */
-export function objectForOopExpression(oop: string): string {
-  return `Object _objectForOop: ${oop}`;
-}
 
 export interface ConflictingObject {
   /** `asOop printString` — what `Object _objectForOop:` takes. */
@@ -86,8 +81,14 @@ export function describeCommitResult(commitResult: string | undefined): string |
 }
 
 // Record-per-line, tab-separated: R = commitResult, K = a conflict kind and its
-// object count, O = one conflicting object under the K above it, T = a non-Array
-// value rendered as text.
+// object count, O = one conflicting object under the K above it, T = a value
+// that is not a collection of objects, rendered as text. A String is a
+// Collection in GemStone, so CharacterCollection is excluded explicitly —
+// otherwise a text value is walked a Character at a time.
+//
+// `source` is the expression that answers the conflict dictionary; only the
+// live-stone test passes anything but `System transactionConflicts`, to reach
+// the T branch, which no conflict it can provoke would.
 //
 // `printString` runs application code, inside a doit, on objects two sessions are
 // fighting over — so it is guarded the way `getGlobalsForDictionary` guards its
@@ -97,14 +98,15 @@ export function describeCommitResult(commitResult: string | undefined): string |
 // cost is time, on an object whose printOn: walks a large collection; that is the
 // same bargain every printString in this codebase makes, and it is only ever paid
 // on a commit that has already been refused.
-const CONFLICTS_CODE = `| conflicts stream |
-conflicts := System transactionConflicts.
+export function conflictsCode(source = 'System transactionConflicts'): string {
+  return `| conflicts stream |
+conflicts := ${source}.
 stream := WriteStream on: Unicode7 new.
 stream nextPutAll: 'R'; tab;
   nextPutAll: (conflicts at: #commitResult ifAbsent: [nil]) asString; lf.
 conflicts keysAndValuesDo: [:key :value |
   key == #commitResult ifFalse: [
-    (value isKindOf: Collection)
+    ((value isKindOf: Collection) and: [(value isKindOf: CharacterCollection) not])
       ifTrue: [ | shown |
         shown := 0.
         stream nextPutAll: 'K'; tab; nextPutAll: key asString; tab;
@@ -125,11 +127,13 @@ conflicts keysAndValuesDo: [:key :value |
       ifFalse: [ | txt |
         txt := [value printString] on: Error do: [:ex | '<printString failed>'].
         txt := txt collect: [:c | c isSeparator ifTrue: [$ ] ifFalse: [c]].
-        txt size > 200 ifTrue: [txt := (txt copyFrom: 1 to: 200), '...'].
+        txt size > ${CONFLICT_PRINT_STRING_LIMIT}
+          ifTrue: [txt := (txt copyFrom: 1 to: ${CONFLICT_PRINT_STRING_LIMIT}), '...'].
         stream nextPutAll: 'K'; tab; nextPutAll: key asString; tab; nextPutAll: '0'; lf.
         stream nextPutAll: 'T'; tab; nextPutAll: txt; lf]]].
 conflicts := nil.
 stream contents`;
+}
 
 /**
  * {@link transactionConflicts}, or `undefined` when it could not be read. A failed
@@ -152,7 +156,7 @@ export function tryTransactionConflicts(execute: QueryExecutor): TransactionConf
  * set persistent" (§9.2).
  */
 export function transactionConflicts(execute: QueryExecutor): TransactionConflicts {
-  return parseTransactionConflicts(execute(CONFLICTS_CODE));
+  return parseTransactionConflicts(execute(conflictsCode()));
 }
 
 /** Exported for tests: the pure half of {@link transactionConflicts}. */
@@ -238,6 +242,21 @@ export function conflictReason(conflicts: TransactionConflicts | undefined): str
   return `${parts.join('. ')}. ${ADVICE}`;
 }
 
+/**
+ * A refusal, worded for both places it is shown: `reason` for the toast or the
+ * MCP reply's headline, and `details` — the full {@link conflictReport} — only
+ * when the conflict set has something to add to it.
+ */
+export function describeRefusal(conflicts: TransactionConflicts | undefined): {
+  reason: string;
+  details?: string;
+} {
+  return {
+    reason: conflictReason(conflicts),
+    details: conflicts && hasConflictDetail(conflicts) ? conflictReport(conflicts) : undefined,
+  };
+}
+
 /** Whether there is anything in `conflicts` worth showing beyond {@link conflictReason}. */
 export function hasConflictDetail(conflicts: TransactionConflicts): boolean {
   return conflicts.categories.length > 0 || !!conflicts.commitResult;
@@ -263,7 +282,7 @@ export function conflictReport(conflicts: TransactionConflicts): string {
 
   const named = conflicts.categories.flatMap((c) => c.objects);
   if (named.length > 0) {
-    lines.push(`Inspect one in a workspace: ${objectForOopExpression(named[0].oop)}`);
+    lines.push(`Inspect one in a workspace: Object _objectForOop: ${named[0].oop}`);
   }
   const oopWidth = Math.max(0, ...named.map((o) => o.oop.length));
   const classWidth = Math.max(0, ...named.map((o) => o.className.length));

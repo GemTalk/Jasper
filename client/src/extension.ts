@@ -387,12 +387,9 @@ export function abortConfirmMessage(
  * The detail line of the confirmation shown before a transaction-mode switch.
  *
  * Switching modes aborts — GemStone does that as part of switching, and there is
- * no way to ask it not to — so the dialog always says that, and then says how
- * much the abort would actually cost. `needsCommit` is the tri-state
- * `sessionNeedsCommit` answer, where `undefined` (couldn't tell) is treated like
- * `true`: a failed probe is not evidence that there is nothing to lose. The switch
- * runs the same post-abort refresh an abort does, so it carries
- * {@link UNSAVED_EXPORT_EDITS_WARNING} on the same terms too.
+ * no way to ask it not to — so the dialog always says that, and then says what
+ * {@link abortConfirmMessage} would say about the same abort, on the same terms.
+ * Unlike the abort, the switch always asks, so it says so when nothing is lost.
  *
  * Exported, like {@link abortConfirmMessage}, so the wording is testable without
  * a live session behind a modal.
@@ -402,14 +399,9 @@ export function transactionModeSwitchDetail(
   hasUnsavedEditors = false,
 ): string {
   const stake =
-    needsCommit === true
-      ? 'This session has uncommitted changes; switching discards them.'
-      : needsCommit === undefined
-        ? 'This session may have uncommitted changes (its commit state could not be checked); switching would discard them.'
-        : 'This session has no uncommitted changes, so nothing is lost.';
-  const parts = ['Changing the transaction mode aborts the current transaction.', stake];
-  if (hasUnsavedEditors) parts.push(UNSAVED_EXPORT_EDITS_WARNING);
-  return parts.join('\n\n');
+    abortConfirmMessage(needsCommit, hasUnsavedEditors) ??
+    'This session has no uncommitted changes, so nothing is lost.';
+  return `Changing the transaction mode aborts the current transaction.\n\n${stake}`;
 }
 
 /**
@@ -447,21 +439,21 @@ export function sessionActionConfirmation(options: {
 }
 
 /**
- * What the user is shown once a Commit or Abort has actually run: an
+ * What the user is shown once a Commit, Abort or Begin has actually run: an
  * information toast on success, an error toast on failure, both headed by the
  * session — `Session 3 — DataCurator on gs64stone (localhost): Commit
  * succeeded.` A commit that says nothing is indistinguishable from a commit
  * that never happened, which is the whole reason the toast is not optional.
  *
- * Shared by the commit and the abort, and by both of their failure routes (the
- * GCI call answering `success: false`, and the call throwing — a session that
- * has gone answers "Session not found" from the throw path), so the four
- * messages cannot drift into four shapes. Exported so the contract is testable
+ * Shared by the commit, the abort and the begin, and by both of their failure
+ * routes (the GCI call answering `success: false`, and the call throwing — a
+ * session that has gone answers "Session not found" from the throw path), so the
+ * messages cannot drift into different shapes. Exported so the contract is testable
  * without standing up an activation, like `abortConfirmMessage` and
  * `sessionActionConfirmation` above.
  */
 export function announceSessionAction(
-  action: 'Commit' | 'Abort',
+  action: 'Commit' | 'Abort' | 'Begin Transaction',
   sessionDescription: string,
   result:
     | { success: true }
@@ -1818,7 +1810,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (warning) {
       const choice = await vscode.window.showWarningMessage(
         `Begin a transaction on session ${session.id}?`,
-        { modal: true, detail: warning },
+        { modal: true, detail: `${loginLabel(session.login)}\n\n${warning}` },
         'Begin Transaction',
       );
       if (choice !== 'Begin Transaction') return;
@@ -1826,16 +1818,20 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const { success, err } = sessionManager.begin(session.id);
       if (!success) {
-        vscode.window.showErrorMessage(
-          `Session ${session.id}: Begin Transaction failed — ${explainGciError(err) || `error ${err.number}`}`,
-        );
+        announceSessionAction('Begin Transaction', sessionDescription(session), {
+          success: false,
+          reason: explainGciError(err) || `error ${err.number}`,
+        });
         return;
       }
-      vscode.window.showInformationMessage(`Session ${session.id}: Transaction begun.`);
+      announceSessionAction('Begin Transaction', sessionDescription(session), { success: true });
       await refreshAfterViewReplaced(session);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Begin Transaction failed: ${msg}`);
+      announceSessionAction('Begin Transaction', sessionDescription(session), {
+        success: false,
+        reason: msg,
+      });
     }
   };
 
@@ -1873,10 +1869,10 @@ export function activate(context: vscode.ExtensionContext) {
       `Switch session ${session.id} to ${modeLabel(pick.mode)}?`,
       {
         modal: true,
-        detail: transactionModeSwitchDetail(
+        detail: `${loginLabel(session.login)}\n\n${transactionModeSwitchDetail(
           queries.sessionNeedsCommit(session),
           fileInManager.hasUnsavedChanges(session),
-        ),
+        )}`,
       },
       'Switch Mode',
     );
@@ -1886,7 +1882,9 @@ export function activate(context: vscode.ExtensionContext) {
       sessionManager.setTransactionMode(session.id, pick.mode);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Session ${session.id}: could not switch mode — ${msg}`);
+      vscode.window.showErrorMessage(
+        `${sessionDescription(session)}: could not switch mode — ${msg}`,
+      );
       // The switch may have got part-way; ask the stone rather than leave the
       // cached mode describing a session that is no longer in it.
       sessionManager.refreshTransactionState(session.id);
@@ -1894,7 +1892,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     await refreshAfterViewReplaced(session);
     vscode.window.showInformationMessage(
-      `Session ${session.id}: ${transactionStateLabel(session.transactionMode, session.inTransaction)}.`,
+      `${sessionDescription(session)}: ${transactionStateLabel(session.transactionMode, session.inTransaction)}.`,
     );
   };
 

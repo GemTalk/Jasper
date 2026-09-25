@@ -904,8 +904,7 @@
       {
         "command": "gemstone.setTransactionMode",
         "title": "Set Transaction Mode",
-        "category": "GemStone",
-        "icon": "$(arrow-swap)"
+        "category": "GemStone"
       },
       {
         "command": "gemstone.sessionCommit",

@@ -40,7 +40,7 @@ import { wslStatFilesSync } from '../wslFs';
 import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { GemStoneLogin, loginLabel, dataCuratorLoginToCreate } from '../loginTypes';
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { canBegin, canCommit, transactionStateLabel } from '../queries/transactionMode';
+import { canBegin, canCommit, transactionStateLabelIfKnown } from '../queries/transactionMode';
 import { readWebviewScript } from '../webviewAssets';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 
@@ -1649,10 +1649,10 @@ export class DatabasesPanel {
     return {
       id: session.id,
       current: session.id === selectedId,
-      transactionState:
-        session.transactionMode === undefined
-          ? undefined
-          : transactionStateLabel(session.transactionMode, session.inTransaction),
+      transactionState: transactionStateLabelIfKnown(
+        session.transactionMode,
+        session.inTransaction,
+      ),
       canCommit: canCommit(session.inTransaction),
       canBegin: canBegin(session.transactionMode, session.inTransaction),
     };

@@ -1,13 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { commitTransaction } from '../commitTransaction';
-
-const CONFLICTS = [
-  'R\tfailure',
-  'K\tWrite-Write\t2',
-  'O\t12200193\tSymbolDictionary',
-  'O\t12200449\tAccount',
-].join('\n');
+import { WRITE_WRITE_ANSWER as CONFLICTS } from './conflictFixtures';
 
 /** An executor that answers each call from `answers`, in order. */
 function executorFor(...answers: (string | Error)[]) {
@@ -43,7 +37,7 @@ describe('commitTransaction', () => {
   // can see which objects to look at rather than being told "possible conflict".
   it('lists the conflicting objects under the refusal', () => {
     const text = commitTransaction(executorFor('refused', CONFLICTS));
-    expect(text).toContain('12200193  SymbolDictionary');
+    expect(text).toContain('12086785  SymbolDictionary');
     expect(text).toContain('12200449  Account');
   });
 
