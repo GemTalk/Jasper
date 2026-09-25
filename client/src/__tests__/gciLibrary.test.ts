@@ -266,6 +266,76 @@ describe('GciLibrary', () => {
   }
 
   /**
+   * Asserts that evaluating `codeToEvaluate` and fetching its result as a
+   * string via the non-blocking GCI entry point yields `expectedResult`.
+   *
+   * @param codeToEvaluate - Smalltalk source to evaluate.
+   * @param expectedResult - The string the evaluated result is expected to decode to.
+   */
+  async function expectEvaluatedStringToBeAsync(codeToEvaluate: string, expectedResult: string) {
+    await expect(gciLibrary.executeAndFetchStringAsync(session, codeToEvaluate)).resolves.toBe(
+      expectedResult,
+    );
+  }
+
+  /**
+   * Asserts that the session's PureExportSet is the same once `callback`'s
+   * promise resolves as it was before `callback` started. If `callback`
+   * rejects, rethrows its error without comparing.
+   *
+   * @param callback - The async work expected to leave the PureExportSet unchanged.
+   */
+  async function expectPureExportSetToStayUnchangedAsync(callback: () => Promise<unknown>) {
+    const takeSnapshotExpression = '(GsBitmap newForHiddenSet: #PureExportSet) asArray';
+    const snapshotName = gciLibrary.storeInUniqueUserGlobalsKey(session, takeSnapshotExpression);
+
+    try {
+      await callback();
+    } catch (error) {
+      try {
+        gciLibrary.removeKeyFromUserGlobals(session, snapshotName);
+      } catch (cleanupError) {
+        console.warn(
+          `Failed to clean up UserGlobals key '${snapshotName}' after callback error:`,
+          cleanupError,
+        );
+      }
+      throw error;
+    }
+
+    const comparisonResult = gciLibrary.execute(
+      session,
+      `
+        | previousSnapshot currentSnapshot |
+        previousSnapshot := UserGlobals removeKey: ${snapshotName}.
+        currentSnapshot := ${takeSnapshotExpression}.
+        previousSnapshot asIdentityBag = currentSnapshot asIdentityBag
+      `,
+    );
+
+    expect(gciLibrary.isTrueOop(comparisonResult)).toBe(true);
+  }
+
+  /**
+   * Makes the next oop release fail while `callback` runs, and restores
+   * normal releases only once `callback`'s promise settles, since the release
+   * may happen well after `callback` first returns its promise.
+   *
+   * @param callback - The async work whose next release should fail.
+   */
+  async function simulateReleaseObjectFailureAsync(callback: () => Promise<void>) {
+    const spy = vi.spyOn(gciLibrary, 'releaseObject').mockImplementationOnce(() => {
+      throw GciLibraryError.withMessage('Simulated releaseObject failure');
+    });
+
+    try {
+      await callback();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  /**
    * Asserts that evaluating `codeToEvaluate` and fetching its result as an
    * integer yields `expectedResult`.
    *
@@ -276,10 +346,31 @@ describe('GciLibrary', () => {
     expect(gciLibrary.executeAndFetchInteger(session, codeToEvaluate)).toBe(expectedResult);
   }
 
-  /** A call to a non-blocking GCI operation, paired with the integer its resulting oop decodes to. */
-  interface NonBlockingOperation {
-    run: () => Promise<bigint>;
-    expectedResult: bigint;
+  /**
+   * Asserts that no instance of the class named `className` is left in the
+   * session's PureExportSet.
+   *
+   * Checks for a fixture class's instances rather than for an unchanged
+   * PureExportSet: a failed GCI call leaves its exception object in the
+   * PureExportSet, and nothing currently releases it, so an unchanged
+   * PureExportSet can't be expected after a failure.
+   *
+   * @param className - The name of a class the test defined in UserGlobals.
+   */
+  function expectNoInstanceToRemainInPureExportSet(className: string) {
+    expectOopToBeTrue(
+      gciLibrary.execute(
+        session,
+        `((GsBitmap newForHiddenSet: #PureExportSet) asArray
+            anySatisfy: [:each | each class == ${className}]) not`,
+      ),
+    );
+  }
+
+  /** A call to a non-blocking GCI operation, paired with the value its result decodes to. */
+  interface NonBlockingOperation<Result, Decoded> {
+    run: () => Promise<Result>;
+    expectedResult: Decoded;
   }
 
   /**
@@ -294,19 +385,25 @@ describe('GciLibrary', () => {
    * @param operations.quick - An operation that finishes right away. Its
    *   result must differ from `slow`'s, so a test can tell which operation
    *   a result came from.
+   * @param operations.decodeResult - Turns an operation's result into the
+   *   value compared against its `expectedResult`.
    */
-  function itBehavesLikeANonBlockingOperation(operations: {
-    slow: NonBlockingOperation;
-    quick: NonBlockingOperation;
+  function itBehavesLikeANonBlockingOperation<Result, Decoded>(operations: {
+    slow: NonBlockingOperation<Result, Decoded>;
+    quick: NonBlockingOperation<Result, Decoded>;
+    decodeResult: (result: Result) => Decoded;
   }) {
-    const { slow, quick } = operations;
+    const { slow, quick, decodeResult } = operations;
 
     if (slow.expectedResult === quick.expectedResult) {
       throw new Error('The slow and quick operations must resolve to different results.');
     }
 
-    function expectOperationToReturn(operation: NonBlockingOperation, resultOop: bigint) {
-      expect(gciLibrary.oopToInteger(session, resultOop)).toBe(operation.expectedResult);
+    function expectOperationToReturn(
+      operation: NonBlockingOperation<Result, Decoded>,
+      result: Result,
+    ) {
+      expect(decodeResult(result)).toBe(operation.expectedResult);
     }
 
     it('does not block the event loop while GemStone works on it', async () => {
@@ -459,6 +556,7 @@ describe('GciLibrary', () => {
         run: () => gciLibrary.executeAndFetchOop(session, `2`),
         expectedResult: 2n,
       },
+      decodeResult: (resultOop) => gciLibrary.oopToInteger(session, resultOop),
     });
   });
 
@@ -703,6 +801,7 @@ describe('GciLibrary', () => {
           ),
         expectedResult: 2n,
       },
+      decodeResult: (resultOop) => gciLibrary.oopToInteger(session, resultOop),
     });
   });
 
@@ -976,18 +1075,51 @@ describe('GciLibrary', () => {
             `
                     "executeAndFetchString sends #encodeAsUTF8 to the evaluated result, then
                     fetches bytes from whatever comes back, assuming it's a byte object. This
-                    class's encodeAsUTF8 lies about that -- it answers self, not a byte
-                    object -- to exercise what happens when the contract is broken."
+                    class's encodeAsUTF8 lies about that (it answers a new instance of
+                    itself, not a byte object) to exercise what happens when the contract
+                    is broken. A new instance, rather than self, keeps the evaluated result
+                    and the encoded one distinct oops, so a missed release of either shows up."
 
                     | encodeAsUTF8LiarClass |
                     encodeAsUTF8LiarClass := Object subclass: #EncodeAsUTF8Liar instVarNames: {} inDictionary: UserGlobals.
-                    encodeAsUTF8LiarClass compileMethod: 'encodeAsUTF8 ^ self'.
+                    encodeAsUTF8LiarClass compileMethod: 'encodeAsUTF8 ^ self class new'.
                     encodeAsUTF8LiarClass new
                 `,
           ),
         'a ArgumentTypeError occurred (error 2103), The object anEncodeAsUTF8Liar is not implemented as a byte object.',
       );
     }
+
+    it('throws when the evaluated code signals an error', () => {
+      expectToThrowExpectedGciLibraryError((signalExpectedErrorExpression) => {
+        gciLibrary.executeAndFetchString(session, signalExpectedErrorExpression);
+      });
+    });
+
+    function expectToThrowEncodingNotUnderstoodError() {
+      expectToThrowGciLibraryError(
+        () =>
+          gciLibrary.executeAndFetchString(
+            session,
+            `
+                    "Defines a class of its own, rather than using e.g. Object, so a test
+                    can tell its instances apart from anything else in the PureExportSet."
+                    (Object subclass: #EncodeAsUTF8Refuser instVarNames: {} inDictionary: UserGlobals) new
+                `,
+          ),
+        "a MessageNotUnderstood occurred (error 2010), a EncodeAsUTF8Refuser does not understand  #'encodeAsUTF8'",
+      );
+    }
+
+    it('fails when the result cannot be encoded as UTF-8', () => {
+      expectToThrowEncodingNotUnderstoodError();
+    });
+
+    it('releases the evaluated result when it cannot be encoded as UTF-8', () => {
+      expectToThrowEncodingNotUnderstoodError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Refuser');
+    });
 
     it('fails when trying to fetch a string from a non-string oop', () => {
       expectToThrowNonByteStringError();
@@ -1005,8 +1137,182 @@ describe('GciLibrary', () => {
       });
     });
 
+    it('releases the evaluated and encoded results when the result cannot be fetched as a string', () => {
+      expectToThrowNonByteStringError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Liar');
+    });
+
     it('returns the result of code that uses a non-local return', () => {
       expectEvaluatedStringToBe(`^ 'a' encodeAsUTF16`, 'a');
+    });
+  });
+
+  describe('evaluating expressions and fetching the result as a string asynchronously', () => {
+    it('returns the result of code that evaluates to an empty string', async () => {
+      await expectEvaluatedStringToBeAsync(`''`, '');
+    });
+
+    it('returns the result of code that evaluates to a string', async () => {
+      await expectEvaluatedStringToBeAsync(`'a'`, 'a');
+    });
+
+    it('returns the result of code that evaluates to an UTF-16 string', async () => {
+      await expectEvaluatedStringToBeAsync(`'a' encodeAsUTF16`, 'a');
+    });
+
+    it('returns the result of code that evaluates to a multi-byte Unicode string', async () => {
+      await expectEvaluatedStringToBeAsync(`'—'`, '—');
+    });
+
+    it('returns the result of code with variables that evaluates to a string', async () => {
+      await expectEvaluatedStringToBeAsync(`|a| a:= 'a'. a`, 'a');
+    });
+
+    it('returns the result of code that evaluates to a string that does not fill a fetch page', async () => {
+      const expectedResult = 'a'.repeat(GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES - 1);
+
+      await expectEvaluatedStringToBeAsync(`'${expectedResult}'`, expectedResult);
+    });
+
+    it('returns the result of code that evaluates to a string that fills exactly one fetch page', async () => {
+      const expectedResult = 'a'.repeat(GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES);
+
+      await expectEvaluatedStringToBeAsync(`'${expectedResult}'`, expectedResult);
+    });
+
+    it('returns the result of code that evaluates to a string that fills exactly more than one fetch page', async () => {
+      const expectedResult = 'a'.repeat(GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES * 2);
+
+      await expectEvaluatedStringToBeAsync(`'${expectedResult}'`, expectedResult);
+    });
+
+    it('returns the result of code that evaluates to a string that slightly exceeds a fetch page', async () => {
+      const expectedResult = 'a'.repeat(GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES + 1);
+
+      await expectEvaluatedStringToBeAsync(`'${expectedResult}'`, expectedResult);
+    });
+
+    it('returns the result of code that evaluates to a string that splits a multi-byte character across a fetch page boundary', async () => {
+      const asciiPrefixLength = GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES - 1;
+      const expectedResult = 'a'.repeat(asciiPrefixLength) + '—';
+
+      // Built via Smalltalk concatenation, not embedded as one giant
+      // source literal: a source literal this size hits an unrelated
+      // limit in how execute() transmits multi-byte source code.
+      await expectEvaluatedStringToBeAsync(
+        `((String new: ${asciiPrefixLength}) atAllPut: $a; yourself) , '—'`,
+        expectedResult,
+      );
+    });
+
+    function expectToBeRejectedWithNonByteStringError() {
+      return expectToBeRejectedWithGciLibraryError(
+        gciLibrary.executeAndFetchStringAsync(
+          session,
+          `
+                    "executeAndFetchStringAsync sends #encodeAsUTF8 to the evaluated result, then
+                    fetches bytes from whatever comes back, assuming it's a byte object. This
+                    class's encodeAsUTF8 lies about that (it answers a new instance of
+                    itself, not a byte object) to exercise what happens when the contract
+                    is broken. A new instance, rather than self, keeps the evaluated result
+                    and the encoded one distinct oops, so a missed release of either shows up."
+
+                    | encodeAsUTF8LiarClass |
+                    encodeAsUTF8LiarClass := Object subclass: #EncodeAsUTF8Liar instVarNames: {} inDictionary: UserGlobals.
+                    encodeAsUTF8LiarClass compileMethod: 'encodeAsUTF8 ^ self class new'.
+                    encodeAsUTF8LiarClass new
+                `,
+        ),
+        'a ArgumentTypeError occurred (error 2103), The object anEncodeAsUTF8Liar is not implemented as a byte object.',
+      );
+    }
+
+    it('throws when the evaluated code signals an error', async () => {
+      await expectToBeRejectedWithExpectedGciLibraryError((signalExpectedErrorExpression) =>
+        gciLibrary.executeAndFetchStringAsync(session, signalExpectedErrorExpression),
+      );
+    });
+
+    function expectToBeRejectedWithEncodingNotUnderstoodError() {
+      return expectToBeRejectedWithGciLibraryError(
+        gciLibrary.executeAndFetchStringAsync(
+          session,
+          `
+                    "Defines a class of its own, rather than using e.g. Object, so a test
+                    can tell its instances apart from anything else in the PureExportSet."
+                    (Object subclass: #EncodeAsUTF8Refuser instVarNames: {} inDictionary: UserGlobals) new
+                `,
+        ),
+        "a MessageNotUnderstood occurred (error 2010), a EncodeAsUTF8Refuser does not understand  #'encodeAsUTF8'",
+      );
+    }
+
+    it('fails when the result cannot be encoded as UTF-8', async () => {
+      await expectToBeRejectedWithEncodingNotUnderstoodError();
+    });
+
+    it('releases the evaluated result when it cannot be encoded as UTF-8', async () => {
+      await expectToBeRejectedWithEncodingNotUnderstoodError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Refuser');
+    });
+
+    it('fails when trying to fetch a string from a non-string oop', async () => {
+      await expectToBeRejectedWithNonByteStringError();
+    });
+
+    it('still throws the original error when the callback and its cleanup both fail', async () => {
+      await simulateReleaseObjectFailureAsync(async () => {
+        await expectToBeRejectedWithNonByteStringError();
+      });
+    });
+
+    it('does not modify PureExportSet', async () => {
+      await expectPureExportSetToStayUnchangedAsync(() =>
+        gciLibrary.executeAndFetchStringAsync(session, `'a'`),
+      );
+    });
+
+    it('releases the evaluated and encoded results when the result cannot be fetched as a string', async () => {
+      await expectToBeRejectedWithNonByteStringError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Liar');
+    });
+
+    it('returns the result of code that uses a non-local return', async () => {
+      await expectEvaluatedStringToBeAsync(`^ 'a' encodeAsUTF16`, 'a');
+    });
+
+    it('does not block the event loop while encoding the result as UTF-8', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.executeAndFetchStringAsync(
+          session,
+          `
+                    "The shared non-blocking tests only make evaluating the code slow. This
+                    class makes the encodeAsUTF8 send slow instead, so a blocking send
+                    would show up."
+
+                    | encodeAsUTF8SleeperClass |
+                    encodeAsUTF8SleeperClass := Object subclass: #EncodeAsUTF8Sleeper instVarNames: {} inDictionary: UserGlobals.
+                    encodeAsUTF8SleeperClass compileMethod: 'encodeAsUTF8 (Delay forSeconds: 1) wait. ^ ''a'' encodeAsUTF8'.
+                    encodeAsUTF8SleeperClass new
+                `,
+        ),
+      );
+    });
+
+    itBehavesLikeANonBlockingOperation({
+      slow: {
+        run: () =>
+          gciLibrary.executeAndFetchStringAsync(session, `(Delay forSeconds: 1) wait. 'a'`),
+        expectedResult: 'a',
+      },
+      quick: {
+        run: () => gciLibrary.executeAndFetchStringAsync(session, `'b'`),
+        expectedResult: 'b',
+      },
+      decodeResult: (result) => result,
     });
   });
 

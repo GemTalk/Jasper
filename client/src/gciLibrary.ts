@@ -2340,6 +2340,39 @@ export class GciLibrary {
   }
 
   /**
+   * Evaluates `code` via the non-blocking GCI entry point, passes the
+   * resulting oop to `callback`, and releases that oop afterwards regardless
+   * of whether `callback` resolves or rejects.
+   *
+   * `callback` must not let `oop` escape past its own resolution (e.g. by
+   * returning it, or by capturing it in something that outlives the call):
+   * the oop is released the instant `callback`'s promise settles, so any use
+   * of it afterwards operates on an already released oop.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @param callback - Receives the oop `code` evaluated to. Must not let the
+   *   oop escape past its own resolution.
+   * @returns Whatever `callback` resolves to.
+   * @throws {GciLibraryError} If execution fails to start, the evaluated code
+   *   signals an error, another non-blocking call is already in progress on
+   *   this session, or the underlying GCI call fails.
+   * @throws Whatever `callback` itself throws, unchanged, not necessarily a
+   *   {@link GciLibraryError}.
+   */
+  private async executeAndReleaseAsync<T>(
+    session: unknown,
+    code: string,
+    callback: (oop: bigint) => Promise<T>,
+  ): Promise<T> {
+    return this.releaseAfterUseAsync(
+      session,
+      await this.executeAndFetchOop(session, code),
+      callback,
+    );
+  }
+
+  /**
    * Evaluates `code` and decodes its result as a signed 64-bit integer, via
    * {@link oopToInteger}.
    *
@@ -2665,6 +2698,42 @@ export class GciLibrary {
     return this.releaseAfterUse(session, this.perform(session, receiverOop, selector), callback);
   }
 
+  /**
+   * Sends the unary message `selector` to `receiverOop` via the non-blocking
+   * GCI entry point, passes the resulting oop to `callback`, and releases
+   * that oop afterwards regardless of whether `callback` resolves or
+   * rejects.
+   *
+   * `callback` must not let `oop` escape past its own resolution (e.g. by
+   * returning it, or by capturing it in something that outlives the call):
+   * the oop is released the instant `callback`'s promise settles, so any use
+   * of it afterwards operates on an already released oop.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param receiverOop - The oop of the message's receiver.
+   * @param selector - The unary selector to send.
+   * @param callback - Receives the oop `selector` resolved to on
+   *   `receiverOop`. Must not let the oop escape past its own resolution.
+   * @returns Whatever `callback` resolves to.
+   * @throws {GciLibraryError} If `selector` cannot be resolved, the sent
+   *   method signals an error, another non-blocking call is already in
+   *   progress on this session, or the underlying GCI call fails.
+   * @throws Whatever `callback` itself throws, unchanged, not necessarily a
+   *   {@link GciLibraryError}.
+   */
+  private async performAndReleaseAsync<T>(
+    session: unknown,
+    receiverOop: bigint,
+    selector: string,
+    callback: (oop: bigint) => Promise<T>,
+  ): Promise<T> {
+    return this.releaseAfterUseAsync(
+      session,
+      await this.performAsync(session, receiverOop, selector),
+      callback,
+    );
+  }
+
   // ---------------------------------------------------------------------
   // Symbol resolution & Utf8 caching
   // ---------------------------------------------------------------------
@@ -2822,6 +2891,30 @@ export class GciLibrary {
   ): T {
     try {
       return consumer(oopToUse);
+    } finally {
+      this.safelyReleaseObject(session, oopToUse);
+    }
+  }
+
+  /**
+   * Passes `oopToUse` to `consumer` and releases it afterwards, regardless of
+   * whether `consumer`'s promise resolves or rejects. A failed release is
+   * logged rather than thrown, so it never replaces `consumer`'s result or
+   * error.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param oopToUse - The oop to hand to `consumer`, released once `consumer` settles.
+   * @param consumer - Receives `oopToUse`. Must not let it escape past its own resolution.
+   * @returns Whatever `consumer` resolves to.
+   * @throws Whatever `consumer` itself throws, unchanged.
+   */
+  private async releaseAfterUseAsync<T>(
+    session: unknown,
+    oopToUse: bigint,
+    consumer: (oopToUse: bigint) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await consumer(oopToUse);
     } finally {
       this.safelyReleaseObject(session, oopToUse);
     }
@@ -3299,6 +3392,35 @@ export class GciLibrary {
     );
   }
 
+  /**
+   * Evaluates `code` and returns its result, encoded server-side with
+   * `encodeAsUTF8` and decoded as a UTF-8 JS string. `code` may exit through
+   * a non-local return (`^`); its returned value is still encoded.
+   *
+   * Evaluating `code` and encoding its result don't block the event loop.
+   * Reading the encoded bytes back still does, since GCI has no non-blocking
+   * way to fetch them.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @returns The evaluated result, decoded as a UTF-8 JS string.
+   * @throws {GciLibraryError} If execution fails to start, the evaluated
+   *   code signals an error, the result cannot be sent `encodeAsUTF8`,
+   *   another non-blocking call is already in progress on this session, or
+   *   the underlying GCI calls fail.
+   */
+  public async executeAndFetchStringAsync(session: unknown, code: string): Promise<string> {
+    // encodeAsUTF8 is sent as its own round-trip, not appended to `code`'s
+    // source (e.g. `[ ${code} ] value encodeAsUTF8`): a non-local return
+    // inside `code` exits the whole doit, so an appended send would never run
+    // and the raw, unencoded result would reach the byte fetch instead.
+    return this.executeAndReleaseAsync(session, code, (resultOop) =>
+      this.performAndReleaseAsync(session, resultOop, 'encodeAsUTF8', async (utf8StringOop) =>
+        this.fetchUtf8String(session, utf8StringOop, GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES),
+      ),
+    );
+  }
+
   /** The page size, in bytes, used by {@link fetchUtf8String} to page a string's contents out of GemStone. */
   public static readonly FETCH_STRING_PAGE_SIZE_BYTES = 256 * 1024;
 
@@ -3308,10 +3430,10 @@ export class GciLibrary {
    *
    * Uses the generic `GciTsFetchBytes` rather than the UTF-8-specific
    * `GciTsFetchUtf8Bytes`, even though the latter exists for exactly this
-   * purpose. Callers reach this method (via {@link executeAndFetchString})
-   * only after already sending `encodeAsUTF8` to the value server-side, so
-   * `stringOop` is always already an instance of `Utf8` by the time it gets
-   * here. Per gcits.hf's doc comment on `GciTsFetchUtf8Bytes`: once
+   * purpose. Callers reach this method only after already sending
+   * `encodeAsUTF8` to the value server-side, so `stringOop` is always
+   * already an instance of `Utf8` by the time it gets here. Per gcits.hf's
+   * doc comment on `GciTsFetchUtf8Bytes`: once
    * `aString` is already an instance of `Utf8`, "*utf8String will be
    * unchanged and behavior is the same as GciTsFetchBytes_" -- so calling it
    * here would be functionally identical to `GciTsFetchBytes`, but would
