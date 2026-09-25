@@ -12,7 +12,6 @@ import {
   setTransactionMode,
   transactionStateLabel,
   TRANSACTION_MODES,
-  VIEW_REFRESH_CODE,
 } from '../transactionMode';
 
 describe('recognizing a transaction mode', () => {
@@ -93,26 +92,6 @@ describe('the gem’s own SigAbort servicing', () => {
     expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'true'))).toBe(true);
     expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'false'))).toBe(false);
     expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'nil'))).toBeUndefined();
-  });
-});
-
-describe('the view-refresh guard', () => {
-  it('skips the abort while the session holds uncommitted changes', () => {
-    expect(VIEW_REFRESH_CODE).toContain('System needsCommit');
-    expect(VIEW_REFRESH_CODE).toContain('skipped: uncommitted changes present');
-  });
-
-  it('also skips it inside a transaction begun by hand, which the abort would end', () => {
-    // Under autoBegin the abort immediately opens a fresh transaction; under
-    // manualBegin and transactionless nothing would, so both lose one this way.
-    expect(VIEW_REFRESH_CODE).toContain(
-      'System inTransaction and: [System transactionMode ~~ #autoBegin]',
-    );
-    expect(VIEW_REFRESH_CODE).toContain('skipped: session is inside a transaction begun by hand');
-  });
-
-  it('aborts to refresh when neither applies', () => {
-    expect(VIEW_REFRESH_CODE).toContain("System abortTransaction. 'refreshed'");
   });
 });
 

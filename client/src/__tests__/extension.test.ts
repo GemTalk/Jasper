@@ -723,7 +723,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
   });
 
   it('keeps the commit button when the transaction state could not be read', async () => {
-    // A failed probe is not evidence that a commit would fail.
+    // canCommit's rule: an unread state keeps the button.
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Logout Anyway' as unknown as vscode.MessageItem,
     );

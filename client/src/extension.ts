@@ -283,14 +283,10 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * stone the commit that just failed was headed for.
  *
  * `inTransaction` decides which BUTTONS the prompt carries, not whether it is
- * shown. A session outside a transaction can still hold uncommitted work —
- * GemStone lets you write outside a transaction and `System needsCommit` says so;
- * it is `commitTransaction` that raises 2030, not the write (verified on 3.6.2,
- * and see "Reading and Writing Outside of Transactions" in the Programming
- * Guide). So the warning still fires, because the work is still about to be
- * discarded; what is dropped is "Commit & Logout", which there could only fail.
- * It too is tri-state, and `undefined` keeps the button: a failed probe is not
- * evidence that a commit would fail.
+ * shown: a session outside a transaction can still hold uncommitted work (see
+ * `canCommit`), so the warning still fires, and what is dropped is "Commit &
+ * Logout", which there could only fail. `undefined` keeps the button, on
+ * `canCommit`'s terms.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
@@ -1727,8 +1723,7 @@ export function activate(context: vscode.ExtensionContext) {
         omniSearch?.notifySessionSynced(session.id);
       } else {
         // Only a refusal has a conflict set, so an errored commit costs no extra
-        // round trip. Read before anything else touches the transaction: GemStone
-        // clears the set at the start of the next commit, abort or continue.
+        // round trip. Read first — see the transactionConflicts.ts header.
         const conflicts = isCommitConflict(err) ? queries.transactionConflicts(session) : undefined;
         const failure = commitFailureMessage(err, conflicts);
         announceSessionAction('Commit', sessionDescription(session), {
@@ -1796,11 +1791,10 @@ export function activate(context: vscode.ExtensionContext) {
    *
    * `GciTsBegin` is `System beginTransaction`, which moves the session onto a
    * newer view: it discards whatever the session wrote while it was outside a
-   * transaction, and the refresh that follows rewrites the exported `.gs` mirror.
-   * GemStone lets a between-transactions session write, and `System needsCommit`
-   * duly reports it, so both losses are real here on exactly the terms they are
-   * real for an abort — and it asks with the same wording, via
-   * {@link abortConfirmMessage}. Nothing to lose means no modal, as before.
+   * transaction (such writes are allowed — see `canCommit`), and the refresh that
+   * follows rewrites the exported `.gs` mirror. Both losses are an abort's, so it
+   * asks with the abort's wording, via {@link abortConfirmMessage}. Nothing to
+   * lose means no modal, as before.
    */
   const beginSession = async (session: ActiveSession): Promise<void> => {
     const warning = abortConfirmMessage(
@@ -1885,9 +1879,13 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage(
         `${sessionDescription(session)}: could not switch mode — ${msg}`,
       );
-      // The switch may have got part-way; ask the stone rather than leave the
-      // cached mode describing a session that is no longer in it.
+      // The switch may have got part-way — GemStone aborts as part of switching,
+      // so a switch that lands in the wrong mode has usually still replaced the
+      // view. Ask the stone rather than leave the cached mode describing a session
+      // that is no longer in it, and bring the browsers along while it is still
+      // logged in.
       sessionManager.refreshTransactionState(session.id);
+      if (sessionManager.getSession(session.id)) await refreshAfterViewReplaced(session);
       return;
     }
     await refreshAfterViewReplaced(session);
@@ -1953,7 +1951,7 @@ export function activate(context: vscode.ExtensionContext) {
    * stale row would otherwise raise a confirmation naming what is at stake and
    * then fail with "Session not found".
    */
-  const sessionForTransactionModeCommand = (item?: GemStoneSessionItem) =>
+  const sessionForBeginOrModeCommand = (item?: GemStoneSessionItem) =>
     resolveCommandSession(sessionManager, item, {
       gone: (id) => `Session ${id} is no longer logged in.`,
       none: 'No active GemStone session.',
@@ -2532,7 +2530,7 @@ export function activate(context: vscode.ExtensionContext) {
       sessionTransactionCommand(sessionTransactionDeps, 'Abort', item),
     ),
 
-    // Begin and Set Transaction Mode go through sessionForTransactionModeCommand
+    // Begin and Set Transaction Mode go through sessionForBeginOrModeCommand
     // instead, not through sessionTransactionCommand: that one's job is the modal
     // naming the session before work is committed or discarded, and neither of
     // these needs it. A begin has nothing at stake, and a mode switch raises a
@@ -2540,13 +2538,13 @@ export function activate(context: vscode.ExtensionContext) {
     // The mode is reachable from a session row, from the status bar (which names
     // no row) and from the palette.
     vscode.commands.registerCommand('gemstone.sessionBegin', (item?: GemStoneSessionItem) => {
-      const session = sessionForTransactionModeCommand(item);
+      const session = sessionForBeginOrModeCommand(item);
       if (!session) return;
       return beginSession(session);
     }),
 
     vscode.commands.registerCommand('gemstone.setTransactionMode', (item?: GemStoneSessionItem) => {
-      const session = sessionForTransactionModeCommand(item);
+      const session = sessionForBeginOrModeCommand(item);
       if (!session) return;
       return setTransactionModeFor(session);
     }),

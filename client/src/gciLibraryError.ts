@@ -28,9 +28,9 @@ export type ReportedGciError = Pick<GciError, 'number' | 'message'> &
  * occurred") reads as a failure, which is exactly what it is not.
  *
  * What it does NOT say is "nothing was lost". What the gem serviced is an abort,
- * and a session outside a transaction can still be holding writes — GemStone
- * allows them, it is only the commit it refuses (see `canCommit`). Those writes
- * are discarded, so the message says so rather than reassuring over them.
+ * and a session outside a transaction can still be holding writes (see
+ * `canCommit`), which the abort discarded — so the message says so rather than
+ * reassuring over them.
  *
  * 2030 is the other way round: an ordinary refusal whose wording ("not inside of
  * a transaction") states the problem and not the remedy. It is the failure a

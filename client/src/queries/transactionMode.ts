@@ -51,7 +51,7 @@ export function isTransactionMode(value: string): value is TransactionMode {
  * the user agree first.
  *
  * Answers the mode the stone reports afterwards rather than the one asked for,
- * so a caller never caches a mode the switch did not actually reach.
+ * so a caller can tell a switch that did not land from one that did.
  */
 export function setTransactionMode(
   execute: QueryExecutor,
@@ -168,8 +168,10 @@ export const VIEW_REFRESH_CODE = `(System needsCommit
  * What this does NOT answer is whether the session holds uncommitted work. A
  * session outside a transaction can still have written — GemStone allows the
  * write and `System needsCommit` reports it; only `commitTransaction` raises
- * {@link ERR_NOT_IN_TRANSACTION}. `needsCommit` stays the question to ask before
- * discarding anything.
+ * {@link ERR_NOT_IN_TRANSACTION} (verified on 3.6.2; "Reading and Writing Outside
+ * of Transactions" in the Programming Guide). `needsCommit` stays the question to
+ * ask before discarding anything. This is the one full statement of that rule;
+ * the logout, begin and 3007 wording all lean on it.
  */
 export function canCommit(inTransaction: boolean | undefined): boolean {
   return inTransaction !== false;

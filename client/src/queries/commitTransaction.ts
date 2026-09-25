@@ -17,8 +17,7 @@ export function commitTransaction(execute: QueryExecutor): string {
   ).trim();
   if (answer === 'committed') return 'Transaction committed';
 
-  // Read before anything else touches the transaction: GemStone clears the
-  // conflict set at the start of the next commit, abort or continue.
+  // Read first — see the transactionConflicts.ts header.
   const { reason, details } = describeRefusal(tryTransactionConflicts(execute));
   const headline = `Commit refused — ${reason}`;
   return details ? `${headline}\n\n${details}` : headline;

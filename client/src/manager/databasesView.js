@@ -603,12 +603,6 @@
       begin +
       commit +
       act('gemstone.sessionAbort', 'Abort', 'discard', 'Abort this session') +
-      act(
-        'gemstone.setTransactionMode',
-        'Transaction Mode',
-        'arrow-swap',
-        'Change this session’s transaction mode (this aborts the current transaction)',
-      ) +
       btn('showSessionConfiguration', 'Session Configuration', 'gear', null, {
         session: session.id,
         iconOnly: true,
@@ -625,6 +619,16 @@
         'Full Logical Restore',
         'restore',
         'Full logical restore through this session',
+      ) +
+      // Inline here, where the Logins & Sessions tree keeps it on the context
+      // menu: the panel has no per-row context menu, so a button is the only way
+      // to offer it. It goes last, away from Commit and Abort, because switching
+      // aborts; the confirmation it raises says so before anything happens.
+      act(
+        'gemstone.setTransactionMode',
+        'Transaction Mode',
+        'arrow-swap',
+        'Change this session’s transaction mode (this aborts the current transaction)',
       ) +
       btn('logoutSession', 'Log out', null, 'btn-secondary', {
         session: session.id,

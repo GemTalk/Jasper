@@ -246,7 +246,7 @@ describe('GemStoneSessionItem', () => {
   });
 
   it('keeps Commit on a row whose transaction state could not be read', () => {
-    // A failed probe is not evidence that a commit would fail; let the stone say no.
+    // canCommit's rule: an unread state keeps Commit, and the stone says no.
     expect(new GemStoneSessionItem(sessionInMode(undefined, undefined), true).contextValue).toBe(
       'gemstoneSession.canCommit',
     );

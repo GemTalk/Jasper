@@ -8,7 +8,7 @@ describe('SESSION_STATUS_CODE', () => {
   // Stale-transaction guard: the report must auto-refresh when the abort would
   // discard nothing, so the rest of it (and any follow-up read tools in this
   // session) sees committed state. When it stands down is VIEW_REFRESH_CODE's,
-  // pinned in transactionMode.test.ts.
+  // pinned against a live stone in transactionMode.integration.test.ts.
   it('refreshes the view first, and reports whether it did', () => {
     expect(SESSION_STATUS_CODE).toContain(`viewState := ${VIEW_REFRESH_CODE}.`);
     expect(SESSION_STATUS_CODE).toContain("nextPutAll: 'View: '; nextPutAll: viewState");

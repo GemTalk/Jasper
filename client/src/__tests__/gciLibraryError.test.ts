@@ -28,9 +28,8 @@ describe('explaining a GCI error', () => {
   );
 
   // What the gem serviced is an abort, and a session outside a transaction can
-  // still be holding writes — GemStone allows the write and refuses only the
-  // commit. Reassuring that nothing was lost would be reassuring over exactly the
-  // work the abort discarded.
+  // still be holding writes (see canCommit) — reassuring that nothing was lost
+  // would be reassuring over exactly the work the abort discarded.
   it('does not claim nothing was lost, because the abort discards uncommitted writes', () => {
     const text = explainGciError(gciError(ERR_GEM_AUTO_ABORT, 'a TransactionBacklog occurred'));
 

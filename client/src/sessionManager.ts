@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { GciLibrary, GciError } from './gciLibrary';
 import { OOP_NIL } from './gciConstants';
 import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes';
-import { logInfo } from './gciLog';
+import { logInfo, logWarning } from './gciLog';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
@@ -42,6 +42,10 @@ export interface ActiveSession {
    *  This — not the mode — decides whether a commit can land. Owned by
    *  `SessionManager.refreshTransactionState`. */
   inTransaction?: boolean;
+  /** Whether `GemAutoServiceSigAbort` has been armed on this session — set only
+   *  once arming succeeds, so a failed attempt is retried on the next read that
+   *  finds the session in `manualBegin`. Owned by `SessionManager`. */
+  sigAbortArmed?: boolean;
 }
 
 /**
@@ -552,13 +556,15 @@ export class SessionManager {
    * Runs the query straight against the GCI rather than through browserQueries,
    * which would make this module depend on the one that depends on it.
    *
-   * Arms the gem's own SigAbort servicing whenever the read shows the session has
-   * ENTERED `manualBegin` — see {@link armGemAutoServiceSigAbort}. Doing it here
-   * rather than in {@link setTransactionMode} is what covers the case that is not
-   * a Jasper mode switch at all: a stone whose `STN_GEM_INITIAL_TRANSACTION_MODE`
-   * is `manualBegin` hands the session out in that mode at login, and another tool
-   * sharing the session can move it there behind Jasper's back. It costs a round
-   * trip only on the transition, not on every refresh.
+   * Arms the gem's own SigAbort servicing whenever the read finds the session in
+   * `manualBegin` and not yet armed — see {@link armGemAutoServiceSigAbort}. Doing
+   * it here rather than in {@link setTransactionMode} is what covers the case that
+   * is not a Jasper mode switch at all: a stone whose
+   * `STN_GEM_INITIAL_TRANSACTION_MODE` is `manualBegin` hands the session out in
+   * that mode at login, and another tool sharing the session can move it there
+   * behind Jasper's back. Keyed on `sigAbortArmed` rather than on the mode
+   * changing, so a failed arm is retried by the next read instead of never, and a
+   * session armed once is not armed again.
    */
   refreshTransactionState(id: number): void {
     const s = this.sessions.get(id);
@@ -574,11 +580,10 @@ export class SessionManager {
       // must not blank the half it did read, which is what the promise above says.
       const nextMode = mode ?? s.transactionMode;
       const nextInTransaction = inTransaction ?? s.inTransaction;
-      const enteredManualBegin = nextMode === 'manualBegin' && s.transactionMode !== 'manualBegin';
       const changed = s.transactionMode !== nextMode || s.inTransaction !== nextInTransaction;
       s.transactionMode = nextMode;
       s.inTransaction = nextInTransaction;
-      if (enteredManualBegin) this.armGemAutoServiceSigAbort(s);
+      if (nextMode === 'manualBegin' && !s.sigAbortArmed) this.armGemAutoServiceSigAbort(s);
       if (changed) this._onDidChangeTransactionState.fire(id);
     } catch (e: unknown) {
       logInfo(
@@ -600,7 +605,8 @@ export class SessionManager {
    *
    * Failing to arm it is not fatal — whatever put the session into `manualBegin`
    * still succeeded, and the session merely goes back to needing the user to abort
-   * promptly — so it is logged rather than raised.
+   * promptly — so it is logged as a warning rather than raised, and left unmarked
+   * so the next read tries again.
    *
    * Never undone, deliberately. GemStone raises the auto-service errors (3007 /
    * 3008) only in `manualBegin`, and a session in `autoBegin` is never outside a
@@ -611,9 +617,12 @@ export class SessionManager {
   private armGemAutoServiceSigAbort(s: ActiveSession): void {
     try {
       setGemAutoServiceSigAbort((code) => s.gci.executeAndFetchString(s.handle, code), true);
+      s.sigAbortArmed = true;
     } catch (e: unknown) {
-      logInfo(
-        `[Session ${s.id}] Could not arm GemAutoServiceSigAbort: ${e instanceof Error ? e.message : String(e)}`,
+      logWarning(
+        `[Session ${s.id}] Could not arm GemAutoServiceSigAbort, so the stone may force-abort ` +
+          `this session (error 3031) while it sits outside a transaction; will retry: ` +
+          `${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -631,12 +640,24 @@ export class SessionManager {
    * pin — so the code that ships is the code those tests exercise. The re-read
    * that follows is what updates the cache, and what arms the gem's own SigAbort
    * servicing when the session has landed in `manualBegin`.
+   *
+   * Throws when the stone reports a mode other than `mode`, after that re-read,
+   * so the caller reports a switch that did not land instead of announcing the
+   * old mode as though it were the new one. The abort may still have happened.
    */
   setTransactionMode(id: number, mode: TransactionMode): void {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
-    applyTransactionMode((code) => s.gci.executeAndFetchString(s.handle, code), mode);
+    const reached = applyTransactionMode(
+      (code) => s.gci.executeAndFetchString(s.handle, code),
+      mode,
+    );
     this.refreshTransactionState(id);
+    if (reached !== mode) {
+      throw new Error(
+        `the stone reports ${reached ?? 'an unrecognized mode'} after the switch, not ${mode}`,
+      );
+    }
   }
 
   begin(id: number): { success: boolean; err: GciError } {

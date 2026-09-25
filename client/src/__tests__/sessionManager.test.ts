@@ -34,12 +34,19 @@ let transactionStateAnswer = 'autoBegin true';
 // The transcript-sink install (run at login) executes a doit via
 // executeAndFetchString; capture the calls so tests can assert on them. The
 // transaction-state probe goes through the same call, and is answered from
-// `transactionStateAnswer` so a test can say which mode the stone handed out.
-const executeAndFetchStringMock = vi.fn((..._args: unknown[]) =>
-  typeof _args[1] === 'string' && _args[1].includes('System transactionMode asString,')
-    ? transactionStateAnswer
-    : 'installed',
-);
+// `transactionStateAnswer` so a test can say which mode the stone handed out; a
+// mode switch answers the mode it was asked for, unless `switchAnswer` says else.
+let switchAnswer: string | undefined;
+function stoneAnswer(..._args: unknown[]): string {
+  const code = typeof _args[1] === 'string' ? _args[1] : '';
+  if (code.includes('System transactionMode asString,')) return transactionStateAnswer;
+  const switchTo = /System transactionMode: #(\w+)\./.exec(code);
+  if (switchTo) return switchAnswer ?? switchTo[1];
+  return 'installed';
+}
+// Restored in beforeEach: a test that swaps the implementation must not leave
+// every later test talking to its stone.
+const executeAndFetchStringMock = vi.fn(stoneAnswer);
 // The liveness ping (GciTsFetchSize on nil) and the logout itself — the only two
 // GCI calls a logout has any reason to make. Spied so a test can assert how many
 // times they cross to the gem.
@@ -176,6 +183,8 @@ describe('SessionManager', () => {
     nbLoginStarts = true;
     nbFinishedSequence = [];
     transactionStateAnswer = 'autoBegin true';
+    switchAnswer = undefined;
+    executeAndFetchStringMock.mockImplementation(stoneAnswer);
     manager = new SessionManager();
   });
 
@@ -272,6 +281,55 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('arming the gem’s SigAbort servicing', () => {
+    const armCalls = () =>
+      executeAndFetchStringMock.mock.calls.filter(
+        (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort put: true'),
+      ).length;
+
+    // One failed attempt must not leave the session unarmed for the rest of its
+    // life, open to the very force-abort (3031) arming exists to prevent.
+    it('retries on the next read after a failed attempt, and marks success', () => {
+      transactionStateAnswer = 'manualBegin false';
+      let failArm = true;
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (failArm && typeof args[1] === 'string' && args[1].includes('#GemAutoServiceSigAbort')) {
+          throw GciLibraryError.withMessage('busy');
+        }
+        return stoneAnswer(...args);
+      });
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      expect(session.sigAbortArmed).toBeUndefined();
+
+      failArm = false;
+      manager.refreshTransactionState(session.id);
+
+      expect(session.sigAbortArmed).toBe(true);
+    });
+
+    // The option is never disarmed, so a session armed once stays armed.
+    it('does not arm again after a manualBegin → autoBegin → manualBegin round trip', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      transactionStateAnswer = 'manualBegin false';
+      manager.setTransactionMode(session.id, 'manualBegin');
+      transactionStateAnswer = 'autoBegin true';
+      manager.setTransactionMode(session.id, 'autoBegin');
+      transactionStateAnswer = 'manualBegin false';
+      manager.setTransactionMode(session.id, 'manualBegin');
+
+      expect(armCalls()).toBe(1);
+    });
+
+    it('does not arm again on every read while the session stays in manualBegin', () => {
+      transactionStateAnswer = 'manualBegin false';
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      manager.refreshTransactionState(session.id);
+      manager.refreshTransactionState(session.id);
+
+      expect(armCalls()).toBe(1);
+    });
+  });
+
   describe('switching the transaction mode', () => {
     it('sends the doit queries/transactionMode owns, and re-reads what the stone reached', () => {
       const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
@@ -298,6 +356,18 @@ describe('SessionManager', () => {
           (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort put: true'),
         ),
       ).toBe(true);
+    });
+
+    // A switch the stone did not carry out must not be announced as done: the
+    // caller shows an error instead of a toast naming the old mode.
+    it('throws when the stone reports a different mode afterwards, having re-read it', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      switchAnswer = 'autoBegin';
+
+      expect(() => manager.setTransactionMode(session.id, 'manualBegin')).toThrow(
+        'the stone reports autoBegin after the switch, not manualBegin',
+      );
+      expect(session.transactionMode).toBe('autoBegin');
     });
 
     it('announces the change so every surface that draws it redraws together', () => {

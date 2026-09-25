@@ -82,10 +82,21 @@ describe('the status bar tooltip', () => {
     expect(value).not.toContain('not needed in this mode');
   });
 
-  it('still says Begin is not needed where the mode genuinely says so', () => {
-    expect(transactionStatusTooltip(session('autoBegin', true)).value).toContain(
-      'Begin Transaction: not needed in this mode',
-    );
+  it.each([
+    ['an Auto-Begin session', session('autoBegin', true), 'not needed in this mode'],
+    [
+      'a Manual session already in a transaction',
+      session('manualBegin', true),
+      'not needed — already in a transaction',
+    ],
+    // Withheld on purpose rather than unneeded: the way to write is a switch.
+    [
+      'a Transactionless session',
+      session('transactionless', false),
+      'not offered in Transactionless — switch to Manual to write',
+    ],
+  ])('says why Begin is not offered to %s', (_who, s, reason) => {
+    expect(transactionStatusTooltip(s).value).toContain(`Begin Transaction: ${reason}`);
   });
 });
 

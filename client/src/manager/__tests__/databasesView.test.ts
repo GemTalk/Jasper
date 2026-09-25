@@ -988,16 +988,19 @@ describe('session actions', () => {
   // have to wonder whether the panel can do it.
   // Export Classes is deliberately absent: the sidebar's session row does not
   // show it as a button either (it is right-click only there).
-  it('offers the actions the Logins & Sessions row shows, and no more', () => {
+  // The one deliberate difference is Set Transaction Mode, which the sidebar keeps
+  // on its context menu: the panel has no per-row context menu, so it is a button
+  // here — the last one, away from Commit and Abort, since switching aborts.
+  it('offers the Logins & Sessions row’s actions, plus the mode switch it keeps on a menu', () => {
     mountSession();
     const row = root.querySelector('.db-session')!;
     expect(rowCommands()).toEqual([
       'gemstone.selectSession',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
-      'gemstone.setTransactionMode',
       'gemstone.fullLogicalBackup',
       'gemstone.fullLogicalRestore',
+      'gemstone.setTransactionMode',
     ]);
     expect(row.querySelector('[data-action="showSessionConfiguration"]')).not.toBeNull();
     expect(row.querySelector('[data-action="logoutSession"]')).not.toBeNull();

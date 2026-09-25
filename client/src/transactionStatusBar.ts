@@ -44,6 +44,25 @@ export function transactionStatusText(session: ActiveSession): string {
 }
 
 /**
+ * Why Begin is or is not offered, for the tooltip. Each reason is a different
+ * claim: "not needed in this mode" is about the mode — true only of Auto-Begin —
+ * so it is not made when the mode, or the transaction state Begin also depends
+ * on, could not be read; elsewhere Begin is withheld because the session is
+ * already in a transaction, or, under Transactionless, on purpose (see
+ * `canBegin`), where the way to write is a mode switch.
+ */
+function beginAvailability(session: ActiveSession): string {
+  const { transactionMode: mode, inTransaction } = session;
+  if (canBegin(mode, inTransaction)) return 'available';
+  if (mode === undefined || inTransaction === undefined) {
+    return 'unavailable — this session’s transaction state could not be read';
+  }
+  if (mode === 'autoBegin') return 'not needed in this mode';
+  if (inTransaction) return 'not needed — already in a transaction';
+  return 'not offered in Transactionless — switch to Manual to write';
+}
+
+/**
  * The hover: what the mode means, what it lets the session do right now, and
  * that clicking changes it. Spelled out rather than left to the mode's name,
  * because the names are GemStone's and not self-explaining.
@@ -59,17 +78,7 @@ export function transactionStatusTooltip(session: ActiveSession): vscode.Markdow
       ? '- Commit: available\n'
       : '- Commit: unavailable — the session is not in a transaction\n',
   );
-  // Three cases, not two: "not needed in this mode" is a claim about the mode,
-  // and the mode is one of the things that can be the thing we could not read.
-  // The Commit line above handles the same ambiguity by keeping the button and
-  // saying nothing about why.
-  md.appendMarkdown(
-    canBegin(session.transactionMode, session.inTransaction)
-      ? '- Begin Transaction: available\n'
-      : session.transactionMode === undefined || session.inTransaction === undefined
-        ? '- Begin Transaction: unavailable — this session’s transaction state could not be read\n'
-        : '- Begin Transaction: not needed in this mode\n',
-  );
+  md.appendMarkdown(`- Begin Transaction: ${beginAvailability(session)}\n`);
   md.appendMarkdown('- Abort: always available\n\n');
   md.appendMarkdown('_Click to change the transaction mode._');
   return md;

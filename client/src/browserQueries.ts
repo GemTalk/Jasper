@@ -534,8 +534,8 @@ export function abortSessionTransaction(session: ActiveSession): string {
  * The conflict set left by a commit this session just had refused, or undefined
  * when it could not be read (session busy, unreachable, unrecognized reply).
  *
- * Call it before anything else touches the transaction: GemStone clears the
- * conflict set at the start of the next commit, abort or continue.
+ * Call it before anything else touches the transaction — why is the
+ * queries/transactionConflicts.ts header.
  */
 export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
   return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
