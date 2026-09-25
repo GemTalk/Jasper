@@ -181,15 +181,20 @@ describe('GciLibrary', () => {
   }
 
   /**
-   * Makes the next readiness check report a failure via whichever
-   * mechanism this GemStone version's library actually uses: a
-   * `GciTsNbPoll` error result if it's available, or a thrown raw-socket
-   * read otherwise. Only one of the two mocks below is ever exercised in a
-   * given run, per the connected version's own {@link isNbResultReady}
-   * branch -- covering both is what makes this version-agnostic.
+   * Makes every readiness check report a failure, for the duration of
+   * `callback`, via whichever mechanism this GemStone version's library
+   * actually uses: a `GciTsNbPoll` error result if it's available, or a
+   * thrown raw-socket read otherwise. Only one of the two mocks below is
+   * ever exercised in a given run, per the connected version's own
+   * {@link isNbResultReady} branch -- covering both is what makes this
+   * version-agnostic. Failing every check, rather than just the next one,
+   * is what makes this safe to use around a call that polls more than
+   * once, e.g. one composed of several chained non-blocking GCI calls.
+   *
+   * @param callback - The operation to run while readiness checks are rigged to fail.
    */
-  function simulatePollFailure() {
-    vi.spyOn(gciLibrary, 'GciTsNbPoll').mockReturnValueOnce({
+  async function simulatePollFailure<T>(callback: () => Promise<T>): Promise<T> {
+    const pollSpy = vi.spyOn(gciLibrary, 'GciTsNbPoll').mockReturnValue({
       result: -1,
       err: {
         number: 0,
@@ -203,12 +208,38 @@ describe('GciLibrary', () => {
         reason: '',
       },
     });
-    vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrowOnce('oops');
+    const isReadableSpy = vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrow('oops');
+
+    try {
+      const result = await callback();
+
+      expect(pollSpy.mock.calls.length + isReadableSpy.mock.calls.length).toBeGreaterThan(0);
+
+      return result;
+    } finally {
+      pollSpy.mockRestore();
+      isReadableSpy.mockRestore();
+    }
   }
 
-  /** Forces the next `socketFor` call to throw, simulating a session whose socket cannot be identified. */
-  function simulateSessionSocketFailure() {
-    vi.spyOn(gciLibrary, 'socketFor').mockThrowOnce('oops');
+  /**
+   * Forces every `socketFor` call to throw for the duration of `callback`,
+   * simulating a session whose socket cannot be identified throughout.
+   *
+   * @param callback - The operation to run while `socketFor` is rigged to fail.
+   */
+  async function simulateSessionSocketFailure<T>(callback: () => Promise<T>): Promise<T> {
+    const spy = vi.spyOn(gciLibrary, 'socketFor').mockThrow('oops');
+
+    try {
+      const result = await callback();
+
+      expect(spy).toHaveBeenCalled();
+
+      return result;
+    } finally {
+      spy.mockRestore();
+    }
   }
 
   /**
@@ -304,34 +335,26 @@ describe('GciLibrary', () => {
     });
 
     it('returns the result when polling for it fails', async () => {
-      simulatePollFailure();
-
-      const result = await quick.run();
+      const result = await simulatePollFailure(quick.run);
 
       expectOperationToReturn(quick, result);
     });
 
     it('returns the result synchronously when polling for it fails', async () => {
-      simulatePollFailure();
-
-      await expectEventLoopToBeBlockedDuring(100, slow.run);
+      await simulatePollFailure(() => expectEventLoopToBeBlockedDuring(100, slow.run));
     });
 
     describe('Native socket error handling', () => {
       beforeEach(skipUnlessRawSocketPolling);
 
       it('returns the result when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-
-        const result = await quick.run();
+        const result = await simulateSessionSocketFailure(quick.run);
 
         expectOperationToReturn(quick, result);
       });
 
       it('returns the result synchronously when the session socket cannot be identified', async () => {
-        simulateSessionSocketFailure();
-
-        await expectEventLoopToBeBlockedDuring(100, slow.run);
+        await simulateSessionSocketFailure(() => expectEventLoopToBeBlockedDuring(100, slow.run));
       });
     });
   }
