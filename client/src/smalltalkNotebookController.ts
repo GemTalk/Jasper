@@ -88,7 +88,13 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         }
         return result;
       },
-      { title: 'GemStone: Running cell…', disposableProcess: true },
+      {
+        title: 'GemStone: Running cell…',
+        disposableProcess: true,
+        // The `finally`'s end is refused while a hard-broken cell is being
+        // collected; this is where it can succeed.
+        onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+      },
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.

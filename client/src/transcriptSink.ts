@@ -35,15 +35,21 @@ import { logError, logInfo } from './gciLog';
  * caller started it for, never to the session. A write is forwarded when it
  * comes from that process or from any process while that process is still
  * running; once it completes, halts, or is cleared by a hard break, the next
- * write finds it gone and the mode ends by itself. So an end that GemStone
- * refuses (it does, while a hard-broken call is still being collected) cannot
- * leave the mode on for the calls that follow, where a 2336 would fail a
- * blocking call and hand its answer to the next one
- * ([#665](https://github.com/GemTalk/Jasper/issues/665)).
- * {@link endClientForwarderMode} still ends it explicitly, which covers the one
- * case the process check cannot: a soft-broken process, suspended for the
- * debugger but still reading as waiting. The end always succeeds there, because
- * the session is idle.
+ * write finds it gone and the mode ends by itself. Left on, a 2336 in the
+ * calls that follow would fail a blocking call and hand its answer to the next
+ * one ([#665](https://github.com/GemTalk/Jasper/issues/665)).
+ *
+ * {@link endClientForwarderMode} still ends it explicitly, for the two cases
+ * the process check cannot see:
+ *
+ * - a soft-broken process, suspended for the debugger but still reading as
+ *   waiting. The caller's `finally` ends the mode, and succeeds, because the
+ *   session is idle.
+ * - a hard break that lands in a fork. It stops whichever process is running,
+ *   so the process the mode belongs to can be left parked, still reading as
+ *   waiting. The `finally`'s end is refused at that point (the cancelled call
+ *   is still being collected), so the runner ends the mode again once it has
+ *   collected the call (`NbRunOptions.onAbandonedCollected`).
  *
  * ClientForwarder sends bypass Smalltalk exception handlers (verified: an
  * `on: AbstractException do:` around the send still surfaces 2336 to the GCI),
@@ -94,8 +100,9 @@ const MAX_TRANSCRIPT_FETCH = 1024 * 1024;
  * `terminated` once a hard break has been cleared. A completed process is not
  * marked terminated, and one resumed by GciTsContinueWith even keeps its
  * frames, so neither `_isTerminated` nor the stack depth can tell. A process
- * that returned soft-broken can still read as waiting, which is why the
- * explicit end is kept.
+ * that returned soft-broken, or that a hard break left parked because it
+ * stopped a fork instead, can still read as waiting, which is why the explicit
+ * end is kept.
  *
  * No String literal is compared with a runtime String: this doit is sent as
  * UTF-8, so its literals compile as Unicode strings, and comparing one with a
@@ -289,9 +296,10 @@ export function startClientForwarderMode(session: ActiveSession, source: string)
 
 /**
  * End clientForwarder mode and return anything drained in the transition, so
- * writes that raced the end are not lost. Failing is harmless — GemStone
- * refuses it while a hard-broken call is still being collected — because the
- * mode ends with its process anyway (see the module doc).
+ * writes that raced the end are not lost. GemStone refuses it while a
+ * hard-broken call is still being collected; callers therefore also run it once
+ * the call has been collected (see the module doc). Failure is logged, never
+ * thrown.
  */
 export function endClientForwarderMode(session: ActiveSession): string {
   return runFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);

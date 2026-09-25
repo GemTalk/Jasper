@@ -271,7 +271,8 @@ export class CodeExecutor {
       editor.setDecorations(executingDecorationType, []);
       // End clientForwarder mode; display anything that raced the end. (After
       // a hard-break cancel the gem may still be settling — the end then
-      // fails quietly, and the mode ends with the cleared process anyway.)
+      // fails quietly, and runs again once the call is collected; see
+      // pollForCompletion.)
       appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
@@ -709,6 +710,9 @@ export class CodeExecutor {
     return pollNbToCompletion(session, onReady, {
       title: 'GemStone: Executing…',
       disposableProcess: true,
+      // Every caller runs in clientForwarder mode, and after a hard break the
+      // `finally`'s end is refused; this is where it can succeed.
+      onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
     });
   }
 

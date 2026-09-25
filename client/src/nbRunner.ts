@@ -94,6 +94,16 @@ export interface NbRunOptions {
    * panel still says "Step cancelled." and offers to step it again.
    */
   disposableProcess?: boolean;
+  /**
+   * Called once a hard-broken call has been collected and the session is idle
+   * again, before any call waiting on the session starts. Execute It and
+   * notebook cells end clientForwarder mode here: their own `finally` runs
+   * while the call is still being collected, when GemStone refuses it, and a
+   * hard break does not always stop the process the mode belongs to — it stops
+   * whichever process was running, which may be a fork (see transcriptSink.ts).
+   * Not called if collection gives up. Anything it throws is logged.
+   */
+  onAbandonedCollected?: () => void;
 }
 
 /**
@@ -145,7 +155,11 @@ const draining = new Map<number, Promise<void>>();
  * Only for a call whose result has not been read yet. Once `onReady` has read
  * it, see {@link awaitAbandonedRead}.
  */
-function drainAbandonedCall(session: ActiveSession, disposableProcess: boolean): Promise<void> {
+function drainAbandonedCall(
+  session: ActiveSession,
+  disposableProcess: boolean,
+  onCollected?: () => void,
+): Promise<void> {
   const existing = draining.get(session.id);
   if (existing) return existing;
 
@@ -156,6 +170,7 @@ function drainAbandonedCall(session: ActiveSession, disposableProcess: boolean):
         if (result === 1) {
           const { err } = session.gci.GciTsNbResult(session.handle);
           if (disposableProcess) clearStoppedProcess(session, err?.context);
+          runCollectedHook(session, onCollected);
           resolve();
           return;
         }
@@ -210,7 +225,11 @@ const ABANDONED_READ_WAIT_MS = 30_000;
  * Past the bound a new call is refused cleanly by GemStone itself ("call in
  * progress by another C thread"), never crashed.
  */
-function awaitAbandonedRead(session: ActiveSession, read: Promise<unknown>): void {
+function awaitAbandonedRead(
+  session: ActiveSession,
+  read: Promise<unknown>,
+  onCollected?: () => void,
+): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const done: Promise<void> = new Promise<void>((resolve) => {
     timer = setTimeout(() => {
@@ -219,15 +238,29 @@ function awaitAbandonedRead(session: ActiveSession, read: Promise<unknown>): voi
       );
       resolve();
     }, ABANDONED_READ_WAIT_MS);
-    read.then(
-      () => resolve(),
-      () => resolve(),
-    );
+    const collected = (): void => {
+      runCollectedHook(session, onCollected);
+      resolve();
+    };
+    read.then(collected, collected);
   }).finally(() => {
     clearTimeout(timer);
     if (draining.get(session.id) === done) draining.delete(session.id);
   });
   draining.set(session.id, done);
+}
+
+/** Run a caller's `onAbandonedCollected`; the caller is long gone, so only log a throw. */
+function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined): void {
+  if (!hook) return;
+  try {
+    hook();
+  } catch (e) {
+    logInfo(
+      `[Session ${session.id}] Cleanup after a cancelled run failed: ` +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
 }
 
 /**
@@ -336,13 +369,17 @@ export function pollNbToCompletion<T>(
       if (reading) {
         // Nothing to drain, and the session must not be touched — see
         // awaitAbandonedRead.
-        awaitAbandonedRead(session, reading);
+        awaitAbandonedRead(session, reading, opts.onAbandonedCollected);
       } else {
         // A hard break abandons the call, but the session still counts it as in
         // progress until its (aborted) result is collected. Drain it, or the very
         // next call on this session is refused with "session is busy" — which reads
         // as the next run silently doing nothing.
-        void drainAbandonedCall(session, opts.disposableProcess === true);
+        void drainAbandonedCall(
+          session,
+          opts.disposableProcess === true,
+          opts.onAbandonedCollected,
+        );
       }
       settle(() => reject(new NbCancelledError()));
     };
@@ -411,7 +448,11 @@ export function pollNbToCompletion<T>(
         // reporting a call in progress, and every later call on it refused. A
         // break that the gem turns into a poll error takes this path, so the
         // drain belongs here as much as on the hard-break path.
-        void drainAbandonedCall(session, opts.disposableProcess === true);
+        void drainAbandonedCall(
+          session,
+          opts.disposableProcess === true,
+          opts.onAbandonedCollected,
+        );
         settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
         return;
       }

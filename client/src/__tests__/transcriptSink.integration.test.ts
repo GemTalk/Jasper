@@ -98,7 +98,8 @@ describe('transcript sink (integration)', () => {
    *
    * Deliberately does NOT end the mode afterwards, as production's `finally`
    * does: the scoping tests below prove the mode ends with its process, and
-   * `afterEach` tidies up for the rest.
+   * `afterEach` tidies up for the rest. It does end it once a hard-broken call
+   * has been collected, exactly as production does (`onAbandonedCollected`).
    */
   function executeForwarding(
     code: string,
@@ -111,7 +112,12 @@ describe('transcript sink (integration)', () => {
       () =>
         gci.GciTsNbExecute(handle, code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, opts.flags ?? 0, 0),
       (signal) => settleNbResult(session(), onTranscript, signal),
-      { suppressNotification: true, disposableProcess: true, onStart: opts.onStart },
+      {
+        suppressNotification: true,
+        disposableProcess: true,
+        onStart: opts.onStart,
+        onAbandonedCollected: () => endClientForwarderMode(session()),
+      },
     );
   }
 
@@ -136,14 +142,47 @@ describe('transcript sink (integration)', () => {
   const numbered = (count: number): string[] =>
     Array.from({ length: count }, (_, k) => String(k + 1));
 
-  /** Wait until an abandoned call has been collected: a new nb call waits for exactly that. */
-  const sessionFree = () =>
+  /**
+   * Run `code` non-blocking WITHOUT starting clientForwarder mode. After a hard
+   * break this is the safe follow-up: runNbCall waits until the abandoned call
+   * has been collected, and a blocking call made while the cancelled process
+   * is still parked can be handed that process's answer instead of its own.
+   */
+  const executeNb = (code: string, onTranscript: (text: string) => void = () => {}) =>
     runNbCall(
       session(),
-      () => gci.GciTsNbExecute(handle, 'nil', OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
-      (signal) => settleNbResult(session(), () => {}, signal),
+      () => gci.GciTsNbExecute(handle, code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      (signal) => settleNbResult(session(), onTranscript, signal),
       { suppressNotification: true },
     );
+
+  /** Wait until an abandoned call has been collected. */
+  const sessionFree = () => executeNb('nil');
+
+  /** Release code waiting in the gem on `waitForGo` or `forkAfterGo`. */
+  const go = () =>
+    exec(
+      'SessionTemps current at: #JasperTestGo put: true. ' +
+        "(SessionTemps current at: #JasperTestForkGo otherwise: nil) ifNotNil: [:s | s signal]. 'ok'",
+    );
+
+  /**
+   * Smalltalk that waits until the test calls `go()`. Soft- and hard-break
+   * delivery varies by an order of magnitude between machines, so tests that
+   * break a run wait on this rather than on a fixed delay. For the process a
+   * break is meant to land in: it polls, because a process soft-broken while
+   * blocked on a semaphore cannot be resumed (error 2261).
+   */
+  const waitForGo =
+    '[SessionTemps current at: #JasperTestGo otherwise: false] whileFalse: [(Delay forMilliseconds: 20) wait]';
+
+  /**
+   * Smalltalk that forks `body` to run once the test calls `go()`. The fork
+   * blocks on a semaphore meanwhile, and a blocked process is never the one a
+   * break lands in, so a Cancel cannot stop the fork instead of its parent.
+   */
+  const forkAfterGo = (body: string) =>
+    `[(SessionTemps current at: #JasperTestForkGo put: Semaphore new) wait. ${body}] fork. `;
 
   it('reinstalling into a session that already has a sink keeps the buffered output', () => {
     exec("Transcript nextPutAll: 'kept across reinstall'. 'ok'");
@@ -298,11 +337,12 @@ tmps := SessionTemps current.
 
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
 
-      // A blocking write, not another forwarded execute: starting the mode
-      // repairs a held semaphore by itself, and would pass this with the
-      // break's process left uncleared.
-      await sessionFree();
-      expect(exec("Transcript nextPutAll: 'after'. 'ok'")).toBe('ok');
+      // Not another forwarded execute: starting the mode repairs a held
+      // semaphore by itself, and would pass this with the break's process
+      // left uncleared.
+      const { result, err } = await executeNb("Transcript nextPutAll: 'after'. 3 + 4");
+      expect(err.number).toBe(0);
+      expect(gci.oopToInteger(handle, result)).toBe(7n);
       expect(drainTranscript(session())).toContain('after');
     } finally {
       // Whatever failed above, nothing may still be running into the next
@@ -507,16 +547,20 @@ tmps := SessionTemps current.
       ['wrote', "Transcript nextPutAll: 'streaming'. "],
       ['never wrote', ''],
     ])(
-      'a hard break ends the mode with the cleared process, with no end call (process %s)',
+      'a hard break ends the mode once the call is collected, though the finally’s end is refused (process %s)',
       async (_label, ownWrite) => {
         // Survives the soft break, so the second Cancel is a hard break, and
-        // leaves a fork behind that writes after the break. No end call:
-        // production's is refused at this point (the aborted call is still
-        // being collected), and nothing may depend on it.
+        // leaves a fork behind that writes once the test says so, after the
+        // break has been collected: on a slow machine collecting it takes
+        // longer than any fixed delay the fork could wait. The fork blocks on
+        // a semaphore meanwhile, so neither break can land in it. (One that
+        // did would leave the process the mode belongs to parked and still
+        // reading as waiting, which is why the runner ends the mode once the
+        // call is collected.)
         const chunks: string[] = [];
         let cancel: (() => void) | undefined;
         const run = executeForwarding(
-          "[(Delay forMilliseconds: 1500) wait. Transcript nextPutAll: 'late fork'] fork. " +
+          forkAfterGo("Transcript nextPutAll: 'late fork'") +
             ownWrite +
             '[200 timesRepeat: [(Delay forMilliseconds: 50) wait]] on: Break do: [:e | e resume]. 42',
           (text) => chunks.push(text),
@@ -529,10 +573,13 @@ tmps := SessionTemps current.
           await sleep(MIN_HARD_BREAK_GAP_MS + 50);
           cancel!();
           await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+          // Production's `finally`, which GemStone refuses at this point.
+          endClientForwarderMode(session());
           await sessionFree();
+          go();
 
           // The fork writes during one of these, well after the break.
-          expect(blockingSeries(12, 150)).toEqual(numbered(12));
+          expect(blockingSeries(6, 150)).toEqual(numbered(6));
           expect(drainTranscript(session())).toBe('late fork');
           expect(exec("Transcript nextPutAll: 'own write'. 'ok'")).toBe('ok');
           expect(drainTranscript(session())).toBe('own write');
@@ -542,6 +589,10 @@ tmps := SessionTemps current.
           cancel?.();
           await run.catch(() => {});
           await sessionFree().catch(() => {});
+          // Release the fork even when an assertion failed before go().
+          go();
+          blockingSeries(2, 50);
+          drainTranscript(session());
         }
       },
       30_000,
@@ -552,8 +603,7 @@ tmps := SessionTemps current.
       // earlier, soft-broken process still reads as waiting. Resumed from the
       // debugger, that old process must not be taken for the new one: its
       // serial predates the start.
-      const code =
-        "20 timesRepeat: [(Delay forMilliseconds: 50) wait]. Transcript nextPutAll: 'old'. 42";
+      const code = `${waitForGo}. Transcript nextPutAll: 'old'. 42`;
       let cancel: (() => void) | undefined;
       const run = executeForwarding(code, () => {}, {
         flags: EXECUTE_IT_FLAGS,
@@ -564,6 +614,7 @@ tmps := SessionTemps current.
       const { err } = await run;
       expect(err.number).not.toBe(0);
       endClientForwarderMode(session());
+      go();
 
       startClientForwarderMode(session(), code);
       const resumed = gci.GciTsContinueWith(handle, BigInt(err.context), OOP_ILLEGAL, null, 0);
@@ -597,11 +648,7 @@ tmps := SessionTemps current.
 
     it.each([
       ['halted', "self halt. Transcript nextPutAll: 'resumed'. 42", false],
-      [
-        'soft-broken',
-        "20 timesRepeat: [(Delay forMilliseconds: 50) wait]. Transcript nextPutAll: 'resumed'. 42",
-        true,
-      ],
+      ['soft-broken', `${waitForGo}. Transcript nextPutAll: 'resumed'. 42`, true],
     ])(
       'a %s process resumed after the end call writes to the buffer',
       async (_label, code, softBreak) => {
@@ -622,6 +669,7 @@ tmps := SessionTemps current.
         const { err } = await run;
         expect(err.number).not.toBe(0);
         endClientForwarderMode(session());
+        go();
 
         const resumed = gci.GciTsContinueWith(handle, BigInt(err.context), OOP_ILLEGAL, null, 0);
 
