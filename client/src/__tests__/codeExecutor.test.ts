@@ -25,11 +25,17 @@ vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn() },
 }));
 
+// Call-through spies, so a test can read the options a caller hands the runner.
+vi.mock('../nbRunner', async (orig) => {
+  const actual = await orig<typeof import('../nbRunner')>();
+  return { ...actual, pollNbToCompletion: vi.fn(actual.pollNbToCompletion) };
+});
 vi.mock('../basicInspector/basicInspector', () => ({
   BasicInspector: { create: vi.fn() },
 }));
 
 import { CodeExecutor } from '../codeExecutor';
+import { pollNbToCompletion, type NbRunOptions } from '../nbRunner';
 import { DebuggerPanel } from '../debuggerPanel';
 import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { BasicInspector } from '../basicInspector/basicInspector';
@@ -70,11 +76,11 @@ function makeGci(overrides: Record<string, unknown> = {}) {
       err: { number: 0, message: '', context: OOP_NIL },
     })),
     GciTsPerformFetchBytes: vi.fn(() => ({ data: '42', err: { number: 0 } })),
-    // Transcript sink toggle/drain calls (see transcriptSink.ts) also go through
+    // Transcript sink start/end/drain calls (see transcriptSink.ts) also go through
     // executeAndFetchString; default them to an empty buffer so tests that don't
     // care about transcript output don't have to configure this mock at all.
     executeAndFetchString: vi.fn((_handle: unknown, code: string) => {
-      if (code.includes('jasperLive:') || code.includes('jasperDrain')) return '';
+      if (code.includes('ClientForwarderMode') || code.includes('jasperDrain')) return '';
       return expect.unreachable(
         'executeAndFetchString mock not configured for this test -- call ' +
           '(gci.executeAndFetchString as Mock).mockReturnValue(...) before triggering Display It.',
@@ -427,19 +433,46 @@ describe('CodeExecutor', () => {
       expect(sessionManager.refreshTransactionState).toHaveBeenCalledWith(session.id);
     });
 
-    it('runs with the transcript sink live, restoring buffered mode after', async () => {
-      setActiveEditor(makeEditor('3 + 4'));
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s starts clientForwarder mode for the exact code it runs, and ends it after',
+      async (command) => {
+        setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
 
-      await executor.executeIt();
+        await executor[command]();
 
-      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
-        .map((c) => c[1] as string)
-        .filter((code) => code.includes('jasperLive:'));
-      expect(sinkCalls.some((code) => code.includes('jasperLive: true'))).toBe(true);
-      expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
-    });
+        const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
+        const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
+          .map((c) => c[1] as string)
+          .filter((code) => code.includes('ClientForwarderMode'));
+        expect(sinkCalls).toHaveLength(2);
+        expect(sinkCalls[0]).toContain(
+          `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
+        );
+        expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
+      },
+    );
 
-    it('restores buffered mode even when the execution errors', async () => {
+    // After a hard break the `finally`'s end is refused while the call is
+    // still being collected; the runner calls this hook once it has been. When
+    // it runs is nbRunner.test.ts's to pin; here, that each caller hands one
+    // over and that it ends the mode.
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s ends clientForwarder mode once a hard-broken call is collected',
+      async (command) => {
+        setActiveEditor(makeEditor('3 + 4'));
+        await executor[command]();
+        const opts = vi.mocked(pollNbToCompletion).mock.lastCall![2] as NbRunOptions;
+        (gci.executeAndFetchString as Mock).mockClear();
+
+        opts.onAbandonedCollected!();
+
+        const sent = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toContain('jasperEndClientForwarderMode');
+      },
+    );
+
+    it('ends clientForwarder mode even when the execution errors', async () => {
       (gci.GciTsNbResult as Mock).mockReturnValue({
         result: 0x01n,
         err: {
@@ -453,7 +486,7 @@ describe('CodeExecutor', () => {
       await executor.executeIt();
 
       const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
-      expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
+      expect(sinkCalls.at(-1)).toContain('jasperEndClientForwarderMode');
     });
 
     it('streams a mid-execution Transcript write to the channel and resumes to the result', async () => {
@@ -1611,6 +1644,38 @@ describe('CodeExecutor', () => {
       const flags = (gci.GciTsNbExecute as Mock).mock.calls[0][5] as number;
       expect(flags & GCI_PERFORM_FLAG_ENABLE_DEBUG).toBe(GCI_PERFORM_FLAG_ENABLE_DEBUG);
       expect((gci.GciTsNbExecute as Mock).mock.calls[0][1]).toBe('3 + 4');
+    });
+
+    it('starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      await executor.executeWithDebugger(session, "MyTest debug: #'testAdd'", 'MyTest>>testAdd');
+
+      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
+        .map((c) => c[1] as string)
+        .filter((code) => code.includes('ClientForwarderMode'));
+      expect(sinkCalls).toHaveLength(2);
+      expect(sinkCalls[0]).toContain(
+        "jasperStartClientForwarderModeFor: 'MyTest debug: #''testAdd'''",
+      );
+      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
+    });
+
+    it('ends clientForwarder mode once a hard-broken call is collected', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+      await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+      const opts = vi.mocked(pollNbToCompletion).mock.lastCall![2] as NbRunOptions;
+      (gci.executeAndFetchString as Mock).mockClear();
+
+      opts.onAbandonedCollected!();
+
+      const sent = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain('jasperEndClientForwarderMode');
     });
 
     it('needs no active editor — a test is debugged from a row, not from text', async () => {

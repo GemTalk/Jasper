@@ -11,7 +11,7 @@ refactoring-engine install, and **GemStone File In**, on the first file in.
 |---|---|---|
 | **Jasper** | `extension.ts` (`activate`) | Top-level extension activity and general logging. |
 | **GemStone GCI** | `gciLog.ts` (`getGciLog`) | Error lines (`logError`) from debug sessions, code execution, and notebooks, plus informational traces (`logInfo`) — session login/logout, debugger stepping, `[FS]` filesystem-provider activity, refactoring commands. A refused commit writes its conflict report here (`logWarning`), which is what **Show Conflicts** on the toast reveals. Each line is timestamped `[HH:MM:SS.mmm]`. |
-| **GemStone Transcript** | `transcriptChannel.ts` (`getTranscriptChannel`) | Server-side `Transcript` output (see [the Transcript sink](../CLAUDE.md)). Live during Execute/Display/Inspect It and notebook cells; buffered-then-drained elsewhere. |
+| **GemStone Transcript** | `transcriptChannel.ts` (`getTranscriptChannel`) | Server-side `Transcript` output (see [the Transcript sink](../CLAUDE.md)). Streams while an Execute/Display/Inspect It or notebook cell's process runs (clientForwarder mode); buffered and drained after every other call. |
 | **GemStone Admin** | `sysadminChannel.ts` (`getSysadminChannel`) | Stone / NetLDI process management — `startstone`, `stopstone`, `gslist`, stale-lock handling. |
 | **GemStone Class Sync** | `exportManager.ts` (`ensureLogChannel`) | The incremental `.gemstone` mirror sync (see [incremental-class-sync.md](incremental-class-sync.md)). |
 | **GemStone Enhanced Inspector Perf** | `extension.ts` (`activate`) | Enhanced Inspector round-trip counts, for perf tuning. Populated only while perf tracking is enabled. |
