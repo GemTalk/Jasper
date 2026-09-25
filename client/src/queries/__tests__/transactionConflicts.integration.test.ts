@@ -54,14 +54,16 @@ describe('transaction conflicts on a live stone', () => {
     expect(transactionConflicts(execute).categories).toEqual([]);
   });
 
-  // No conflict this suite can provoke answers a text value, and a String is a
-  // Collection in GemStone — so the doit is fed a dictionary of its own shape to
-  // prove a text value comes back as one T record, not a Character per object.
-  it('renders a text-valued kind as text and a collection as its objects', () => {
+  // No conflict this suite can provoke answers a text value or an empty kind,
+  // so the doit is fed a dictionary of its own shape: a String (a Collection in
+  // GemStone) must come back as one T record, not a Character per object, and
+  // an empty kind — 3.7.5's #RcReadSet on a clean transaction — not at all.
+  it('renders text as text, a collection as its objects, and skips an empty kind', () => {
     const source =
       'SymbolKeyValueDictionary new at: #commitResult put: #failure; ' +
       "at: #'Synchronized-Commit' put: 'peer timed out'; " +
-      "at: #'Write-Write' put: (Array with: #jasperProbe); yourself";
+      "at: #'Write-Write' put: (Array with: #jasperProbe); " +
+      'at: #RcReadSet put: #(); yourself';
     const { commitResult, categories } = parseTransactionConflicts(execute(conflictsCode(source)));
 
     expect(commitResult).toBe('failure');

@@ -44,9 +44,10 @@ export interface ConflictCategory {
   total: number;
   objects: ConflictingObject[];
   /**
-   * Set instead of `objects` when the value was not a collection. Table 9.1's
-   * `#'Synchronized-Commit'` is documented as "details of the synchronized
-   * commit failure" rather than an Array, so the shape is not guaranteed.
+   * Set instead of `objects` when the value was not a collection. Table 9.1
+   * documents `#'Synchronized-Commit'` as "details of the synchronized commit
+   * failure" rather than an Array; 3.6.2 wraps it in a one-element Array, but
+   * the manual does not promise that shape.
    */
   text?: string;
 }
@@ -86,6 +87,12 @@ export function describeCommitResult(commitResult: string | undefined): string |
 // Collection in GemStone, so CharacterCollection is excluded explicitly —
 // otherwise a text value is walked a Character at a time.
 //
+// A kind with no objects is skipped: it names no collision. 3.6.2 never answers
+// one — `System class>>_conflictsReport:withDetails:` adds each kind only when
+// its set is non-empty — but 3.7.5 answers an empty #RcReadSet (this session's
+// own reduced-conflict reads, not another session's writes) even for a
+// transaction that has had no conflict at all.
+//
 // `source` is the expression that answers the conflict dictionary; only the
 // live-stone test passes anything but `System transactionConflicts`, to reach
 // the T branch, which no conflict it can provoke would.
@@ -107,7 +114,7 @@ stream nextPutAll: 'R'; tab;
 conflicts keysAndValuesDo: [:key :value |
   key == #commitResult ifFalse: [
     ((value isKindOf: Collection) and: [(value isKindOf: CharacterCollection) not])
-      ifTrue: [ | shown |
+      ifTrue: [value isEmpty ifFalse: [ | shown |
         shown := 0.
         stream nextPutAll: 'K'; tab; nextPutAll: key asString; tab;
           nextPutAll: value size printString; lf.
@@ -123,7 +130,7 @@ conflicts keysAndValuesDo: [:key :value |
             stream nextPutAll: 'O'; tab;
               nextPutAll: each asOop printString; tab;
               nextPutAll: each class name asString; tab;
-              nextPutAll: ps; lf]]]
+              nextPutAll: ps; lf]]]]
       ifFalse: [ | txt |
         txt := [value printString] on: Error do: [:ex | '<printString failed>'].
         txt := txt collect: [:c | c isSeparator ifTrue: [$ ] ifFalse: [c]].

@@ -161,6 +161,8 @@ describe('transactionConflicts', () => {
     // reference to avoid making the conflict set persistent."
     ['drops the doit\u2019s own reference to the conflict set', 'conflicts := nil'],
     ['caps how many objects come back', `shown <= ${CONFLICT_OBJECT_LIMIT}`],
+    // 3.7.5 answers an empty #RcReadSet for a transaction with no conflicts.
+    ['skips a kind that names no objects', 'value isEmpty ifFalse:'],
   ])('%s', (_why, fragment) => {
     const execute = vi.fn((_code: string) => WRITE_WRITE);
     transactionConflicts(execute);
