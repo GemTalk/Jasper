@@ -30,7 +30,7 @@ import {
   drainTranscript,
   settleNbResult,
 } from '../transcriptSink';
-import { runNbCall, NbCancelledError, MIN_HARD_BREAK_GAP_MS } from '../nbRunner';
+import { runNbCall, NbCancelledError, pollNbResultReady } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
 import {
   OOP_CLASS_STRING,
@@ -162,30 +162,22 @@ describe('transcript sink (integration)', () => {
   /** Wait until an abandoned call has been collected. */
   const sessionFree = () => executeNb('nil');
 
-  /** Release code waiting in the gem on `waitForGo` or `forkAfterGo`. */
-  const go = () =>
-    exec(
-      'SessionTemps current at: #JasperTestGo put: true. ' +
-        "(SessionTemps current at: #JasperTestForkGo otherwise: nil) ifNotNil: [:s | s signal]. 'ok'",
-    );
+  /** Release code waiting in the gem on `waitForGo`. */
+  const go = () => exec("SessionTemps current at: #JasperTestGo put: true. 'ok'");
 
   /**
-   * Smalltalk that waits until the test calls `go()`. Soft- and hard-break
-   * delivery varies by an order of magnitude between machines, so tests that
-   * break a run wait on this rather than on a fixed delay. For the process a
-   * break is meant to land in: it polls, because a process soft-broken while
-   * blocked on a semaphore cannot be resumed (error 2261).
+   * Smalltalk that waits until the test calls `go()`. Soft-break delivery
+   * varies by an order of magnitude between machines, so tests that break a
+   * run wait on this rather than on a fixed delay. It polls rather than
+   * waiting on a semaphore, because a process soft-broken while blocked on a
+   * semaphore cannot be resumed (error 2261). Bounded at 5s, so a break that
+   * never lands fails one test instead of leaving the session busy for the
+   * rest of the file.
    */
   const waitForGo =
-    '[SessionTemps current at: #JasperTestGo otherwise: false] whileFalse: [(Delay forMilliseconds: 20) wait]';
-
-  /**
-   * Smalltalk that forks `body` to run once the test calls `go()`. The fork
-   * blocks on a semaphore meanwhile, and a blocked process is never the one a
-   * break lands in, so a Cancel cannot stop the fork instead of its parent.
-   */
-  const forkAfterGo = (body: string) =>
-    `[(SessionTemps current at: #JasperTestForkGo put: Semaphore new) wait. ${body}] fork. `;
+    '| waited | waited := 0. ' +
+    '[(SessionTemps current at: #JasperTestGo otherwise: false) or: [waited >= 250]] ' +
+    'whileFalse: [(Delay forMilliseconds: 20) wait. waited := waited + 1]';
 
   it('reinstalling into a session that already has a sink keeps the buffered output', () => {
     exec("Transcript nextPutAll: 'kept across reinstall'. 'ok'");
@@ -546,65 +538,47 @@ tmps := SessionTemps current.
       },
     );
 
-    it.each([
-      ['wrote', "Transcript nextPutAll: 'streaming'. "],
-      ['never wrote', ''],
-    ])(
-      'a hard break ends the mode once the call is collected, though the finally’s end is refused (process %s)',
-      async (_label, ownWrite) => {
-        // Survives the soft break, so the second Cancel is a hard break, and
-        // leaves a fork behind that writes once the test says so, after the
-        // break has been collected: on a slow machine collecting it takes
-        // longer than any fixed delay the fork could wait. The fork blocks on
-        // a semaphore meanwhile, so neither break can land in it. (One that
-        // did would leave the process the mode belongs to parked and still
-        // reading as waiting, which is why the runner ends the mode once the
-        // call is collected.)
-        const chunks: string[] = [];
-        let cancel: (() => void) | undefined;
-        const run = executeForwarding(
-          forkAfterGo("Transcript nextPutAll: 'late fork'") +
-            ownWrite +
-            '[200 timesRepeat: [(Delay forMilliseconds: 50) wait]] on: Break do: [:e | e resume]. 42',
-          (text) => chunks.push(text),
-          { flags: EXECUTE_IT_FLAGS, onStart: (c) => (cancel = c) },
-        );
-        run.catch(() => {});
-        try {
-          await sleep(300);
-          cancel!();
-          await sleep(MIN_HARD_BREAK_GAP_MS + 50);
-          cancel!();
-          await expect(run).rejects.toBeInstanceOf(NbCancelledError);
-          // Production's `finally`, which GemStone refuses at this point.
-          endClientForwarderMode(session());
-          await sessionFree();
-          go();
+    it('a process stopped by a hard break no longer forwards, with no end call', async () => {
+      // The break is sent straight to the gem, not through the runner, and
+      // the test waits as long as the gem takes: whether and how fast a hard
+      // break lands is the gem's business, not something to assert (#550).
+      // Either way the process ends -- cleared by the break (3.7.5), or at the
+      // end of its loop (3.6.2 does not act on a hard break while the process
+      // is being resumed) -- and what must hold afterwards is the same:
+      // nothing is forwarded into a blocking call.
+      const code =
+        "Transcript nextPutAll: 'streaming'. 10 timesRepeat: [(Delay forMilliseconds: 50) wait]. 42";
+      startClientForwarderMode(session(), code);
+      expect(
+        gci.GciTsNbExecute(handle, code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, EXECUTE_IT_FLAGS, 0)
+          .success,
+      ).toBe(true);
+      const chunks: string[] = [];
+      let settled:
+        Promise<{ result: bigint; err: { number: number; context: unknown } }> | undefined;
+      try {
+        while (pollNbResultReady(session()).result === 0) await sleep(20);
+        // The first result is the forwarded write; resuming it puts the loop
+        // on a worker thread, where the only safe thing to send is the break.
+        settled = settleNbResult(session(), (text) => chunks.push(text));
+        while (chunks.length === 0) await sleep(20);
+        gci.GciTsBreak(handle, true);
+        const { err } = await settled;
 
-          // The fork writes during one of these, well after the break.
-          expect(blockingSeries(6, 150)).toEqual(numbered(6));
-          expect(drainTranscript(session())).toBe('late fork');
-          expect(exec("Transcript nextPutAll: 'own write'. 'ok'")).toBe('ok');
-          expect(drainTranscript(session())).toBe('own write');
-          expect(chunks).toEqual(ownWrite ? ['streaming'] : []);
-        } finally {
-          cancel?.();
-          cancel?.();
-          await run.catch(() => {});
-          await sessionFree().catch(() => {});
-          // Release the fork even when an assertion failed before go(). Best
-          // effort: a throw here would replace the assertion that failed.
-          try {
-            go();
-            blockingSeries(2, 50);
-            drainTranscript(session());
-          } catch (e) {
-            console.error('hard-break test cleanup failed:', e);
-          }
+        expect(chunks).toEqual(['streaming']);
+        const context = BigInt(err.context as bigint | number);
+        if (err.number !== 0 && context !== OOP_NIL && context !== 0n) {
+          gci.GciTsClearStack(handle, context);
         }
-      },
-      30_000,
-    );
+        expect(blockingSeries(4, 50)).toEqual(numbered(4));
+        expect(exec("Transcript nextPutAll: 'after'. 'ok'")).toBe('ok');
+        expect(drainTranscript(session())).toBe('after');
+      } finally {
+        await settled?.catch(() => {});
+      }
+      // Its worst case is the loop running out (0.5s) where the gem does not
+      // take the break.
+    }, 10_000);
 
     it('an older process running the same source cannot claim the mode', async () => {
       // Re-running the same code starts the mode for the same source while the
@@ -630,7 +604,8 @@ tmps := SessionTemps current.
       expect(resumed.err.number).toBe(0);
       expect(gci.oopToInteger(handle, resumed.result)).toBe(42n);
       expect(drainTranscript(session())).toBe('old');
-    });
+      // Soft-break delivery is the gem's pace, not ours; see waitForGo.
+    }, 10_000);
 
     it('buffers the write, rather than failing it, when the ownership check itself raises', async () => {
       // Fault injection: an owner that is not a process makes the running
@@ -685,6 +660,8 @@ tmps := SessionTemps current.
         expect(gci.oopToInteger(handle, resumed.result)).toBe(42n);
         expect(drainTranscript(session())).toBe('resumed');
       },
+      // Soft-break delivery is the gem's pace, not ours; see waitForGo.
+      10_000,
     );
   });
 });

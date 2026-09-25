@@ -5,6 +5,11 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
+// Call-through spy, so a test can read the options a cell hands the runner.
+vi.mock('../nbRunner', async (orig) => {
+  const actual = await orig<typeof import('../nbRunner')>();
+  return { ...actual, runNbCall: vi.fn(actual.runNbCall) };
+});
 
 import { notebooks } from '../__mocks__/vscode';
 import {
@@ -13,6 +18,7 @@ import {
   SMALLTALK_CONTROLLER_LABEL,
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
+import { runNbCall, type NbRunOptions } from '../nbRunner';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 
@@ -128,6 +134,24 @@ describe('SmalltalkNotebookController', () => {
       `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
     );
     expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
+    ctrl.dispose();
+  });
+
+  // After a hard break the `finally`'s end is refused while the cell is still
+  // being collected; the runner calls this hook once it has been (when is
+  // nbRunner.test.ts's to pin).
+  it('ends clientForwarder mode once a hard-broken cell is collected', async () => {
+    const gci = makeGci();
+    const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
+    await runCells([makeCell('3 + 4')]);
+    const opts = vi.mocked(runNbCall).mock.lastCall![3] as NbRunOptions;
+    gci.executeAndFetchString.mockClear();
+
+    opts.onAbandonedCollected!();
+
+    const sent = gci.executeAndFetchString.mock.calls.map((c) => c[1] as string);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('jasperEndClientForwarderMode');
     ctrl.dispose();
   });
 
