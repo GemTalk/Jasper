@@ -12,7 +12,12 @@ import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
 import { clearStack, getObjectPrintString } from './debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
-import { setTranscriptLive, drainTranscript, settleNbResult } from './transcriptSink';
+import {
+  startClientForwarderMode,
+  endClientForwarderMode,
+  drainTranscript,
+  settleNbResult,
+} from './transcriptSink';
 import { pollNbToCompletion, NbCancelledError } from './nbRunner';
 
 const MAX_RESULT_SIZE = 64 * 1024;
@@ -181,10 +186,10 @@ export class CodeExecutor {
       GCI_PERFORM_FLAG_ENABLE_DEBUG |
       GCI_PERFORM_FLAG_INTERPRETED |
       (mode === 'debug' ? GCI_PERFORM_FLAG_SINGLE_STEP : 0);
-    // Transcript writes stream live to the output channel while this execute
-    // runs (see transcriptSink). Any residue buffered since the last drain is
-    // displayed now. Switched back to buffered mode in finally.
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    // clientForwarder mode: Transcript writes stream to the output channel
+    // while this execute's process runs (see transcriptSink). Any residue
+    // buffered since the last drain is displayed now. Ended in finally.
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -238,8 +243,8 @@ export class CodeExecutor {
         // It is intentionally silent, so no callback.)
         const onComplete = displayResult
           ? (resultOop: bigint): void => {
-              // The debugger runs with the sink in buffered mode; show what
-              // accumulated while stepping/resuming to completion.
+              // The debugger runs outside clientForwarder mode, so writes are
+              // buffered; show what accumulated while stepping/resuming.
               appendTranscriptOutput(drainTranscript(session));
               const resultString = getObjectPrintString(session, resultOop, MAX_RESULT_SIZE);
               // Capture the editor's column now, while it is still visible — by the
@@ -264,10 +269,11 @@ export class CodeExecutor {
       }
     } finally {
       editor.setDecorations(executingDecorationType, []);
-      // Back to buffered mode; display anything that raced the switch. (After
-      // a hard-break cancel the gem may still be settling — the switch then
-      // fails quietly and the next execute's switch-on drains the residue.)
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      // End clientForwarder mode; display anything that raced the end. (After
+      // a hard-break cancel the gem may still be settling — the end then
+      // fails quietly, and runs again once the call is collected; see
+      // pollForCompletion.)
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -499,7 +505,7 @@ export class CodeExecutor {
 
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
     this.setExecuting(session.id, true);
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -537,7 +543,7 @@ export class CodeExecutor {
       }
       throw e instanceof Error ? e : new Error(msg);
     } finally {
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -590,9 +596,9 @@ export class CodeExecutor {
    *
    * GemStone error messages for compile errors typically contain a 1-based
    * character offset into the source string (e.g. "...near source character 45").
-   * Since the user code is wrapped in a Transcript-capture template, we subtract
-   * the wrapper prefix length to map back to the user's original code, then
-   * convert to a line/column position relative to the editor selection.
+   * `wrapperPrefixLength` is subtracted to map back to the user's original
+   * code (every caller passes 0: Execute It sends the code unwrapped), then the
+   * offset is converted to a line/column position relative to the selection.
    */
   private showCompileError(
     editor: vscode.TextEditor,
@@ -704,6 +710,9 @@ export class CodeExecutor {
     return pollNbToCompletion(session, onReady, {
       title: 'GemStone: Executing…',
       disposableProcess: true,
+      // Every caller runs in clientForwarder mode, and after a hard break the
+      // `finally`'s end is refused; this is where it can succeed.
+      onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
     });
   }
 
@@ -808,8 +817,8 @@ export class CodeExecutor {
     }
 
     this.setExecuting(session.id, true);
-    // Live transcript for the duration; see execute() above.
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    // clientForwarder mode for the duration; see execute() above.
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       // Interpreted so a halt/error is steppable in the debugger; see execute().
       const { success, err: startErr } = session.gci.GciTsNbExecute(
@@ -850,7 +859,7 @@ export class CodeExecutor {
       if (editor) {
         editor.setDecorations(executingDecorationType, []);
       }
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
