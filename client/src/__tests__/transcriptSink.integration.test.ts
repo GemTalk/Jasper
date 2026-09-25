@@ -1,6 +1,7 @@
 // End-to-end tests for the Jade-style Transcript sink against a live stone:
 // real class compilation, kernel `Transcript` writes reaching the sink,
-// buffered drains, and live forwarding (2336 -> settleNbResult -> ContinueWith).
+// buffered drains, and clientForwarder mode (2336 -> settleNbResult ->
+// ContinueWith) scoped to the process it was started for.
 // Mocked-boundary coverage of the same module is in transcriptSink.test.ts;
 // only what needs a real gem belongs here.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -21,13 +22,26 @@ import { GciLibrary } from '../gciLibrary';
 import type { ActiveSession } from '../sessionManager';
 import {
   installTranscriptSink,
-  setTranscriptLive,
+  startClientForwarderMode,
+  endClientForwarderMode,
   drainTranscript,
   settleNbResult,
 } from '../transcriptSink';
-import { runNbCall, NbCancelledError } from '../nbRunner';
+import { runNbCall, NbCancelledError, MIN_HARD_BREAK_GAP_MS } from '../nbRunner';
 import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
-import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
+import {
+  OOP_CLASS_STRING,
+  OOP_CLASS_UTF8,
+  OOP_ILLEGAL,
+  OOP_NIL,
+  GCI_PERFORM_FLAG_ENABLE_DEBUG,
+  GCI_PERFORM_FLAG_INTERPRETED,
+} from '../gciConstants';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The flags Execute It runs with (codeExecutor.ts); cells and these tests' default run with 0. */
+const EXECUTE_IT_FLAGS = GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED;
 
 describe('transcript sink (integration)', () => {
   let gci: GciLibrary;
@@ -68,26 +82,68 @@ describe('transcript sink (integration)', () => {
   });
 
   // Counterpart to installing per test: the harness's teardown doits run on the
-  // blocking execute path before it clears SessionTemps, and a live forwarder
-  // send there has no continuable context (see transcriptSink.ts's module doc).
+  // blocking execute path before it clears SessionTemps, and a forwarder send
+  // there has no continuable context (see transcriptSink.ts's module doc).
   afterEach(() => {
-    setTranscriptLive(session(), false);
+    endClientForwarderMode(session());
   });
 
   /**
-   * Run `code` the way Execute It does: started non-blocking and settled
-   * through the shared nb poll loop, with transcript forwarder sends (2336)
-   * displayed as they arrive. The progress notification is suppressed --
-   * there is no user here to offer a Cancel to.
+   * Run `code` the way Execute It does: clientForwarder mode started for it,
+   * then started non-blocking (as UTF-8, like production) and settled through
+   * the shared nb poll loop,
+   * with transcript forwarder sends (2336) displayed as they arrive. The
+   * progress notification is suppressed -- there is no user here to offer a
+   * Cancel to.
+   *
+   * Deliberately does NOT end the mode afterwards, as production's `finally`
+   * does: the scoping tests below prove the mode ends with its process, and
+   * `afterEach` tidies up for the rest.
    */
-  function executeLive(code: string, onTranscript: (text: string) => void) {
+  function executeForwarding(
+    code: string,
+    onTranscript: (text: string) => void,
+    opts: { flags?: number; onStart?: (cancel: () => void) => void } = {},
+  ) {
+    startClientForwarderMode(session(), code);
     return runNbCall(
       session(),
-      () => gci.GciTsNbExecute(handle, code, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      () =>
+        gci.GciTsNbExecute(handle, code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, opts.flags ?? 0, 0),
       (signal) => settleNbResult(session(), onTranscript, signal),
-      { suppressNotification: true },
+      { suppressNotification: true, disposableProcess: true, onStart: opts.onStart },
     );
   }
+
+  /**
+   * Blocking calls, each yielding for `waitMs` in the gem and answering its own
+   * number. A 2336 surfacing inside one fails it, and leaves its process parked
+   * to hand its answer to the next call that yields -- so a single stray
+   * forwarder send shows up here as a THREW followed by answers off by one.
+   */
+  function blockingSeries(count: number, waitMs: number): string[] {
+    const out: string[] = [];
+    for (let i = 1; i <= count; i++) {
+      try {
+        out.push(exec(`(Delay forMilliseconds: ${waitMs}) wait. '${i}'`));
+      } catch (e) {
+        out.push(`THREW ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return out;
+  }
+
+  const numbered = (count: number): string[] =>
+    Array.from({ length: count }, (_, k) => String(k + 1));
+
+  /** Wait until an abandoned call has been collected: a new nb call waits for exactly that. */
+  const sessionFree = () =>
+    runNbCall(
+      session(),
+      () => gci.GciTsNbExecute(handle, 'nil', OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      (signal) => settleNbResult(session(), () => {}, signal),
+      { suppressNotification: true },
+    );
 
   it('reinstalling into a session that already has a sink keeps the buffered output', () => {
     exec("Transcript nextPutAll: 'kept across reinstall'. 'ok'");
@@ -118,24 +174,23 @@ tmps := SessionTemps current.
     );
   }
 
-  it('switching to live mode frees a Transcript mutex left held', () => {
-    // The live switch-on is what every interactive execute runs first, so it is
-    // the repair production actually reaches. Installing does NOT do this: at
+  it('starting clientForwarder mode frees a Transcript mutex left held', () => {
+    // The start is what every interactive execute runs first, so it is the
+    // repair production actually reaches. Installing does NOT do this: at
     // login the key does not exist yet, which is why the reset is not there.
     poisonTranscriptMutex();
 
-    // Switch live on (the repair) and straight back off: a blocking exec must
-    // not run while live, since a forwarder send there has no continuable
-    // context. What is under test is the mutex, not the mode.
-    setTranscriptLive(session(), true);
-    setTranscriptLive(session(), false);
+    // Start the mode (the repair) and end it: what is under test is the
+    // mutex, not the mode.
+    startClientForwarderMode(session(), 'nil');
+    endClientForwarderMode(session());
 
     expect(exec("Transcript nextPutAll: 'recovered'. 'ok'")).toBe('ok');
     expect(drainTranscript(session())).toContain('recovered');
   });
 
   it('installing does not touch the mutex, because at login there is none to touch', () => {
-    // Guards the rationale in setLiveCode's comment: if someone moves the reset
+    // Guards the rationale in startClientForwarderModeCode's comment: if someone moves the reset
     // back into the install doit, it is dead code again and this goes red.
     poisonTranscriptMutex();
 
@@ -144,8 +199,8 @@ tmps := SessionTemps current.
     expect(() => exec("Transcript nextPutAll: 'still poisoned'. 'ok'")).toThrow(
       /rtErrSchedulerDeadlocked/,
     );
-    setTranscriptLive(session(), true);
-    setTranscriptLive(session(), false);
+    startClientForwarderMode(session(), 'nil');
+    endClientForwarderMode(session());
     expect(exec("Transcript nextPutAll: 'now fine'. 'ok'")).toBe('ok');
   });
 
@@ -154,21 +209,13 @@ tmps := SessionTemps current.
     // critical: block, holding the semaphore. Before settleNbResult cleared it,
     // a throw here killed the session's Transcript for good -- the shape of the
     // original #646 report.
-    setTranscriptLive(session(), true);
+    const code = "Transcript nextPutAll: 'before the throw'. 'done'";
+    startClientForwarderMode(session(), code);
 
     await expect(
       runNbCall(
         session(),
-        () =>
-          gci.GciTsNbExecute(
-            handle,
-            "Transcript nextPutAll: 'before the throw'. 'done'",
-            OOP_CLASS_STRING,
-            OOP_ILLEGAL,
-            OOP_NIL,
-            0,
-            0,
-          ),
+        () => gci.GciTsNbExecute(handle, code, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
         () =>
           settleNbResult(session(), () => {
             throw new Error('display blew up');
@@ -177,7 +224,7 @@ tmps := SessionTemps current.
       ),
     ).rejects.toThrow('display blew up');
 
-    setTranscriptLive(session(), false);
+    endClientForwarderMode(session());
     expect(exec("Transcript nextPutAll: 'after the throw'. 'ok'")).toBe('ok');
     expect(drainTranscript(session())).toContain('after the throw');
   });
@@ -196,11 +243,10 @@ tmps := SessionTemps current.
     // Same 1s delay and 800ms floor as gciLibrary.test.ts's two responsiveness
     // tests: 20% headroom over a whole second, measured as elapsed time between
     // samples rather than a count of them, so a loaded machine still passes.
-    setTranscriptLive(session(), true);
     const chunks: string[] = [];
 
     await expectEventLoopToRemainResponsiveDuring(100, 800, async () => {
-      const { err } = await executeLive(
+      const { err } = await executeForwarding(
         "Transcript nextPutAll: 'before'. (Delay forSeconds: 1) wait. " +
           "Transcript nextPutAll: 'after'. 42",
         (text) => chunks.push(text),
@@ -226,30 +272,18 @@ tmps := SessionTemps current.
     // soft break never reaches the path under test. Short waits rather than
     // one long one, because on 3.6.2 resuming the break cuts a single Delay
     // short. Bounded, so a break that never arrives cannot hang the file.
-    setTranscriptLive(session(), true);
     let wroteOnce: () => void = () => {};
     const onWorker = new Promise<void>((resolve) => {
       wroteOnce = resolve;
     });
     let cancel: (() => void) | undefined;
-    const run = runNbCall(
-      session(),
-      () =>
-        gci.GciTsNbExecute(
-          handle,
-          "[Transcript nextPutAll: 'streaming'. " +
-            '(SessionTemps current at: #TranscriptStream_SessionMutex) ' +
-            'critical: [200 timesRepeat: [(Delay forMilliseconds: 50) wait]]] ' +
-            'on: Break do: [:e | e resume]. 42',
-          OOP_CLASS_STRING,
-          OOP_ILLEGAL,
-          OOP_NIL,
-          0,
-          0,
-        ),
-      (signal) => settleNbResult(session(), () => wroteOnce(), signal),
+    const run = executeForwarding(
+      "[Transcript nextPutAll: 'streaming'. " +
+        '(SessionTemps current at: #TranscriptStream_SessionMutex) ' +
+        'critical: [200 timesRepeat: [(Delay forMilliseconds: 50) wait]]] ' +
+        'on: Break do: [:e | e resume]. 42',
+      () => wroteOnce(),
       {
-        suppressNotification: true,
         onStart: (c) => {
           cancel = c;
         },
@@ -264,15 +298,12 @@ tmps := SessionTemps current.
 
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
 
-      // Live stays on: switching it on repairs a held semaphore by itself, and
-      // would pass this with the break's process left uncleared.
-      const chunks: string[] = [];
-      const { result, err } = await executeLive("Transcript nextPutAll: 'after'. 6 * 7", (text) =>
-        chunks.push(text),
-      );
-      expect(err.number).toBe(0);
-      expect(chunks).toEqual(['after']);
-      expect(gci.oopToInteger(handle, result)).toBe(42n);
+      // A blocking write, not another forwarded execute: starting the mode
+      // repairs a held semaphore by itself, and would pass this with the
+      // break's process left uncleared.
+      await sessionFree();
+      expect(exec("Transcript nextPutAll: 'after'. 'ok'")).toBe('ok');
+      expect(drainTranscript(session())).toContain('after');
     } finally {
       // Whatever failed above, nothing may still be running into the next
       // test: stop the run, and wait until the session is free again (a new
@@ -280,7 +311,7 @@ tmps := SessionTemps current.
       cancel?.();
       cancel?.();
       await run.catch(() => {});
-      await executeLive('nil', () => {}).catch(() => {});
+      await sessionFree().catch(() => {});
     }
     // Far past the 5s default, because the worst case here is slow rather than
     // broken: the run's handler resumes the hard break, so the gem can carry on
@@ -296,31 +327,25 @@ tmps := SessionTemps current.
     // that silently freezes. And the error
     // must not cost the session its Transcript: the write fails while the
     // process sits inside the critical: block, so settleNbResult has to clear
-    // it. Live stays on across both writes, because switching it on is a
-    // repair of its own and would hide a stranded semaphore.
+    // it. Checked with a blocking write, because starting the mode for another
+    // execute is a repair of its own and would hide a stranded semaphore.
     const bindings = gci as unknown as Record<string, unknown>;
     const realBinding = bindings._GciTsContinueWith as (...args: unknown[]) => unknown;
-    setTranscriptLive(session(), true);
 
     bindings._GciTsContinueWith = (...args: unknown[]) => realBinding(...args);
     try {
-      await expect(executeLive("Transcript nextPutAll: 'lost'. 6 * 7", () => {})).rejects.toThrow(
-        TypeError,
-      );
+      await expect(
+        executeForwarding("Transcript nextPutAll: 'lost'. 6 * 7", () => {}),
+      ).rejects.toThrow(TypeError);
     } finally {
       bindings._GciTsContinueWith = realBinding;
     }
 
-    const chunks: string[] = [];
-    const { result, err } = await executeLive("Transcript nextPutAll: 'after'. 6 * 7", (text) =>
-      chunks.push(text),
-    );
-    expect(err.number).toBe(0);
-    expect(chunks).toEqual(['after']);
-    expect(gci.oopToInteger(handle, result)).toBe(42n);
+    expect(exec("Transcript nextPutAll: 'after'. 'ok'")).toBe('ok');
+    expect(drainTranscript(session())).toContain('after');
   });
 
-  it('captures kernel Transcript writes and drains them in buffered mode', () => {
+  it('buffers kernel Transcript writes outside clientForwarder mode and drains them', () => {
     const result = exec("Transcript nextPutAll: 'buffered hello'; tab: 1. 'ok'");
 
     expect(result).toBe('ok');
@@ -345,19 +370,18 @@ tmps := SessionTemps current.
     expect(drainTranscript(session())).toContain('café');
   });
 
-  it('switching to live mode returns any buffered residue', () => {
+  it('starting clientForwarder mode returns any buffered residue', () => {
     exec("Transcript nextPutAll: 'residue'. 'ok'");
 
-    const residue = setTranscriptLive(session(), true);
+    const residue = startClientForwarderMode(session(), 'nil');
 
     expect(residue).toContain('residue');
   });
 
-  it('streams writes mid-execution in live mode and settles to the real result', async () => {
-    setTranscriptLive(session(), true);
+  it('streams writes mid-execution in clientForwarder mode and settles to the real result', async () => {
     const chunks: string[] = [];
 
-    const { result, err } = await executeLive(
+    const { result, err } = await executeForwarding(
       "Transcript nextPutAll: 'first'. Transcript nextPutAll: 'second'. 6 * 7",
       (text) => chunks.push(text),
     );
@@ -367,11 +391,10 @@ tmps := SessionTemps current.
     expect(gci.oopToInteger(handle, result)).toBe(42n);
   });
 
-  it('live forwarding bypasses user exception handlers', async () => {
-    setTranscriptLive(session(), true);
+  it('clientForwarder mode bypasses user exception handlers', async () => {
     const chunks: string[] = [];
 
-    const { result, err } = await executeLive(
+    const { result, err } = await executeForwarding(
       "[Transcript nextPutAll: 'inside handler'. 'no error'] on: AbstractException do: [:e | 'trapped']",
       (text) => chunks.push(text),
     );
@@ -383,11 +406,11 @@ tmps := SessionTemps current.
   });
 
   it('passes real errors through the settle loop and leaves the session usable', async () => {
-    setTranscriptLive(session(), true);
     const chunks: string[] = [];
 
-    const { err } = await executeLive("Transcript nextPutAll: 'before boom'. nil foo", (text) =>
-      chunks.push(text),
+    const { err } = await executeForwarding(
+      "Transcript nextPutAll: 'before boom'. nil foo",
+      (text) => chunks.push(text),
     );
 
     expect(chunks).toEqual(['before boom']);
@@ -402,5 +425,210 @@ tmps := SessionTemps current.
       gci.GciTsClearStack(handle, context);
     }
     expect(gci.executeAndFetchInteger(handle, '3 + 4')).toBe(7n);
+  });
+
+  // clientForwarder mode belongs to the process it was started for, not the
+  // session (#665). None of these end the mode the way production's `finally`
+  // does, except where a test says so: each proves the mode ends with its
+  // process. What they observe is behaviour -- whether a write reaches the
+  // settle loop or the buffer, and whether blocking calls keep their own
+  // answers -- never the sink's own state.
+  describe('clientForwarder mode is scoped to its process', () => {
+    it.each([
+      ['Execute It', EXECUTE_IT_FLAGS],
+      ['a notebook cell', 0],
+    ])(
+      'forwards the process’s own writes and its forks’ writes while it runs (%s flags)',
+      async (_label, flags) => {
+        const chunks: string[] = [];
+
+        const { result, err } = await executeForwarding(
+          "[Transcript nextPutAll: 'from the fork'] fork. (Delay forMilliseconds: 50) wait. " +
+            "Transcript nextPutAll: 'from the process'. 42",
+          (text) => chunks.push(text),
+          { flags },
+        );
+
+        expect(err.number).toBe(0);
+        expect(chunks).toEqual(['from the fork', 'from the process']);
+        expect(gci.oopToInteger(handle, result)).toBe(42n);
+        expect(drainTranscript(session())).toBe('');
+      },
+    );
+
+    it('recognises its process when the source has non-ASCII characters', async () => {
+      // The sink compares the source it was given with the one the process
+      // runs; both arrive as UTF-8, and one side decoding to a String and the
+      // other to a Unicode string must not stop the match.
+      const chunks: string[] = [];
+
+      const { err } = await executeForwarding(
+        "Transcript nextPutAll: 'caf\u00e9 \u2603'. 1",
+        (text) => chunks.push(text),
+        { flags: EXECUTE_IT_FLAGS },
+      );
+
+      expect(err.number).toBe(0);
+      expect(chunks).toEqual(['caf\u00e9 \u2603']);
+    });
+
+    it('buffers a fork that outlives its process, and later blocking calls keep their answers', async () => {
+      const { err } = await executeForwarding(
+        "[(Delay forMilliseconds: 400) wait. Transcript nextPutAll: 'orphan'] fork. 'started'",
+        () => {},
+        { flags: EXECUTE_IT_FLAGS },
+      );
+      expect(err.number).toBe(0);
+
+      // The fork writes during one of these. Forwarded, that call would fail
+      // and the ones after it would each answer the one before.
+      expect(blockingSeries(6, 150)).toEqual(numbered(6));
+      expect(drainTranscript(session())).toBe('orphan');
+    });
+
+    it.each([
+      ['wrote', "Transcript nextPutAll: 'forwarded'. 1"],
+      ['never wrote', '1'],
+    ])(
+      'buffers a later blocking call’s own write once the process (which %s) has completed',
+      async (_label, code) => {
+        const { err } = await executeForwarding(code, () => {}, { flags: EXECUTE_IT_FLAGS });
+        expect(err.number).toBe(0);
+
+        expect(exec("Transcript nextPutAll: 'blocking one'. 'ok'")).toBe('ok');
+        // A forwarded write would also have left the Transcript lock held, so
+        // this one would raise 2366.
+        expect(exec("Transcript nextPutAll: ' blocking two'. 'ok'")).toBe('ok');
+        expect(drainTranscript(session())).toBe('blocking one blocking two');
+      },
+    );
+
+    it.each([
+      ['wrote', "Transcript nextPutAll: 'streaming'. "],
+      ['never wrote', ''],
+    ])(
+      'a hard break ends the mode with the cleared process, with no end call (process %s)',
+      async (_label, ownWrite) => {
+        // Survives the soft break, so the second Cancel is a hard break, and
+        // leaves a fork behind that writes after the break. No end call:
+        // production's is refused at this point (the aborted call is still
+        // being collected), and nothing may depend on it.
+        const chunks: string[] = [];
+        let cancel: (() => void) | undefined;
+        const run = executeForwarding(
+          "[(Delay forMilliseconds: 1500) wait. Transcript nextPutAll: 'late fork'] fork. " +
+            ownWrite +
+            '[200 timesRepeat: [(Delay forMilliseconds: 50) wait]] on: Break do: [:e | e resume]. 42',
+          (text) => chunks.push(text),
+          { flags: EXECUTE_IT_FLAGS, onStart: (c) => (cancel = c) },
+        );
+        run.catch(() => {});
+        try {
+          await sleep(300);
+          cancel!();
+          await sleep(MIN_HARD_BREAK_GAP_MS + 50);
+          cancel!();
+          await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+          await sessionFree();
+
+          // The fork writes during one of these, well after the break.
+          expect(blockingSeries(12, 150)).toEqual(numbered(12));
+          expect(drainTranscript(session())).toBe('late fork');
+          expect(exec("Transcript nextPutAll: 'own write'. 'ok'")).toBe('ok');
+          expect(drainTranscript(session())).toBe('own write');
+          expect(chunks).toEqual(ownWrite ? ['streaming'] : []);
+        } finally {
+          cancel?.();
+          cancel?.();
+          await run.catch(() => {});
+          await sessionFree().catch(() => {});
+        }
+      },
+      30_000,
+    );
+
+    it('an older process running the same source cannot claim the mode', async () => {
+      // Re-running the same code starts the mode for the same source while the
+      // earlier, soft-broken process still reads as waiting. Resumed from the
+      // debugger, that old process must not be taken for the new one: its
+      // serial predates the start.
+      const code =
+        "20 timesRepeat: [(Delay forMilliseconds: 50) wait]. Transcript nextPutAll: 'old'. 42";
+      let cancel: (() => void) | undefined;
+      const run = executeForwarding(code, () => {}, {
+        flags: EXECUTE_IT_FLAGS,
+        onStart: (c) => (cancel = c),
+      });
+      await sleep(200);
+      cancel!();
+      const { err } = await run;
+      expect(err.number).not.toBe(0);
+      endClientForwarderMode(session());
+
+      startClientForwarderMode(session(), code);
+      const resumed = gci.GciTsContinueWith(handle, BigInt(err.context), OOP_ILLEGAL, null, 0);
+
+      expect(resumed.err.number).toBe(0);
+      expect(gci.oopToInteger(handle, resumed.result)).toBe(42n);
+      expect(drainTranscript(session())).toBe('old');
+    });
+
+    it('buffers the write, rather than failing it, when the ownership check itself raises', async () => {
+      // Fault injection: an owner that is not a process makes the running
+      // check raise. A Transcript write must never fail because of the sink's
+      // own check.
+      const code = "Transcript nextPutAll: 'still written'. 42";
+      startClientForwarderMode(session(), code);
+      exec("(SessionTemps current at: #JasperTranscriptSink) instVarAt: 3 put: Object new. 'ok'");
+      const chunks: string[] = [];
+
+      const { result, err } = await runNbCall(
+        session(),
+        () => gci.GciTsNbExecute(handle, code, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL, 0, 0),
+        (signal) => settleNbResult(session(), (text) => chunks.push(text), signal),
+        { suppressNotification: true },
+      );
+
+      expect(err.number).toBe(0);
+      expect(gci.oopToInteger(handle, result)).toBe(42n);
+      expect(chunks).toEqual([]);
+      expect(drainTranscript(session())).toBe('still written');
+    });
+
+    it.each([
+      ['halted', "self halt. Transcript nextPutAll: 'resumed'. 42", false],
+      [
+        'soft-broken',
+        "20 timesRepeat: [(Delay forMilliseconds: 50) wait]. Transcript nextPutAll: 'resumed'. 42",
+        true,
+      ],
+    ])(
+      'a %s process resumed after the end call writes to the buffer',
+      async (_label, code, softBreak) => {
+        // Both leave the process suspended with its stack for the debugger, so
+        // by the sink's own test it is still running. The end call
+        // (production's `finally`, which can run here because the session is
+        // idle) is what stops forwarding. The debugger resumes and steps on
+        // paths that cannot take a 2336.
+        let cancel: (() => void) | undefined;
+        const run = executeForwarding(code, () => {}, {
+          flags: EXECUTE_IT_FLAGS,
+          onStart: (c) => (cancel = c),
+        });
+        if (softBreak) {
+          await sleep(200);
+          cancel!();
+        }
+        const { err } = await run;
+        expect(err.number).not.toBe(0);
+        endClientForwarderMode(session());
+
+        const resumed = gci.GciTsContinueWith(handle, BigInt(err.context), OOP_ILLEGAL, null, 0);
+
+        expect(resumed.err.number).toBe(0);
+        expect(gci.oopToInteger(handle, resumed.result)).toBe(42n);
+        expect(drainTranscript(session())).toBe('resumed');
+      },
+    );
   });
 });

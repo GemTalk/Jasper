@@ -16,10 +16,10 @@ import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 
-// Cells run on the non-blocking execute path (live transcript). The mock gci
-// covers that path: NbExecute starts the doit, NbPoll reports ready, NbResult
-// yields the result oop, FetchUtf8 reads its string. The transcript sink's
-// live-toggle/drain calls go through executeAndFetchString.
+// Cells run on the non-blocking execute path in clientForwarder mode. The mock
+// gci covers that path: NbExecute starts the doit, NbPoll reports ready,
+// NbResult yields the result oop, FetchUtf8 reads its string. The transcript
+// sink's start/end/drain calls go through executeAndFetchString.
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
@@ -113,17 +113,21 @@ describe('SmalltalkNotebookController', () => {
     ctrl.dispose();
   });
 
-  it('runs the cell with the transcript sink toggled live, restoring buffered mode after', async () => {
+  it('starts clientForwarder mode for the wrapped cell it runs, and ends it after', async () => {
     const gci = makeGci();
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeSession(gci)));
 
-    await runCells([makeCell('3 + 4')]);
+    await runCells([makeCell("Transcript show: 'hi'. 3 + 4")]);
 
+    const sent = gci.GciTsNbExecute.mock.calls[0][1] as string;
     const sinkCalls = gci.executeAndFetchString.mock.calls
       .map((c) => c[1] as string)
-      .filter((code) => code.includes('jasperLive:'));
-    expect(sinkCalls.some((code) => code.includes('jasperLive: true'))).toBe(true);
-    expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
+      .filter((code) => code.includes('ClientForwarderMode'));
+    expect(sinkCalls).toHaveLength(2);
+    expect(sinkCalls[0]).toContain(
+      `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
+    );
+    expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
     ctrl.dispose();
   });
 

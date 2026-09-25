@@ -15,8 +15,9 @@ import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
-// (MCP tools run on the FetchBytes path, which cannot host live forwarding —
-// see transcriptSink.ts), so surface them in the channel after each code run.
+// (MCP tools run on the FetchBytes path, which cannot host clientForwarder
+// mode — see transcriptSink.ts), so surface them in the channel after each
+// code run.
 function showBufferedTranscript(session: ActiveSession): void {
   appendTranscriptOutput(drainTranscript(session));
 }

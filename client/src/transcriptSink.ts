@@ -16,24 +16,38 @@ import { logError, logInfo } from './gciLog';
  * version keyed the sink at `#Transcript`, which no supported version consults,
  * so Transcript output was silently lost — don't reintroduce that.
  *
- * The sink runs in one of two modes:
+ * Every write is either buffered or forwarded:
  *
  * - **buffered** (default): writes accumulate server-side and the client
  *   drains them after a call completes ({@link drainTranscript}). This is the
- *   only safe mode for GciTsExecuteFetchBytes-based calls (all queries, MCP
+ *   only safe handling for GciTsExecuteFetchBytes-based calls (all queries, MCP
  *   tools): a forwarder send on that path degenerates to rtErrExpectedClass
  *   with no continuable context, killing the call.
  *
- * - **live**: each write goes through an embedded `ClientForwarder`, which the
- *   VM surfaces to the GCI client as error 2336 (`#clientForwarderSend`) with a
- *   continuable GsProcess — *while the code is still running*. The client
- *   displays the text and resumes via GciTsContinueWith. Only paths prepared to
- *   handle 2336 (Execute/Display/Inspect It, notebook cells) turn this on, via
- *   {@link setTranscriptLive}.
+ * - **clientForwarder mode**: each write goes through an embedded
+ *   `ClientForwarder`, which the VM surfaces to the GCI client as error 2336
+ *   (`#clientForwarderSend`) with a continuable GsProcess — *while the code is
+ *   still running*. The client displays the text and resumes via
+ *   GciTsContinueWith. Only paths prepared to handle 2336 (Execute/Display/
+ *   Inspect It, notebook cells) start it, via {@link startClientForwarderMode}.
+ *
+ * clientForwarder mode belongs to one process, the one running the code the
+ * caller started it for, never to the session. A write is forwarded when it
+ * comes from that process or from any process while that process is still
+ * running; once it completes, halts, or is cleared by a hard break, the next
+ * write finds it gone and the mode ends by itself. So an end that GemStone
+ * refuses (it does, while a hard-broken call is still being collected) cannot
+ * leave the mode on for the calls that follow, where a 2336 would fail a
+ * blocking call and hand its answer to the next one
+ * ([#665](https://github.com/GemTalk/Jasper/issues/665)).
+ * {@link endClientForwarderMode} still ends it explicitly, which covers the one
+ * case the process check cannot: a soft-broken process, suspended for the
+ * debugger but still reading as waiting. The end always succeeds there, because
+ * the session is idle.
  *
  * ClientForwarder sends bypass Smalltalk exception handlers (verified: an
  * `on: AbstractException do:` around the send still surfaces 2336 to the GCI),
- * so live forwarding works even inside error-trapping wrappers.
+ * so clientForwarder mode works even inside error-trapping wrappers.
  */
 
 /** GemStone error number for a ClientForwarder send (#clientForwarderSend). */
@@ -61,6 +75,31 @@ const MAX_TRANSCRIPT_FETCH = 1024 * 1024;
  * `reset` (3.6.2 and 3.7.x verified) — plus the `jasper…` control protocol.
  * `contents` answers an empty string so `endEntry` doesn't ALSO echo everything
  * to the gem log via `GsFile gciLogServer:`.
+ *
+ * How the sink finds clientForwarder mode's process: the start call records the
+ * source about to run and its own process's `_stackSerialNum`. Each GCI call
+ * gets a larger serial, and a fork inherits its parent's. On the first write
+ * after the start, the sink follows `parentProcess` from the writer to the
+ * process its GCI call started, and claims that process if it is newer than the
+ * start call and still running that source. Execute It sends its code
+ * unwrapped, so nothing inside the code can mark the process. Once claimed,
+ * every write is forwarded while the process runs. A newer process that is not
+ * running the source means the call is over, and clears the mode as well.
+ * Anything the check raises means "buffer": a Transcript write must never fail
+ * because of it.
+ *
+ * "Running" means the scheduler still has the process: active, ready, or
+ * waiting. Once its call has returned to the client its status reads `debug`
+ * (the scheduler's own word for "the GCI application holds it"), or
+ * `terminated` once a hard break has been cleared. A completed process is not
+ * marked terminated, and one resumed by GciTsContinueWith even keeps its
+ * frames, so neither `_isTerminated` nor the stack depth can tell. A process
+ * that returned soft-broken can still read as waiting, which is why the
+ * explicit end is kept.
+ *
+ * No String literal is compared with a runtime String: this doit is sent as
+ * UTF-8, so its literals compile as Unicode strings, and comparing one with a
+ * plain String raises (swallowed above, so the write would quietly buffer).
  */
 export const TRANSCRIPT_SINK_INSTALL_CODE = `| tmps dict cls sink old symList |
 tmps := SessionTemps current.
@@ -69,7 +108,7 @@ symList := System myUserProfile symbolList.
 dict := SymbolDictionary new.
 cls := Object
   subclass: 'JasperTranscriptSink'
-  instVarNames: #('buffer' 'live' 'forwarder')
+  instVarNames: #('buffer' 'forwarder' 'owner' 'ownerSource' 'ownerAfter')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -77,14 +116,13 @@ cls := Object
   options: #(#instancesNonPersistent).
 cls compileMethod: 'jasperSetup
   buffer := WriteStream on: String new.
-  live := false.
   forwarder := ClientForwarder new clientObject: ${TRANSCRIPT_CLIENT_OBJECT}'
   dictionaries: symList category: 'jasper' environmentId: 0.
 cls compileMethod: 'nextPutAll: aCollection
   | str |
   str := (aCollection isKindOf: CharacterCollection)
     ifTrue: [aCollection] ifFalse: [aCollection printString].
-  live == true
+  self jasperForwarding
     ifTrue: [forwarder nextPutAll: str]
     ifFalse: [buffer nextPutAll: str].
   ^aCollection'
@@ -105,9 +143,54 @@ cls compileMethod: 'jasperDrain
   buffer := WriteStream on: String new.
   ^c'
   dictionaries: symList category: 'jasper' environmentId: 0.
-cls compileMethod: 'jasperLive: aBoolean
-  live := aBoolean == true.
+cls compileMethod: 'jasperStartClientForwarderModeFor: aSource
+  owner := nil.
+  ownerSource := aSource asUnicodeString.
+  ownerAfter := GsProcess _current _stackSerialNum.
   ^self jasperDrain'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperEndClientForwarderMode
+  owner := nil.
+  ownerSource := nil.
+  ^self jasperDrain'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperForwarding
+  ^[owner == nil ifTrue: [owner := self jasperClaimOwner].
+    owner ~~ nil and: [(self jasperIsRunning: owner)
+      or: [owner := nil. ownerSource := nil. false]]]
+    on: Error do: [:e | false]'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperClaimOwner
+  | root |
+  ownerSource == nil ifTrue: [^nil].
+  root := GsProcess _current.
+  [root isForked and: [root parentProcess ~~ nil]] whileTrue: [root := root parentProcess].
+  root _stackSerialNum > ownerAfter ifFalse: [^nil].
+  ((self jasperIsRunning: root) and: [self jasperRunsOwnerSource: root]) ifTrue: [^root].
+  ownerSource := nil.
+  ^nil'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperIsRunning: aProcess
+  aProcess == GsProcess _current ifTrue: [^true].
+  ^(#(#debug #terminated #terminationStarted) includesIdentical: aProcess _statusString asSymbol) not'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperIsOwnerSource: aMethod
+  | src |
+  aMethod == nil ifTrue: [^false].
+  src := aMethod sourceString.
+  ^src size = ownerSource size and: [src asUnicodeString = ownerSource]'
+  dictionaries: symList category: 'jasper' environmentId: 0.
+cls compileMethod: 'jasperRunsOwnerSource: aProcess
+  | level frame |
+  aProcess == GsProcess _current ifFalse: [
+    1 to: aProcess stackDepth do: [:i |
+      (self jasperIsOwnerSource: (aProcess methodAt: i)) ifTrue: [^true]].
+    ^false].
+  level := 1.
+  [(frame := GsProcess _frameContentsAt: level) ~~ nil] whileTrue: [
+    (self jasperIsOwnerSource: (frame at: 1)) ifTrue: [^true].
+    level := level + 1].
+  ^false'
   dictionaries: symList category: 'jasper' environmentId: 0.
 sink := cls new.
 sink jasperSetup.
@@ -128,9 +211,10 @@ sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
 sink == nil ifTrue: [''] ifFalse: [sink jasperDrain encodeAsUTF8]`;
 
 /**
- * Switching live mode ON also drops `TranscriptStreamPortable`'s per-session
- * mutex, because this runs at the start of every interactive execute and is
- * therefore the one place that reliably precedes a Transcript write.
+ * Starting clientForwarder mode also drops `TranscriptStreamPortable`'s
+ * per-session mutex, because this runs at the start of every interactive
+ * execute and is therefore the one place that reliably precedes a Transcript
+ * write.
  *
  * That semaphore guards every `Transcript` write. A GsProcess left suspended
  * inside its `critical:` block holds it for the life of the session, and from
@@ -152,13 +236,25 @@ sink == nil ifTrue: [''] ifFalse: [sink jasperDrain encodeAsUTF8]`;
  * Both were already deadlocked against the holder, so neither loses anything
  * that was going to work. Writes racing the swap can interleave.
  */
-function setLiveCode(live: boolean): string {
-  const resetMutex = live
-    ? 'SessionTemps current removeKey: #TranscriptStream_SessionMutex ifAbsent: [nil].\n'
-    : '';
+function startClientForwarderModeCode(source: string): string {
   return `| sink |
-${resetMutex}sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
-sink == nil ifTrue: [''] ifFalse: [(sink jasperLive: ${live}) encodeAsUTF8]`;
+SessionTemps current removeKey: #TranscriptStream_SessionMutex ifAbsent: [nil].
+sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
+sink == nil ifTrue: [''] ifFalse: [(sink jasperStartClientForwarderModeFor: ${smalltalkString(source)}) encodeAsUTF8]`;
+}
+
+const END_CLIENT_FORWARDER_MODE_CODE = `| sink |
+sink := SessionTemps current at: #JasperTranscriptSink otherwise: nil.
+sink == nil ifTrue: [''] ifFalse: [sink jasperEndClientForwarderMode encodeAsUTF8]`;
+
+/**
+ * A Smalltalk expression answering `text`, kept ASCII: the 3.6.x compiler fails
+ * on a non-ASCII literal inside a doit ("ComStrmSetCursor: new cursor out of
+ * range"), so such text travels as its UTF-8 bytes in hex instead.
+ */
+function smalltalkString(text: string): string {
+  if (/^\p{ASCII}*$/u.test(text)) return `'${text.replace(/'/g, "''")}'`;
+  return `((ByteArray fromHexString: '${Buffer.from(text, 'utf8').toString('hex')}') decodeFromUTF8)`;
 }
 
 /**
@@ -182,12 +278,23 @@ export function installTranscriptSink(session: ActiveSession): boolean {
 }
 
 /**
- * Switch the sink's mode and return any text drained in the transition, so a
- * buffered residue is displayed the moment a live execute starts, and writes
- * that raced the switch-off are not lost. Empty string when no sink installed.
+ * Start clientForwarder mode for the call about to run `source`, which must be
+ * the exact source string handed to GciTsNbExecute next: the sink recognises
+ * the call's process by it. Returns any buffered residue, so it is displayed
+ * the moment the execute starts. Empty string when no sink is installed.
  */
-export function setTranscriptLive(session: ActiveSession, live: boolean): string {
-  return runFetchString(session, setLiveCode(live));
+export function startClientForwarderMode(session: ActiveSession, source: string): string {
+  return runFetchString(session, startClientForwarderModeCode(source));
+}
+
+/**
+ * End clientForwarder mode and return anything drained in the transition, so
+ * writes that raced the end are not lost. Failing is harmless — GemStone
+ * refuses it while a hard-broken call is still being collected — because the
+ * mode ends with its process anyway (see the module doc).
+ */
+export function endClientForwarderMode(session: ActiveSession): string {
+  return runFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);
 }
 
 /** Drain buffered transcript output (queries, MCP, debugger-step paths). */

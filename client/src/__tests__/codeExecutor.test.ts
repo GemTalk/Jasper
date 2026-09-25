@@ -70,11 +70,11 @@ function makeGci(overrides: Record<string, unknown> = {}) {
       err: { number: 0, message: '', context: OOP_NIL },
     })),
     GciTsPerformFetchBytes: vi.fn(() => ({ data: '42', err: { number: 0 } })),
-    // Transcript sink toggle/drain calls (see transcriptSink.ts) also go through
+    // Transcript sink start/end/drain calls (see transcriptSink.ts) also go through
     // executeAndFetchString; default them to an empty buffer so tests that don't
     // care about transcript output don't have to configure this mock at all.
     executeAndFetchString: vi.fn((_handle: unknown, code: string) => {
-      if (code.includes('jasperLive:') || code.includes('jasperDrain')) return '';
+      if (code.includes('ClientForwarderMode') || code.includes('jasperDrain')) return '';
       return expect.unreachable(
         'executeAndFetchString mock not configured for this test -- call ' +
           '(gci.executeAndFetchString as Mock).mockReturnValue(...) before triggering Display It.',
@@ -411,19 +411,39 @@ describe('CodeExecutor', () => {
       expect(wrappedCode).not.toContain("''Foster''");
     });
 
-    it('runs with the transcript sink live, restoring buffered mode after', async () => {
-      setActiveEditor(makeEditor('3 + 4'));
+    it('starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
+      setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
 
       await executor.executeIt();
 
+      const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
       const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
         .map((c) => c[1] as string)
-        .filter((code) => code.includes('jasperLive:'));
-      expect(sinkCalls.some((code) => code.includes('jasperLive: true'))).toBe(true);
-      expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
+        .filter((code) => code.includes('ClientForwarderMode'));
+      expect(sinkCalls).toHaveLength(2);
+      expect(sinkCalls[0]).toContain(
+        `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
+      );
+      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
     });
 
-    it('restores buffered mode even when the execution errors', async () => {
+    it('Inspect It starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
+      setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
+
+      await executor.inspectIt();
+
+      const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
+      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
+        .map((c) => c[1] as string)
+        .filter((code) => code.includes('ClientForwarderMode'));
+      expect(sinkCalls).toHaveLength(2);
+      expect(sinkCalls[0]).toContain(
+        `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
+      );
+      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
+    });
+
+    it('ends clientForwarder mode even when the execution errors', async () => {
       (gci.GciTsNbResult as Mock).mockReturnValue({
         result: 0x01n,
         err: {
@@ -437,7 +457,7 @@ describe('CodeExecutor', () => {
       await executor.executeIt();
 
       const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
-      expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
+      expect(sinkCalls.at(-1)).toContain('jasperEndClientForwarderMode');
     });
 
     it('streams a mid-execution Transcript write to the channel and resumes to the result', async () => {
@@ -1595,6 +1615,23 @@ describe('CodeExecutor', () => {
       const flags = (gci.GciTsNbExecute as Mock).mock.calls[0][5] as number;
       expect(flags & GCI_PERFORM_FLAG_ENABLE_DEBUG).toBe(GCI_PERFORM_FLAG_ENABLE_DEBUG);
       expect((gci.GciTsNbExecute as Mock).mock.calls[0][1]).toBe('3 + 4');
+    });
+
+    it('starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      await executor.executeWithDebugger(session, "MyTest debug: #'testAdd'", 'MyTest>>testAdd');
+
+      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
+        .map((c) => c[1] as string)
+        .filter((code) => code.includes('ClientForwarderMode'));
+      expect(sinkCalls).toHaveLength(2);
+      expect(sinkCalls[0]).toContain(
+        "jasperStartClientForwarderModeFor: 'MyTest debug: #''testAdd'''",
+      );
+      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
     });
 
     it('needs no active editor — a test is debugged from a row, not from text', async () => {
