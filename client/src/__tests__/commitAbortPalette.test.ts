@@ -51,13 +51,34 @@ describe('Commit and Abort in the Command Palette', () => {
   });
 
   // Without a session there is nothing to commit or abort, and the handler's
-  // own fallback would answer with an error toast — so don't offer them.
-  it.each(['gemstone.sessionCommit', 'gemstone.sessionAbort'])(
-    'shows %s only while a session is active',
-    (command) => {
-      expect(paletteWhen(command)).toBe('gemstone.hasActiveSession');
-    },
-  );
+  // own fallback would answer with an error toast — so don't offer them. Commit
+  // is held to more than that: the palette acts in the current session, and a
+  // session outside a transaction cannot commit at all, so the entry is gated on
+  // the same `gemstone.canCommit` the session row uses — driven off the selected
+  // session, which is the one the palette would act in.
+  it('shows gemstone.sessionCommit only while the current session can commit', () => {
+    expect(paletteWhen('gemstone.sessionCommit')).toBe(
+      'gemstone.hasActiveSession && gemstone.canCommit',
+    );
+  });
+
+  // Abort is the one transaction command that is never withheld by mode: it is
+  // the way out of a stale view whatever the session is in.
+  it('shows gemstone.sessionAbort for any active session', () => {
+    expect(paletteWhen('gemstone.sessionAbort')).toBe('gemstone.hasActiveSession');
+  });
+
+  // Begin only means anything in manualBegin, between transactions; Set
+  // Transaction Mode applies in all three, so it needs only a session.
+  it('shows gemstone.sessionBegin only while the current session can begin', () => {
+    expect(paletteWhen('gemstone.sessionBegin')).toBe(
+      'gemstone.hasActiveSession && gemstone.canBegin',
+    );
+  });
+
+  it('shows gemstone.setTransactionMode for any active session', () => {
+    expect(paletteWhen('gemstone.setTransactionMode')).toBe('gemstone.hasActiveSession');
+  });
 
   it.each(['gemstone.explorer.commit', 'gemstone.explorer.abort'])(
     'keeps the Explorer title-bar %s out of the palette',

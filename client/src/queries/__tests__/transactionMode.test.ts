@@ -1,0 +1,170 @@
+import { describe, it, expect, vi } from 'vitest';
+import { QueryExecutor } from '../types';
+import {
+  canBegin,
+  canCommit,
+  getGemAutoServiceSigAbort,
+  getTransactionState,
+  isTransactionMode,
+  modeDescription,
+  modeLabel,
+  setGemAutoServiceSigAbort,
+  setTransactionMode,
+  transactionStateLabel,
+  TRANSACTION_MODES,
+} from '../transactionMode';
+
+describe('recognizing a transaction mode', () => {
+  it('recognizes exactly the three modes GemStone defines', () => {
+    expect([...TRANSACTION_MODES]).toEqual(['autoBegin', 'manualBegin', 'transactionless']);
+    expect(isTransactionMode('autoBegin')).toBe(true);
+    expect(isTransactionMode('manual')).toBe(false);
+  });
+});
+
+describe('reading mode and transaction state together', () => {
+  it('takes both from one round trip', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'manualBegin false\n');
+
+    expect(getTransactionState(execute)).toEqual({
+      mode: 'manualBegin',
+      inTransaction: false,
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    // asString, not printString: the latter answers #'manualBegin', quotes and all.
+    expect(execute.mock.calls[0][0]).toContain('System transactionMode asString');
+  });
+
+  it('reads true as in a transaction', () => {
+    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'autoBegin true'))).toEqual({
+      mode: 'autoBegin',
+      inTransaction: true,
+    });
+  });
+
+  it('leaves each half undefined on its own when the stone answers oddly', () => {
+    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'manualBegin nil'))).toEqual({
+      mode: 'manualBegin',
+      inTransaction: undefined,
+    });
+    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'somethingElse true'))).toEqual({
+      mode: undefined,
+      inTransaction: true,
+    });
+  });
+
+  it('survives an empty answer without throwing', () => {
+    expect(getTransactionState(vi.fn<QueryExecutor>(() => ''))).toEqual({
+      mode: undefined,
+      inTransaction: undefined,
+    });
+  });
+});
+
+describe('switching the transaction mode', () => {
+  it('asks for the mode and answers what the stone reports afterwards', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'transactionless');
+
+    expect(setTransactionMode(execute, 'transactionless')).toBe('transactionless');
+    expect(execute.mock.calls[0][0]).toContain('System transactionMode: #transactionless');
+  });
+
+  it('answers undefined when the switch did not land, so no caller caches a mode that was never reached', () => {
+    // The stone still reports the old mode — the switch silently did not take.
+    const execute = vi.fn<QueryExecutor>(() => 'notAMode');
+
+    expect(setTransactionMode(execute, 'manualBegin')).toBeUndefined();
+  });
+});
+
+describe('the gem’s own SigAbort servicing', () => {
+  it('arms it', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'GemAutoServiceSigAbort set');
+
+    setGemAutoServiceSigAbort(execute, true);
+
+    expect(execute.mock.calls[0][0]).toContain(
+      'System gemConfigurationAt: #GemAutoServiceSigAbort put: true',
+    );
+  });
+
+  it('reads it back', () => {
+    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'true'))).toBe(true);
+    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'false'))).toBe(false);
+    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'nil'))).toBeUndefined();
+  });
+});
+
+describe('what the session can do', () => {
+  // The stone raises 2030 from commitTransaction exactly when the session is not
+  // in a transaction, in every mode — so that, and not the mode, is the rule.
+  it('enables Commit whenever the session is in a transaction', () => {
+    expect(canCommit(true)).toBe(true);
+  });
+
+  it('disables Commit outside a transaction', () => {
+    expect(canCommit(false)).toBe(false);
+  });
+
+  it('leaves Commit enabled when the transaction state could not be read', () => {
+    expect(canCommit(undefined)).toBe(true);
+  });
+
+  it('offers Begin only in manual mode, outside a transaction', () => {
+    expect(canBegin('manualBegin', false)).toBe(true);
+    expect(canBegin('manualBegin', true)).toBe(false);
+    expect(canBegin('autoBegin', false)).toBe(false);
+    expect(canBegin('autoBegin', true)).toBe(false);
+    // A begin does work under transactionless, but the mode exists to pin no
+    // commit record; entering a transaction under it is not something to invite.
+    expect(canBegin('transactionless', false)).toBe(false);
+    expect(canBegin('transactionless', true)).toBe(false);
+  });
+
+  it('does not offer Begin on an unknown mode or unknown transaction state', () => {
+    expect(canBegin(undefined, false)).toBe(false);
+    expect(canBegin('manualBegin', undefined)).toBe(false);
+  });
+});
+
+describe('how the state reads', () => {
+  it('spells out the in-transaction half only where it varies', () => {
+    expect(transactionStateLabel('autoBegin', true)).toBe('Auto-Begin');
+    expect(transactionStateLabel('manualBegin', true)).toBe('Manual · in transaction');
+    expect(transactionStateLabel('manualBegin', false)).toBe('Manual · not in transaction');
+    expect(transactionStateLabel('transactionless', false)).toBe('Transactionless');
+  });
+
+  it('falls back to the bare mode when the transaction state is unknown', () => {
+    expect(transactionStateLabel('manualBegin', undefined)).toBe('Manual');
+  });
+
+  it('names a transactionless session that has been walked into a transaction', () => {
+    // Not what the mode implies, and it changes what Commit does — so it is said.
+    expect(transactionStateLabel('transactionless', true)).toBe('Transactionless · in transaction');
+  });
+
+  it('says so plainly when the mode could not be read', () => {
+    expect(modeLabel(undefined)).toBe('Unknown');
+    expect(transactionStateLabel(undefined, undefined)).toBe('Unknown');
+    expect(modeDescription(undefined)).toContain('could not be read');
+  });
+
+  it.each([
+    ['autoBegin', 'starts automatically'],
+    ['manualBegin', 'Begin Transaction puts it back in'],
+    ['transactionless', 'cheapest mode for the repository'],
+  ] as const)('describes %s in its own words', (mode, phrase) => {
+    expect(modeLabel(mode)).not.toBe('Unknown');
+    expect(modeDescription(mode)).toContain(phrase);
+    expect(modeDescription(mode)).not.toContain('could not be read');
+  });
+
+  // The mode's own live-stone test walks a transactionless session into a
+  // transaction and commits there, so the tooltip must not say it never can; and
+  // Jasper never offers Begin in that mode, so the way out it names is a switch.
+  it('points a transactionless session at a mode switch, not at "never"', () => {
+    expect(modeDescription('transactionless')).not.toContain('never in a transaction');
+    expect(modeDescription('transactionless')).toContain('switch to Manual or Auto-Begin');
+  });
+});

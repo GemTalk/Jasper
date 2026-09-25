@@ -57,6 +57,11 @@ export function defaultSocketPath(): string {
 export interface McpSocketServerOptions {
   /** Returns the user's currently selected GemStone session, or undefined. */
   getSession: () => ActiveSession | undefined;
+  /** Told which session may have left or entered a transaction, after an MCP tool
+   *  that can move it — so the session row, the status bar and the transaction
+   *  context keys are not left describing the session as it was before Claude
+   *  committed or aborted it. */
+  onTransactionStateMayHaveMoved?: (sessionId: number) => void;
   /**
    * Override the socket path. Production code should let this default to
    * {@link defaultSocketPath}; tests use it to avoid the shared global path.
@@ -228,7 +233,11 @@ export class McpSocketServer {
   private handleConnection(socket: net.Socket): void {
     appendSysadmin('MCP client connected');
     const mcpServer = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' });
-    registerMcpTools(mcpServer, this.options.getSession);
+    registerMcpTools(
+      mcpServer,
+      this.options.getSession,
+      this.options.onTransactionStateMayHaveMoved,
+    );
 
     const transport = new StdioServerTransport(socket, socket);
     mcpServer.connect(transport).catch((err) => {

@@ -1,6 +1,7 @@
 // Client-side MCP tool registration: exposes GemStone operations to AI tools
 // (Claude Desktop, Claude Code) over the in-extension MCP server.
 // Full design: docs/mcp-server.md
+import { REFRESH_TOOL_DESCRIPTION, SESSION_STATUS_CODE } from './mcpSharedText';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ActiveSession } from './sessionManager';
@@ -13,6 +14,8 @@ import type { TestFailureDetails } from './queries/describeTestFailure';
 import { withMcpErrorMap } from './mcpZodErrorMap';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
+import { VIEW_REFRESH_CODE } from './queries/transactionMode';
+import { commitTransaction } from './queries/commitTransaction';
 
 // AI-executed code writes to the Transcript too: the sink buffers those writes
 // (MCP tools run on the FetchBytes path, which cannot host clientForwarder
@@ -22,17 +25,11 @@ function showBufferedTranscript(session: ActiveSession): void {
   appendTranscriptOutput(drainTranscript(session));
 }
 
-// Refresh the session's view of committed state if it's safe to do so.
-// GemStone's GCI pins read-only operations to the session's transaction
-// view: a commit landed by another process is invisible until this session
-// aborts or commits. Auto-refresh closes the silent-stale gap; we skip
-// when the session has uncommitted work so we never discard.
+// Refresh the session's view of committed state if it's safe to do so — when,
+// and why, is VIEW_REFRESH_CODE's doc-comment.
 function refreshIfClean(session: ActiveSession): void {
   try {
-    queries.executeFetchString(
-      session,
-      "System needsCommit ifFalse: [System abortTransaction]. 'ok'",
-    );
+    queries.executeFetchString(session, VIEW_REFRESH_CODE);
   } catch {
     // Best effort. If refresh fails (e.g. session disconnected) the primary
     // tool call below will report the real error.
@@ -126,6 +123,17 @@ function searchWithEnvFallback<T>(
 export function registerMcpTools(
   rawServer: McpServer,
   getSession: () => ActiveSession | undefined,
+  /**
+   * Told which session may have left (or entered) a transaction, after a tool
+   * that can move it. These tools run in the same window as the tree row, the
+   * status bar and the `gemstone.canCommit` / `gemstone.canBegin` keys, and all
+   * of those are drawn from SessionManager's cached transaction state — nothing
+   * else here would tell it that Claude just committed a manualBegin session out
+   * of its transaction, leaving a row offering the one button that now raises
+   * 2030 and hiding the one that would fix it. Optional so the tool registration
+   * stays testable on its own; defaults to doing nothing.
+   */
+  onTransactionStateMayHaveMoved: (sessionId: number) => void = () => {},
 ): void {
   // Wrap the MCP server so each tool's input shape gets the actionable-error
   // zod error map attached at registration time. Per-schema attachment (not
@@ -165,6 +173,28 @@ export function registerMcpTools(
     };
   }
 
+  /**
+   * `wrap`, for a tool whose Smalltalk can move the session's transaction state:
+   * `commit` and `abort` do it by definition, and `execute_code` runs whatever
+   * the caller wrote, which is free to send `System beginTransaction` or change
+   * the mode outright — the same reason CodeExecutor re-reads the state after a
+   * Display It. The re-read runs whether the tool succeeded or failed: a commit
+   * that was refused still tells us where the session ended up.
+   */
+  function wrapMoving<T extends Record<string, unknown>>(
+    fn: (session: ActiveSession, args: T) => string,
+  ): (args: T) => { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+    const inner = wrap(fn);
+    return (args: T) => {
+      try {
+        return inner(args);
+      } finally {
+        const session = getSession();
+        if (session) onTransactionStateMayHaveMoved(session.id);
+      }
+    };
+  }
+
   // Tools are registered alphabetically.
 
   server.tool(
@@ -172,7 +202,7 @@ export function registerMcpTools(
     "Abort the current transaction on the user's active session, discarding uncommitted changes.",
     {},
     async () =>
-      wrap<Record<string, unknown>>((session) => {
+      wrapMoving<Record<string, unknown>>((session) => {
         return executeString(session, `System abortTransaction. 'Transaction aborted'`);
       })({}),
   );
@@ -193,13 +223,10 @@ export function registerMcpTools(
     "Commit the user's active session transaction, persisting all changes.",
     {},
     async () =>
-      wrap<Record<string, unknown>>((session) => {
-        return executeString(
-          session,
-          `System commitTransaction
-  ifTrue: ['Transaction committed']
-  ifFalse: ['Commit failed - possible conflict. Use abort to reset, then retry.']`,
-        );
+      wrapMoving<Record<string, unknown>>((session) => {
+        // Through the shared query rather than inline, so a refusal here names the
+        // conflicting objects exactly as the session-row Commit does.
+        return commitTransaction((code) => executeString(session, code));
       })({}),
   );
 
@@ -372,7 +399,7 @@ export function registerMcpTools(
       'Changes are NOT committed automatically.',
     { code: z.string().describe('Smalltalk expression or statement sequence to execute') },
     async (args) =>
-      wrap<typeof args>((session, a) => {
+      wrapMoving<typeof args>((session, a) => {
         // See queries/executeCode.ts. Block-wraps multi-statement bodies and
         // guards against AlmostOutOfStack / AbstractException so a runaway
         // block returns a clean error string instead of taking the gem down.
@@ -652,21 +679,10 @@ export function registerMcpTools(
       })({}),
   );
 
-  server.tool(
-    'refresh',
-    "Refresh this session's view of committed state by aborting if (and only if) " +
-      "there are no uncommitted changes. GemStone's GCI pins the session's read view " +
-      'until it aborts or commits, so a commit landed by another process (e.g. install.sh) ' +
-      'is invisible until refresh runs. If the session has uncommitted work, this is a ' +
-      'no-op and reports back so the caller can decide whether to abort or commit first.',
-    {},
-    async () =>
-      wrap<Record<string, unknown>>((session) => {
-        return executeString(
-          session,
-          "System needsCommit ifTrue: ['skipped: uncommitted changes present'] ifFalse: [System abortTransaction. 'refreshed']",
-        );
-      })({}),
+  server.tool('refresh', REFRESH_TOOL_DESCRIPTION, {}, async () =>
+    wrap<Record<string, unknown>>((session) => {
+      return executeString(session, VIEW_REFRESH_CODE);
+    })({}),
   );
 
   server.tool(
@@ -788,22 +804,10 @@ export function registerMcpTools(
         // DNU do:). Coerce with asString / printString to keep it robust across
         // GemStone versions where these System methods return different types.
         //
-        // Auto-refresh: if no uncommitted work is pending we abort first so the
+        // Auto-refresh: abort first, when the abort would discard nothing, so the
         // rest of the report (and any follow-up read tool calls) sees committed
-        // state landed by other processes. Skip when uncommitted work is
-        // pending — silent discard would be far worse than slightly stale state.
-        const code = `| ws viewState |
-viewState := System needsCommit
-  ifTrue: ['stale (uncommitted changes - call abort or commit to refresh)']
-  ifFalse: [System abortTransaction. 'refreshed'].
-ws := WriteStream on: String new.
-ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.
-ws nextPutAll: 'Stone: '; nextPutAll: System stoneName asString; lf.
-ws nextPutAll: 'Session ID: '; nextPutAll: System session printString; lf.
-ws nextPutAll: 'Transaction: '; nextPutAll: (System inTransaction ifTrue: ['active'] ifFalse: ['none']); lf.
-ws nextPutAll: 'Uncommitted changes: '; nextPutAll: (System needsCommit ifTrue: ['yes'] ifFalse: ['no']); lf.
-ws nextPutAll: 'View: '; nextPutAll: viewState; lf.
-ws contents`;
+        // state landed by other processes. See VIEW_REFRESH_CODE.
+        const code = SESSION_STATUS_CODE;
         return executeString(session, code);
       })({}),
   );

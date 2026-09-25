@@ -153,16 +153,34 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
-- **Commit** / **Abort** — transaction control. Also in the Command Palette as **GemStone: Commit** and **GemStone: Abort**, which act in the current session and name it before they act
+- **Begin Transaction** / **Commit** / **Abort** — transaction control. Begin and Commit appear only when this session can use them: Commit needs the session to be in a transaction, and Begin only applies in **manual** mode when it is not. Abort is always offered. All three are in the Command Palette as **GemStone: Begin Transaction**, **GemStone: Commit** and **GemStone: Abort**; from there they act in the current session, and Commit and Abort name it before they act
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed, with Undo/Redo for a change you want back
 - **Logout** — disconnect
-- **Export** and **Make Active Session** (context menu)
+- **Set Transaction Mode**, **Export** and **Make Active Session** (context menu)
+
+Each session row also says which **transaction mode** it is in, beside its session number — `Session 3 (3.7.5) · Manual · not in transaction`. Hovering explains what the mode means.
 
 The session Claude Code and Claude Desktop run their GemStone tools against is marked `· MCP` in its description — see [MCP Server](#mcp-server), which is set up from the **Databases** header rather than from a session row, since it belongs to the window.
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
 The active session (used for code execution) is highlighted, and the status bar shows which session is active.
+
+#### Transaction modes
+
+GemStone gives a session one of three transaction modes, and the mode decides what Commit, Abort and Begin do:
+
+- **Auto-Begin** — a new transaction starts automatically after every commit or abort, so the session is always inside one. This is GemStone's default. It is convenient, but an idle session holds a commit record open and holds back the repository's reclaim.
+- **Manual** — commit and abort leave the session *outside* a transaction; **Begin Transaction** puts it back in. Nothing can be committed while it is outside one.
+- **Transactionless** — the session is not in a transaction, so it cannot commit; switch it to Manual or Auto-Begin to write. The cheapest mode for the repository, but its view is refreshed automatically at any moment, so what it shows can change under you. GemStone intends it for idle sessions.
+
+The **status bar** carries the selected session's mode on the left: a filled circle when the session is inside a transaction, a hollow one when it is outside, an eye for transactionless, and a question mark when the state could not be read. Hovering it says what the mode means and what the session can do; **clicking it changes the mode**. It is also **GemStone: Set Transaction Mode** in the Command Palette, on a session row's context menu in Logins & Sessions, and a button on the session row in Databases & Versions.
+
+Changing the mode **aborts the current transaction** — GemStone does that as part of switching — so Jasper asks first and tells you how much is at stake. Any session in Manual mode also has the gem service the stone's SigAbort on its behalf — whether you switched it there or the stone handed it out that way at login — so a session left sitting outside a transaction is not forcibly aborted.
+
+Outside a transaction you can still *change* things; GemStone refuses only the commit. So Jasper still warns you at logout about uncommitted work in a session that is between transactions — it just does not offer to commit it, since that could only fail. When the stone does refuse a save with "not inside of a transaction", Jasper names **Begin Transaction** as the way on. More detail: [Transaction modes](docs/reference/transaction-modes.md).
+
+**When a commit does not land, Jasper says which of the two things happened.** A commit the stone *refused* — another session committed over an object you changed — is not a malfunction, and retrying it cannot work, so it is reported as `Commit refused — Write-Write on 2 objects. Abort for a fresh view, then try again.` **Show Conflicts** on that message lists every object that collided in the **GemStone GCI** output channel — oop, class, and enough of its printString to recognize it (`12086785  SymbolDictionary  aSymbolDictionary( name: #'UserGlobals' )`), over an `Object _objectForOop:` you can paste into a workspace to open the object itself. A commit that *failed* with an error still reports the stone's own words. Claude's `commit` tool answers the same way.
 
 #### Single vs. multiple sessions
 

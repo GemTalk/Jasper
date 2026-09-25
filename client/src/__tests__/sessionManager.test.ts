@@ -4,9 +4,18 @@ const configValues: Record<string, unknown> = {};
 
 vi.mock('vscode', () => ({
   commands: { executeCommand: vi.fn() },
-  EventEmitter: class {
-    fire = vi.fn();
-    event = vi.fn();
+  // A real emitter, not a pair of spies: SessionManager announces a transaction-
+  // state change through one, and a stub `event` that never registers the
+  // listener makes "did it announce?" untestable.
+  EventEmitter: class<T> {
+    private listeners: Array<(e: T) => void> = [];
+    event = (listener: (e: T) => void) => {
+      this.listeners.push(listener);
+      return { dispose: () => {} };
+    };
+    fire = (data: T) => {
+      for (const listener of this.listeners) listener(data);
+    };
     dispose = vi.fn();
   },
   window: { showQuickPick: vi.fn(), showInformationMessage: vi.fn() },
@@ -18,9 +27,26 @@ vi.mock('vscode', () => ({
 }));
 
 let pingErrNumber = 0;
+// What the stone answers the `System transactionMode … System inTransaction`
+// probe with. `autoBegin true` is GemStone's default and what almost every stone
+// hands out; a test that wants the manualBegin case sets this before logging in.
+let transactionStateAnswer = 'autoBegin true';
 // The transcript-sink install (run at login) executes a doit via
-// executeAndFetchString; capture the calls so tests can assert on them.
-const executeAndFetchStringMock = vi.fn((..._args: unknown[]) => 'installed');
+// executeAndFetchString; capture the calls so tests can assert on them. The
+// transaction-state probe goes through the same call, and is answered from
+// `transactionStateAnswer` so a test can say which mode the stone handed out; a
+// mode switch answers the mode it was asked for, unless `switchAnswer` says else.
+let switchAnswer: string | undefined;
+function stoneAnswer(..._args: unknown[]): string {
+  const code = typeof _args[1] === 'string' ? _args[1] : '';
+  if (code.includes('System transactionMode asString,')) return transactionStateAnswer;
+  const switchTo = /System transactionMode: #(\w+)\./.exec(code);
+  if (switchTo) return switchAnswer ?? switchTo[1];
+  return 'installed';
+}
+// Restored in beforeEach: a test that swaps the implementation must not leave
+// every later test talking to its stone.
+const executeAndFetchStringMock = vi.fn(stoneAnswer);
 // The liveness ping (GciTsFetchSize on nil) and the logout itself — the only two
 // GCI calls a logout has any reason to make. Spied so a test can assert how many
 // times they cross to the gem.
@@ -31,6 +57,14 @@ const gciTsFetchSize = vi.fn((..._args: unknown[]) => ({
 const gciTsLogout = vi.fn((..._args: unknown[]) => undefined);
 // login() aborts once after setup to drop the session-method-policy's spurious
 // write; capture those calls so tests can assert on them.
+const gciTsBegin = vi.fn((..._args: unknown[]) => ({
+  success: true,
+  err: { number: 0, message: '' },
+}));
+const gciTsCommit = vi.fn((..._args: unknown[]) => ({
+  success: true,
+  err: { number: 0, message: '' },
+}));
 const gciTsAbort = vi.fn((..._args: unknown[]) => ({
   success: true,
   err: { number: 0, message: '' },
@@ -74,8 +108,17 @@ vi.mock('../gciLibrary', () => ({
     executeAndFetchString(...args: unknown[]) {
       return executeAndFetchStringMock(...(args as []));
     }
+    GciTsCallInProgress() {
+      return { result: 0, err: { number: 0, message: '' } };
+    }
     GciTsAbort(...args: unknown[]) {
       return gciTsAbort(...(args as []));
+    }
+    GciTsBegin(...args: unknown[]) {
+      return gciTsBegin(...(args as []));
+    }
+    GciTsCommit(...args: unknown[]) {
+      return gciTsCommit(...(args as []));
     }
     GciTsLogout(...args: unknown[]) {
       return gciTsLogout(...(args as []));
@@ -139,6 +182,9 @@ describe('SessionManager', () => {
     supportsNb = false;
     nbLoginStarts = true;
     nbFinishedSequence = [];
+    transactionStateAnswer = 'autoBegin true';
+    switchAnswer = undefined;
+    executeAndFetchStringMock.mockImplementation(stoneAnswer);
     manager = new SessionManager();
   });
 
@@ -179,6 +225,193 @@ describe('SessionManager', () => {
     const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     expect(session.id).toBe(1);
+  });
+
+  describe('the transaction mode the stone hands out at login', () => {
+    const armCall = () =>
+      executeAndFetchStringMock.mock.calls.find(
+        (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort'),
+      );
+
+    it('is read rather than assumed', () => {
+      transactionStateAnswer = 'manualBegin false';
+
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+
+      expect(session.transactionMode).toBe('manualBegin');
+      expect(session.inTransaction).toBe(false);
+    });
+
+    // STN_GEM_INITIAL_TRANSACTION_MODE can hand out manualBegin, and such a
+    // session is outside a transaction from its first moment — pinning a commit
+    // record the stone will come asking for. Waiting for the user to switch modes
+    // by hand would leave it to be force-aborted (3031) with every cache
+    // reinitialized, which is the very thing this feature promises it is not.
+    it('arms the gem’s own SigAbort servicing when that mode is manualBegin', () => {
+      transactionStateAnswer = 'manualBegin false';
+
+      manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+
+      expect(armCall()![1]).toContain('#GemAutoServiceSigAbort put: true');
+    });
+
+    it('does not arm it for the autoBegin session almost everyone gets', () => {
+      // autoBegin is never outside a transaction, so the stone never signals it —
+      // and a round trip that can only be a no-op is one not to spend at login.
+      manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+
+      expect(armCall()).toBeUndefined();
+    });
+
+    it('still logs in when the arming fails', () => {
+      transactionStateAnswer = 'manualBegin false';
+      executeAndFetchStringMock.mockImplementation((..._args: unknown[]) => {
+        if (typeof _args[1] === 'string' && _args[1].includes('#GemAutoServiceSigAbort')) {
+          throw GciLibraryError.withMessage('no privilege');
+        }
+        return typeof _args[1] === 'string' && _args[1].includes('System transactionMode asString,')
+          ? transactionStateAnswer
+          : 'installed';
+      });
+
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+
+      expect(session.id).toBe(1);
+      expect(session.transactionMode).toBe('manualBegin');
+    });
+  });
+
+  describe('arming the gem’s SigAbort servicing', () => {
+    const armCalls = () =>
+      executeAndFetchStringMock.mock.calls.filter(
+        (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort put: true'),
+      ).length;
+
+    // One failed attempt must not leave the session unarmed for the rest of its
+    // life, open to the very force-abort (3031) arming exists to prevent.
+    it('retries on the next read after a failed attempt, and marks success', () => {
+      transactionStateAnswer = 'manualBegin false';
+      let failArm = true;
+      executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
+        if (failArm && typeof args[1] === 'string' && args[1].includes('#GemAutoServiceSigAbort')) {
+          throw GciLibraryError.withMessage('busy');
+        }
+        return stoneAnswer(...args);
+      });
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      expect(session.sigAbortArmed).toBeUndefined();
+
+      failArm = false;
+      manager.refreshTransactionState(session.id);
+
+      expect(session.sigAbortArmed).toBe(true);
+    });
+
+    // The option is never disarmed, so a session armed once stays armed.
+    it('does not arm again after a manualBegin → autoBegin → manualBegin round trip', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      transactionStateAnswer = 'manualBegin false';
+      manager.setTransactionMode(session.id, 'manualBegin');
+      transactionStateAnswer = 'autoBegin true';
+      manager.setTransactionMode(session.id, 'autoBegin');
+      transactionStateAnswer = 'manualBegin false';
+      manager.setTransactionMode(session.id, 'manualBegin');
+
+      expect(armCalls()).toBe(1);
+    });
+
+    it('does not arm again on every read while the session stays in manualBegin', () => {
+      transactionStateAnswer = 'manualBegin false';
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      manager.refreshTransactionState(session.id);
+      manager.refreshTransactionState(session.id);
+
+      expect(armCalls()).toBe(1);
+    });
+  });
+
+  describe('switching the transaction mode', () => {
+    it('sends the doit queries/transactionMode owns, and re-reads what the stone reached', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      transactionStateAnswer = 'manualBegin false';
+
+      manager.setTransactionMode(session.id, 'manualBegin');
+
+      const switchCall = executeAndFetchStringMock.mock.calls.find(
+        (c) => typeof c[1] === 'string' && c[1].includes('System transactionMode: #manualBegin'),
+      );
+      expect(switchCall).toBeDefined();
+      expect(session.transactionMode).toBe('manualBegin');
+      expect(session.inTransaction).toBe(false);
+    });
+
+    it('arms the gem’s SigAbort servicing on the way into manualBegin', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      transactionStateAnswer = 'manualBegin false';
+
+      manager.setTransactionMode(session.id, 'manualBegin');
+
+      expect(
+        executeAndFetchStringMock.mock.calls.some(
+          (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort put: true'),
+        ),
+      ).toBe(true);
+    });
+
+    // A switch the stone did not carry out must not be announced as done: the
+    // caller shows an error instead of a toast naming the old mode.
+    it('throws when the stone reports a different mode afterwards, having re-read it', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      switchAnswer = 'autoBegin';
+
+      expect(() => manager.setTransactionMode(session.id, 'manualBegin')).toThrow(
+        'the stone reports autoBegin after the switch, not manualBegin',
+      );
+      expect(session.transactionMode).toBe('autoBegin');
+    });
+
+    it('announces the change so every surface that draws it redraws together', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const seen: number[] = [];
+      manager.onDidChangeTransactionState((id) => seen.push(id));
+      transactionStateAnswer = 'manualBegin false';
+
+      manager.setTransactionMode(session.id, 'manualBegin');
+
+      expect(seen).toEqual([session.id]);
+    });
+
+    // Under manualBegin a commit or abort drops the session out of its
+    // transaction and nothing starts another one, so the cached state is stale
+    // the moment the call returns — which is what leaves a row offering Commit
+    // where only Begin can work.
+    it.each<[string, (m: SessionManager, id: number) => unknown, boolean]>([
+      ['begin', (m, id) => m.begin(id), true],
+      ['commit', (m, id) => m.commit(id), false],
+      ['abort', (m, id) => m.abort(id), false],
+    ])('re-reads the state after %s, so the row stops describing the old one', (_n, act, after) => {
+      transactionStateAnswer = `manualBegin ${!after}`;
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const seen: number[] = [];
+      manager.onDidChangeTransactionState((id) => seen.push(id));
+      transactionStateAnswer = `manualBegin ${after}`;
+
+      act(manager, session.id);
+
+      expect(session.inTransaction).toBe(after);
+      expect(seen).toEqual([session.id]);
+    });
+
+    it('says nothing when the state did not actually move', () => {
+      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const seen: number[] = [];
+      manager.onDidChangeTransactionState((id) => seen.push(id));
+
+      // The stone keeps answering autoBegin/true: a redraw here would be noise.
+      manager.refreshTransactionState(session.id);
+
+      expect(seen).toEqual([]);
+    });
   });
 
   it('still completes login when the post-login abort throws', () => {

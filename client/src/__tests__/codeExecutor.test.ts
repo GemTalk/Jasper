@@ -109,6 +109,9 @@ function makeSessionManager(session?: ActiveSession): SessionManager {
     resolveSession: vi.fn(async () => s),
     getSessions: vi.fn(() => [s]),
     getSession: vi.fn(() => s),
+    // The executor re-reads the session's transaction state once an execution
+    // finishes, since user code is free to commit, begin, or change the mode.
+    refreshTransactionState: vi.fn(),
   } as unknown as SessionManager;
 }
 
@@ -243,12 +246,15 @@ describe('CodeExecutor', () => {
   let session: ActiveSession;
   let gci: ReturnType<typeof makeGci>;
 
+  let sessionManager: SessionManager;
+
   beforeEach(() => {
     vi.clearAllMocks();
     __resetConfig();
     gci = makeGci();
     session = makeSession(gci);
-    executor = new CodeExecutor(makeSessionManager(session));
+    sessionManager = makeSessionManager(session);
+    executor = new CodeExecutor(sessionManager);
   });
 
   // ── Syntax error diagnostics ───────────────────────────────
@@ -415,6 +421,16 @@ describe('CodeExecutor', () => {
       expect(wrappedCode).toContain("UserGlobals at: #'James' put: 'Foster'.");
       expect(wrappedCode).not.toContain("''James''");
       expect(wrappedCode).not.toContain("''Foster''");
+    });
+
+    // User code can commit, begin or switch modes on its own, so the status bar
+    // and session rows must hear about the state it left behind.
+    it('re-reads the session’s transaction state once the execution finishes', async () => {
+      setActiveEditor(makeEditor('System beginTransaction'));
+
+      await executor.executeIt();
+
+      expect(sessionManager.refreshTransactionState).toHaveBeenCalledWith(session.id);
     });
 
     it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(

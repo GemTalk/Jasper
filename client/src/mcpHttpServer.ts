@@ -12,6 +12,11 @@ export const DEFAULT_MCP_HTTP_PORT = 27101;
 export interface McpHttpServerOptions {
   /** Returns the user's currently selected GemStone session, or undefined. */
   getSession: () => ActiveSession | undefined;
+  /** Told which session may have left or entered a transaction, after an MCP tool
+   *  that can move it — so the session row, the status bar and the transaction
+   *  context keys are not left describing the session as it was before Claude
+   *  committed or aborted it. */
+  onTransactionStateMayHaveMoved?: (sessionId: number) => void;
   /** Port to bind on 127.0.0.1. Stable across restarts so the URL pasted
    *  into an MCP client's connector UI stays valid. */
   port: number;
@@ -63,7 +68,11 @@ export class McpHttpServer {
         const transport = new SSEServerTransport('/messages', res);
         transports.set(transport.sessionId, transport);
         const mcpServer = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' });
-        registerMcpTools(mcpServer, this.options.getSession);
+        registerMcpTools(
+          mcpServer,
+          this.options.getSession,
+          this.options.onTransactionStateMayHaveMoved,
+        );
         res.on('close', () => {
           transports.delete(transport.sessionId);
         });
