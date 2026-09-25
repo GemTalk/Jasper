@@ -94,10 +94,12 @@ const MAX_TRANSCRIPT_FETCH = 1024 * 1024;
  * Anything the check raises means "buffer": a Transcript write must never fail
  * because of it.
  *
- * "Running" means the scheduler still has the process: active, ready, or
- * waiting. Once its call has returned to the client its status reads `debug`
- * (the scheduler's own word for "the GCI application holds it"), or
- * `terminated` once a hard break has been cleared. A completed process is not
+ * "Running" means any status but `debug`, `terminated` or
+ * `terminationStarted`, so `suspended` and `on delayQueue` count as running
+ * too; both only occur while the call is still in flight. Once its call has
+ * returned to the client its status reads `debug` (the scheduler's own word
+ * for "the GCI application holds it"), or `terminated` once a hard break has
+ * been cleared. A completed process is not
  * marked terminated, and one resumed by GciTsContinueWith even keeps its
  * frames, so neither `_isTerminated` nor the stack depth can tell. A process
  * that returned soft-broken, or that a hard break left parked because it

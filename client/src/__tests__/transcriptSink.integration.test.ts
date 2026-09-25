@@ -613,7 +613,11 @@ tmps := SessionTemps current.
       // own check.
       const code = "Transcript nextPutAll: 'still written'. 42";
       startClientForwarderMode(session(), code);
-      exec("(SessionTemps current at: #JasperTranscriptSink) instVarAt: 3 put: Object new. 'ok'");
+      // By name, so a reordered inst var fails loudly instead of skipping the fault.
+      exec(
+        '| sink | sink := SessionTemps current at: #JasperTranscriptSink. ' +
+          "sink instVarAt: (sink class allInstVarNames indexOf: #owner) put: Object new. 'ok'",
+      );
       const chunks: string[] = [];
 
       const { result, err } = await runNbCall(

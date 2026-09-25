@@ -417,43 +417,30 @@ describe('CodeExecutor', () => {
       expect(wrappedCode).not.toContain("''Foster''");
     });
 
-    it('starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
-      setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
+      '%s starts clientForwarder mode for the exact code it runs, and ends it after',
+      async (command) => {
+        setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
 
-      await executor.executeIt();
+        await executor[command]();
 
-      const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
-      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
-        .map((c) => c[1] as string)
-        .filter((code) => code.includes('ClientForwarderMode'));
-      expect(sinkCalls).toHaveLength(2);
-      expect(sinkCalls[0]).toContain(
-        `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
-      );
-      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
-    });
-
-    it('Inspect It starts clientForwarder mode for the exact code it runs, and ends it after', async () => {
-      setActiveEditor(makeEditor("Transcript show: 'hi'. 3 + 4"));
-
-      await executor.inspectIt();
-
-      const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
-      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
-        .map((c) => c[1] as string)
-        .filter((code) => code.includes('ClientForwarderMode'));
-      expect(sinkCalls).toHaveLength(2);
-      expect(sinkCalls[0]).toContain(
-        `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
-      );
-      expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
-    });
+        const sent = (gci.GciTsNbExecute as Mock).mock.calls[0][1] as string;
+        const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
+          .map((c) => c[1] as string)
+          .filter((code) => code.includes('ClientForwarderMode'));
+        expect(sinkCalls).toHaveLength(2);
+        expect(sinkCalls[0]).toContain(
+          `jasperStartClientForwarderModeFor: '${sent.replace(/'/g, "''")}'`,
+        );
+        expect(sinkCalls[1]).toContain('jasperEndClientForwarderMode');
+      },
+    );
 
     // After a hard break the `finally`'s end is refused while the call is
     // still being collected; the runner calls this hook once it has been. When
     // it runs is nbRunner.test.ts's to pin; here, that each caller hands one
     // over and that it ends the mode.
-    it.each(['executeIt', 'inspectIt'] as const)(
+    it.each(['executeIt', 'displayIt', 'inspectIt'] as const)(
       '%s ends clientForwarder mode once a hard-broken call is collected',
       async (command) => {
         setActiveEditor(makeEditor('3 + 4'));
