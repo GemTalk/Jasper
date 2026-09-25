@@ -192,10 +192,14 @@ const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name,
 // leave with the files. The other three are the unit tests *of* the bindings,
 // where constructing a `GciLibrary` is the point; all three mock `koffi`, so
 // a call reaches a `vi.fn()` and never a stone -- no session to arm, nothing
-// for this rule to protect. Matched by basename, so moving one keeps its
-// exemption.
+// for this rule to protect. `gciLogin.integration.test.ts` does reach a stone:
+// its subject is the raw login entry points themselves, including logins that
+// fail, which `withTransientSession` can't express -- so it arms each
+// successful session by hand instead. Matched by basename, so moving one keeps
+// its exemption.
 const HARNESS_SESSION_IGNORES = [
   'client/src/__tests__/gci/**',
+  '**/gciLogin.integration.test.ts',
   '**/gciLoginQuiet.test.ts',
   '**/missingGciFunctions.test.ts',
   '**/optionalFuncSignature.test.ts',
@@ -563,7 +567,7 @@ export default tseslint.config(
   {
     // Confines every test to the harness's session (see the message constants
     // above for why). Exemptions are `HARNESS_SESSION_IGNORES` above -- see
-    // that const's comment for why each of the four is there.
+    // that const's comment for why each of the five is there.
     files: ['**/*.test.ts', '**/*.spec.ts', '**/*.test.tsx'],
     ignores: HARNESS_SESSION_IGNORES,
     rules: {
