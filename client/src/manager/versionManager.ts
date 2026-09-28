@@ -66,6 +66,28 @@ function stderrTail(stderr: string): string {
 }
 
 /**
+ * What to say when an install did not finish and removing what it left failed
+ * too: how it ended, then the folder to remove by hand. `detail` is why the
+ * removal failed, already punctuated. Shared by the GemStone and Windows-client
+ * unpacks so their wording cannot drift apart.
+ */
+function cleanupFailedMessage(
+  subject: string,
+  cause: unknown,
+  dir: string,
+  detail: string,
+): string {
+  const what =
+    cause instanceof InstallCancelledError
+      ? `${subject} was cancelled`
+      : `${subject} failed (${cause instanceof Error ? cause.message : String(cause)})`;
+  return (
+    `${what}, and the partly unpacked files at ${dir} could not be removed${detail}. ` +
+    'Remove that folder before installing again.'
+  );
+}
+
+/**
  * How many entries a zip holds, read from its end-of-central-directory record
  * in the last few KB rather than by a pass over the archive. Undefined when it
  * cannot say: no record found, or a zip64 archive, which keeps the count elsewhere.
@@ -506,13 +528,7 @@ export class VersionManager {
     await this.run('chmod', ['-R', 'u+w', dir]);
     const rm = await this.run('rm', ['-rf', dir]);
     if (rm.code === 0) return;
-    const what =
-      cause instanceof InstallCancelledError
-        ? 'Unpacking was cancelled'
-        : `Unpacking failed (${cause instanceof Error ? cause.message : String(cause)})`;
-    const message =
-      `${what}, and the partly unpacked files at ${dir} could not be removed` +
-      `${stderrTail(rm.stderr)}. Remove that folder before installing again.`;
+    const message = cleanupFailedMessage('Unpacking', cause, dir, stderrTail(rm.stderr));
     appendSysadmin(message);
     throw new Error(message, { cause });
   }
@@ -916,11 +932,12 @@ export class VersionManager {
         } catch (rmError) {
           // Said instead of the outcome, which it would otherwise replace: a
           // virus scanner holding a fresh DLL is enough to make this fail.
-          const message =
-            `${e instanceof InstallCancelledError ? 'The Windows client install was cancelled' : `The Windows client install failed (${e instanceof Error ? e.message : String(e)})`}` +
-            `, and the partly unpacked files at ${clientDir} could not be removed ` +
-            `(${rmError instanceof Error ? rmError.message : String(rmError)}). ` +
-            'Remove that folder before installing again.';
+          const message = cleanupFailedMessage(
+            'The Windows client install',
+            e,
+            clientDir,
+            ` (${rmError instanceof Error ? rmError.message : String(rmError)})`,
+          );
           appendSysadmin(message);
           throw new Error(message, { cause: rmError });
         }
