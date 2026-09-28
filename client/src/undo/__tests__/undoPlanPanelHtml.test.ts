@@ -164,6 +164,12 @@ describe('renderUndoPlanHtml', () => {
       );
     };
 
+    it('focuses Apply when the panel opens, making it the default button', () => {
+      mount();
+
+      expect(document.activeElement).toBe(document.getElementById('apply'));
+    });
+
     it('applies on Enter from the page', () => {
       const { posted } = mount();
 

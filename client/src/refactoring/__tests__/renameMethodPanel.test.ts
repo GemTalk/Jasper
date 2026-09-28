@@ -199,6 +199,15 @@ describe('paginated rename-method panel', () => {
       );
     };
 
+    it('focuses Apply when the panel opens, making it the default button', () => {
+      // A webview opens with nothing focused, so the keydown handler never fires: the keystroke
+      // goes to the editor chrome and Enter looks dead. Focusing Apply also makes Enter and Space
+      // activate it natively -- the same thing the editor step gets by focusing its name field.
+      mount([change('1', 'A')], 1, true);
+
+      expect(document.activeElement).toBe(document.getElementById('apply'));
+    });
+
     it('applies on Enter from the page', () => {
       const { vscode } = mount([change('1', 'A')], 1, true);
 
@@ -225,6 +234,21 @@ describe('paginated rename-method panel', () => {
       press(document.getElementById('cancel')!);
 
       expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('replaces its handler rather than stacking one, so a re-wire cannot double-fire', () => {
+      // The listener is on the DOCUMENT so Enter works from anywhere on the page, and a document
+      // outlives a re-render. A stale handler would fire first, act on a detached button, and its
+      // preventDefault would stop the live one.
+      mount([change('1', 'A')], 1, true);
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.body);
+
+      expect(vscode.postMessage).toHaveBeenCalledTimes(1);
+      expect(vscode.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'apply' }),
       );
     });
