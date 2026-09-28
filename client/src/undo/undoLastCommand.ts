@@ -176,18 +176,8 @@ async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<bo
   // reader -- least of all when the point is telling two same-named classes apart (#396).
   const plan = planUndo(entry, (d) => dictionaryNameFor(session, d));
   if (plan === undefined) return true;
-  return showUndoPlanPanel({
-    ...plan,
-    // Every affordance already names the change; the panel adds what the reversal will DO, and
-    // this note is the one thing the list cannot show -- that the top of the stack is not
-    // necessarily the last thing the user did.
-    note: [
-      plan.note,
-      'This is the most recent change Jasper recorded in this session. It is not necessarily ' +
-        'the last thing you did — an action that cannot be reversed records nothing, so the ' +
-        'change before it is what this reverses.',
-    ]
-      .filter((t): t is string => t !== undefined)
-      .join(' '),
-  });
+  // The plan's own note -- what THIS reversal costs -- is the panel's banner. The standing
+  // caveat about which change is on top of the stack lives in the panel as a disclosure, so it
+  // stays available without sitting above the rows on every single undo.
+  return showUndoPlanPanel(plan);
 }

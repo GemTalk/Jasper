@@ -352,15 +352,16 @@ describe('undoLastCommand', () => {
       expect(undoStackDepth(session.id)).toBe(1);
     });
 
-    it('says why the change named may not be the last thing you did', async () => {
+    it('leaves the plan’s note for what the reversal costs, not the standing caveat', async () => {
+      // The standing caveat lives in the panel itself as a disclosure -- see the panel's own
+      // tests. What the dispatcher must NOT do is graft it onto the plan's note, which is
+      // reserved for what THIS reversal costs and is shown as a banner.
       pushUndoEntry(methodEdit('Save Account>>#balance'));
       vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
       await undoLastCommand(sessions);
 
-      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].note).toContain(
-        'not necessarily the last thing you did',
-      );
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].note).toBeUndefined();
     });
 
     it('offers Undo for a method edit and Revert for a class edit', async () => {

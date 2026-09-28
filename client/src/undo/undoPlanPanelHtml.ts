@@ -14,6 +14,20 @@
  */
 import { UndoPlan } from './undoPlan';
 
+/**
+ * Why the change named may not be the last thing you did.
+ *
+ * True of every undo and worth knowing once, which is why it is a disclosure rather than a
+ * banner: after the first few reversals it is text the reader already has, sitting above the one
+ * thing they opened the panel to read. Collapsed it costs a line; open it says the same thing it
+ * always did. A plan's own `note` stays prominent -- that one is specific to the reversal in
+ * front of you and names something it will cost.
+ */
+const WHY_THIS_CHANGE =
+  'Undo takes the most recent change Jasper RECORDED in this session, which is not necessarily ' +
+  'the last thing you did: an action that cannot be reversed records nothing, so the change ' +
+  'before it is what this reverses.';
+
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -90,7 +104,16 @@ export function renderUndoPlanHtml(opts: UndoPlanHtmlOptions): string {
       background: var(--vscode-inputValidation-warningBackground, rgba(200,160,0,0.12));
       border-radius: 4px;
     }
-    .summary { padding: 8px 16px; opacity: 0.85; }
+    .summary { padding: 8px 16px; opacity: 0.85; display: flex; align-items: baseline; gap: 12px; }
+    details.why { font-size: 0.95em; }
+    details.why summary {
+      cursor: pointer; opacity: 0.7;
+      color: var(--vscode-textLink-foreground);
+      list-style: none;
+    }
+    details.why summary::-webkit-details-marker { display: none; }
+    details.why summary:hover { opacity: 1; text-decoration: underline; }
+    details.why p { margin: 6px 0 0; opacity: 0.85; max-width: 70ch; }
     ul.changes { list-style: none; margin: 0; padding: 0 8px; }
     li.change {
       border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.25));
@@ -111,7 +134,13 @@ export function renderUndoPlanHtml(opts: UndoPlanHtmlOptions): string {
       <button id="cancel" class="secondary">Cancel</button>
     </div>
   </header>
-${note}  <div class="summary">${n} change${n === 1 ? '' : 's'} — all applied together</div>
+${note}  <div class="summary">
+    <span>${n} change${n === 1 ? '' : 's'} — all applied together</span>
+    <details class="why">
+      <summary>Why this change?</summary>
+      <p>${escapeHtml(WHY_THIS_CHANGE)}</p>
+    </details>
+  </div>
   <ul class="changes">
 ${rows}
   </ul>

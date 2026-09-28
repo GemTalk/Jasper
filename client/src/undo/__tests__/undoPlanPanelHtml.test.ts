@@ -69,6 +69,41 @@ describe('renderUndoPlanHtml', () => {
     expect(document.body.textContent).toContain('all applied together');
   });
 
+  // Informational, true of every undo, and worth knowing once -- so a disclosure rather than a
+  // banner. Boxed at the top of every single reversal it is noise sitting above the one thing
+  // the reader opened the panel for.
+  describe('the standing caveat about which change is on top', () => {
+    it('is present, and says what it always said', () => {
+      expect(html()).toContain('not necessarily');
+      expect(html()).toContain('an action that cannot be reversed records nothing');
+    });
+
+    it('is collapsed behind a disclosure rather than shown as a banner', () => {
+      mount();
+      const why = document.querySelector('details.why') as HTMLDetailsElement;
+
+      expect(why).not.toBeNull();
+      expect(why.open).toBe(false);
+      expect(why.querySelector('summary')?.textContent).toBe('Why this change?');
+      // not in the warning box -- that is reserved for what THIS reversal costs
+      expect(document.querySelector('.oos')).toBeNull();
+    });
+
+    it('keeps the warning box for a reversal that really costs something', () => {
+      document.documentElement.innerHTML = html({
+        ...plan,
+        note: 'anything written since is left behind',
+      });
+
+      expect(document.querySelector('.oos')?.textContent).toBe(
+        'anything written since is left behind',
+      );
+      // the caveat is still its own disclosure, not merged into the box
+      expect(document.querySelector('.oos')?.textContent).not.toContain('not necessarily');
+      expect(document.querySelector('details.why')).not.toBeNull();
+    });
+  });
+
   it('shows a note above the rows when the reversal costs something', () => {
     const out = html({ ...plan, note: 'anything written since is left behind' });
     expect(out).toContain('anything written since is left behind');
