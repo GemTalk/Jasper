@@ -758,6 +758,18 @@
             ]
           },
           {
+            "id": "notebook",
+            "title": "Try a notebook",
+            "description": "A notebook keeps code, results and notes together, one cell at a time. Open a blank one, or learn Smalltalk in one.\n[Open Notebook](command:gemstone.openNotebook)\n[Learn Smalltalk](command:gemstone.openTutorial)",
+            "media": {
+              "markdown": "resources/walkthrough/notebook.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.openNotebook",
+              "onCommand:gemstone.openTutorial"
+            ]
+          },
+          {
             "id": "browseClasses",
             "title": "Browse classes",
             "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",

@@ -53,6 +53,17 @@ describe('Getting Started walkthrough content', () => {
     expect(setupIndex).toBeLessThan(connectIndex);
   });
 
+  it('offers a notebook, blank or the tutorial, after the workspace steps', () => {
+    const notebook = steps.find((s) => s.id === 'notebook');
+    expect(notebook?.description).toContain('command:gemstone.openNotebook');
+    expect(notebook?.description).toContain('command:gemstone.openTutorial');
+    // Display It and Inspect It are done in the workspace, so the notebook step
+    // follows them rather than splitting them from the workspace step.
+    const index = (id: string) => steps.findIndex((s) => s.id === id);
+    expect(index('notebook')).toBeGreaterThan(index('inspectIt'));
+    expect(index('inspectIt')).toBeGreaterThan(index('openWorkspace'));
+  });
+
   it('names creating a database in the setup step', () => {
     const setup = steps.find((s) => s.description.includes('command:gemstone.quickSetup'));
 
