@@ -33,7 +33,10 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import { peekUndoEntry } from './undoStack';
-import { UndoEntry } from './undoTypes';
+import { undoVerb } from './undoTypes';
+// Re-exported so existing importers keep their path; its home is undoTypes, which has no
+// vscode dependency, so the pure plan can reach it too.
+export { undoVerb };
 
 /** The command every Undo affordance runs. */
 export const UNDO_COMMAND = 'gemstone.undoLast';
@@ -88,6 +91,3 @@ export function refreshUndoUi(session: ActiveSession | undefined): void {
 
 /** What reversing this entry is honestly called. A class edit binds an earlier version
  *  rather than rolling anything back, so it is a revert; everything else is an undo. */
-export function undoVerb(entry: UndoEntry): 'Undo' | 'Revert' {
-  return entry.kind === 'classEdit' ? 'Revert' : 'Undo';
-}

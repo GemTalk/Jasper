@@ -8,9 +8,14 @@
  * refactoring plugs in here as one more kind. Adding a further kind means another branch
  * here and a reverser beside it — not a change to the stack, the UI, or any recording site.
  *
- * Every undo CONFIRMS first, naming the change — see `confirmUndo` for why it is
- * unconditional. Past that, the kinds behave differently on purpose, and the difference is
- * the point of the design:
+ * Every undo SHOWS WHAT IT WILL DO first and waits to be accepted — see `confirmUndo` for why
+ * that is unconditional. Every kind opens a panel: the local ones a plan built from the recorded
+ * entry (`undoPlan.ts`), a refactoring the paged preview it already had. That is deliberate
+ * sameness — "Undo" should not be two different experiences depending on machinery the user has
+ * no reason to know about (#396 review).
+ *
+ * Past the panel the kinds still behave differently, and those differences are the point of the
+ * design:
  *
  *  - a METHOD EDIT reverses straight away, because the user just made it and it is one
  *    method;
@@ -24,15 +29,17 @@
  *  - a METHOD CATEGORY is renamed back, a CLASS CATEGORY is put back one class at a time, and a
  *    DICTIONARY is renamed back or put back at its old position on the symbol list — all exact,
  *    and all UNDOs for the same reason;
- *  - a REFACTORING opens the preview panel it already has INSTEAD of the confirmation,
- *    because it can have rewritten dozens of methods across a hierarchy and undoing it
- *    wholesale, unseen, is not a decision to take on the user's behalf.
+ *  - a REFACTORING opens its OWN preview panel rather than a plan: its reversal is paged from
+ *    the stone, can span a hierarchy, and supports per-change deselection, none of which a
+ *    client-side plan can describe.
  */
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
-import { refreshUndoUi, undoVerb } from './undoUi';
+import { refreshUndoUi } from './undoUi';
+import { planUndo } from './undoPlan';
+import { showUndoPlanPanel } from './undoPlanPanel';
 import { UndoEntry } from './undoTypes';
 import { reverseMethodEdit } from './reverseMethodEdit';
 import { reverseClassEdit } from './reverseClassEdit';
@@ -163,17 +170,20 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
  * it costs, rather than which change it is — and are left where they are.
  */
 async function confirmUndo(entry: UndoEntry): Promise<boolean> {
-  const verb = undoVerb(entry);
-  const choice = await vscode.window.showWarningMessage(
-    `${verb} ${entry.label}?`,
-    {
-      modal: true,
-      detail:
-        'This is the most recent change Jasper recorded in this session. It is not ' +
-        'necessarily the last thing you did — an action that cannot be reversed records ' +
-        'nothing, so the change before it is what this reverses.',
-    },
-    verb,
-  );
-  return choice === verb;
+  const plan = planUndo(entry);
+  if (plan === undefined) return true;
+  return showUndoPlanPanel({
+    ...plan,
+    // Every affordance already names the change; the panel adds what the reversal will DO, and
+    // this note is the one thing the list cannot show -- that the top of the stack is not
+    // necessarily the last thing the user did.
+    note: [
+      plan.note,
+      'This is the most recent change Jasper recorded in this session. It is not necessarily ' +
+        'the last thing you did — an action that cannot be reversed records nothing, so the ' +
+        'change before it is what this reverses.',
+    ]
+      .filter((t): t is string => t !== undefined)
+      .join(' '),
+  });
 }

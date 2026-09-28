@@ -21,6 +21,7 @@ vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
 vi.mock('../../refactoring/undoRefactoringCommand', () => ({
   undoLastRefactoringCommand: vi.fn(),
 }));
+vi.mock('../undoPlanPanel', () => ({ showUndoPlanPanel: vi.fn() }));
 
 import * as vscode from 'vscode';
 import { reverseMethodEdit } from '../reverseMethodEdit';
@@ -32,6 +33,7 @@ import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
 import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
+import { showUndoPlanPanel } from '../undoPlanPanel';
 import { undoLastCommand } from '../undoLastCommand';
 import { peekUndoEntry, pushUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { NewUndoEntry } from '../undoTypes';
@@ -132,14 +134,12 @@ const dictionaryEdit = (label: string): NewUndoEntry => ({
 /**
  * Answer the confirmation with its own action button.
  *
- * Every undo asks before it reverses anything, so a test about the DISPATCH would otherwise
- * stop at the modal. Resolving to the last argument answers whichever verb the modal offered
- * ('Undo' or 'Revert') without the test having to know which entry kind it is looking at.
+ * Every undo shows a panel of what it will do before it reverses anything, so a test about the
+ * DISPATCH would otherwise stop there. Accepting it unconditionally lets each test get to the
+ * reverser it is actually about.
  */
 function confirmTheModal(): void {
-  vi.mocked(vscode.window.showWarningMessage).mockImplementation(
-    (...args: unknown[]) => Promise.resolve(args[args.length - 1]) as never,
-  );
+  vi.mocked(showUndoPlanPanel).mockResolvedValue(true);
 }
 
 beforeEach(() => {
@@ -341,39 +341,38 @@ describe('undoLastCommand', () => {
     // click from undoing something the user did not mean (review of #507).
     it('names the change, and reverses nothing until it is answered', async () => {
       pushUndoEntry(methodEdit('Save Account>>#balance'));
-      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
       await undoLastCommand(sessions);
 
-      const [message, options] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
-      expect(message).toContain('Save Account>>#balance');
-      expect(options).toMatchObject({ modal: true });
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].label).toContain(
+        'Save Account>>#balance',
+      );
       expect(reverseMethodEdit).not.toHaveBeenCalled();
       expect(undoStackDepth(session.id)).toBe(1);
     });
 
     it('says why the change named may not be the last thing you did', async () => {
       pushUndoEntry(methodEdit('Save Account>>#balance'));
-      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
       await undoLastCommand(sessions);
 
-      const options = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
-        detail: string;
-      };
-      expect(options.detail).toContain('not necessarily the last thing you did');
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].note).toContain(
+        'not necessarily the last thing you did',
+      );
     });
 
     it('offers Undo for a method edit and Revert for a class edit', async () => {
       pushUndoEntry(methodEdit('Save Account>>#balance'));
       await undoLastCommand(sessions);
-      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Undo');
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].verb).toBe('Undo');
 
-      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      vi.mocked(showUndoPlanPanel).mockClear();
       pushUndoEntry(classEdit('Redefine class Account'));
       vi.mocked(reverseClassEdit).mockResolvedValue(true);
       await undoLastCommand(sessions);
-      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Revert');
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].verb).toBe('Revert');
     });
 
     it('does not ask twice for a refactoring, which has its own preview', async () => {
