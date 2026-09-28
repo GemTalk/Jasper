@@ -31,22 +31,37 @@ export function showClassHistoryPanel(
   className: string,
   versions: ClassVersion[],
   handlers: ClassHistoryPanelHandlers,
+  // Which class this history belongs to, beyond its name. `dictName` is the dictionary the user
+  // selected; `alsoDefinedIn` are the OTHER dictionaries binding the same name. A class name is
+  // not unique, and Restore rewrites a class -- so the tab, the header and the confirmation all
+  // say which one, rather than leaving two identical-looking histories side by side.
+  scope?: { dictName?: string; alsoDefinedIn?: string[] },
 ): vscode.WebviewPanel {
+  const dictName = scope?.dictName;
+  const alsoDefinedIn = scope?.alsoDefinedIn ?? [];
+  const qualified = dictName ? `${className} (${dictName})` : className;
   const panel = vscode.window.createWebviewPanel(
     'gemstoneClassHistory',
-    `Class History: ${className}`,
+    `Class History: ${qualified}`,
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
   );
 
   const nonce = crypto.randomBytes(16).toString('hex');
-  panel.webview.html = renderClassHistoryHtml({ className, versions, nonce, script: panelJs });
+  panel.webview.html = renderClassHistoryHtml({
+    className,
+    versions,
+    nonce,
+    script: panelJs,
+    dictName,
+    alsoDefinedIn,
+  });
 
   let busy = false;
   const doRestore = async (index: number): Promise<void> => {
     const CONFIRM = 'Restore';
     const choice = await vscode.window.showWarningMessage(
-      `Restore ${className} to version [${index}]? This recompiles that version's shape and ` +
+      `Restore ${qualified} to version [${index}]? This recompiles that version's shape and ` +
         'methods as a NEW version (a redo).',
       { modal: true },
       CONFIRM,
@@ -69,7 +84,7 @@ export function showClassHistoryPanel(
   const doRemove = async (index: number): Promise<void> => {
     const CONFIRM = 'Remove';
     const choice = await vscode.window.showWarningMessage(
-      `Remove version [${index}] of ${className} from its class history? Any instances still on ` +
+      `Remove version [${index}] of ${qualified} from its class history? Any instances still on ` +
         'that version will refer to a version no longer in the history. Not committed — commit when ready.',
       { modal: true },
       CONFIRM,

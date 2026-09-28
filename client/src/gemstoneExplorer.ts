@@ -4117,58 +4117,111 @@ export class ExplorerController {
     // change between restores; track it so the follow-up history fetch, the tree
     // refresh, and a second restore all target the right (current) name.
     let currentName = className;
-    showClassHistoryPanel(className, versions, {
-      restore: async (index) => {
-        // A restore binds a NEW version under the class name, so it is an ordinary class
-        // edit and reverts the same way -- by binding back the version that is bound now
-        // (#434). Restoring across a rename also renames the class, which unbinds one name
-        // and binds another, so BOTH names are recorded: the reversal rebinds the first and
-        // unbinds the second. The target version's own name is what history reports for it.
-        const dictRef = this.state.dictIndex ?? this.state.dictName;
-        const restoredName = versions.find((v) => v.index === index)?.name;
-        const names = [
-          currentName,
-          ...(restoredName && restoredName !== currentName ? [restoredName] : []),
-        ];
-        const recording =
-          dictRef !== undefined
-            ? beginClassEdit(
-                session,
-                names.map((className) => ({ dict: dictRef, className })),
-              )
-            : undefined;
+    // Which dictionary this history belongs to, and whether the name is shadowed. Both are shown
+    // in the panel: the versions listed, and anything Restore or Remove does, belong to exactly
+    // one of the classes sharing this name, and nothing else on screen says which (#396).
+    const dictName = this.dictionaryNameForHistory(session, historyDict);
+    const alsoDefinedIn = this.otherDictionariesBinding(session, className, dictName);
+    showClassHistoryPanel(
+      className,
+      versions,
+      {
+        restore: async (index) => {
+          // A restore binds a NEW version under the class name, so it is an ordinary class
+          // edit and reverts the same way -- by binding back the version that is bound now
+          // (#434). Restoring across a rename also renames the class, which unbinds one name
+          // and binds another, so BOTH names are recorded: the reversal rebinds the first and
+          // unbinds the second. The target version's own name is what history reports for it.
+          const dictRef = this.state.dictIndex ?? this.state.dictName;
+          const restoredName = versions.find((v) => v.index === index)?.name;
+          const names = [
+            currentName,
+            ...(restoredName && restoredName !== currentName ? [restoredName] : []),
+          ];
+          const recording =
+            dictRef !== undefined
+              ? beginClassEdit(
+                  session,
+                  names.map((className) => ({ dict: dictRef, className })),
+                )
+              : undefined;
 
-        const result = parseRevertResult(
-          queries.revertClassToVersion(session, currentName, index, historyDict),
-        );
-        const previousName = currentName;
-        if (result.reverted && result.name) currentName = result.name;
-        const refreshed = result.reverted
-          ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
-          : versions;
-        // The class was reshaped/renamed (a new version) — re-cascade so the
-        // Explorer's Classes + Hierarchy panes show the restored name and version.
-        if (result.reverted) await this.refreshAfterClassReshape(currentName);
-        if (result.reverted) {
-          notifyUndoable(
-            `Restored ${previousName} to version ${index}`,
-            recording?.commit(`Restore ${previousName} to version ${index}`),
+          const result = parseRevertResult(
+            queries.revertClassToVersion(session, currentName, index, historyDict),
           );
-        }
-        return { result, versions: refreshed };
+          const previousName = currentName;
+          if (result.reverted && result.name) currentName = result.name;
+          const refreshed = result.reverted
+            ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
+            : versions;
+          // The class was reshaped/renamed (a new version) — re-cascade so the
+          // Explorer's Classes + Hierarchy panes show the restored name and version.
+          if (result.reverted) await this.refreshAfterClassReshape(currentName);
+          if (result.reverted) {
+            notifyUndoable(
+              `Restored ${previousName} to version ${index}`,
+              recording?.commit(`Restore ${previousName} to version ${index}`),
+            );
+          }
+          return { result, versions: refreshed };
+        },
+        remove: async (index) => {
+          const result = parseRemoveResult(
+            queries.removeClassVersion(session, currentName, index, historyDict),
+          );
+          const refreshed = result.removed
+            ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
+            : versions;
+          // The version count / tag changed — refresh the tree's version tags.
+          if (result.removed) await this.refreshAfterClassReshape(currentName);
+          return { result, versions: refreshed };
+        },
       },
-      remove: async (index) => {
-        const result = parseRemoveResult(
-          queries.removeClassVersion(session, currentName, index, historyDict),
-        );
-        const refreshed = result.removed
-          ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
-          : versions;
-        // The version count / tag changed — refresh the tree's version tags.
-        if (result.removed) await this.refreshAfterClassReshape(currentName);
-        return { result, versions: refreshed };
-      },
-    });
+      { dictName, alsoDefinedIn },
+    );
+  }
+
+  /**
+   * The name of the dictionary a Class History was opened on, for the panel to show.
+   *
+   * `dictRef` is what the tree selection gives: a 1-based SymbolList index (the canonical form)
+   * or a name. An index is turned into its dictionary's name, since that is what a reader
+   * recognises. Answers undefined when the reference cannot be resolved, which leaves the panel
+   * unlabelled rather than labelled wrongly.
+   */
+  private dictionaryNameForHistory(
+    session: ActiveSession,
+    dictRef: number | string | undefined,
+  ): string | undefined {
+    if (typeof dictRef === 'string') return dictRef;
+    if (dictRef === undefined) return undefined;
+    // The tree's own name for the selected dictionary, when it has one — no round trip, and it
+    // is the name the user is looking at in the Dictionaries pane.
+    if (this.state.dictName) return this.state.dictName;
+    try {
+      // getDictionaryNames answers the symbol list in order, so the 1-based index selects it.
+      return queries.getDictionaryNames(session)[dictRef - 1];
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The OTHER dictionaries binding `className` — empty unless the name is shadowed. The panel
+   * names them, because two dictionaries' classes of the same name produce two histories that
+   * look identical, and a Restore aimed at the wrong one rewrites a class the user never chose.
+   */
+  private otherDictionariesBinding(
+    session: ActiveSession,
+    className: string,
+    dictName: string | undefined,
+  ): string[] {
+    try {
+      const all = queries.dictionariesContainingClass(session, className);
+      return dictName === undefined ? [] : all.filter((d) => d !== dictName);
+    } catch {
+      return [];
+    }
   }
 
   // Show one method's recorded source history (context menu on a method row). The

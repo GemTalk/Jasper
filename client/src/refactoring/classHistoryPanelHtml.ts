@@ -83,13 +83,40 @@ export interface ClassHistoryHtmlOptions {
   versions: ClassVersion[];
   nonce: string;
   script: string;
+  /**
+   * The dictionary whose class this history belongs to. Shown beside the class name, because a
+   * class name alone does not identify a class: the same name can be bound in several
+   * dictionaries, and the versions listed here -- and anything Restore does -- belong to exactly
+   * one of them.
+   */
+  dictName?: string;
+  /**
+   * The OTHER dictionaries binding this class name, if any. Non-empty means the name is shadowed,
+   * which is worth saying outright rather than leaving the reader to infer it from a dictionary
+   * label they may not have been looking at.
+   */
+  alsoDefinedIn?: string[];
 }
 
 /** Build the viewer's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderClassHistoryHtml(opts: ClassHistoryHtmlOptions): string {
-  const { className, versions, nonce, script } = opts;
+  const { className, versions, nonce, script, dictName, alsoDefinedIn } = opts;
   const rows = renderVersionRows(versions);
   const count = versions.length;
+  const inDict = dictName ? ` in <code>${escapeHtml(dictName)}</code>` : '';
+  const others = alsoDefinedIn ?? [];
+  const shadowNote =
+    others.length === 0
+      ? ''
+      : `
+    <div class="shadow-note">This name is also defined in ${others
+      .map((d) => `<code>${escapeHtml(d)}</code>`)
+      .join(', ')} — ${
+      others.length === 1 ? 'that is a different class' : 'those are different classes'
+    } with ${others.length === 1 ? 'its' : 'their'} own history. Everything below, including
+    <b>Restore</b> and <b>Remove</b>, applies only to${
+      dictName ? ` <code>${escapeHtml(dictName)}</code>'s` : ' this dictionary&rsquo;s'
+    } <code>${escapeHtml(className)}</code>.</div>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -169,12 +196,17 @@ export function renderClassHistoryHtml(opts: ClassHistoryHtmlOptions): string {
     li.mc.removed .mc-glyph { color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39); }
     li.mc.modified .mc-glyph { color: var(--vscode-gitDecoration-modifiedResourceForeground, #a67c00); }
     .nochange { opacity: 0.6; padding: 4px 12px 10px; }
+    .shadow-note {
+      margin-top: 8px; padding: 8px 10px; border-radius: 4px;
+      border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
+      background: var(--vscode-inputValidation-warningBackground, rgba(184,149,0,0.12));
+    }
   </style>
 </head>
 <body>
   <header>
-    <div class="title">Definition history of <code>${escapeHtml(className)}</code></div>
-    <div class="subtitle">${count} version${count === 1 ? '' : 's'} in this stone — newest first. Read-only; a restore is a new version and is not committed.</div>
+    <div class="title">Definition history of <code>${escapeHtml(className)}</code>${inDict}</div>
+    <div class="subtitle">${count} version${count === 1 ? '' : 's'} in this stone — newest first. Read-only; a restore is a new version and is not committed.</div>${shadowNote}
   </header>
   <ul class="versions">
 ${rows}

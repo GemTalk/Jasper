@@ -124,4 +124,90 @@ describe('showClassHistoryPanel restore wiring', () => {
 
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(1));
   });
+
+  // The tab and the confirmation dialog are the two places a user decides "is this the class I
+  // meant?", so both name the dictionary when there is one (#396).
+  describe('naming the dictionary', () => {
+    it('puts the dictionary in the tab title', () => {
+      showClassHistoryPanel(
+        'Shadowed',
+        versions,
+        { restore: vi.fn(), remove: vi.fn() },
+        { dictName: 'DictionaryB' },
+      );
+
+      expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
+        'gemstoneClassHistory',
+        'Class History: Shadowed (DictionaryB)',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('leaves the tab title unqualified when no dictionary was given', () => {
+      showClassHistoryPanel('Shadowed', versions, { restore: vi.fn(), remove: vi.fn() });
+
+      expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
+        'gemstoneClassHistory',
+        'Class History: Shadowed',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('names the dictionary in the restore confirmation', async () => {
+      confirmQueue.push(undefined); // decline, so nothing runs
+      const panel = showClassHistoryPanel(
+        'Shadowed',
+        versions,
+        { restore: vi.fn(), remove: vi.fn() },
+        { dictName: 'DictionaryB' },
+      );
+
+      (panel as unknown as { __emit: (m: unknown) => void }).__emit({
+        command: 'restore',
+        index: 1,
+      });
+      await Promise.resolve();
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Restore Shadowed (DictionaryB) to version [1]?'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('names the dictionary in the remove-version confirmation', async () => {
+      confirmQueue.push(undefined);
+      const panel = showClassHistoryPanel(
+        'Shadowed',
+        versions,
+        { restore: vi.fn(), remove: vi.fn() },
+        { dictName: 'DictionaryB' },
+      );
+
+      (panel as unknown as { __emit: (m: unknown) => void }).__emit({
+        command: 'remove',
+        index: 1,
+      });
+      await Promise.resolve();
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Remove version [1] of Shadowed (DictionaryB)'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('passes the shadowing dictionaries through to the rendered page', () => {
+      const panel = showClassHistoryPanel(
+        'Shadowed',
+        versions,
+        { restore: vi.fn(), remove: vi.fn() },
+        { dictName: 'DictionaryB', alsoDefinedIn: ['DictionaryA'] },
+      );
+
+      expect(panel.webview.html).toContain('This name is also defined in <code>DictionaryA</code>');
+    });
+  });
 });
