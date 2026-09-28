@@ -1017,11 +1017,40 @@ export class ExplorerController {
   // click is recognised by elimination: an open of a test item's URI that nobody
   // claimed. Claiming the deliberate ones keeps them navigating as they always have.
   private readonly attributedOpens = new Set<string>();
+  /**
+   * Set while a deliberate reveal has just placed the tree, so the NEXT editor activation does
+   * not drag it away again.
+   *
+   * Closing a webview panel makes VS Code activate whatever tab is next to it. That activation
+   * is not a navigation -- the user did not go anywhere, a panel merely went away -- but it
+   * fires `onDidChangeActiveTextEditor` like any other, and the follow then moved the Explorer
+   * onto that tab's class. Applying a refactoring with any other GemStone editor open landed
+   * you in its dictionary rather than the one you had just refactored in.
+   *
+   * A one-shot claim, like `attributedOpens`, and cleared on a timer for the same reason: an
+   * activation may never arrive (nothing else was open), and a claim left standing would
+   * swallow the user's next real editor click.
+   */
+  private revealClaim: NodeJS.Timeout | undefined;
 
   /** Claim the next open of `uri`, so syncToEditor treats it as a deliberate
    *  navigation rather than a Testing-view row click. */
   markAttributedOpen(uri: vscode.Uri): void {
     this.attributedOpens.add(uri.toString());
+  }
+
+  /**
+   * Claim the next editor activation, so a deliberate reveal survives a panel closing.
+   *
+   * Called by the Explorer's own post-refactoring reveal. The window is one activation OR a
+   * short moment, whichever comes first: long enough to cover the activation a disposing panel
+   * causes, short enough that a claim nobody spends cannot affect a later click.
+   */
+  private claimNextEditorActivation(): void {
+    if (this.revealClaim) clearTimeout(this.revealClaim);
+    this.revealClaim = setTimeout(() => {
+      this.revealClaim = undefined;
+    }, 1000);
   }
 
   /** Drop a claim that was never consumed — the open threw, kept focus, or the
@@ -3712,8 +3741,12 @@ export class ExplorerController {
     }
     if (entries.some((e) => e.className === className)) {
       await this.revealClass(dictName, dictIndex, className);
+      // The panel that drove this is about to close, which surfaces the tab beside it; without
+      // the claim the follow would move the tree onto THAT class a moment from now (#396).
+      this.claimNextEditorActivation();
       return;
     }
+    this.claimNextEditorActivation();
     this.classCategoryEntries = entries;
     this.loadClassRowMetadata();
     this.loadHierarchy();
@@ -5782,6 +5815,14 @@ export class ExplorerController {
     // Nobody claimed this open and it lands on a test item's document: it is a
     // click on a row in the Testing view, whose navigation is its own.
     if (!this.attributedOpens.delete(uri.toString()) && this.sunit?.isTestItemUri(uri)) {
+      return;
+    }
+    // A deliberate reveal has just placed the tree and a panel then closed, surfacing whatever
+    // tab was beside it. That is not a navigation, so it must not move the Explorer off the
+    // class the user just refactored. One shot: spent here whether or not it was this URI.
+    if (this.revealClaim) {
+      clearTimeout(this.revealClaim);
+      this.revealClaim = undefined;
       return;
     }
     const session = this.session();

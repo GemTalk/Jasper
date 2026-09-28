@@ -716,3 +716,50 @@ describe('Go Back gives up on a class the stone no longer has', () => {
     expect(ctl.history.entries().map((l) => l.className)).toEqual(['Ledger']);
   });
 });
+
+// Closing a webview panel makes VS Code activate whatever tab sits beside it. That is not a
+// navigation -- the user did not go anywhere, a panel went away -- but it fires the same event a
+// click does, and the follow then moved the Explorer onto THAT tab's class. Applying a
+// refactoring with any other GemStone editor open landed you in its dictionary rather than the
+// one you had just refactored in (#396).
+describe('a deliberate reveal survives a panel closing', () => {
+  const reshape = (ctl: unknown, className: string): Promise<void> =>
+    (ctl as { refreshAfterClassReshape(n: string): Promise<void> }).refreshAfterClassReshape(
+      className,
+    );
+
+  it('ignores the activation that follows a post-refactoring reveal', async () => {
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([{ className: CLASS, category: 'c' }]);
+
+    await reshape(ctl, CLASS);
+    // the tab that was next to the panel surfaces
+    await ctl.syncToEditor(
+      vscode.Uri.parse(`gemstone://1/GsRefactoring/GsClassHistory/definition?dict=5`),
+    );
+
+    expect(ctl.state.dictName).toBe(DICT);
+    expect(ctl.state.className).toBe(CLASS);
+  });
+
+  it('spends the claim once, so the next real editor click still navigates', async () => {
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+    const other = vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`);
+
+    await reshape(ctl, CLASS);
+    await ctl.syncToEditor(other); // swallowed: the panel closing
+    expect(ctl.state.className).toBe(CLASS);
+
+    await ctl.syncToEditor(other); // a real click -- must be followed
+
+    expect(ctl.state.className).toBe('Other');
+  });
+});
