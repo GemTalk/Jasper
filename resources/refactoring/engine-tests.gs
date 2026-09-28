@@ -1904,7 +1904,62 @@ setUp
 	"replace-similar with an argument mapped across sites"
 	self compile: 'scaleSrc: n self yourself. n printString. ^count' in: base.
 	self compile: 'scaleA: n self yourself. n printString. ^1' in: base.
-	self compile: 'scaleB: m self yourself. m printString. ^2' in: base
+	self compile: 'scaleB: m self yourself. m printString. ^2' in: base.
+	"a selection that crosses a block's closing bracket"
+	self compile: self crossesBlockSource in: base.
+	"a comment between two statements"
+	self compile: 'commented self yourself. "why" self hash. ^count' in: base
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+crossesBlockSource
+	"Laid out the way an editor shows it: one statement a line, tab-indented, so a
+	 selection can take in a line's leading indentation or its trailing newline."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'crossesBlock' , lf ,
+		tab , '| n |' , lf ,
+		tab , 'n := 0.' , lf ,
+		tab , '1 to: 60 do: [:second |' , lf ,
+		tab , tab , '1 to: 177000000 do: [:k | n := n max: k]].' , lf ,
+		tab , 'self assert: n > 0'
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+wholeStatementsDecline
+	^'Select one or more whole statements, or a single expression, to extract.'
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+assertDeclinesAsNotWholeStatements: aRefactoring
+	self assert: aRefactoring declineReason equals: self wholeStatementsDecline.
+	self assert: aRefactoring changeSet isEmpty
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+assertResolves: aRefactoring
+	| cs |
+	self assert: aRefactoring declineReason isNil.
+	cs := aRefactoring changeSet.
+	self assert: cs size equals: 2.
+	^self addChangeIn: cs
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+lf
+	^String with: Character lf
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+tab
+	^String with: Character tab
 %
 
 category: 'running'
@@ -2099,6 +2154,109 @@ testSelectionNotOnWholeStatementsIsDeclined
 
 	self assert: ref declineReason notNil.
 	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionCrossingABlockCloseIsDeclined
+	"From the inner loop through the end of the method: the selection takes in the
+	 outer block's closing ] and its period, so it cuts the outer 1 to: 60 do: [...]
+	 in two. Extracting only 'self assert: n > 0' would silently leave the inner loop
+	 behind."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '1 to: 177000000 do: [:k | n := n max: k]].' , self lf , self tab ,
+				'self assert: n > 0'
+			newSelector: 'n:')
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionCrossingABlockCloseFromTheLineIndentIsDeclined
+	"The same cut, dragged from column 0 of the inner loop's line."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , self tab , '1 to: 177000000 do: [:k | n := n max: k]].' , self lf ,
+				self tab , 'self assert: n > 0'
+			newSelector: 'n:')
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionStoppingShortOfABlockCloseIsDeclined
+	"The outer statement's opening without its closing ]: the inner loop is whole,
+	 but the statement around it is cut."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '1 to: 60 do: [:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'loop')
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionStartingInsideAStatementIsDeclined
+	"'yourself' is the tail of 'self yourself'; only 'self hash' is whole."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #doStuff
+			select: 'yourself. self hash' newSelector: 'sideEffects')
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionEndingInsideAStatementIsDeclined
+	"'self ha' is the head of 'self hash'; only 'self yourself' is whole."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #doStuff
+			select: 'self yourself. self ha' newSelector: 'sideEffects')
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testWholeOuterStatementWithItsIndentAndNewlineResolves
+	"Leading indentation, the statement period and the trailing newline are slack:
+	 the whole outer loop, dragged line to line, still extracts, inner loop and all."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , '1 to: 60 do: [:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]].' , self lf
+			newSelector: 'loop:').
+	self assert: add newSource includesSubstring: '1 to: 60 do:'.
+	self assert: add newSource includesSubstring: '1 to: 177000000 do:'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testStatementWithTrailingNewlineResolves
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: 'n := 0.' , self lf newSelector: 'reset').
+	self assert: add newSource includesSubstring: 'n := 0'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testInnerLoopWithItsIndentResolves
+	"A whole statement inside the block, dragged from column 0, is not a cut."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , self tab , '1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'inner:').
+	self assert: add newSource includesSubstring: '1 to: 177000000 do:'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testCommentBetweenStatementsResolves
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #commented
+			select: 'self yourself. "why" self hash' newSelector: 'sideEffects').
+	self assert: add newSource includesSubstring: 'self yourself'.
+	self assert: add newSource includesSubstring: 'self hash'
 %
 
 category: 'tests - decline'

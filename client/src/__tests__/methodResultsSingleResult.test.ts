@@ -74,6 +74,12 @@ describe('a result list with exactly one hit', () => {
     expect(info).toHaveBeenCalledWith(expect.stringContaining('Account >> #balance'));
   });
 
+  it('names the environment in the toast when the one hit is above 0', async () => {
+    await showMethodResults(1, [result({ environmentId: 1 })], 'Implementors of #balance');
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('Account >> #balance · env 1'));
+  });
+
   it('reports that a method was opened', async () => {
     // Safe delete reads this answer to tell "went and looked at a method" from
     // "closed the list again"; going straight to the source is the first.

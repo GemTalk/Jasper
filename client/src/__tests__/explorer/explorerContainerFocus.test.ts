@@ -139,8 +139,7 @@ describe('Browse Class from the Inspector or the debugger', () => {
     // The stub flips `visible` on a timer, not synchronously, so this also
     // guards the wait: VS Code resolves the views after the container command
     // has returned, and without waiting for them the reveal here is skipped and
-    // reapplyPaneHighlight catches the pane up only as a plain select — which
-    // does not scroll, leaving a Browse landing on a row that can be off-screen.
+    // left to reapplyPaneHighlight's catch-up.
     const ctl = makeController();
     const views = withViews(ctl, false);
 
@@ -165,13 +164,17 @@ describe('Browse Class from the Inspector or the debugger', () => {
   it('leaves the keyboard in the editor it opened, not in the tree', async () => {
     // The counterpart to Reveal in GemStone Explorer, which deliberately keeps the
     // tree's focus. A Browse opens the source and is there to be read and edited, so
-    // the reveal takes focus only to force the scroll and hands it straight back.
+    // the reveal never takes the tree's focus: a focus:false reveal scrolls the row.
     const ctl = makeController();
-    withViews(ctl);
+    const views = withViews(ctl);
 
     await ctl.findClass('Account', SESSION_ID, undefined, { selector: 'balance', isMeta: false });
 
-    expect(executedCommands()).toContain('workbench.action.focusActiveEditorGroup');
+    expect(views.method.reveal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ select: true, focus: false }),
+    );
+    expect(executedCommands()).not.toContain('workbench.action.focusActiveEditorGroup');
   });
 });
 
@@ -321,7 +324,7 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     }
   });
 
-  it('hands focus back on an ordinary sync that overlaps an explicit reveal', async () => {
+  it('an ordinary sync that overlaps an explicit reveal does not take the tree focus', async () => {
     // Keeping the tree's focus used to be a flag on the controller, raised for the
     // whole of the explicit reveal's sync. Anything else that reached the method
     // reveal inside that window — an editor-change sync, which arrives whenever a
@@ -342,21 +345,28 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     ctl.markAttributedOpen(Uri.parse(TEST_URI));
     await ctl.syncToEditor(Uri.parse(TEST_URI));
 
-    expect(executedCommands()).toContain('workbench.action.focusActiveEditorGroup');
+    const syncReveal = views.method.reveal.mock.calls.at(-1) as unknown[];
+    expect(views.method.reveal.mock.calls.length).toBeGreaterThan(1);
+    expect(syncReveal[1]).toEqual(expect.objectContaining({ select: true, focus: false }));
+    expect(executedCommands()).not.toContain('workbench.action.focusActiveEditorGroup');
 
     releaseTheReveal();
     await explicit;
   });
 
-  it('still hands focus back on an ordinary editor-driven sync', async () => {
+  it('an ordinary editor-driven sync reveals without taking the tree focus', async () => {
     // keepTreeFocus is passed only by the explicit reveal. Typing in an editor
-    // must not end with the cursor stranded in the tree.
+    // must not move the cursor into the tree, even for a moment.
     const ctl = controllerWithSunit();
-    withViews(ctl);
+    const views = withViews(ctl);
     ctl.markAttributedOpen(Uri.parse(TEST_URI));
 
     await ctl.syncToEditor(Uri.parse(TEST_URI));
 
-    expect(executedCommands()).toContain('workbench.action.focusActiveEditorGroup');
+    expect(views.method.reveal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ select: true, focus: false }),
+    );
+    expect(executedCommands()).not.toContain('workbench.action.focusActiveEditorGroup');
   });
 });
