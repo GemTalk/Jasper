@@ -5,6 +5,7 @@ import * as path from 'path';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { SMALLTALK_CONTROLLER_ID } from '../smalltalkNotebookController';
 import { GRAIL_CONTROLLER_ID } from '../grailNotebookController';
+import { sessionKernelId } from '../sessionKernels';
 
 type Menu = { command: string; when?: string };
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
@@ -71,7 +72,15 @@ describe('Switch Session button', () => {
   });
 
   it('does not show on a kernel bound to one session, which switching would not move', () => {
-    expect(kernelPattern.test(`${extensionId}/${SMALLTALK_CONTROLLER_ID}.session-2`)).toBe(false);
-    expect(kernelPattern.test(`${extensionId}/${GRAIL_CONTROLLER_ID}.session-2`)).toBe(false);
+    expect(
+      kernelPattern.test(`${extensionId}/${sessionKernelId(SMALLTALK_CONTROLLER_ID, 2)}`),
+    ).toBe(false);
+    expect(kernelPattern.test(`${extensionId}/${sessionKernelId(GRAIL_CONTROLLER_ID, 2)}`)).toBe(
+      false,
+    );
+  });
+
+  it('shows only in multiple-session mode, where there is another session to switch to', () => {
+    expect(entry.when).toContain('gemstone.multipleSessions');
   });
 });

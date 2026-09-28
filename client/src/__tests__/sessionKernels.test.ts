@@ -2,12 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({ logError: vi.fn(), logInfo: vi.fn() }));
+vi.mock('../pythonQueries', () => ({
+  evalPythonInScope: vi.fn(() => '3'),
+  resetPythonScope: vi.fn(() => 'scope reset'),
+}));
 
-import { notebooks, EventEmitter } from '../__mocks__/vscode';
-import { SessionKernels } from '../sessionKernels';
+import {
+  notebooks,
+  workspace,
+  EventEmitter,
+  __setConfig,
+  __resetConfig,
+} from '../__mocks__/vscode';
+import { SessionKernels, sessionKernelId } from '../sessionKernels';
 import { smalltalkSessionKernel, SMALLTALK_CONTROLLER_ID } from '../smalltalkNotebookController';
 import { grailSessionKernel, GRAIL_CONTROLLER_ID } from '../grailNotebookController';
 import { SessionManager } from '../sessionManager';
+import * as python from '../pythonQueries';
 import { GemStoneNotebookKernel } from '../gemstoneNotebookKernel';
 
 const LOGIN = { gs_user: 'DataCurator', stone: 'gs64stone', gem_host: 'localhost' };
@@ -50,6 +61,55 @@ function byId(id: string) {
 describe('SessionKernels', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetConfig();
+    __setConfig('gemstone', 'sessionMode', 'multiple');
+  });
+
+  function changeSessionMode(mode: 'single' | 'multiple') {
+    __setConfig('gemstone', 'sessionMode', mode);
+    for (const [listener] of vi.mocked(workspace.onDidChangeConfiguration).mock.calls) {
+      (listener as (e: unknown) => void)({
+        affectsConfiguration: (key: string) => key === 'gemstone.sessionMode',
+      });
+    }
+  }
+
+  it('makes none in single-session mode, where they would only duplicate the default', () => {
+    __setConfig('gemstone', 'sessionMode', 'single');
+    const { manager, login } = makeSessionManager([1]);
+    new SessionKernels(manager, [smalltalkSessionKernel, grailSessionKernel]);
+    login(2);
+    expect(created()).toHaveLength(0);
+  });
+
+  it('follows the mode setting: adds them when switched to multiple, removes them when switched back', () => {
+    __setConfig('gemstone', 'sessionMode', 'single');
+    const { manager } = makeSessionManager([1, 2]);
+    new SessionKernels(manager, [smalltalkSessionKernel]);
+
+    changeSessionMode('multiple');
+    expect(created().map((c) => c.id)).toEqual([
+      sessionKernelId(SMALLTALK_CONTROLLER_ID, 1),
+      sessionKernelId(SMALLTALK_CONTROLLER_ID, 2),
+    ]);
+
+    changeSessionMode('single');
+    expect(created().every((c) => c.dispose.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('stops listening once disposed: releases its login, logout and settings subscriptions', () => {
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => ({ dispose: unsubscribe }));
+    const manager = {
+      getSessions: () => [],
+      onDidAddSession: subscribe,
+      onDidRemoveSession: subscribe,
+    } as unknown as SessionManager;
+    vi.mocked(workspace.onDidChangeConfiguration).mockReturnValueOnce({ dispose: unsubscribe });
+
+    new SessionKernels(manager, [smalltalkSessionKernel]).dispose();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(3);
   });
 
   it('lists every session already logged in, for Smalltalk and Python', () => {
@@ -57,14 +117,14 @@ describe('SessionKernels', () => {
     new SessionKernels(manager, [smalltalkSessionKernel, grailSessionKernel]);
 
     expect(created().map((c) => c.id)).toEqual([
-      `${SMALLTALK_CONTROLLER_ID}.session-1`,
-      `${GRAIL_CONTROLLER_ID}.session-1`,
-      `${SMALLTALK_CONTROLLER_ID}.session-2`,
-      `${GRAIL_CONTROLLER_ID}.session-2`,
-      `${SMALLTALK_CONTROLLER_ID}.session-3`,
-      `${GRAIL_CONTROLLER_ID}.session-3`,
+      sessionKernelId(SMALLTALK_CONTROLLER_ID, 1),
+      sessionKernelId(GRAIL_CONTROLLER_ID, 1),
+      sessionKernelId(SMALLTALK_CONTROLLER_ID, 2),
+      sessionKernelId(GRAIL_CONTROLLER_ID, 2),
+      sessionKernelId(SMALLTALK_CONTROLLER_ID, 3),
+      sessionKernelId(GRAIL_CONTROLLER_ID, 3),
     ]);
-    expect(byId(`${SMALLTALK_CONTROLLER_ID}.session-3`).label).toBe(
+    expect(byId(sessionKernelId(SMALLTALK_CONTROLLER_ID, 3)).label).toBe(
       'GemStone Smalltalk · Session 3 · DataCurator on gs64stone (localhost)',
     );
   });
@@ -74,12 +134,12 @@ describe('SessionKernels', () => {
     new SessionKernels(manager, [smalltalkSessionKernel]);
 
     login(4);
-    const kernel = byId(`${SMALLTALK_CONTROLLER_ID}.session-4`);
+    const kernel = byId(sessionKernelId(SMALLTALK_CONTROLLER_ID, 4));
     expect(kernel.label).toContain('Session 4');
 
     logout(4);
     expect(kernel.dispose).toHaveBeenCalled();
-    expect(byId(`${SMALLTALK_CONTROLLER_ID}.session-1`).dispose).not.toHaveBeenCalled();
+    expect(byId(sessionKernelId(SMALLTALK_CONTROLLER_ID, 1)).dispose).not.toHaveBeenCalled();
   });
 
   it('does not add a second kernel for a session it already has', () => {
@@ -151,5 +211,83 @@ describe('a session-bound kernel', () => {
     const { manager } = makeSessionManager([1, 2]);
     smalltalkSessionKernel(manager, 2);
     expect(manager.onDidChangeSelection).not.toHaveBeenCalled();
+  });
+});
+
+describe('the real per-session factories', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Session 2 is not the active one, so a kernel that fell back to the active
+  // session would reach session 1's gci instead.
+  function managerWithGci() {
+    const gciOf = (id: number) => ({
+      // Busy, so evalSmalltalk stops at its first GCI call — the one that shows
+      // which session it went to.
+      GciTsCallInProgress: vi.fn(() => ({ result: 1, err: { number: 0 } })),
+      id,
+    });
+    const sessions = new Map(
+      [1, 2].map((id) => [id, { id, login: LOGIN, gci: gciOf(id), handle: { id } }]),
+    );
+    const manager = {
+      getSessions: () => [...sessions.values()],
+      getSession: (id: number) => sessions.get(id),
+      getSelectedSession: () => sessions.get(1),
+      resolveSession: vi.fn(async () => sessions.get(1)),
+      onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+      onDidAddSession: vi.fn(() => ({ dispose: () => {} })),
+      onDidRemoveSession: vi.fn(() => ({ dispose: () => {} })),
+    } as unknown as SessionManager;
+    return { manager, sessions };
+  }
+
+  const cell = (text: string) => ({
+    document: { getText: () => text },
+    notebook: { uri: { toString: () => 'file:///demo.ipynb' } },
+  });
+
+  it('grailSessionKernel runs Python in its session, keeping one scope per notebook', async () => {
+    const { manager, sessions } = managerWithGci();
+    grailSessionKernel(manager, 2);
+    const kernel = byId(sessionKernelId(GRAIL_CONTROLLER_ID, 2));
+
+    expect(kernel.supportedLanguages).toEqual(['python']);
+    await kernel.executeHandler([cell('x = 1')]);
+
+    expect(python.evalPythonInScope).toHaveBeenCalledWith(
+      sessions.get(2),
+      'x = 1',
+      'file:///demo.ipynb',
+    );
+  });
+
+  it('smalltalkSessionKernel runs Smalltalk in its session', async () => {
+    const { manager, sessions } = managerWithGci();
+    smalltalkSessionKernel(manager, 2);
+    const kernel = byId(sessionKernelId(SMALLTALK_CONTROLLER_ID, 2));
+
+    expect(kernel.supportedLanguages).toEqual(['gemstone-smalltalk']);
+    await kernel.executeHandler([cell('3 + 4')]);
+
+    expect(sessions.get(2)!.gci.GciTsCallInProgress).toHaveBeenCalledWith(sessions.get(2)!.handle);
+    expect(sessions.get(1)!.gci.GciTsCallInProgress).not.toHaveBeenCalled();
+  });
+});
+
+describe('sessionKernelId', () => {
+  it('differs between window runs, so a remembered binding cannot land on a new Session 2', async () => {
+    const thisRun = sessionKernelId('kernel', 2);
+    vi.resetModules();
+    const { sessionKernelId: nextRun } = await import('../sessionKernels.js');
+
+    expect(thisRun).toMatch(/^kernel\.session-2-/);
+    expect(nextRun('kernel', 2)).toMatch(/^kernel\.session-2-/);
+    expect(nextRun('kernel', 2)).not.toBe(thisRun);
+  });
+
+  it('is stable within one run, so the kernel keeps its id while the window is open', () => {
+    expect(sessionKernelId('kernel', 2)).toBe(sessionKernelId('kernel', 2));
   });
 });

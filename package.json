@@ -2559,7 +2559,7 @@
       "notebook/toolbar": [
         {
           "command": "gemstone.switchSession",
-          "when": "notebookType == jupyter-notebook && gemstone.hasActiveSession && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\/(gemstone-smalltalk-kernel|gemstone-grail)$/",
+          "when": "notebookType == jupyter-notebook && gemstone.hasActiveSession && gemstone.multipleSessions && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\/(gemstone-smalltalk-kernel|gemstone-grail)$/",
           "group": "navigation/session@1"
         },
         {

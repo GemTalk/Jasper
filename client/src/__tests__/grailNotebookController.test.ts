@@ -14,6 +14,7 @@ vi.mock('../gciLog', () => ({
 import { notebooks, window, commands, languages } from '../__mocks__/vscode';
 import {
   GrailNotebookController,
+  grailSessionKernel,
   GRAIL_CONTROLLER_ID,
   GRAIL_CONTROLLER_LABEL,
   GRAIL_RESET_SCOPE_COMMAND,
@@ -248,5 +249,33 @@ describe('GrailNotebookController', () => {
     expect(languages.setTextDocumentLanguage).toHaveBeenCalledTimes(1);
     expect(languages.setTextDocumentLanguage).toHaveBeenCalledWith(empty.document, 'python');
     ctrl.dispose();
+  });
+
+  it('resets the scope in the session a pinned notebook runs in, not the active one', async () => {
+    const sessionThree = { ...SESSION, id: 3 };
+    const manager = {
+      ...makeSessionManager(true),
+      getSession: (id: number) => (id === 3 ? sessionThree : undefined),
+    } as unknown as SessionManager;
+    const ctrl = new GrailNotebookController(manager);
+    const pinned = grailSessionKernel(manager, 3);
+    const results = notebooks.createNotebookController.mock.results;
+    const pinnedMock = results[results.length - 1].value;
+    const notebook = { uri: { toString: () => 'file:///pinned.ipynb' }, getCells: () => [] };
+    const onSelected = vi.mocked(pinnedMock.onDidChangeSelectedNotebooks).mock.calls[0][0] as (e: {
+      notebook: unknown;
+      selected: boolean;
+    }) => void;
+    onSelected({ notebook, selected: true });
+    (window as { activeNotebookEditor: unknown }).activeNotebookEditor = { notebook };
+    try {
+      await ctrl.resetActiveNotebookScope();
+      expect(python.resetPythonScope).toHaveBeenCalledWith(sessionThree, 'file:///pinned.ipynb');
+      expect(manager.resolveSession).not.toHaveBeenCalled();
+    } finally {
+      (window as { activeNotebookEditor: unknown }).activeNotebookEditor = undefined;
+      pinned.dispose();
+      ctrl.dispose();
+    }
   });
 });

@@ -49,7 +49,7 @@ import { SessionManager, ActiveSession } from '../sessionManager';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import { chooseActiveSession } from '../activeSessionDisplay';
 import { GemStoneNotebookKernel } from '../gemstoneNotebookKernel';
-import { SessionKernels } from '../sessionKernels';
+import { SessionKernels, sessionKernelId } from '../sessionKernels';
 import { smalltalkSessionKernel, SMALLTALK_CONTROLLER_ID } from '../smalltalkNotebookController';
 
 type QuickPickItem = { label: string; description: string; session: ActiveSession };
@@ -172,6 +172,10 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
 
     expect(window.showQuickPick).not.toHaveBeenCalled();
     expect(manager.getSelectedSession()).toBe(first);
+    // Says so, rather than a click that visibly does nothing.
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining(`Only one session is logged in (Session ${first.id}`),
+    );
   });
 
   it('leaves a notebook pinned to one session where it is when the active session switches', async () => {
@@ -191,7 +195,7 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
       evaluate,
       sessionId: first.id,
     });
-    expect(controller(`${SMALLTALK_CONTROLLER_ID}.session-${second.id}`)).toBeDefined();
+    expect(controller(sessionKernelId(SMALLTALK_CONTROLLER_ID, second.id))).toBeDefined();
 
     await switchSessionTo(second);
     await runCell(controller('pinned'));

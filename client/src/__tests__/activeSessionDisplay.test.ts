@@ -122,9 +122,13 @@ describe('WORKSPACE_SESSION_SELECTORS', () => {
 });
 
 describe('chooseActiveSession', () => {
-  it('always offers the choice, even with a session already active', async () => {
+  it('offers the choice whenever there are two or more, even with one already active', async () => {
     const resolveSession = vi.fn(async () => undefined);
-    await chooseActiveSession({ resolveSession } as unknown as SessionManager);
+    const getSessions = () => [
+      { id: 1, login: LOGIN },
+      { id: 2, login: LOGIN },
+    ];
+    await chooseActiveSession({ resolveSession, getSessions } as unknown as SessionManager);
     expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
   });
 });

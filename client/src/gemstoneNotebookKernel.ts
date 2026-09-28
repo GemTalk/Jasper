@@ -8,10 +8,12 @@ import { describeSession, onDidChangeActiveSession } from './activeSessionDispla
 // Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
 // support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
 // extension adds kernels to it but is not needed); any NotebookController
-// registered against that type appears in its kernel picker, so opening a .ipynb and selecting a GemStone kernel routes cell
-// execution through the active GemStone session. Concrete kernels (Grail
-// Python, GemStone Smalltalk) differ only in id/label/cell language and in
-// how a cell's source is evaluated.
+// registered against that type appears in its kernel picker, so opening a
+// .ipynb and selecting a GemStone kernel routes cell execution through a
+// GemStone session: the active one, or the one a per-session kernel is bound
+// to (sessionKernels.ts). Concrete kernels (Grail Python, GemStone Smalltalk)
+// differ only in id/label/cell language, bound session, and in how a cell's
+// source is evaluated.
 
 export const GEMSTONE_NOTEBOOK_TYPE = 'jupyter-notebook';
 
@@ -29,9 +31,9 @@ export interface NotebookKernelSpec {
    */
   evaluate: (session: ActiveSession, source: string, scopeId: string) => string | Promise<string>;
   /**
-   * Run every cell in this one session instead of the active one. Jasper makes
-   * one such kernel per logged-in session (see sessionKernels.ts), so the
-   * kernel picker lists each session.
+   * Run every cell in this one session instead of the active one. In
+   * multiple-session mode Jasper makes one such kernel per logged-in session
+   * (see sessionKernels.ts), so the kernel picker lists each session.
    */
   sessionId?: number;
 }
@@ -59,6 +61,16 @@ export function classifyCellResult(result: string): NotebookCellResult {
 }
 
 export class GemStoneNotebookKernel {
+  // Which session each notebook on a per-session kernel is bound to, so a
+  // command acting on "the notebook's session" (Reset Grail Notebook Scope)
+  // finds it rather than the active one.
+  private static readonly boundSessions = new Map<vscode.NotebookDocument, number>();
+
+  /** The session `doc` is bound to, or undefined when it follows the active session. */
+  static sessionBoundTo(doc: vscode.NotebookDocument): number | undefined {
+    return GemStoneNotebookKernel.boundSessions.get(doc);
+  }
+
   protected readonly controller: vscode.NotebookController;
   private readonly evaluate: NotebookKernelSpec['evaluate'];
   private readonly baseLabel: string;
@@ -90,16 +102,21 @@ export class GemStoneNotebookKernel {
     this.sessionId = spec.sessionId;
     this.subscriptions.push(
       this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+        const bound = GemStoneNotebookKernel.boundSessions;
         if (selected) {
           this.selected.add(notebook);
+          if (this.sessionId === undefined) bound.delete(notebook);
+          else bound.set(notebook, this.sessionId);
           void this.adoptEmptyCells(notebook, spec.supportedLanguages);
         } else {
           this.selected.delete(notebook);
+          if (bound.get(notebook) === this.sessionId) bound.delete(notebook);
         }
       }),
       vscode.workspace.onDidCloseNotebookDocument((doc) => {
         this.selected.delete(doc);
         this.preferred.delete(doc);
+        GemStoneNotebookKernel.boundSessions.delete(doc);
       }),
     );
     if (this.sessionId === undefined) {

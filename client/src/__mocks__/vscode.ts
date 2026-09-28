@@ -588,7 +588,7 @@ export class NotebookEdit {
 
 export const workspace = {
   getConfiguration,
-  onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
+  onDidChangeConfiguration: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
   onDidChangeTextDocument: vi.fn(() => ({ dispose: () => {} })),
   onDidSaveTextDocument: vi.fn(() => ({ dispose: () => {} })),
   onWillSaveTextDocument: vi.fn(() => ({ dispose: () => {} })),

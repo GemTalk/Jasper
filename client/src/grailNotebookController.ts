@@ -3,6 +3,7 @@ import { SessionManager } from './sessionManager';
 import { evalPythonInScope, resetPythonScope } from './pythonQueries';
 import { logError } from './gciLog';
 import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
+import { sessionKernelId } from './sessionKernels';
 
 // Grail (GemStone-Python) as a Python kernel — see gemstoneNotebookKernel.ts
 // for the Jupyter integration mechanics.
@@ -16,13 +17,13 @@ export const GRAIL_CONTROLLER_ID = 'gemstone-grail';
 export const GRAIL_CONTROLLER_LABEL = 'Grail (GemStone Python)';
 export const GRAIL_RESET_SCOPE_COMMAND = 'gemstone.resetGrailNotebookScope';
 
-/** The Grail kernel bound to one session — one per logged-in session. */
+/** The Grail kernel bound to one session — one per logged-in session, in multiple-session mode. */
 export function grailSessionKernel(
   sessionManager: SessionManager,
   sessionId: number,
 ): GemStoneNotebookKernel {
   return new GemStoneNotebookKernel(sessionManager, {
-    id: `${GRAIL_CONTROLLER_ID}.session-${sessionId}`,
+    id: sessionKernelId(GRAIL_CONTROLLER_ID, sessionId),
     label: GRAIL_CONTROLLER_LABEL,
     description: `Always runs Python in Session ${sessionId}`,
     supportedLanguages: ['python'],
@@ -61,8 +62,21 @@ export class GrailNotebookController extends GemStoneNotebookKernel {
       vscode.window.showErrorMessage('No active notebook to reset.');
       return;
     }
-    const session = await this.sessionManager.resolveSession();
-    if (!session) return;
+    // The scope lives in the session the notebook runs in: its bound session
+    // when it is on a per-session kernel, the active one otherwise.
+    const boundId = GemStoneNotebookKernel.sessionBoundTo(editor.notebook);
+    const session =
+      boundId === undefined
+        ? await this.sessionManager.resolveSession()
+        : this.sessionManager.getSession(boundId);
+    if (!session) {
+      if (boundId !== undefined) {
+        vscode.window.showErrorMessage(
+          `Session ${boundId} has logged out, so there is no scope to reset.`,
+        );
+      }
+      return;
+    }
 
     try {
       resetPythonScope(session, editor.notebook.uri.toString());

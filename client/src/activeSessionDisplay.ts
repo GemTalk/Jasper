@@ -11,11 +11,20 @@ export function describeSession(session: ActiveSession): string {
 }
 
 /**
- * Let the user pick the active session. It always asks, even with one already
- * active — changing it is the point, when it comes from the status bar or a
- * workspace's session line.
+ * Let the user pick the active session. It asks whenever there is more than one
+ * session to choose between, even with one already active — changing it is the
+ * point, from the status bar, a workspace's session line or Switch Session. With
+ * only one, it says so rather than doing nothing visible.
  */
 export async function chooseActiveSession(sessionManager: SessionManager): Promise<void> {
+  const sessions = sessionManager.getSessions();
+  if (sessions.length === 1) {
+    sessionManager.selectSession(sessions[0].id);
+    vscode.window.showInformationMessage(
+      `Only one session is logged in (${describeSession(sessions[0])}).`,
+    );
+    return;
+  }
   await sessionManager.resolveSession({
     alwaysAsk: true,
     placeHolder: 'Select the active GemStone session',

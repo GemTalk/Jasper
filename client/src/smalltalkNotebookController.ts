@@ -7,6 +7,7 @@ import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
+import { sessionKernelId } from './sessionKernels';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit (the
@@ -145,17 +146,18 @@ export async function selectSmalltalkKernel(): Promise<void> {
       extension: EXTENSION_ID,
     });
   } catch {
-    // The Preferred affinity below still makes it the suggested kernel.
+    // The Preferred affinity SmalltalkNotebookController sets on open still
+    // makes it the suggested kernel.
   }
 }
 
-/** The Smalltalk kernel bound to one session — one per logged-in session. */
+/** The Smalltalk kernel bound to one session — one per logged-in session, in multiple-session mode. */
 export function smalltalkSessionKernel(
   sessionManager: SessionManager,
   sessionId: number,
 ): GemStoneNotebookKernel {
   return new GemStoneNotebookKernel(sessionManager, {
-    id: `${SMALLTALK_CONTROLLER_ID}.session-${sessionId}`,
+    id: sessionKernelId(SMALLTALK_CONTROLLER_ID, sessionId),
     label: SMALLTALK_CONTROLLER_LABEL,
     description: `Always runs Smalltalk in Session ${sessionId}`,
     supportedLanguages: [SMALLTALK_LANGUAGE_ID],
