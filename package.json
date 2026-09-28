@@ -758,6 +758,18 @@
             ]
           },
           {
+            "id": "notebook",
+            "title": "Try a notebook",
+            "description": "A notebook keeps code, results and notes together, one cell at a time. Open a blank one, or learn Smalltalk in one.\n[Open Notebook](command:gemstone.openNotebook)\n[Learn Smalltalk](command:gemstone.openTutorial)",
+            "media": {
+              "markdown": "resources/walkthrough/notebook.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.openNotebook",
+              "onCommand:gemstone.openTutorial"
+            ]
+          },
+          {
             "id": "browseClasses",
             "title": "Browse classes",
             "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",
@@ -949,6 +961,18 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "gemstone.switchSession",
+        "title": "Switch Session",
+        "category": "GemStone",
+        "icon": "$(database)"
+      },
+      {
+        "command": "gemstone.openNotebook",
+        "title": "Open Notebook",
+        "category": "GemStone",
+        "icon": "$(notebook-template)"
+      },
+      {
         "command": "gemstone.showSessionConfiguration",
         "title": "Session Configuration",
         "category": "GemStone",
@@ -956,7 +980,7 @@
       },
       {
         "command": "gemstone.openTutorial",
-        "title": "Open Tutorial Notebook",
+        "title": "Learn Smalltalk",
         "category": "GemStone",
         "icon": "$(mortar-board)"
       },
@@ -2544,6 +2568,18 @@
           "group": "gemstone@2"
         }
       ],
+      "notebook/toolbar": [
+        {
+          "command": "gemstone.switchSession",
+          "when": "notebookType == jupyter-notebook && gemstone.hasActiveSession && gemstone.multipleSessions && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\/(gemstone-smalltalk-kernel|gemstone-grail)$/",
+          "group": "navigation/session@1"
+        },
+        {
+          "command": "gemstone.openTutorial",
+          "when": "notebookType == jupyter-notebook && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\// && !gemstone.tutorialNotebookActive",
+          "group": "navigation/tutorial@1"
+        }
+      ],
       "view/title": [
         {
           "command": "gemstone.search.refresh",
@@ -2691,6 +2727,11 @@
           "command": "gemstone.openWorkspace",
           "when": "view == gemstoneLogins && gemstone.hasActiveSession",
           "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.openNotebook",
+          "when": "view == gemstoneLogins && gemstone.hasActiveSession",
+          "group": "navigation@3"
         },
         {
           "command": "gemstone.newDatabase",
