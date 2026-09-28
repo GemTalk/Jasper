@@ -189,4 +189,53 @@ describe('paginated rename-method panel', () => {
     );
     expect(applies).toHaveLength(2);
   });
+
+  // The editor's Enter opens the preview; the preview's Enter applies it. Without this the flow
+  // stopped dead at the panel, which offers no other keyboard route to its primary action.
+  describe('Enter applies, so a refactoring can be driven Enter-to-Enter', () => {
+    const press = (target: Element | Document): void => {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    };
+
+    it('applies on Enter from the page', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.body);
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('applies on Enter from a change row’s checkbox, which does not use Enter itself', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.querySelector('input[type="checkbox"]')!);
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('leaves Enter alone on a button, so Cancel with focus stays Cancel', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.getElementById('cancel')!);
+
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('does nothing when Apply is disabled, so an in-flight apply is not repeated', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+      (document.getElementById('apply') as HTMLButtonElement).disabled = true;
+
+      press(document.body);
+
+      expect(vscode.postMessage).not.toHaveBeenCalled();
+    });
+  });
 });

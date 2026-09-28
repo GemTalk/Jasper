@@ -154,4 +154,38 @@ describe('renderUndoPlanHtml', () => {
 
     expect(posted).toEqual([{ command: 'apply' }, { command: 'cancel' }]);
   });
+
+  // The same Enter-to-Enter flow as the refactoring panels: whatever opened this panel, Enter
+  // runs it, so a keyboard user is not stranded at the last step.
+  describe('Enter applies', () => {
+    const press = (target: Element | Document): void => {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    };
+
+    it('applies on Enter from the page', () => {
+      const { posted } = mount();
+
+      press(document.body);
+
+      expect(posted).toEqual([{ command: 'apply' }]);
+    });
+
+    it('leaves Enter alone on a button, so Cancel with focus stays Cancel', () => {
+      const { posted } = mount();
+
+      press(document.getElementById('cancel')!);
+
+      expect(posted).toEqual([]);
+    });
+
+    it('leaves Enter alone on the disclosure, which toggles itself', () => {
+      const { posted } = mount();
+
+      press(document.querySelector('details.why summary')!);
+
+      expect(posted).toEqual([]);
+    });
+  });
 });

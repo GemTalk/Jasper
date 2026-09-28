@@ -207,6 +207,26 @@
     wireCards();
     refresh();
     syncToggleAll();
+
+    // Enter applies, so a refactoring can be driven Enter-to-Enter: the editor's Enter opens the
+    // preview, and the preview's Enter applies it. Without this the flow stopped dead at the
+    // panel, which offers no other keyboard route to its primary action.
+    //
+    // Anything that owns its own Enter keeps it: a text field submits, a button or a disclosure
+    // activates itself, so Cancel with focus on it stays Cancel. A checkbox does not use Enter
+    // (Space toggles it), so Enter from a change row applies, which is the point.
+    doc.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' || e.defaultPrevented) return;
+      const t = e.target;
+      const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
+      if (tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'SUMMARY') return;
+      if (tag === 'INPUT' && t.type !== 'checkbox' && t.type !== 'radio') return;
+      const btn = doc.getElementById('apply');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      btn.click();
+    });
+
     return {
       refresh: refresh,
       deselectedIds: deselectedIds,
