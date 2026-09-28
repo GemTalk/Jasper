@@ -16,6 +16,21 @@ export const GRAIL_CONTROLLER_ID = 'gemstone-grail';
 export const GRAIL_CONTROLLER_LABEL = 'Grail (GemStone Python)';
 export const GRAIL_RESET_SCOPE_COMMAND = 'gemstone.resetGrailNotebookScope';
 
+/** The Grail kernel bound to one session — one per logged-in session. */
+export function grailSessionKernel(
+  sessionManager: SessionManager,
+  sessionId: number,
+): GemStoneNotebookKernel {
+  return new GemStoneNotebookKernel(sessionManager, {
+    id: `${GRAIL_CONTROLLER_ID}.session-${sessionId}`,
+    label: GRAIL_CONTROLLER_LABEL,
+    description: `Always runs Python in Session ${sessionId}`,
+    supportedLanguages: ['python'],
+    evaluate: (session, source, scopeId) => evalPythonInScope(session, source, scopeId),
+    sessionId,
+  });
+}
+
 export class GrailNotebookController extends GemStoneNotebookKernel {
   private readonly resetCommand: vscode.Disposable;
 

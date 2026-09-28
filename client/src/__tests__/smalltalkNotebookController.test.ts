@@ -352,7 +352,7 @@ describe('SmalltalkNotebookController', () => {
 
       select(3);
       expect(mock.label).toBe(
-        `${SMALLTALK_CONTROLLER_LABEL} · Session 3 · DataCurator on gs64stone (localhost)`,
+        `${SMALLTALK_CONTROLLER_LABEL} · active Session 3 · DataCurator on gs64stone (localhost)`,
       );
       select(undefined);
       expect(mock.label).toBe(SMALLTALK_CONTROLLER_LABEL);
@@ -389,7 +389,7 @@ describe('SmalltalkNotebookController', () => {
       select(3);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const newLabel = `${SMALLTALK_CONTROLLER_LABEL} · Session 3 · DataCurator on gs64stone (localhost)`;
+      const newLabel = `${SMALLTALK_CONTROLLER_LABEL} · active Session 3 · DataCurator on gs64stone (localhost)`;
       expect(sent).toEqual([`label: ${newLabel}`, `affinity (label is: ${newLabel})`]);
       ctrl.dispose();
     });
@@ -455,7 +455,7 @@ describe('SmalltalkNotebookController', () => {
     it('names the session at once when built while one is already active', () => {
       const ctrl = new SmalltalkNotebookController(managerWith({ id: 7, login: LOGIN }).manager);
       expect(lastController().label).toBe(
-        `${SMALLTALK_CONTROLLER_LABEL} · Session 7 · DataCurator on gs64stone (localhost)`,
+        `${SMALLTALK_CONTROLLER_LABEL} · active Session 7 · DataCurator on gs64stone (localhost)`,
       );
       ctrl.dispose();
     });

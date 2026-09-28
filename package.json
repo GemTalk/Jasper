@@ -949,6 +949,12 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "gemstone.switchSession",
+        "title": "Switch Session",
+        "category": "GemStone",
+        "icon": "$(database)"
+      },
+      {
         "command": "gemstone.openNotebook",
         "title": "Open Notebook",
         "category": "GemStone",
@@ -2551,6 +2557,11 @@
         }
       ],
       "notebook/toolbar": [
+        {
+          "command": "gemstone.switchSession",
+          "when": "notebookType == jupyter-notebook && gemstone.hasActiveSession && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\/(gemstone-smalltalk-kernel|gemstone-grail)$/",
+          "group": "navigation/session@1"
+        },
         {
           "command": "gemstone.openTutorial",
           "when": "notebookType == jupyter-notebook && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\// && !gemstone.tutorialNotebookActive",

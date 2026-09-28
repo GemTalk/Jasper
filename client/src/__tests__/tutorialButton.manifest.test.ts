@@ -58,3 +58,20 @@ describe('Open Notebook button', () => {
     expect(order(notebook.group)).toBe(order(workspace.group) + 1);
   });
 });
+
+describe('Switch Session button', () => {
+  const [entry] = menus['notebook/toolbar'].filter((m) => m.command === 'gemstone.switchSession');
+  const source = /notebookKernel =~ \/(.+)\/$/.exec(entry.when!)![1];
+  const kernelPattern = new RegExp(source);
+
+  it('shows on a notebook whose kernel follows the active session', () => {
+    expect(kernelPattern.test(`${extensionId}/${SMALLTALK_CONTROLLER_ID}`)).toBe(true);
+    expect(kernelPattern.test(`${extensionId}/${GRAIL_CONTROLLER_ID}`)).toBe(true);
+    expect(entry.when).toContain('gemstone.hasActiveSession');
+  });
+
+  it('does not show on a kernel bound to one session, which switching would not move', () => {
+    expect(kernelPattern.test(`${extensionId}/${SMALLTALK_CONTROLLER_ID}.session-2`)).toBe(false);
+    expect(kernelPattern.test(`${extensionId}/${GRAIL_CONTROLLER_ID}.session-2`)).toBe(false);
+  });
+});

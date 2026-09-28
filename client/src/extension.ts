@@ -164,8 +164,9 @@ import { StepPointHintsProvider } from './stepPointHints';
 import { StepPointHoverProvider } from './stepPointHover';
 import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
-import { GrailNotebookController } from './grailNotebookController';
-import { SmalltalkNotebookController } from './smalltalkNotebookController';
+import { GrailNotebookController, grailSessionKernel } from './grailNotebookController';
+import { SmalltalkNotebookController, smalltalkSessionKernel } from './smalltalkNotebookController';
+import { SessionKernels } from './sessionKernels';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
@@ -1330,6 +1331,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(grailNotebookController);
   const smalltalkNotebookController = new SmalltalkNotebookController(sessionManager);
   context.subscriptions.push(smalltalkNotebookController);
+  context.subscriptions.push(
+    new SessionKernels(sessionManager, [smalltalkSessionKernel, grailSessionKernel]),
+  );
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -2057,6 +2061,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.openWorkspace', async () => {
       await openWorkspace();
     }),
+
+    vscode.commands.registerCommand('gemstone.switchSession', () =>
+      chooseActiveSession(sessionManager),
+    ),
 
     vscode.commands.registerCommand('gemstone.openNotebook', async () => {
       await openScratchNotebook();

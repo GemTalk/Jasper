@@ -149,6 +149,21 @@ export async function selectSmalltalkKernel(): Promise<void> {
   }
 }
 
+/** The Smalltalk kernel bound to one session — one per logged-in session. */
+export function smalltalkSessionKernel(
+  sessionManager: SessionManager,
+  sessionId: number,
+): GemStoneNotebookKernel {
+  return new GemStoneNotebookKernel(sessionManager, {
+    id: `${SMALLTALK_CONTROLLER_ID}.session-${sessionId}`,
+    label: SMALLTALK_CONTROLLER_LABEL,
+    description: `Always runs Smalltalk in Session ${sessionId}`,
+    supportedLanguages: [SMALLTALK_LANGUAGE_ID],
+    evaluate: (session, source) => evalSmalltalk(session, source),
+    sessionId,
+  });
+}
+
 export class SmalltalkNotebookController extends GemStoneNotebookKernel {
   private readonly openListener: vscode.Disposable;
 

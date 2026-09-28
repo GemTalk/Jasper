@@ -28,6 +28,12 @@ export interface NotebookKernelSpec {
    * output streams live while the cell executes).
    */
   evaluate: (session: ActiveSession, source: string, scopeId: string) => string | Promise<string>;
+  /**
+   * Run every cell in this one session instead of the active one. Jasper makes
+   * one such kernel per logged-in session (see sessionKernels.ts), so the
+   * kernel picker lists each session.
+   */
+  sessionId?: number;
 }
 
 export interface NotebookCellResult {
@@ -56,6 +62,7 @@ export class GemStoneNotebookKernel {
   protected readonly controller: vscode.NotebookController;
   private readonly evaluate: NotebookKernelSpec['evaluate'];
   private readonly baseLabel: string;
+  private readonly sessionId: number | undefined;
   private executionOrder = 0;
   // Notebooks bound to this kernel, or that it is Preferred for — the ones
   // whose toolbar must redraw when the label changes (see refreshLabel).
@@ -80,6 +87,7 @@ export class GemStoneNotebookKernel {
     this.controller.executeHandler = (cells) => this.executeCells(cells);
 
     this.baseLabel = spec.label;
+    this.sessionId = spec.sessionId;
     this.subscriptions.push(
       this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
         if (selected) {
@@ -93,9 +101,16 @@ export class GemStoneNotebookKernel {
         this.selected.delete(doc);
         this.preferred.delete(doc);
       }),
-      onDidChangeActiveSession(sessionManager, () => this.refreshLabel()),
     );
-    this.refreshLabel();
+    if (this.sessionId === undefined) {
+      this.subscriptions.push(onDidChangeActiveSession(sessionManager, () => this.refreshLabel()));
+      this.refreshLabel();
+    } else {
+      const session = sessionManager.getSession(this.sessionId);
+      this.controller.label = session
+        ? `${this.baseLabel} · ${describeSession(session)}`
+        : this.baseLabel;
+    }
   }
 
   dispose(): void {
@@ -129,14 +144,15 @@ export class GemStoneNotebookKernel {
   }
 
   // Cells run in the active session, so the kernel label — the notebook's
-  // top-right corner — names it. VS Code's kernel toolbar does not redraw on a
+  // top-right corner — names it, marked "active" to tell it apart from the
+  // kernel bound to that same session. VS Code's kernel toolbar does not redraw on a
   // label change, only on an affinity change, so re-apply affinity after it.
   // After, not with: a label change reaches VS Code on a microtask while an
   // affinity change goes at once, so an immediate nudge redraws the old label.
   private refreshLabel(): void {
     const session = this.sessionManager.getSelectedSession();
     this.controller.label = session
-      ? `${this.baseLabel} · ${describeSession(session)}`
+      ? `${this.baseLabel} · active ${describeSession(session)}`
       : this.baseLabel;
     setTimeout(() => {
       if (this.disposed) return;
@@ -166,11 +182,16 @@ export class GemStoneNotebookKernel {
       return;
     }
 
-    const session = await this.sessionManager.resolveSession();
+    const session =
+      this.sessionId === undefined
+        ? await this.sessionManager.resolveSession()
+        : this.sessionManager.getSession(this.sessionId);
     if (!session) {
       await this.endWithError(
         execution,
-        'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.',
+        this.sessionId === undefined
+          ? 'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.'
+          : `Session ${this.sessionId} has logged out. Pick another kernel, then re-run the cell.`,
       );
       return;
     }
