@@ -216,7 +216,9 @@ describe('GCI login (integration)', () => {
   });
 
   describe('GciTsEncrypt', () => {
-    it('encrypts a password to a non-empty string that differs from it', () => {
+    it('encrypts a password to a non-empty string that differs from it', (ctx) => {
+      requireGciCapability('GciTsEncrypt', ctx, gci);
+
       const encrypted = gci.GciTsEncrypt(gsPassword);
 
       expect(encrypted).not.toBeNull();
@@ -224,11 +226,15 @@ describe('GCI login (integration)', () => {
       expect(encrypted).not.toBe(gsPassword);
     });
 
-    it('returns null for an empty string', () => {
+    it('returns null for an empty string', (ctx) => {
+      requireGciCapability('GciTsEncrypt', ctx, gci);
+
       expect(gci.GciTsEncrypt('')).toBeNull();
     });
 
-    it('produces consistent output for the same input', () => {
+    it('produces consistent output for the same input', (ctx) => {
+      requireGciCapability('GciTsEncrypt', ctx, gci);
+
       expect(gci.GciTsEncrypt(gsPassword)).toBe(gci.GciTsEncrypt(gsPassword));
     });
   });
