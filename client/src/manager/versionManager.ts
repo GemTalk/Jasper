@@ -33,9 +33,40 @@ interface ChildResult {
   stderr: string;
 }
 
+/** Progress for an unpack: a message, and an increment that fills the notification's bar. */
+type UnpackProgress = vscode.Progress<{ message?: string; increment?: number }>;
+
 /** The last few lines of a child's stderr, for an error message. */
 function stderrTail(stderr: string): string {
   return stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : '';
+}
+
+/**
+ * How many entries a zip holds, read from its end-of-central-directory record
+ * in the last few KB rather than by a pass over the archive. Undefined when it
+ * cannot say: no record found, or a zip64 archive, which keeps the count elsewhere.
+ */
+async function zipEntryCount(file: string): Promise<number | undefined> {
+  const EOCD_SIGNATURE = 0x06054b50;
+  const EOCD_SIZE = 22; // fixed part; a comment of up to 64 KB may follow it
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(file, 'r');
+    const { size } = await handle.stat();
+    const length = Math.min(size, EOCD_SIZE + 0xffff);
+    const tail = Buffer.alloc(length);
+    await handle.read(tail, 0, length, size - length);
+    for (let i = length - EOCD_SIZE; i >= 0; i--) {
+      if (tail.readUInt32LE(i) !== EOCD_SIGNATURE) continue;
+      const entries = tail.readUInt16LE(i + 10);
+      return entries === 0xffff ? undefined : entries;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close();
+  }
 }
 
 /** One row of the downloads page — what the catalog says before any disk is read. */
@@ -409,7 +440,7 @@ export class VersionManager {
    */
   async extract(
     version: GemStoneVersion,
-    progress: vscode.Progress<{ message?: string }>,
+    progress: UnpackProgress,
     token: vscode.CancellationToken,
   ): Promise<void> {
     // Removed afterwards only if this run is what created it.
@@ -421,7 +452,13 @@ export class VersionManager {
       if (process.platform === 'darwin') {
         await this.extractDmg(path.join(rootPath, version.fileName), rootPath, progress, token);
       } else {
-        await this.extractZip(`${rootPath}/${version.fileName}`, rootPath, progress, token);
+        await this.extractZip(
+          `${rootPath}/${version.fileName}`,
+          path.join(this.storage.getRootPath(), version.fileName),
+          rootPath,
+          progress,
+          token,
+        );
       }
     } catch (e) {
       if (!existed) await this.removePartial(productDir, version.version, e);
@@ -458,7 +495,7 @@ export class VersionManager {
   private async extractDmg(
     dmgPath: string,
     destDir: string,
-    progress: vscode.Progress<{ message?: string }>,
+    progress: UnpackProgress,
     token: vscode.CancellationToken,
   ): Promise<void> {
     progress.report({ message: 'Mounting disk image...' });
@@ -493,15 +530,17 @@ export class VersionManager {
         throw new Error(`No GemStone directory found in mounted DMG at ${mountPoint}`);
       }
       progress.report({ message: 'Copying files...' });
+      const srcPath = path.join(mountPoint, gsDir);
+      // cp -v names the top directory too, hence the one.
+      const total = await fs.promises
+        .readdir(srcPath, { recursive: true })
+        .then((names) => names.length + 1)
+        .catch(() => undefined);
       // -v prints a line per file, which is all the progress cp can give.
-      const cp = await this.run(
-        'cp',
-        ['-Rv', path.join(mountPoint, gsDir), path.join(destDir, gsDir)],
-        {
-          token,
-          onLine: this.fileCounter(progress, 'Copied'),
-        },
-      );
+      const cp = await this.run('cp', ['-Rv', srcPath, path.join(destDir, gsDir)], {
+        token,
+        onLine: this.fileCounter(progress, 'Copied', total),
+      });
       if (cp.code !== 0) {
         throw new Error(`cp failed with exit code ${cp.code}${stderrTail(cp.stderr)}`);
       }
@@ -519,10 +558,15 @@ export class VersionManager {
     }
   }
 
+  /**
+   * `zipPath` and `destDir` are in the unpacking command's terms — WSL's on
+   * Windows — and `localZipPath` is the same archive as this process reaches it.
+   */
   private async extractZip(
     zipPath: string,
+    localZipPath: string,
     destDir: string,
-    progress: vscode.Progress<{ message?: string }>,
+    progress: UnpackProgress,
     token: vscode.CancellationToken,
   ): Promise<void> {
     progress.report({ message: 'Unpacking...' });
@@ -533,7 +577,7 @@ export class VersionManager {
       token,
       // One indented "inflating: …" / "creating: …" line per entry, after an
       // unindented "Archive:" header.
-      onLine: this.fileCounter(progress, 'Unpacked', /^\s+\w+:/),
+      onLine: this.fileCounter(progress, 'Unpacked', await zipEntryCount(localZipPath), /^\s+\w+:/),
     });
     if (unzip.code === 0) {
       appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir}`);
@@ -577,21 +621,36 @@ export class VersionManager {
     );
   }
 
-  /** A line handler that reports a running file count, at most four times a second. */
+  /**
+   * A line handler that reports a running file count, at most four times a
+   * second — out of `total`, with a percentage that fills the bar, when the
+   * total is known.
+   */
   private fileCounter(
-    progress: vscode.Progress<{ message?: string }>,
+    progress: UnpackProgress,
     verb: string,
+    total: number | undefined,
     counts: RegExp = /./,
   ): (line: string) => void {
     let files = 0;
     let lastReport = 0;
+    let reportedPercent = 0;
     return (line) => {
       if (!counts.test(line)) return;
       files++;
       const now = Date.now();
       if (now - lastReport < 250) return;
       lastReport = now;
-      progress.report({ message: `${verb} ${files.toLocaleString()} files...` });
+      if (!total) {
+        progress.report({ message: `${verb} ${files.toLocaleString()} files...` });
+        return;
+      }
+      const percent = Math.min(100, Math.floor((files * 100) / total));
+      progress.report({
+        message: `${verb} ${files.toLocaleString()} of ${total.toLocaleString()} files (${percent}%)...`,
+        increment: percent - reportedPercent,
+      });
+      reportedPercent = percent;
     };
   }
 

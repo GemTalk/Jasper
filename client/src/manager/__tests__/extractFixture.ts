@@ -66,6 +66,7 @@ export function makeFixture(platformSuffix: string, ext: 'zip' | 'dmg'): Extract
 /** A few files shaped like a product tree: an executable, a read-only file and directory, a space. */
 function buildTree(f: ExtractFixture): string {
   const src = path.join(f.tmpDir, 'src');
+  fs.rmSync(src, { recursive: true, force: true });
   const top = path.join(src, path.basename(f.productDir));
   fs.mkdirSync(path.join(top, 'bin'), { recursive: true });
   fs.mkdirSync(path.join(top, 'doc'));
@@ -76,7 +77,8 @@ function buildTree(f: ExtractFixture): string {
   return src;
 }
 
-export function buildZip(f: ExtractFixture, python: string): void {
+/** `comment` goes after the zip's end record, which is where the entry count is read from. */
+export function buildZip(f: ExtractFixture, python: string, comment = ''): void {
   const src = buildTree(f);
   execFileSync(
     python,
@@ -84,11 +86,13 @@ export function buildZip(f: ExtractFixture, python: string): void {
       '-c',
       'import os,sys,zipfile\n' +
         'with zipfile.ZipFile(sys.argv[1],"w") as z:\n' +
+        '  z.comment=sys.argv[3].encode()\n' +
         '  for d,ds,fs in os.walk(sys.argv[2]):\n' +
         '    for n in ds+fs:\n' +
         '      p=os.path.join(d,n); z.write(p,os.path.relpath(p,sys.argv[2]))\n',
       f.archivePath,
       src,
+      comment,
     ],
     { stdio: 'ignore' },
   );
@@ -141,11 +145,22 @@ export function cancelSource(): { token: vscode.CancellationToken; cancel: () =>
 }
 
 export function progressLog(): {
-  progress: vscode.Progress<{ message?: string }>;
+  progress: vscode.Progress<{ message?: string; increment?: number }>;
   messages: string[];
+  increments: number[];
 } {
   const messages: string[] = [];
-  return { progress: { report: (v) => messages.push(v.message ?? '') }, messages };
+  const increments: number[] = [];
+  return {
+    progress: {
+      report: (v) => {
+        messages.push(v.message ?? '');
+        if (v.increment !== undefined) increments.push(v.increment);
+      },
+    },
+    messages,
+    increments,
+  };
 }
 
 export async function until(condition: () => boolean): Promise<void> {

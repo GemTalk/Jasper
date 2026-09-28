@@ -59,6 +59,13 @@ function extract(source = cancelSource(), progress = progressLog().progress): Pr
   return done;
 }
 
+/** The archive's entry count by unzip's own reckoning, to check Jasper's against. */
+function entriesInZip(): number {
+  return execFileSync(realUnzip!, ['-Z1', f.archivePath], { encoding: 'utf-8' })
+    .split('\n')
+    .filter(Boolean).length;
+}
+
 /** A PATH holding only the fake commands still needs the real chmod and rm for cleanup. */
 function onlyFakesOnPath(...realTools: string[]): void {
   for (const tool of realTools) fs.symlinkSync(which(tool)!, path.join(f.binDir, tool));
@@ -75,14 +82,36 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
 
     afterEach(() => tearDown(f));
 
-    it('unpacks the tree, keeping the execute bit, and counts files as they land', async () => {
+    it('unpacks the tree, keeping the execute bit', async () => {
+      await extract();
+
+      expect(fs.readFileSync(path.join(f.productDir, 'doc', 'read me.txt'), 'utf-8')).toBe('hello');
+      expect(fs.statSync(path.join(f.productDir, 'bin', 'gem')).mode & 0o111).not.toBe(0);
+    });
+
+    it('counts files out of the archive’s total, and fills the bar to match', async () => {
+      const total = entriesInZip();
+      const { progress, messages, increments } = progressLog();
+
+      await extract(undefined, progress);
+
+      expect(messages).toContainEqual(
+        expect.stringMatching(new RegExp(`^Unpacked \\d+ of ${total} files \\(\\d+%\\)`)),
+      );
+      expect(increments.length).toBeGreaterThan(0);
+      expect(increments.every((i) => i >= 0)).toBe(true);
+      expect(increments.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(100);
+    });
+
+    it('finds the total when the zip carries a comment after its index', async () => {
+      fs.rmSync(f.archivePath);
+      buildZip(f, realPython!, 'x'.repeat(5000));
+      const total = entriesInZip();
       const { progress, messages } = progressLog();
 
       await extract(undefined, progress);
 
-      expect(fs.readFileSync(path.join(f.productDir, 'doc', 'read me.txt'), 'utf-8')).toBe('hello');
-      expect(fs.statSync(path.join(f.productDir, 'bin', 'gem')).mode & 0o111).not.toBe(0);
-      expect(messages.some((m) => /^Unpacked \d+ files/.test(m))).toBe(true);
+      expect(messages).toContainEqual(expect.stringContaining(`of ${total} files`));
     });
 
     it('keeps the editor answering while unzip runs', async () => {
@@ -236,10 +265,13 @@ describe.runIf(process.platform === 'darwin')('Unpacking a GemStone disk image o
     }
   });
 
-  it('copies the tree out and ejects the image', async () => {
-    await extract();
+  it('copies the tree out, counting against its total, and ejects the image', async () => {
+    const { progress, messages } = progressLog();
+
+    await extract(undefined, progress);
 
     expect(fs.existsSync(path.join(f.productDir, 'bin', 'gem'))).toBe(true);
+    expect(messages).toContainEqual(expect.stringMatching(/^Copied \d+ of \d+ files \(\d+%\)/));
     expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
   });
 
