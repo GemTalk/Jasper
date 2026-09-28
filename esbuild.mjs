@@ -36,7 +36,6 @@ const serverResult = await esbuild.build({
   outfile: 'server/out/server.js',
   platform: 'node',
   format: 'cjs',
-  external: ['vscode'],
   sourcemap: true,
   target: 'node22.15.1',
   metafile: true,
