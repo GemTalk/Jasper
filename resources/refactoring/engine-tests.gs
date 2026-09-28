@@ -5736,6 +5736,47 @@ testRemoveBindsTheNewVersionInTheActedOnClassOwnDictionary
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - shadowed class name'
+method: GsInstVarRefactoringTest
+testAddWithAccessorsCompilesThemOntoTheActedOnClassNewVersion
+	"Accessors are compiled onto the new version via `oldToNew at: definingClass`, where
+	 `definingClass` is the class the caller passed BY IDENTITY and `oldToNew` is keyed by whatever
+	 the apply resolved from the change. While that resolution went by name and answered a
+	 same-named class from another dictionary, the two never matched: the lookup missed, fell back
+	 to the caller's class -- still the OLD version, without the new variable -- and every accessor
+	 failed to compile with `undefined symbol`, leaving the refactoring PARTIALLY applied with its
+	 reshape landed on the wrong class (#396).
+
+	 This is the accessor path specifically; the other add tests here pass no accessors and so
+	 never reached it."
+	| decoy decoyClass accessors json |
+	decoy := SymbolDictionary new name: #GsIVShadowAccessorDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 accessors := ((OrderedCollection new)
+		add: (Array with: 'tally' with: 'tally
+	^tally');
+		add: (Array with: 'tally:' with: 'tally: aValue
+	tally := aValue'); yourself) asArray.
+	 json := (self add: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false accessors: accessors.
+
+	 "the accessors compiled -- nothing left half-applied"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 self assert: ((UserGlobals at: #GsIVBase) includesSelector: #tally).
+	 self assert: ((UserGlobals at: #GsIVBase) includesSelector: #'tally:').
+	 "and the shadowing dictionary's class gained neither the variable nor the accessors"
+	 self assert: (decoy at: #GsIVBase) == decoyClass.
+	 self deny: (decoyClass includesSelector: #tally)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsInstVarStructureRefactoringTest
 assert: aString includesSubstring: aSubstring
