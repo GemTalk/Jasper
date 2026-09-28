@@ -3430,13 +3430,6 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
       return false;
     }
-    if (result.failed.length > 0) {
-      this.reportRenameFailures(
-        `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
-        result,
-      );
-      return true;
-    }
     this.recordReverseRename(
       session,
       'instVarRename',
@@ -3446,6 +3439,17 @@ export class ExplorerController {
       `Rename instance variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
       'GsRenameInstanceVariableRefactoring',
     );
+    if (result.failed.length > 0) {
+      // Recorded BEFORE the failure report, not after it. A partial apply has still CHANGED the
+      // stone -- the rename landed, some method did not recompile onto the new version -- and
+      // that is exactly when a way back is worth most. Returning first left the only recourse an
+      // abort, which discards every uncommitted change in the session rather than this one (#396).
+      this.reportRenameFailures(
+        `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
+        result,
+      );
+      return true;
+    }
     notifyRefactoringApplied(
       session,
       `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
@@ -3942,6 +3946,24 @@ export class ExplorerController {
     // and version tag.
     await this.refreshAfterClassReshape(newName);
 
+    // The class is bound under `newName` now, so that is what the reversal looks up; it renames
+    // it back to `oldName`, reusing the scope the forward rename ran in.
+    //
+    // Recorded BEFORE the failure report. A partial apply has still renamed the class -- some
+    // method merely failed to recompile onto the new version -- and that is exactly when a way
+    // back is worth most. Returning first left the only recourse an abort, which discards every
+    // uncommitted change in the session rather than this one (#396).
+    this.recordReverseRename(
+      session,
+      'classRename',
+      newName,
+      newName,
+      oldName,
+      `Rename class ${qualifiedClassName(oldName, this.state.dictName)} to ${newName}`,
+      'GsRenameClassRefactoring',
+      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
+    );
+
     if (result.failed.length > 0) {
       this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
       return;
@@ -3953,18 +3975,6 @@ export class ExplorerController {
     const commitNote = result.committed
       ? `Migrated and COMMITTED${migrateNote}.`
       : 'Compiled but NOT committed — commit when ready.';
-    // The class is bound under `newName` now, so that is what the reversal looks up; it
-    // renames it back to `oldName`, reusing the scope the forward rename ran in.
-    this.recordReverseRename(
-      session,
-      'classRename',
-      newName,
-      newName,
-      oldName,
-      `Rename class ${qualifiedClassName(oldName, this.state.dictName)} to ${newName}`,
-      'GsRenameClassRefactoring',
-      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
-    );
     notifyRefactoringApplied(
       session,
       `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
@@ -4148,13 +4158,6 @@ export class ExplorerController {
       }
     }
 
-    if (result.failed.length > 0) {
-      this.reportRenameFailures(
-        `Rename class variable '${oldName}' → '${newName}' in ${className}`,
-        result,
-      );
-      return true;
-    }
     this.recordReverseRename(
       session,
       'classVarRename',
@@ -4164,6 +4167,16 @@ export class ExplorerController {
       `Rename class variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
       'GsRenameClassVariableRefactoring',
     );
+    if (result.failed.length > 0) {
+      // Recorded BEFORE the failure report, not after it. A partial apply has still CHANGED the
+      // stone, and that is exactly when a way back is worth most. Returning first left the only
+      // recourse an abort, which discards every uncommitted change in the session (#396).
+      this.reportRenameFailures(
+        `Rename class variable '${oldName}' → '${newName}' in ${className}`,
+        result,
+      );
+      return true;
+    }
     notifyRefactoringApplied(
       session,
       `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
