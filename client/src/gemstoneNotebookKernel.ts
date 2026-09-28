@@ -77,9 +77,12 @@ export class GemStoneNotebookKernel {
   private readonly sessionId: number | undefined;
   private executionOrder = 0;
   // Notebooks bound to this kernel, or that it is Preferred for — the ones
-  // whose toolbar must redraw when the label changes (see refreshLabel).
-  private readonly selected = new Set<vscode.NotebookDocument>();
-  private readonly preferred = new Set<vscode.NotebookDocument>();
+  // whose toolbar must redraw when the label changes — each with the affinity
+  // to send back for the redraw (see refreshLabel).
+  private readonly affinities = new Map<
+    vscode.NotebookDocument,
+    vscode.NotebookControllerAffinity
+  >();
   private readonly subscriptions: vscode.Disposable[] = [];
   private disposed = false;
 
@@ -104,18 +107,22 @@ export class GemStoneNotebookKernel {
       this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
         const bound = GemStoneNotebookKernel.boundSessions;
         if (selected) {
-          this.selected.add(notebook);
+          if (!this.affinities.has(notebook)) {
+            this.affinities.set(notebook, vscode.NotebookControllerAffinity.Default);
+          }
           if (this.sessionId === undefined) bound.delete(notebook);
           else bound.set(notebook, this.sessionId);
           void this.adoptEmptyCells(notebook, spec.supportedLanguages);
         } else {
-          this.selected.delete(notebook);
+          // One it is Preferred for stays: the next label change redraws it too.
+          if (this.affinities.get(notebook) === vscode.NotebookControllerAffinity.Default) {
+            this.affinities.delete(notebook);
+          }
           if (bound.get(notebook) === this.sessionId) bound.delete(notebook);
         }
       }),
       vscode.workspace.onDidCloseNotebookDocument((doc) => {
-        this.selected.delete(doc);
-        this.preferred.delete(doc);
+        this.affinities.delete(doc);
         GemStoneNotebookKernel.boundSessions.delete(doc);
       }),
     );
@@ -156,14 +163,16 @@ export class GemStoneNotebookKernel {
   }
 
   protected prefer(doc: vscode.NotebookDocument): void {
-    this.preferred.add(doc);
+    this.affinities.set(doc, vscode.NotebookControllerAffinity.Preferred);
     this.controller.updateNotebookAffinity(doc, vscode.NotebookControllerAffinity.Preferred);
   }
 
   // Cells run in the active session, so the kernel label — the notebook's
   // top-right corner — names it, marked "active" to tell it apart from the
   // kernel bound to that same session. VS Code's kernel toolbar does not redraw on a
-  // label change, only on an affinity change, so re-apply affinity after it.
+  // label change, only on an affinity change, so re-send each notebook's own
+  // affinity after it — Default is enough, and does not promote a notebook
+  // that was only selected into one this kernel is suggested for.
   // After, not with: a label change reaches VS Code on a microtask while an
   // affinity change goes at once, so an immediate nudge redraws the old label.
   private refreshLabel(): void {
@@ -173,8 +182,8 @@ export class GemStoneNotebookKernel {
       : this.baseLabel;
     setTimeout(() => {
       if (this.disposed) return;
-      for (const doc of new Set([...this.selected, ...this.preferred])) {
-        this.controller.updateNotebookAffinity(doc, vscode.NotebookControllerAffinity.Preferred);
+      for (const [doc, affinity] of this.affinities) {
+        this.controller.updateNotebookAffinity(doc, affinity);
       }
     }, 0);
   }

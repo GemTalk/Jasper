@@ -164,7 +164,7 @@ The session Claude Code and Claude Desktop run their GemStone tools against is m
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
-The active session (used for code execution) is highlighted, and the status bar shows which session is active; click it to change the active session. A workspace names it too, on a line above its first line, and a notebook in its kernel label — both redraw when the active session changes.
+The active session (used for code execution) is highlighted, and the status bar shows which session is active; click it to change the active session. A notebook names it too, in its kernel label, and in multiple-session mode so does a workspace, on a line above its first line — both redraw when the active session changes.
 
 #### Transaction modes
 

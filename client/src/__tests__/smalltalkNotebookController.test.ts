@@ -415,7 +415,13 @@ describe('SmalltalkNotebookController', () => {
       // Not yet: the label has to reach VS Code first, or the redraw shows the old one.
       expect(mock.updateNotebookAffinity).not.toHaveBeenCalled();
       vi.runAllTimers();
+      // Its own affinity, Default: re-sending Preferred would make this kernel
+      // the suggested one for a notebook the user only picked it for once.
       expect(mock.updateNotebookAffinity).toHaveBeenCalledWith(
+        doc,
+        NotebookControllerAffinity.Default,
+      );
+      expect(mock.updateNotebookAffinity).not.toHaveBeenCalledWith(
         doc,
         NotebookControllerAffinity.Preferred,
       );
@@ -425,6 +431,40 @@ describe('SmalltalkNotebookController', () => {
       select(4);
       vi.runAllTimers();
       expect(mock.updateNotebookAffinity).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+    it('keeps a Smalltalk notebook Preferred through a redraw, even after it moves to another kernel', () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      const { manager, select } = makeSwitchableSessionManager();
+      const ctrl = new SmalltalkNotebookController(manager);
+      const mock = lastController();
+      const onSelected = vi.mocked(mock.onDidChangeSelectedNotebooks).mock.calls[0][0] as (e: {
+        notebook: unknown;
+        selected: boolean;
+      }) => void;
+      const onOpen = vi.mocked(workspace.onDidOpenNotebookDocument).mock.calls.at(-1)![0] as (
+        d: unknown,
+      ) => void;
+      const doc = {
+        notebookType: GEMSTONE_NOTEBOOK_TYPE,
+        getCells: () => [{ kind: 2, document: { languageId: SMALLTALK_LANGUAGE } }],
+      };
+      onOpen(doc);
+      onSelected({ notebook: doc, selected: true });
+      onSelected({ notebook: doc, selected: false });
+      vi.runAllTimers();
+      mock.updateNotebookAffinity.mockClear();
+
+      select(3);
+      vi.runAllTimers();
+
+      expect(mock.updateNotebookAffinity).toHaveBeenCalledWith(
+        doc,
+        NotebookControllerAffinity.Preferred,
+      );
       ctrl.dispose();
     });
   });
