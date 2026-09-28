@@ -810,6 +810,25 @@ GsRefactoringUndo >> revertChangeSet [
 ]
 
 { #category : 'reverse rename' }
+GsRefactoringUndo >> describeClass: aClass [
+	"`Shadowed in DictionaryA` -- a class named together with the dictionary it actually lives in,
+	 for the text of a decline.
+
+	 A decline that names only the class cannot be checked against what the user meant: when the
+	 name is shadowed there are two classes it could be about, and WHICH ONE the reversal resolved
+	 is the whole question (#396). Naming it turns 'Shadowed no longer declares abc' -- which reads
+	 as a bug in the undo -- into 'Shadowed in DictionaryA no longer declares abc', which says
+	 plainly that the reversal is looking at the wrong class and why."
+	| dict |
+	aClass isNil ifTrue: [^'the class'].
+	dict := GsRefactoringEnvironment new dictionaryDefiningClass: aClass.
+	^dict isNil
+		ifTrue: [aClass name asString, ' (in no dictionary)']
+		ifFalse: [aClass name asString, ' in ',
+			(dict name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [dict name asString])]
+]
+
+{ #category : 'reverse rename' }
 GsRefactoringUndo >> reverseOpClassDictName [
 	"The home dictionary recorded for the reverse operation's class, or nil. An op recorded
 	 before #396 has six slots and no dictionary; nil scopes exactly as it did then."
@@ -1006,18 +1025,18 @@ GsRefactoringUndo >> reverseUnavailableReason [
 	 here explicitly: the name we would rename back TO must not already be declared."
 	(reverseOp at: 1) == #instVarRename ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 4)) ifTrue: [
-			^'Cannot rename back: ', (reverseOp at: 2), ' already declares an instance variable named ',
+			^'Cannot rename back: ', (self describeClass: cls), ' already declares an instance variable named ',
 			  (reverseOp at: 4), '.']].
 	"Reversing an ADD means removing the variable -- pointless, and misleading to offer, if it is
 	 no longer there. Reversing a REMOVE means adding it back, which duplicates it if something
 	 has re-declared the name (the class-creation primitive rejects that mid-apply, error 2271)."
 	(reverseOp at: 1) == #instVarAdd ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifFalse: [
-			^(reverseOp at: 2), ' no longer declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' no longer declares an instance variable named ', (reverseOp at: 3),
 			  ', so there is nothing to take back out.']].
 	(reverseOp at: 1) == #instVarRemove ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifTrue: [
-			^(reverseOp at: 2), ' already declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' already declares an instance variable named ', (reverseOp at: 3),
 			  ' again, so it cannot be added back.']].
 	ref := self reverseRefactoring.
 	ref isNil ifTrue: [

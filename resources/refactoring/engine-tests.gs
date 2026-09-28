@@ -10407,6 +10407,32 @@ testUndoInstVarAddAcceptsTheDictionaryAsASymbolListIndex
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testADeclinedReversalNamesTheDictionaryItResolved
+	"A decline that names only the class is unreadable when the name is shadowed: 'Shadowed no
+	 longer declares abc' reads as a broken undo, when what it means is that the reversal resolved
+	 a DIFFERENT class of that name. Naming the dictionary makes the two tellable apart, and is
+	 what turns a report of 'undo is broken' into a diagnosis (#396)."
+	| decoy reason |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	["record WITHOUT a dictionary, so the reversal resolves by name and lands on the decoy"
+	 GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+	 reason := GsRefactoringUndo currentEntry reverseUnavailableReason.
+
+	 self assert: reason notNil.
+	 "it declines -- and says which class it was looking at, by naming its dictionary"
+	 self assert: reason includesSubstring: 'GsUndoAccount in GsUndoShadowDict'.
+	 self assert: reason includesSubstring: 'no longer declares an instance variable named gsuExtra']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsRenameClassRefactoringTest
 assert: aString includesSubstring: aSubstring
