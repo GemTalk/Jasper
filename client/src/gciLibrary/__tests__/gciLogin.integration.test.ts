@@ -33,7 +33,6 @@ describe('GCI login (integration)', () => {
   });
 
   const { stoneNrs, gemNrs, gsUser, gsPassword, netldiName } = resolveTestConnection();
-  const { gem_host } = requireParsedStoneNrs(stoneNrs);
 
   // The lint exemption above also lifts the rule that would make these
   // sessions arm the commit guard, so arm them by hand even though the tests
@@ -141,6 +140,8 @@ describe('GCI login (integration)', () => {
   // there", never "no such host".
   describe('failed login', () => {
     it('GciTsLogin rejects an unknown stone', () => {
+      const { gem_host } = requireParsedStoneNrs(stoneNrs);
+
       const { session, err } = gci.GciTsLogin(
         stoneNrsFor({ gem_host, stone: 'jasperNoSuchStone' }),
         null,
@@ -175,6 +176,8 @@ describe('GCI login (integration)', () => {
     });
 
     it('GciTsLogin rejects an unknown NetLDI in the gem NRS', () => {
+      const { gem_host } = requireParsedStoneNrs(stoneNrs);
+
       const { session, err } = gci.GciTsLogin(
         stoneNrs,
         null,
