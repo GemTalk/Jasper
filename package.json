@@ -949,6 +949,12 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "gemstone.openNotebook",
+        "title": "Open Notebook",
+        "category": "GemStone",
+        "icon": "$(notebook-template)"
+      },
+      {
         "command": "gemstone.showSessionConfiguration",
         "title": "Session Configuration",
         "category": "GemStone",
@@ -956,7 +962,7 @@
       },
       {
         "command": "gemstone.openTutorial",
-        "title": "Open Tutorial Notebook",
+        "title": "Learn Smalltalk",
         "category": "GemStone",
         "icon": "$(mortar-board)"
       },
@@ -2544,6 +2550,13 @@
           "group": "gemstone@2"
         }
       ],
+      "notebook/toolbar": [
+        {
+          "command": "gemstone.openTutorial",
+          "when": "notebookType == jupyter-notebook && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\// && !gemstone.tutorialNotebookActive",
+          "group": "navigation/tutorial@1"
+        }
+      ],
       "view/title": [
         {
           "command": "gemstone.search.refresh",
@@ -2691,6 +2704,11 @@
           "command": "gemstone.openWorkspace",
           "when": "view == gemstoneLogins && gemstone.hasActiveSession",
           "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.openNotebook",
+          "when": "view == gemstoneLogins && gemstone.hasActiveSession",
+          "group": "navigation@3"
         },
         {
           "command": "gemstone.newDatabase",

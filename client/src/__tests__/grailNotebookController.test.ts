@@ -11,7 +11,7 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
-import { notebooks, window, commands } from '../__mocks__/vscode';
+import { notebooks, window, commands, languages } from '../__mocks__/vscode';
 import {
   GrailNotebookController,
   GRAIL_CONTROLLER_ID,
@@ -33,6 +33,11 @@ const SESSION = {
 function makeSessionManager(hasSession: boolean) {
   return {
     resolveSession: vi.fn(async () => (hasSession ? SESSION : undefined)),
+    getSelectedSession: vi.fn(() => undefined),
+    getSessions: vi.fn(() => []),
+    onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+    onDidAddSession: vi.fn(() => ({ dispose: () => {} })),
+    onDidRemoveSession: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
 
@@ -214,5 +219,34 @@ describe('GrailNotebookController', () => {
     const mock = lastController();
     ctrl.dispose();
     expect(mock.dispose).toHaveBeenCalled();
+  });
+
+  it('switches only the empty Smalltalk cells to Python when picked for a notebook', async () => {
+    const ctrl = new GrailNotebookController(makeSessionManager(true));
+    const results = notebooks.createNotebookController.mock.results;
+    const mock = results[results.length - 1].value;
+    const onSelected = vi.mocked(mock.onDidChangeSelectedNotebooks).mock.calls[0][0] as (e: {
+      notebook: unknown;
+      selected: boolean;
+    }) => void;
+    const cell = (kind: number, text: string, languageId: string) => ({
+      kind,
+      document: { getText: () => text, languageId },
+    });
+    const empty = cell(2, '  ', 'gemstone-smalltalk');
+    const written = cell(2, '6 * 7', 'gemstone-smalltalk');
+    const alreadyPython = cell(2, '', 'python');
+    const markdown = cell(1, '', 'markdown');
+    vi.mocked(languages.setTextDocumentLanguage).mockClear();
+
+    onSelected({
+      notebook: { getCells: () => [markdown, empty, written, alreadyPython] },
+      selected: true,
+    });
+    await vi.waitFor(() => expect(languages.setTextDocumentLanguage).toHaveBeenCalled());
+
+    expect(languages.setTextDocumentLanguage).toHaveBeenCalledTimes(1);
+    expect(languages.setTextDocumentLanguage).toHaveBeenCalledWith(empty.document, 'python');
+    ctrl.dispose();
   });
 });

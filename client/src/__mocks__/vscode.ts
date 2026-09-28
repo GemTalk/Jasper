@@ -330,6 +330,7 @@ export const QuickPickItemKind = {
 export const window = {
   activeTextEditor: undefined as unknown,
   activeNotebookEditor: undefined as unknown,
+  onDidChangeActiveNotebookEditor: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
   createWebviewPanel: vi.fn((_viewType: string, title: string, showOptions?: unknown) => {
     const panel = createMockPanel();
     panel.title = title;
@@ -570,6 +571,19 @@ export class WorkspaceEdit {
   delete(uri: Uri, range: Range): void {
     this.edits.push({ uri, edit: TextEdit.delete(range) });
   }
+  readonly notebookEdits: Array<{ uri: Uri; edits: unknown[] }> = [];
+  set(uri: Uri, edits: unknown[]): void {
+    this.notebookEdits.push({ uri, edits });
+  }
+}
+
+export class NotebookEdit {
+  static insertCells(index: number, newCells: unknown[]) {
+    return { kind: 'insertCells', index, newCells };
+  }
+  static updateNotebookMetadata(newMetadata: Record<string, unknown>) {
+    return { kind: 'updateNotebookMetadata', newMetadata };
+  }
 }
 
 export const workspace = {
@@ -589,11 +603,17 @@ export const workspace = {
     getText: vi.fn(() => ''),
     isDirty: false,
   })),
-  openNotebookDocument: vi.fn(async (notebookType: string, data?: unknown) => ({
-    notebookType,
-    data,
-  })),
+  // (notebookType, data) opens an anonymous untitled notebook; (uri) opens a
+  // named one, which starts empty.
+  openNotebookDocument: vi.fn(async (typeOrUri: unknown, data?: unknown) =>
+    typeof typeOrUri === 'string'
+      ? { notebookType: typeOrUri, data }
+      : { uri: typeOrUri, notebookType: 'jupyter-notebook', cellCount: 0, metadata: {} },
+  ),
   applyEdit: vi.fn(async () => true),
+  onDidOpenNotebookDocument: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+  onDidCloseNotebookDocument: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+  notebookDocuments: [] as unknown[],
   textDocuments: [] as unknown[],
   workspaceFolders: undefined as { uri: { fsPath: string; path: string } }[] | undefined,
 };
@@ -1106,6 +1126,11 @@ export class NotebookCellOutput {
   constructor(public readonly items: NotebookCellOutputItem[]) {}
 }
 
+export const NotebookControllerAffinity = {
+  Default: 1,
+  Preferred: 2,
+} as const;
+
 export const NotebookCellKind = {
   Markup: 1,
   Code: 2,
@@ -1149,7 +1174,8 @@ function createMockNotebookController(id: string, notebookType: string, label: s
     executeHandler: undefined as unknown,
     interruptHandler: undefined as unknown,
     createNotebookCellExecution: vi.fn((cell: unknown) => createMockCellExecution(cell)),
-    onDidChangeSelectedNotebooks: vi.fn(() => ({ dispose: () => {} })),
+    onDidChangeSelectedNotebooks: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+    updateNotebookAffinity: vi.fn(),
     dispose: vi.fn(),
   };
 }

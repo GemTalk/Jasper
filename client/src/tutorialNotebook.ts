@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
-import { GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
-import { SMALLTALK_LANGUAGE_ID } from './smalltalkNotebookController';
+import {
+  SMALLTALK_LANGUAGE_ID,
+  selectSmalltalkKernel,
+  smalltalkNotebookData,
+} from './smalltalkNotebookController';
 import { logInfo } from './gciLog';
+import { nextUntitledUri } from './untitledNames';
 
 // A GemStone Smalltalk tutorial delivered as a Jupyter notebook, modelled on
 // Prof Stef (the classic in-workspace Smalltalk syntax tutorial). The lessons
@@ -302,7 +306,7 @@ Run these read-only cells to look around. (This lesson changes nothing permanent
 **Where to go next:**
 - Open a **Workspace** (command: *GemStone: Open Workspace*) for free-form experimenting with *Display It*, *Inspect It*, and *Debug It*.
 - Browse and edit the image in the **GemStone Explorer** (its own icon in the activity bar, the far-left strip), and inspect globals in the **Globals Browser**.
-- Re-run this tutorial any time from the command *GemStone: Open Tutorial Notebook*.
+- Re-run this tutorial any time with **Learn Smalltalk** in a notebook's toolbar, or the command *GemStone: Learn Smalltalk*.
 
 Happy hacking!`,
     snippets: [],
@@ -338,27 +342,68 @@ export function buildTutorialCells(
 export function buildTutorialNotebook(
   lessons: TutorialLesson[] = TUTORIAL_LESSONS,
 ): vscode.NotebookData {
-  return new vscode.NotebookData(buildTutorialCells(lessons));
+  const data = smalltalkNotebookData(buildTutorialCells(lessons));
+  // Marks the tutorial so its own toolbar can drop the Learn Smalltalk button.
+  // It is ipynb metadata, so a saved copy is still recognised.
+  data.metadata!.metadata.jasper = { tutorial: true };
+  return data;
+}
+
+export const TUTORIAL_ACTIVE_CONTEXT = 'gemstone.tutorialNotebookActive';
+
+export function isTutorialNotebook(doc: vscode.NotebookDocument | undefined): boolean {
+  return doc?.metadata?.metadata?.jasper?.tutorial === true;
+}
+
+/** Keep TUTORIAL_ACTIVE_CONTEXT true exactly while the tutorial is the active notebook. */
+export function registerTutorialContext(): vscode.Disposable {
+  const update = (editor: vscode.NotebookEditor | undefined) =>
+    void vscode.commands.executeCommand(
+      'setContext',
+      TUTORIAL_ACTIVE_CONTEXT,
+      isTutorialNotebook(editor?.notebook),
+    );
+  update(vscode.window.activeNotebookEditor);
+  return vscode.window.onDidChangeActiveNotebookEditor(update);
+}
+
+const TUTORIAL_TITLE = 'Learn Smalltalk';
+
+/** `Learn Smalltalk.ipynb`, then `Learn Smalltalk 2.ipynb`, … — the first not already open. */
+export function tutorialUri(openUris: string[]): vscode.Uri {
+  return nextUntitledUri(TUTORIAL_TITLE, '.ipynb', openUris);
 }
 
 /**
- * Open the tutorial as a fresh, untitled GemStone Smalltalk notebook. Untitled
- * (not a bundled file) so running its cells never dirties a shipped resource;
- * the user can Save As if they want to keep their edits.
+ * Open the tutorial as a fresh untitled GemStone Smalltalk notebook, named so
+ * its tab reads "Learn Smalltalk" rather than "Untitled-N" (the `.ipynb` is how
+ * VS Code picks the notebook type). Untitled, not a bundled file, so running
+ * its cells never dirties a shipped resource; Save As keeps a copy.
  */
 export async function openTutorialNotebook(): Promise<void> {
   logInfo('[Tutorial] opening GemStone Smalltalk tutorial notebook');
   try {
+    const openUris = vscode.workspace.notebookDocuments.map((d) => d.uri.toString());
+    const uri = tutorialUri(openUris);
+    const doc = await vscode.workspace.openNotebookDocument(uri);
+    // A named untitled notebook opens empty; fill it the way a data-backed one
+    // would have been. The metadata edit keeps what the ipynb serializer set.
     const data = buildTutorialNotebook();
-    const doc = await vscode.workspace.openNotebookDocument(GEMSTONE_NOTEBOOK_TYPE, data);
+    const edit = new vscode.WorkspaceEdit();
+    edit.set(uri, [
+      vscode.NotebookEdit.updateNotebookMetadata({
+        ...doc.metadata,
+        metadata: { ...(doc.metadata.metadata ?? {}), ...data.metadata!.metadata },
+      }),
+      vscode.NotebookEdit.insertCells(0, data.cells),
+    ]);
+    await vscode.workspace.applyEdit(edit);
     await vscode.window.showNotebookDocument(doc);
+    await selectSmalltalkKernel();
     logInfo('[Tutorial] tutorial notebook opened');
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     logInfo(`[Tutorial] ERROR: ${msg}`);
-    vscode.window.showErrorMessage(
-      `Could not open the tutorial notebook: ${msg}. ` +
-        'Notebook support requires the Jupyter extension.',
-    );
+    vscode.window.showErrorMessage(`Could not open the tutorial notebook: ${msg}`);
   }
 }

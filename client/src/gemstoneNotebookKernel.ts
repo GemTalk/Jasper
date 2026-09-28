@@ -3,11 +3,12 @@ import { SessionManager, ActiveSession } from './sessionManager';
 import { logError } from './gciLog';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
+import { describeSession, onDidChangeActiveSession } from './activeSessionDisplay';
 
-// Shared base for GemStone-backed kernels in Microsoft's Jupyter extension.
-// The Jupyter extension owns the `jupyter-notebook` notebook type; any
-// NotebookController registered against that type appears in its kernel
-// picker, so opening a .ipynb and selecting a GemStone kernel routes cell
+// Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
+// support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
+// extension adds kernels to it but is not needed); any NotebookController
+// registered against that type appears in its kernel picker, so opening a .ipynb and selecting a GemStone kernel routes cell
 // execution through the active GemStone session. Concrete kernels (Grail
 // Python, GemStone Smalltalk) differ only in id/label/cell language and in
 // how a cell's source is evaluated.
@@ -54,7 +55,14 @@ export function classifyCellResult(result: string): NotebookCellResult {
 export class GemStoneNotebookKernel {
   protected readonly controller: vscode.NotebookController;
   private readonly evaluate: NotebookKernelSpec['evaluate'];
+  private readonly baseLabel: string;
   private executionOrder = 0;
+  // Notebooks bound to this kernel, or that it is Preferred for — the ones
+  // whose toolbar must redraw when the label changes (see refreshLabel).
+  private readonly selected = new Set<vscode.NotebookDocument>();
+  private readonly preferred = new Set<vscode.NotebookDocument>();
+  private readonly subscriptions: vscode.Disposable[] = [];
+  private disposed = false;
 
   constructor(
     protected sessionManager: SessionManager,
@@ -70,10 +78,72 @@ export class GemStoneNotebookKernel {
     this.controller.supportsExecutionOrder = true;
     this.controller.description = spec.description;
     this.controller.executeHandler = (cells) => this.executeCells(cells);
+
+    this.baseLabel = spec.label;
+    this.subscriptions.push(
+      this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+        if (selected) {
+          this.selected.add(notebook);
+          void this.adoptEmptyCells(notebook, spec.supportedLanguages);
+        } else {
+          this.selected.delete(notebook);
+        }
+      }),
+      vscode.workspace.onDidCloseNotebookDocument((doc) => {
+        this.selected.delete(doc);
+        this.preferred.delete(doc);
+      }),
+      onDidChangeActiveSession(sessionManager, () => this.refreshLabel()),
+    );
+    this.refreshLabel();
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.subscriptions.forEach((d) => d.dispose());
     this.controller.dispose();
+  }
+
+  // Switching kernels should switch the language of the cells not yet written
+  // in, so a blank notebook follows the kernel. Written cells keep theirs:
+  // Smalltalk source does not become Python by relabelling it.
+  private async adoptEmptyCells(
+    notebook: vscode.NotebookDocument,
+    languages: string[],
+  ): Promise<void> {
+    const [language] = languages;
+    for (const cell of notebook.getCells()) {
+      if (
+        cell.kind === vscode.NotebookCellKind.Code &&
+        cell.document.getText().trim() === '' &&
+        !languages.includes(cell.document.languageId)
+      ) {
+        await vscode.languages.setTextDocumentLanguage(cell.document, language);
+      }
+    }
+  }
+
+  protected prefer(doc: vscode.NotebookDocument): void {
+    this.preferred.add(doc);
+    this.controller.updateNotebookAffinity(doc, vscode.NotebookControllerAffinity.Preferred);
+  }
+
+  // Cells run in the active session, so the kernel label — the notebook's
+  // top-right corner — names it. VS Code's kernel toolbar does not redraw on a
+  // label change, only on an affinity change, so re-apply affinity after it.
+  // After, not with: a label change reaches VS Code on a microtask while an
+  // affinity change goes at once, so an immediate nudge redraws the old label.
+  private refreshLabel(): void {
+    const session = this.sessionManager.getSelectedSession();
+    this.controller.label = session
+      ? `${this.baseLabel} · ${describeSession(session)}`
+      : this.baseLabel;
+    setTimeout(() => {
+      if (this.disposed) return;
+      for (const doc of new Set([...this.selected, ...this.preferred])) {
+        this.controller.updateNotebookAffinity(doc, vscode.NotebookControllerAffinity.Preferred);
+      }
+    }, 0);
   }
 
   // Cells run sequentially: each shares the single GemStone session, and the

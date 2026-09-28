@@ -164,7 +164,7 @@ The session Claude Code and Claude Desktop run their GemStone tools against is m
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
-The active session (used for code execution) is highlighted, and the status bar shows which session is active.
+The active session (used for code execution) is highlighted, and the status bar shows which session is active; click it to change the active session. A workspace names it too, on a line above its first line, and a notebook in its kernel label — both redraw when the active session changes.
 
 #### Transaction modes
 
@@ -195,7 +195,7 @@ If you need concurrent connections, enable the **beta** multiple-session mode:
 
 The only difference is cardinality: a login may now have several session children, and its **Login** action stays available while connected so you can start more.
 
-> **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
+> **Note:** In multiple-session mode, an open method editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. A workspace and a notebook are not bound: they run in whichever session is active, and say which. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
 > **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep *every* logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
 
@@ -412,7 +412,9 @@ The extension integrates with VS Code's native Test Explorer:
 
 ### Jupyter Notebooks (Smalltalk and Grail Python)
 
-Jasper registers two kernels with Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter). Open any `.ipynb` notebook and pick one from the kernel picker; cells execute in the active GemStone session, so notebook code sees — and can modify — the same objects as the GemStone Explorer and Display It. Compile and runtime errors appear as cell error outputs.
+Jasper registers two notebook kernels for `.ipynb` files. VS Code's built-in notebook support is enough; Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter) is not required. Open any `.ipynb` notebook and pick one from the kernel picker — a notebook whose code cells are all Smalltalk gets **GemStone Smalltalk** as its suggested kernel, and the tutorial and **Open Notebook** select it for you. That is only the default: pick another kernel and the empty cells switch to its language, while cells you have written keep theirs. The kernel label names the session cells run in; cells execute in the active GemStone session, so notebook code sees — and can modify — the same objects as the GemStone Explorer and Display It. Compile and runtime errors appear as cell error outputs.
+
+**Open Notebook**, next to **Open Workspace** in the **Logins & Sessions** title bar, opens a blank untitled Smalltalk notebook. A notebook running a GemStone kernel, other than the tutorial itself, has **Learn Smalltalk** in its toolbar, which opens the Smalltalk syntax tutorial (also **GemStone: Learn Smalltalk** in the Command Palette).
 
 **GemStone Smalltalk** runs each cell as an independent doit — multi-statement bodies are fine, and the value of the last statement is printed as the cell output. There is no notebook-local variable scope (Smalltalk has no REPL globals concept); state persists the way it does everywhere else in the session, e.g. `UserGlobals at: #x put: ...`, class definitions, and commits.
 

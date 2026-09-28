@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { logInfo } from './gciLog';
 import { SMALLTALK_LANGUAGE } from './languageIds';
+import { nextUntitledUri } from './untitledNames';
 
 const MOD_KEY = process.platform === 'darwin' ? 'Cmd' : 'Ctrl';
 
@@ -18,23 +19,34 @@ export const WORKSPACE_TEMPLATE = `"Workspace — a scratch pad for GemStone Sma
 System myUserProfile
 `;
 
+/** Text documents showing in an editor tab, as URI strings. */
+function openTabUris(): string[] {
+  return vscode.window.tabGroups.all
+    .flatMap((group) => group.tabs)
+    .flatMap((tab) => (tab.input instanceof vscode.TabInputText ? [tab.input.uri.toString()] : []));
+}
+
+/** `Workspace`, then `Workspace 2`, … — the first with no open tab. */
+export function workspaceUri(openUris: string[]): vscode.Uri {
+  return nextUntitledUri('Workspace', '', openUris);
+}
+
 /**
- * Open a GemStone Workspace scratch buffer.
+ * Open a new GemStone Workspace scratch buffer — another each time, so several
+ * can be open at once.
  *
- * It uses the *named* untitled URI `untitled:Workspace` rather than
- * `openTextDocument({content})`. An anonymous untitled doc is titled
- * "Untitled-N" and — because it carries unsaved content — VS Code's hot-exit
- * restores it under a *fresh* number on every window reload, so the buffers
- * pile up (Untitled-1, Untitled-2, …). The named doc keeps the stable title
- * "Workspace" across reloads, and reopening the same URI reuses the one
- * document instead of spawning new ones. (An editable buffer with content is
- * still "dirty" — only a saved file is ever truly clean — but it no longer
- * multiplies or loses its name.)
+ * Each is a *named* untitled URI (`untitled:Workspace`, `untitled:Workspace 2`,
+ * …) rather than `openTextDocument({content})`. An anonymous untitled doc is
+ * titled "Untitled-N" and — because it carries unsaved content — VS Code's
+ * hot-exit restores it under a *fresh* number on every window reload, so the
+ * buffers pile up. A named doc keeps its title across reloads. (An editable
+ * buffer with content is still "dirty" — only a saved file is ever truly clean
+ * — but it no longer multiplies or loses its name.)
  */
 export async function openWorkspace(): Promise<void> {
   logInfo('[Workspace] opening workspace document');
   try {
-    const uri = vscode.Uri.from({ scheme: 'untitled', path: 'Workspace' });
+    const uri = workspaceUri(openTabUris());
     const doc = await vscode.workspace.openTextDocument(uri);
     if (doc.languageId !== SMALLTALK_LANGUAGE) {
       await vscode.languages.setTextDocumentLanguage(doc, SMALLTALK_LANGUAGE);

@@ -1,6 +1,7 @@
+import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { wrapExecuteCode } from './queries/executeCode';
-import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
+import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
 import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
@@ -112,7 +113,45 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
   }
 }
 
+const EXTENSION_ID = 'gemtalksystems.gemstone-ide';
+
+/**
+ * Build a notebook of Smalltalk cells that stays Smalltalk. VS Code round-trips
+ * a new notebook through the built-in ipynb serializer, which reads the cell
+ * language from `language_info` and falls back to Python when it is missing.
+ */
+export function smalltalkNotebookData(cells: vscode.NotebookCellData[]): vscode.NotebookData {
+  const data = new vscode.NotebookData(cells);
+  data.metadata = { metadata: { language_info: { name: SMALLTALK_LANGUAGE_ID } } };
+  return data;
+}
+
+/** A notebook whose code cells are all Smalltalk — Jasper's own, or one saved from them. */
+export function isSmalltalkNotebook(doc: vscode.NotebookDocument): boolean {
+  if (doc.notebookType !== GEMSTONE_NOTEBOOK_TYPE) return false;
+  const code = doc.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  return code.length > 0 && code.every((c) => c.document.languageId === SMALLTALK_LANGUAGE_ID);
+}
+
+/**
+ * Bind the active notebook editor to the Smalltalk kernel, so its first run
+ * doesn't stop at the kernel picker. `{ id, extension }` with no editor means
+ * "the active one" — pass it right after showNotebookDocument.
+ */
+export async function selectSmalltalkKernel(): Promise<void> {
+  try {
+    await vscode.commands.executeCommand('notebook.selectKernel', {
+      id: SMALLTALK_CONTROLLER_ID,
+      extension: EXTENSION_ID,
+    });
+  } catch {
+    // The Preferred affinity below still makes it the suggested kernel.
+  }
+}
+
 export class SmalltalkNotebookController extends GemStoneNotebookKernel {
+  private readonly openListener: vscode.Disposable;
+
   constructor(sessionManager: SessionManager) {
     super(sessionManager, {
       id: SMALLTALK_CONTROLLER_ID,
@@ -121,5 +160,20 @@ export class SmalltalkNotebookController extends GemStoneNotebookKernel {
       supportedLanguages: [SMALLTALK_LANGUAGE_ID],
       evaluate: (session, source) => evalSmalltalk(session, source),
     });
+    // Offer this kernel first for Smalltalk notebooks, including ones that
+    // hot-exit restored before the extension activated.
+    vscode.workspace.notebookDocuments.forEach((doc) => this.preferIfSmalltalk(doc));
+    this.openListener = vscode.workspace.onDidOpenNotebookDocument((doc) =>
+      this.preferIfSmalltalk(doc),
+    );
+  }
+
+  dispose(): void {
+    super.dispose();
+    this.openListener.dispose();
+  }
+
+  private preferIfSmalltalk(doc: vscode.NotebookDocument): void {
+    if (isSmalltalkNotebook(doc)) this.prefer(doc);
   }
 }
