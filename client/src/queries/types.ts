@@ -3,3 +3,4 @@
 // (which handles logging and busy-session checks); the MCP server wraps
 // `McpSession.executeFetchString` (its own GCI session, no logging).
 export type QueryExecutor = (code: string) => string;
+export type AsyncQueryExecutor = (code: string) => Promise<string>;

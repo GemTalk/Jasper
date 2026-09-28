@@ -3,7 +3,7 @@ import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { logError } from './gciLog';
 import { runNbCall } from './nbRunner';
 
-import { QueryExecutor } from './queries/types';
+import { AsyncQueryExecutor, QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
@@ -363,6 +363,29 @@ export function executeFetchString(session: ActiveSession, code: string): string
   }
 }
 
+// Same as executeFetchString, but evaluates `code` without blocking the
+// event loop (see GciLibrary.executeAndFetchStringAsync for what still
+// blocks, and why no other call may start on `session` until it settles).
+export async function executeFetchStringAsync(
+  session: ActiveSession,
+  code: string,
+): Promise<string> {
+  const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
+  if (inProgress !== 0) {
+    const msg = 'Session is busy with another operation. Please wait or use a different session.';
+    logError(session.id, msg);
+    throw new BrowserQueryError(msg);
+  }
+
+  try {
+    return await session.gci.executeAndFetchStringAsync(session.handle, code);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logError(session.id, msg);
+    throw new BrowserQueryError(msg);
+  }
+}
+
 // Non-blocking variant of executeFetchString for LONG-RUNNING queries (e.g. a
 // Rowan project load, which can take minutes). The synchronous GCI call would
 // freeze the whole extension host for the duration; this one starts the
@@ -554,6 +577,21 @@ export function transactionConflicts(session: ActiveSession): TransactionConflic
  */
 export function defaultQueryExecutorUsing(activeSession: ActiveSession): QueryExecutor {
   return (code) => executeFetchString(activeSession, code);
+}
+
+/**
+ * Binds a session to the {@link AsyncQueryExecutor} shape, backed by
+ * {@link executeFetchStringAsync}. Don't start another call on the session
+ * until a returned promise settles.
+ *
+ * @param activeSession - The active GCI session to execute against.
+ * @returns An {@link AsyncQueryExecutor} that runs `code` in `session` and
+ * resolves to its String result.
+ * @throws {@link BrowserQueryError} if the session is busy, the code fails to
+ * compile or execute, or the result cannot be resolved to a String.
+ */
+export function asyncQueryExecutorUsing(activeSession: ActiveSession): AsyncQueryExecutor {
+  return (code) => executeFetchStringAsync(activeSession, code);
 }
 
 // ── Read-only queries (thin delegates to client/src/queries/) ─────────────
