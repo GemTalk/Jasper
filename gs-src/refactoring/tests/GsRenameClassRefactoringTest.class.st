@@ -26,9 +26,9 @@ setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
 rename target name).
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: a rename must
-file the renamed class in the dictionary that held the class being renamed. This is the same helper
-the Class History restore goes through.
+The `tests - shadowed class name` category covers #396: a rename files the renamed class in the
+dictionary that held the class being renamed. This is the same helper the Class History restore
+goes through.
 "
 Class {
 	#name : 'GsRenameClassRefactoringTest',
@@ -503,8 +503,8 @@ GsRenameClassRefactoringTest >> testDictionaryScopeExcludesSameNamedClassReferen
 GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary [
 	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
 	 resolves by the OLD class's name and takes the first match. With a decoy binding GsRCBase ahead
-	 of UserGlobals, the renamed class is filed in the decoy: the user's own dictionary loses the
-	 class outright. This is the same helper the Class History restore goes through. See #396."
+	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
+	 lost the class outright. This is the same helper the Class History restore goes through. See #396."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsRCShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

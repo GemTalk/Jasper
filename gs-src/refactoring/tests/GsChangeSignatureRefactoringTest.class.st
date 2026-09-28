@@ -28,15 +28,14 @@ and tearDown removes them. Fixture selectors are spellings unique to the fixture
 (movePointX:y:, csPing, ~>, csComputeWith:unused:, ...), so an image-wide
 implementor/sender search finds only the fixture.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
-reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
-a staged change records its class by NAME and the apply re-resolves it through
-`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
-`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
 satisfy it.
 
-The existing dictionary-scope test above covers which implementors are in SCOPE; the shadow test
-covers where the new signature is then WRITTEN.
+The dictionary-scope test above covers which implementors are in SCOPE; the shadow test covers
+where the new signature is then WRITTEN.
 "
 Class {
 	#name : 'GsChangeSignatureRefactoringTest',
@@ -637,7 +636,7 @@ GsChangeSignatureRefactoringTest >> testChangeSignatureCompilesOntoTheActedOnCla
 	"The existing dictionary-scope test here stops at the change set -- which implementors are in
 	 scope. This is the apply half: each staged change records its class by NAME and is re-resolved
 	 with `environment classNamed:`, first-match across the symbol list, so a decoy binding GsCSBase
-	 ahead of UserGlobals receives the new signature. See #396."
+	 ahead of UserGlobals used to receive the new signature (#396)."
 	| decoy decoyClass base json |
 	decoy := SymbolDictionary new name: #GsCSShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

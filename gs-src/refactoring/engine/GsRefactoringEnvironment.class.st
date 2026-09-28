@@ -216,6 +216,78 @@ GsRefactoringEnvironment >> classNamed: aName [
 ]
 
 { #category : 'accessing' }
+GsRefactoringEnvironment >> dictionaryDefiningClass: aClass [
+	"The SymbolDictionary that binds aClass ITSELF under its own name, compared by IDENTITY,
+	 or nil when no dictionary does.
+
+	 This is the one right answer to 'where does this class live', and the reason it exists is
+	 that the obvious wrong answer -- take the class's name and use the first dictionary that
+	 binds it -- silently picks a DIFFERENT class whenever the name is shadowed. Refactoring
+	 wrote that wrong answer in three places (#396): the dictionary a reshaped class was rebound
+	 into, the dictionary name recorded on a staged change, and the class a change was applied
+	 to. All three now come through here.
+
+	 Identity also makes the answer honest when it cannot be given: a class that is unbound, or
+	 bound only under some other name, answers nil rather than a plausible-looking wrong
+	 dictionary. Callers decide what to do with that."
+	| sym |
+	sym := aClass name asSymbol.
+	self dictionariesDo: [:dict |
+		((dict at: sym ifAbsent: [nil]) == aClass) ifTrue: [^dict]].
+	^nil
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> classForChange: aChange [
+	"The class a staged change was computed against, or nil.
+
+	 A change records its class as a NAME plus the name of the dictionary it was found in, so
+	 this resolves the pair rather than the name alone. Resolving the name alone is what
+	 `classNamed:` does, and it answers the first binding on the symbol list -- which, for a
+	 shadowed name, is a different class from the one the refactoring analysed. Applying a
+	 change to it writes the user's refactoring onto a class they never chose (#396).
+
+	 A change with no dictionary name falls back to `classNamed:`. That is the pre-#396
+	 behaviour and is kept deliberately: an undo entry or change set recorded before this fix,
+	 or staged by a caller that has no dictionary to give, still applies as well as it ever did.
+
+	 Dictionaries are scanned in symbol-list order and the first one whose name matches AND
+	 which binds the class name wins, so a dictionary that merely shares the name but does not
+	 define the class cannot swallow the lookup."
+	aChange isNil ifTrue: [^nil].
+	^self classNamed: aChange className inDictionaryNamed: aChange dictName
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> classNamed: aName inDictionaryNamed: aDictName [
+	"The class bound to aName in a dictionary called aDictName, or -- when aDictName is nil, names
+	 no dictionary on the symbol list, or names one that does not bind aName -- whatever
+	 #classNamed: answers.
+
+	 Dictionaries are scanned in symbol-list order and the first whose name matches AND which
+	 binds the class name wins, so a dictionary that merely shares the name cannot swallow the
+	 lookup. The nil and not-found cases fall back deliberately: a record made before #396, or by
+	 a caller with no dictionary to give, must still resolve as well as it ever did."
+	| sym |
+	aDictName isNil ifTrue: [^self classNamed: aName].
+	sym := aName asSymbol.
+	"An Integer is a 1-based SymbolList index -- unambiguous where a name is not, and what the
+	 client sends. `isKindOf: Integer` rather than `isInteger`, which String does not implement
+	 on the supported releases."
+	(aDictName isKindOf: Integer) ifTrue: [
+		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^self classNamed: aName].
+		^((symbolList at: aDictName) at: sym ifAbsent: [nil])
+			ifNil: [self classNamed: aName]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [self classNamed: aName]]].
+	self dictionariesDo: [:dict | | bound |
+		(dict name notNil and: [dict name asSymbol == aDictName asSymbol])
+			ifTrue: [
+				bound := dict at: sym ifAbsent: [nil].
+				(bound notNil and: [bound isKindOf: Class]) ifTrue: [^bound]]].
+	^self classNamed: aName
+]
+
+{ #category : 'accessing' }
 GsRefactoringEnvironment >> dictionariesDefiningClassNamed: aName [
 	"Every dictionary in which aName is bound to a class. More than one means the
 	 name is shadowed; the result documents the all-dictionaries coverage a

@@ -553,9 +553,11 @@ GsInstVarStructureRefactoring >> planAccessorMovesFrom: srcClass to: destClasses
 				ifFalse: [t includesSelector: sel]].
 		(self effectiveDirection == #up and: [targets isEmpty])
 			ifFalse: [
-				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
+				accessorRemovals add: ((Array with: sel with: srcClass name asString with: src with: cat)
+					copyWith: srcClass).
 				targets do: [:t |
-					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+					accessorAdds add: ((Array with: sel with: t name asString with: src with: cat)
+						copyWith: t)]]]
 ]
 
 { #category : 'private - accessors' }
@@ -620,6 +622,10 @@ GsInstVarStructureRefactoring >> simpleAccessorKindOf: tree forVar: v [
 
 { #category : 'private' }
 GsInstVarStructureRefactoring >> dictNameForClassNamed: aName [
+	"DEPRECATED, and kept only so an external caller does not break: a NAME cannot say which
+	 dictionary is meant when the name is shadowed, and answering the first match is what sent
+	 staged changes to the wrong class (#396). Use #dictNameForClass:, which resolves the class
+	 object by identity. Nothing in the engine calls this."
 	| dicts |
 	dicts := environment dictionariesDefiningClassNamed: aName.
 	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
@@ -649,7 +655,14 @@ GsInstVarStructureRefactoring >> isEditedClassNamed: aName [
 
 { #category : 'private' }
 GsInstVarStructureRefactoring >> dictNameForClass: aClass [
-	^self dictNameForClassNamed: aClass name
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the class under its own
+	 name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'preconditions' }
@@ -679,7 +692,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 	affected do: [:cls | self stageClassChange: cls into: cs].
 	accessorRemovals do: [:r |
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClassNamed: (r at: 2))
+			addMethodRemoveInDictionary: (self dictNameForClass: (r at: 5))
 			className: (r at: 2)
 			isMeta: false
 			selector: (r at: 1)
@@ -687,7 +700,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 			oldSource: (r at: 3)].
 	accessorAdds do: [:a |
 		cs
-			addMethodAddInDictionary: (self dictNameForClassNamed: (a at: 2))
+			addMethodAddInDictionary: (self dictNameForClass: (a at: 5))
 			className: (a at: 2)
 			isMeta: false
 			selector: (a at: 1)
@@ -914,7 +927,7 @@ GsInstVarStructureRefactoring >> applyMethodRemove: aChange [
 	 class. #copyMethodsFrom:to: already skips carrying it forward, so this is normally a no-op;
 	 the guard also keeps re-application idempotent and avoids removeSelector: on an absent one."
 	| cls target sel |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	sel := aChange selector asSymbol.
@@ -925,7 +938,7 @@ GsInstVarStructureRefactoring >> applyMethodRemove: aChange [
 GsInstVarStructureRefactoring >> applyMethodAdd: aChange [
 	"Accessor move: compile the accessor onto its (freshly versioned) target class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -940,7 +953,7 @@ GsInstVarStructureRefactoring >> applyClassChange: aChange [
 	 with its computed own-instVar list -- copy its methods forward, and record the
 	 old->new mapping so its own descendants re-parent onto it. No commit."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
@@ -1026,7 +1039,7 @@ GsInstVarStructureRefactoring >> applyMethodRecompile: aChange [
 	"Recompile the converted method (V5) with the temporary declaration removed, onto the
 	 current (freshly versioned) class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -1037,12 +1050,14 @@ GsInstVarStructureRefactoring >> applyMethodRecompile: aChange [
 
 { #category : 'applying' }
 GsInstVarStructureRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
+	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'serializing' }

@@ -256,6 +256,10 @@ export async function runInstVarRefactor(
         ivarName,
         titleFor(req),
         'GsInstVarRefactoring',
+        undefined,
+        // The class's own dictionary. Without it the reversal re-resolves the class by name and
+        // reshapes a same-named class in another dictionary instead (#396).
+        req.dict,
       );
     } catch (e: unknown) {
       logInfo(

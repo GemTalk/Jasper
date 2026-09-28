@@ -342,10 +342,14 @@ GsRenameTemporaryRefactoring >> methodCategory [
 
 { #category : 'private' }
 GsRenameTemporaryRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the
+	 class under its own name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'preconditions' }
@@ -489,7 +493,7 @@ GsRenameTemporaryRefactoring >> applyChange: aChange [
 GsRenameTemporaryRefactoring >> applyMethodRecompile: aChange [
 	"Recompile the one method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment

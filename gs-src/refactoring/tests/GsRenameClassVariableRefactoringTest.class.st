@@ -24,10 +24,11 @@ two-class hierarchy in UserGlobals and tearDown removes it. The block-argument
 fixtures shadow the class variable on purpose, which the compiler warns about;
 the warning is resumed so the fixture still installs.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
-creates no new class version, so it is not the `dictObjectFor:` defect: it is the wider one, where a
-staged change records its class by NAME and the apply re-resolves it with `environment classNamed:`
-(documented first-match). The rename lands on the wrong class and half-applies.
+The `tests - shadowed class name` category covers #396. This refactoring creates no new class
+version, so it never reaches `dictObjectFor:`; it exercises the wider half, where a staged change
+records its class by name and the apply resolves that name against a dictionary. Getting it wrong
+left the refactoring HALF-applied -- the new class variable on one class, the methods rewritten on
+another -- which is why the test asserts `"failed":[]` as well as the destination.
 "
 Class {
 	#name : 'GsRenameClassVariableRefactoringTest',
@@ -556,8 +557,9 @@ GsRenameClassVariableRefactoringTest >> testRenameEditsTheActedOnClassNotAGlobal
 	 anyway, by a second and wider root cause: a staged change records its class by NAME, and
 	 `applyClassDefinitionEdit:` re-resolves it with `environment classNamed:`, documented as
 	 'the first class bound to aName across all dictionaries'. With a decoy binding GsRCVBase
-	 ahead of UserGlobals the new class variable is created on the DECOY, so the acted-on class
-	 keeps its old name and the methods rewritten to the new one no longer compile. See #396."
+	 ahead of UserGlobals the new class variable used to be created on the DECOY, leaving the
+	 acted-on class with its old name and the methods rewritten to a name that would not compile
+	 (#396)."
 	| decoy decoyClass base json |
 	decoy := SymbolDictionary new name: #GsRCVShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
@@ -570,8 +572,8 @@ GsRenameClassVariableRefactoringTest >> testRenameEditsTheActedOnClassNotAGlobal
 	 json := (GsRenameClassVariableRefactoring class: base renameClassVar: 'Counter' to: 'Tally')
 		applyDeselected: #().
 
-	 "nothing may be left half-applied: today the referencing methods are rewritten to a name
-	  their own class does not have, and report 'did not recompile: undefined symbol'"
+	 "nothing may be left half-applied: this is what caught the half-apply -- the referencing methods
+	  were rewritten to a name their own class did not have"
 	 self assert: json includesSubstring: '"failed":[]'.
 	 "the rename lands on the class the user acted on"
 	 self assert: ((base classVarNames collect: [:e | e asString]) includes: 'Tally').

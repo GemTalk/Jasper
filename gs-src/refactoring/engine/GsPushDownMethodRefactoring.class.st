@@ -198,9 +198,14 @@ GsPushDownMethodRefactoring >> tree: aTree referencesName: aName [
 
 { #category : 'private' }
 GsPushDownMethodRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the class under its own
+	 name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'private' }
@@ -468,7 +473,7 @@ GsPushDownMethodRefactoring >> applyMethodAdd: aChange [
 	 already understood the selector via its own override). The compile RAISES when it fails, so
 	 the record is only reached once the method is actually installed on the subclass."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -491,7 +496,7 @@ GsPushDownMethodRefactoring >> applyMethodRemove: aChange [
 	(appliedAddSelectors includes: sel) ifFalse: [^false].
 	(subClasses allSatisfy: [:s | (self behaviorFor: s) includesSelector: sel])
 		ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	(aChange isMeta ifTrue: [cls class] ifFalse: [cls]) removeSelector: sel.
 	^true

@@ -9,8 +9,8 @@ straddling / super-sending / retained-calling method, or a subclass use, or a ba
 
 Fixture names are substring-safe against the decline keywords, and all emitted Smalltalk is ASCII.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
-the re-versioned source and the placement of the new component class.
+The `tests - shadowed class name` category covers #396, both the re-versioned source and the
+placement of the new component class.
 "
 Class {
 	#name : 'GsSplitClassRefactoringTest',
@@ -541,7 +541,7 @@ GsSplitClassRefactoringTest >> testClearTokenRemovesThePreviewSession [
 GsSplitClassRefactoringTest >> testSplitBindsTheReversionedSourceInItsOwnDictionary [
 	"Splitting a class re-versions the source (it loses the extracted instance variables) and binds
 	 that new version through `dictObjectFor:` -- by class NAME, first match. A decoy binding
-	 GsSCSource ahead of UserGlobals takes it. See #396."
+	 GsSCSource ahead of UserGlobals used to take it (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
@@ -561,7 +561,7 @@ GsSplitClassRefactoringTest >> testSplitBindsTheReversionedSourceInItsOwnDiction
 { #category : 'tests - shadowed class name' }
 GsSplitClassRefactoringTest >> testSplitPlacesTheNewComponentInTheSourceOwnDictionary [
 	"`dictObjectForNewClass` falls through to `dictObjectFor: sourceClass` when the caller names no
-	 dictionary, so a shadowed SOURCE name misfiles the brand-new component class as well. See #396."
+	 dictionary, so a shadowed SOURCE name used to misfile the brand-new component class as well (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowNewDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

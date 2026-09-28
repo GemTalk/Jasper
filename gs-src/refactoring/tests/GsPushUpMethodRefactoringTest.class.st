@@ -31,15 +31,14 @@ This suite pins down:
 
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
-reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
-a staged change records its class by NAME and the apply re-resolves it through
-`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
-`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
 satisfy it.
 
 The destination superclass is the shadowed one here: the pushed method is added through a change
-that names it, so the decoy receives the method and the real superclass never does.
+that names it.
 "
 Class {
 	#name : 'GsPushUpMethodRefactoringTest',
@@ -502,7 +501,7 @@ GsPushUpMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnErro
 GsPushUpMethodRefactoringTest >> testPushUpCompilesOntoTheRealSuperclassNotAGlobalFirstMatch [
 	"The pushed method is added to the superclass through a change that records the class by NAME,
 	 re-resolved at apply time with `environment classNamed:`. A decoy binding GsPUSuper ahead of
-	 UserGlobals receives the method instead, and the real superclass never gets it. See #396."
+	 UserGlobals used to receive the method instead, and the real superclass never got it (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsPUShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

@@ -24,8 +24,8 @@ GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it (children first).
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
-halves: the re-versioned anchor, and the placement of the brand-new superclass (`dictObjectForNewClass`).
+The `tests - shadowed class name` category covers #396, both halves: the re-versioned anchor, and
+the placement of the brand-new superclass (`dictObjectForNewClass`).
 "
 Class {
 	#name : 'GsExtractSuperclassRefactoringTest',
@@ -665,7 +665,7 @@ GsExtractSuperclassRefactoringTest >> testCandidatesJsonCarriesClassifiedMembers
 GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsOwnDictionary [
 	"Extracting a superclass re-versions the anchor and its siblings, each bound through
 	 `dictObjectFor:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
-	 takes the anchor's new version. See #396."
+	 used to take the anchor's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
@@ -693,7 +693,7 @@ GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsO
 { #category : 'tests - shadowed class name' }
 GsExtractSuperclassRefactoringTest >> testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary [
 	"`dictObjectForNewClass` falls through to `dictObjectFor: anchorClass` when the caller names no
-	 dictionary, so a shadowed ANCHOR name misfiles the brand-new superclass too -- it is created in
+	 dictionary, so a shadowed ANCHOR name used to misfile the brand-new superclass too, creating it in
 	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
 	 misplaces a class that did not exist before. See #396."
 	| decoy decoyClass json |

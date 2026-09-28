@@ -25,9 +25,9 @@ This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. The existing
-dictionary-scope tests above cover which class a move BINDS; this one covers where the reshaped
-class is then WRITTEN, which is the half `dictObjectFor:` gets wrong.
+The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
+which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
+half `dictObjectFor:` used to get wrong.
 "
 Class {
 	#name : 'GsInstVarStructureRefactoringTest',
@@ -917,7 +917,7 @@ GsInstVarStructureRefactoringTest >> testPushUpBindsTheDestinationNewVersionInIt
 	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
 	 its destination. This is the apply half. Both classes a push-up reshapes (source and
 	 destination) are re-created through `dictObjectFor:`, which picks their dictionary by NAME, so a
-	 decoy binding GsVSBase ahead of UserGlobals takes the destination's new version. See #396."
+	 decoy binding GsVSBase ahead of UserGlobals used to take the destination's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

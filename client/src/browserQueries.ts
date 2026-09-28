@@ -2056,16 +2056,21 @@ export function clearSplitClassPreview(session: ActiveSession, token: string): s
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and
 // the redo (restore a historical version as a new version, no commit).
-export function getClassHistory(session: ActiveSession, className: string): string {
-  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className);
+export function getClassHistory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function revertClassToVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
@@ -2115,8 +2120,9 @@ export function removeClassVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 export function getGrailStubReflection(
@@ -2649,6 +2655,7 @@ export function recordReverseRename(
   label: string,
   engineClassName: string,
   scope?: { kind: string; dictName?: string },
+  classDict?: number | string,
 ): string {
   return sharedRecordReverseRename(
     defaultQueryExecutorUsing(session),
@@ -2659,6 +2666,7 @@ export function recordReverseRename(
     label,
     engineClassName,
     scope,
+    classDict,
   );
 }
 
@@ -2670,8 +2678,12 @@ export function recordReverseRename(
  * apply really landed -- these refactorings report partial application, and a capture promoted
  * after a partial reshape would describe a state the stone was never in.
  */
-export function captureClassHistory(session: ActiveSession, rootClassName: string): string {
-  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName);
+export function captureClassHistory(
+  session: ActiveSession,
+  rootClassName: string,
+  dict?: number | string,
+): string {
+  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName, dict);
 }
 
 export function discardPendingCapture(session: ActiveSession): string {

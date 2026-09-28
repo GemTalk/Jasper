@@ -83,12 +83,14 @@ GsRenameInstanceVariableRefactoring >> definingClass [
 
 { #category : 'private' }
 GsRenameInstanceVariableRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil.
-	 Informational for the client preview; the method lives on the class object
-	 regardless of how many dictionaries name it."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the
+	 class under its own name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'accessing' }
@@ -422,13 +424,14 @@ GsRenameInstanceVariableRefactoring >> copyMethod: sel from: srcCls to: dstCls m
 
 { #category : 'private - applying' }
 GsRenameInstanceVariableRefactoring >> dictObjectFor: aClass [
-	"The SymbolDictionary that defines aClass's name, for inDictionary:. Falls back to
-	 UserGlobals if none is found (should not happen for a bound class)."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
+	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'serializing' }

@@ -530,9 +530,14 @@ GsSplitClassRefactoring >> newClassDictName [
 
 { #category : 'private' }
 GsSplitClassRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). 'UserGlobals' stays the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: ['UserGlobals']
+		ifNotNil: [:dict | dict name ifNil: ['UserGlobals'] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'serializing' }
@@ -664,7 +669,7 @@ GsSplitClassRefactoring >> applyClassChange: aChange [
 	 the component ivar, and drops the moved methods on copy-forward; a DESCENDANT (a #classReparent)
 	 just re-points at its freshly-versioned ancestor with its own shape unchanged."
 	| old isSource parentNew list skip new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	isSource := aChange kind == #classDefinitionEdit.
 	parentNew := isSource
@@ -709,7 +714,7 @@ GsSplitClassRefactoring >> applyMethodAdd: aChange [
 	| target |
 	target := aChange className = newName
 		ifTrue: [newClass]
-		ifFalse: [environment classNamed: aChange className].
+		ifFalse: [environment classForChange: aChange].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	environment
 		compile: aChange newSource
@@ -719,11 +724,14 @@ GsSplitClassRefactoring >> applyMethodAdd: aChange [
 
 { #category : 'applying' }
 GsSplitClassRefactoring >> dictObjectFor: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
+	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'applying' }

@@ -3311,6 +3311,9 @@ export class ExplorerController {
         label,
         engine,
         scope,
+        // The Explorer's selected dictionary is the class's home. Without it the reversal
+        // re-resolves the class by name and acts on a same-named one elsewhere (#396).
+        this.state.dictIndex ?? this.state.dictName,
       );
       // Logged on the way THROUGH, not only on failure: "no Undo was offered" is a silent
       // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
@@ -4092,9 +4095,14 @@ export class ExplorerController {
     const className = item.className;
     if (!(await this.ensureRbSupport('Viewing class history'))) return;
 
+    // The dictionary the user selected, threaded through every history call. Without it the
+    // engine resolves the class name against the whole symbol list and answers the first
+    // binding -- a different class when the name is shadowed, whose history is then shown and,
+    // on Restore, rewritten (#396).
+    const historyDict = this.state.dictIndex ?? this.state.dictName;
     let versions;
     try {
-      versions = parseClassHistory(queries.getClassHistory(session, className));
+      versions = parseClassHistory(queries.getClassHistory(session, className, historyDict));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Class history failed: ${msg}`);
@@ -4130,11 +4138,13 @@ export class ExplorerController {
               )
             : undefined;
 
-        const result = parseRevertResult(queries.revertClassToVersion(session, currentName, index));
+        const result = parseRevertResult(
+          queries.revertClassToVersion(session, currentName, index, historyDict),
+        );
         const previousName = currentName;
         if (result.reverted && result.name) currentName = result.name;
         const refreshed = result.reverted
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
+          ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
           : versions;
         // The class was reshaped/renamed (a new version) — re-cascade so the
         // Explorer's Classes + Hierarchy panes show the restored name and version.
@@ -4148,9 +4158,11 @@ export class ExplorerController {
         return { result, versions: refreshed };
       },
       remove: async (index) => {
-        const result = parseRemoveResult(queries.removeClassVersion(session, currentName, index));
+        const result = parseRemoveResult(
+          queries.removeClassVersion(session, currentName, index, historyDict),
+        );
         const refreshed = result.removed
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
+          ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
           : versions;
         // The version count / tag changed — refresh the tree's version tags.
         if (result.removed) await this.refreshAfterClassReshape(currentName);

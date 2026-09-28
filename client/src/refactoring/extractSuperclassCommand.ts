@@ -241,7 +241,9 @@ async function runExtractSuperclass(
     }
   };
   try {
-    queries.captureClassHistory(session, className);
+    // Scoped to the class's own dictionary: an unscoped capture snapshots, and later reverts,
+    // whichever same-named class the symbol list reaches first (#396).
+    queries.captureClassHistory(session, className, dict);
   } catch {
     /* best-effort: a reshape must not fail because its undo bookkeeping did */
   }

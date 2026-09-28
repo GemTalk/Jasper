@@ -16,8 +16,8 @@ setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The block-argument fixtures shadow the instance variable on purpose, which
 the compiler warns about; the warning is resumed so the fixture still installs.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: the reshaped
-class must be bound in its own dictionary, not in whichever dictionary binds its name first.
+The `tests - shadowed class name` category covers #396: the reshaped class must be bound in its
+own dictionary, not in whichever dictionary binds its name first.
 "
 Class {
 	#name : 'GsRenameInstanceVariableRefactoringTest',
@@ -357,7 +357,7 @@ GsRenameInstanceVariableRefactoringTest >> testApplyDropsOnlyTheDeselectedMethod
 GsRenameInstanceVariableRefactoringTest >> testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary [
 	"Renaming an instance variable reshapes the declaring class and its subtree through
 	 makeNewVersionOf:, which binds each new version through `dictObjectFor:` -- resolved by class
-	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals takes the new version. See #396."
+	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals used to take the new version (#396)."
 	| decoy decoyClass ref json |
 	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

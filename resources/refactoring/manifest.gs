@@ -62,7 +62,7 @@ m add: (Array with: 'RBTonelParser' with: 14).
 m add: (Array with: 'RBTonelScanner' with: 3).
 m add: (Array with: 'RBWorkspaceNode' with: 15).
 m add: (Array with: 'GsChangeSignatureRefactoring' with: 44).
-m add: (Array with: 'GsClassHistory' with: 13).
+m add: (Array with: 'GsClassHistory' with: 17).
 m add: (Array with: 'GsExtractMethodRefactoring' with: 71).
 m add: (Array with: 'GsExtractSuperclassRefactoring' with: 61).
 m add: (Array with: 'GsExtractTemporaryRefactoring' with: 50).
@@ -75,9 +75,9 @@ m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).
 m add: (Array with: 'GsRefactoringChange' with: 31).
 m add: (Array with: 'GsRefactoringChangeSet' with: 20).
-m add: (Array with: 'GsRefactoringEnvironment' with: 32).
+m add: (Array with: 'GsRefactoringEnvironment' with: 35).
 m add: (Array with: 'GsRefactoringJson' with: 3).
-m add: (Array with: 'GsRefactoringUndo' with: 60).
+m add: (Array with: 'GsRefactoringUndo' with: 63).
 m add: (Array with: 'GsRenameClassRefactoring' with: 55).
 m add: (Array with: 'GsRenameClassVariableRefactoring' with: 37).
 m add: (Array with: 'GsRenameInstanceVariableRefactoring' with: 34).

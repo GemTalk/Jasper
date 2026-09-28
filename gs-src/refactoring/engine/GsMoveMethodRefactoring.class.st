@@ -200,9 +200,14 @@ GsMoveMethodRefactoring >> commaList: aCollection [
 
 { #category : 'private' }
 GsMoveMethodRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the class under its own
+	 name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'private' }
@@ -412,7 +417,7 @@ GsMoveMethodRefactoring >> applyChange: aChange [
 GsMoveMethodRefactoring >> applyMethodAdd: aChange [
 	"Compile the moved method onto the target class/side. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -428,7 +433,7 @@ GsMoveMethodRefactoring >> applyMethodRemove: aChange [
 	 a deselected or failed add never leaves the method in neither class. No commit."
 	| cls target |
 	(self targetBehavior includesSelector: aChange selector asSymbol) ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	target removeSelector: aChange selector asSymbol.

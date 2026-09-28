@@ -379,10 +379,14 @@ GsRenameClassRefactoring >> hierarchyScopeClasses [
 
 { #category : 'private' }
 GsRenameClassRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the
+	 class under its own name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'source rewriting' }
@@ -657,7 +661,7 @@ GsRenameClassRefactoring >> applyClassRename: aChange [
 	 references). Record the old->new mapping for the descendant reparents, then, if
 	 the name actually changed, remove the old name binding."
 	| old src new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	src := self shapeSourceOr: old.
 	new := self
@@ -677,7 +681,7 @@ GsRenameClassRefactoring >> applyClassReparent: aChange [
 	 freshly created parent-chain version, and copy its methods forward (rewriting any
 	 old-name reference). Its name is unchanged, so the primitive rebinds it in place."
 	| old parentNew new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	new := self makeNewVersionOf: old shapedLike: old named: old name asString superclass: parentNew.
@@ -689,7 +693,7 @@ GsRenameClassRefactoring >> applyClassReparent: aChange [
 GsRenameClassRefactoring >> applyMethodRecompile: aChange [
 	"Recompile one external referencing method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure -- an unchecked send would
@@ -759,14 +763,14 @@ GsRenameClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta
 
 { #category : 'applying' }
 GsRenameClassRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:.
-	 Falls back to the user's default (UserGlobals) if none is found (should not happen
-	 for a bound class)."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
+	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'applying' }

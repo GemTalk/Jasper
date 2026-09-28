@@ -31,14 +31,14 @@ same-named method elsewhere in the image, and every scope used is #class.
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, and it covers all
-THREE undo mechanisms, because each resolves its class by name:
+The `tests - shadowed class name` category covers #396 across all THREE undo mechanisms, because
+each resolves its class by name:
 
-  - #changeSet replay re-resolves every recorded change through `env classNamed:` (first-match), the
-    same lookup the forward apply uses -- so the safety net has the hole it is meant to catch;
-  - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the engine
-    gets wrong, including `dictObjectFor:`;
-  - #historyRevert captures and replays by name through `GsClassHistory revertClassNamed:toIndex:`.
+  - #changeSet replay resolves every recorded change through the environment, the same lookup the
+    forward apply uses -- so the safety net had the hole it is meant to catch;
+  - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the
+    engine gets wrong, including `dictObjectFor:`;
+  - #historyRevert captures and replays through `GsClassHistory`.
 
 Each test shadows the class name only AFTER the forward refactoring has landed, so the refactoring
 itself is correct and the undo alone is on trial.
@@ -650,7 +650,7 @@ GsRefactoringUndoTest >> recordClassRenameFrom: fromName to: toName [
 		to: toName
 		scopeKind: #wholeSystem
 		scopeDictName: nil
-		label: 'Rename class ', toName, ' to ', fromName
+		classDictName: 'UserGlobals' label: 'Rename class ', toName, ' to ', fromName
 		engine: 'GsRenameClassRefactoring'
 ]
 
@@ -674,7 +674,7 @@ GsRefactoringUndoTest >> testAnUnreversibleKindRecordsNothing [
 	self
 		assert: (GsRefactoringUndo
 			recordReverseRename: #splitClass className: 'GsUndoAccount' from: 'a' to: 'b'
-			scopeKind: nil scopeDictName: nil label: 'x' engine: 'GsSplitClassRefactoring')
+			scopeKind: nil scopeDictName: nil classDictName: 'UserGlobals' label: 'x' engine: 'GsSplitClassRefactoring')
 		equals: 'unsupported'.
 	self assert: GsRefactoringUndo currentEntry isNil
 ]
@@ -826,7 +826,7 @@ GsRefactoringUndoTest >> testAnInstVarReversalRefusesWhenTheOldNameIsDeclaredAga
 	GsRefactoringUndo
 		recordReverseRename: #instVarRename className: 'GsUndoAccount'
 		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
-		label: 'Rename instance variable balance to gsuFunds'
+		classDictName: 'UserGlobals' label: 'Rename instance variable balance to gsuFunds'
 		engine: 'GsRenameInstanceVariableRefactoring'.
 
 	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
@@ -846,7 +846,7 @@ GsRefactoringUndoTest >> testReversingARenamedInstanceVariablePutsTheNameBack [
 	GsRefactoringUndo
 		recordReverseRename: #instVarRename className: 'GsUndoAccount'
 		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
-		label: 'Rename instance variable balance to gsuFunds'
+		classDictName: 'UserGlobals' label: 'Rename instance variable balance to gsuFunds'
 		engine: 'GsRenameInstanceVariableRefactoring'.
 	self undoAll.
 
@@ -876,7 +876,7 @@ GsRefactoringUndoTest >> testReversingARenamedClassVariablePutsTheNameBack [
 	GsRefactoringUndo
 		recordReverseRename: #classVarRename className: 'GsUndoVarHolder'
 		from: 'GsuCatalog' to: 'GsuRegistry' scopeKind: nil scopeDictName: nil
-		label: 'Rename class variable GsuRegistry to GsuCatalog'
+		classDictName: 'UserGlobals' label: 'Rename class variable GsuRegistry to GsuCatalog'
 		engine: 'GsRenameClassVariableRefactoring'.
 	self undoAll.
 
@@ -935,7 +935,7 @@ GsRefactoringUndoTest >> recordInstVarAddOf: aName [
 		to: aName
 		scopeKind: nil
 		scopeDictName: nil
-		label: 'Add instance variable ', aName, ' to GsUndoAccount'
+		classDictName: 'UserGlobals' label: 'Add instance variable ', aName, ' to GsUndoAccount'
 		engine: 'GsInstVarRefactoring'
 ]
 
@@ -948,7 +948,7 @@ GsRefactoringUndoTest >> recordInstVarRemoveOf: aName [
 		to: aName
 		scopeKind: nil
 		scopeDictName: nil
-		label: 'Remove instance variable ', aName, ' from GsUndoAccount'
+		classDictName: 'UserGlobals' label: 'Remove instance variable ', aName, ' from GsUndoAccount'
 		engine: 'GsInstVarRefactoring'
 ]
 
@@ -1045,7 +1045,7 @@ GsRefactoringUndoTest >> testAnInstVarReversalNeverCommitsAndNeverDeletesHistory
 
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testCaptureAndCommitMakeAHistoryRevertEntry [
-	self assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount') equals: 'ok'.
+	self assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals') equals: 'ok'.
 	self
 		assert: (GsRefactoringUndo commitHistoryRevert: 'Push up balance' engine: 'GsInstVarStructureRefactoring' created: #())
 		equals: 'ok'.
@@ -1057,7 +1057,7 @@ GsRefactoringUndoTest >> testCaptureRecordsTheSubtreeTopDown [
 	"Parent before child: GsClassHistory re-versions each subclass onto its parent's restored
 	 version, so replaying a child first would re-parent it onto a version about to be superseded."
 	| names |
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
 	names := GsRefactoringUndo currentEntry revertPlan collect: [:e | e at: 1].
 	self assert: (names indexOf: 'GsUndoAccount') < (names indexOf: 'GsUndoSavings')
@@ -1074,7 +1074,7 @@ GsRefactoringUndoTest >> testCommittingWithNoCaptureRecordsNothing [
 
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testADiscardedCaptureLeavesNoEntry [
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	GsRefactoringUndo discardPendingCapture.
 	self
 		assert: (GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #())
@@ -1090,7 +1090,7 @@ GsRefactoringUndoTest >> testCapturingAnUnknownClassRecordsNothing [
 
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testAHistoryRevertIsAllOrNothing [
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
 	self assert: GsRefactoringUndo currentEntry deselection equals: #ignored.
 	self assert: self undoPreviewJson includesSubstring: '"deselection":"ignored"'
@@ -1101,7 +1101,7 @@ GsRefactoringUndoTest >> testHistoryRevertRestoresAReshapedClass [
 	"The real thing: reshape a class, then put it back to its pre-refactoring state."
 	| before |
 	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo
@@ -1124,7 +1124,7 @@ GsRefactoringUndoTest >> testHistoryRevertNamesTheMethodsItWillDiscard [
 	"Eric 2026-08-19: the reversal returns the class to its PRE-REFACTORING state, and the user
 	 must be told that -- so anything written since is named, not discovered afterwards."
 	| json |
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
@@ -1138,7 +1138,7 @@ GsRefactoringUndoTest >> testHistoryRevertNamesTheMethodsItWillDiscard [
 
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testNothingWrittenSinceMeansNothingDiscarded [
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
@@ -1148,7 +1148,7 @@ GsRefactoringUndoTest >> testNothingWrittenSinceMeansNothingDiscarded [
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testThePreviewShowsADefinitionDiffPerRevertedClass [
 	| json |
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
@@ -1167,7 +1167,7 @@ GsRefactoringUndoTest >> testAClassTheRefactoringCREATEDIsUnbound [
 		instVarNames: #()
 		classVars: #() classInstVars: #() poolDictionaries: #()
 		inDictionary: UserGlobals.
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	GsRefactoringUndo
 		commitHistoryRevert: 'Extract superclass GsUndoCreated'
 		engine: 'GsExtractSuperclassRefactoring'
@@ -1189,7 +1189,7 @@ GsRefactoringUndoTest >> testAHistoryRevertRefusesWhenEveryClassIsGone [
 
 { #category : 'tests - history revert' }
 GsRefactoringUndoTest >> testACleanHistoryRevertConsumesTheEntry [
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
@@ -1201,7 +1201,7 @@ GsRefactoringUndoTest >> testACleanHistoryRevertConsumesTheEntry [
 GsRefactoringUndoTest >> testAHistoryRevertCommitsNothing [
 	| before |
 	before := System needsCommit.
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
@@ -1228,9 +1228,9 @@ GsRefactoringUndoTest >> shadowDecoyFor: aClassName [
 GsRefactoringUndoTest >> testUndoRenameMethodRestoresTheActedOnClassNotAGlobalFirstMatch [
 	"Undo records the inverse of a refactoring as changes keyed by class NAME, and replays them
 	 through `env classNamed:` -- first-match across the symbol list, exactly like the forward
-	 apply. So the safety net has the same hole as the thing it is meant to catch: introduce a
-	 decoy binding the fixture's name ahead of UserGlobals between apply and undo, and the undo
-	 restores the decoy instead, leaving the real class renamed with no way back. See #396."
+	 apply. So the safety net has the same hole as the thing it is meant to catch: a decoy
+	 introduced between apply and undo used to send the undo at that class instead, leaving the real
+	 class renamed with no way back (#396)."
 	| decoy before undoJson |
 	before := self snapshotOf: self fixture.
 	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
@@ -1466,11 +1466,11 @@ GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalF
 	 reshaped class back to its pre-apply classHistory version. Both halves resolve by NAME:
 	 `captureClassHistoryOf:` through `env classNamed:`, and the replay through
 	 `GsClassHistory revertClassNamed:toIndex:`. Reshape the fixture, then introduce a decoy binding
-	 its name ahead of UserGlobals before undoing: the revert is aimed at the decoy, so the real
-	 class keeps the variable the undo was supposed to take back out. See #396."
+	 its name ahead of UserGlobals before undoing: the revert used to be aimed at the decoy, leaving
+	 the real class with the variable the undo was supposed to take back out (#396)."
 	| decoy before |
 	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
-	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	GsRefactoringUndo

@@ -303,9 +303,14 @@ GsInstVarRefactoring >> isEditedClassNamed: aName [
 
 { #category : 'private' }
 GsInstVarRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity through the environment: taking the first dictionary that binds
+	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
+	 then writes the change there (#396). nil when no dictionary binds the class under its own
+	 name, which the apply falls back on as before."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'preconditions' }
@@ -627,7 +632,7 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 	 computed own-instVar list and its preserved-or-edited options -- copy its methods forward, and
 	 record the old->new mapping so its own descendants re-parent onto it. No commit here."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
@@ -719,12 +724,14 @@ GsInstVarRefactoring >> compileAccessors: accessorPairs onFailures: failures [
 
 { #category : 'applying' }
 GsInstVarRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
+	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name."
+	^(environment dictionaryDefiningClass: aClass)
+		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'serializing' }

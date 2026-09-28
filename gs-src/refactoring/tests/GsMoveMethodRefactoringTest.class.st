@@ -30,11 +30,10 @@ This suite pins down:
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
 
-The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
-reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
-a staged change records its class by NAME and the apply re-resolves it through
-`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
-`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
 satisfy it.
 
 The SOURCE end is what the shadow test covers. Choosing the destination by name up front is a
@@ -410,8 +409,8 @@ GsMoveMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError 
 GsMoveMethodRefactoringTest >> testMoveRemovesFromTheRealSourceNotAGlobalFirstMatch [
 	"The SOURCE side of a move is the half that is re-resolved at apply time by NAME through
 	 `environment classNamed:` (the destination is chosen by name up front, which is a separate
-	 concern). A decoy binding GsMMSource ahead of UserGlobals means the removal is attempted
-	 against the decoy, so the real source keeps the method it was supposed to give away. See #396."
+	 concern). A decoy binding GsMMSource ahead of UserGlobals used to aim the removal at the decoy, so the
+	 real source kept the method it was supposed to give away (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
