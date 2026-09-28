@@ -318,4 +318,22 @@ describe('reverseClassVarEdit', () => {
     expect(await reverseClassVarEdit(session, entry())).toBe(false);
     expect(applyClassVarOp).not.toHaveBeenCalled();
   });
+
+  // findClass resolves a bare class name against the whole symbol list and lands on the FIRST
+  // match, so undoing on a shadowed class name selected another dictionary's class of that name
+  // and left the Explorer looking at the wrong thing (#396). The slot always carries a
+  // dictionary -- that is why a class slot requires one -- so the reveal uses it.
+  it('reveals the class in its own dictionary, not the first of that name', async () => {
+    await reverseClassVarEdit(
+      session,
+      entry({ slot: { dict: 'DictionaryB', className: 'Shadowed', varName: 'Registry' } }),
+    );
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Shadowed',
+      undefined,
+      'DictionaryB',
+    );
+  });
 });

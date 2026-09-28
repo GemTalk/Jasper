@@ -18,6 +18,7 @@
  * did the thing, and a modal that names the cost is the honest amount of ceremony.
  */
 import * as vscode from 'vscode';
+import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -100,7 +101,14 @@ export async function reverseClassEdit(
   const landOn = succeeded.find((op) => op.kind === 'rebind');
   if (landOn) {
     try {
-      await vscode.commands.executeCommand('gemstone.explorer.findClass', landOn.slot.className);
+      // Scoped to the slot's own dictionary -- a class slot always carries one, precisely
+      // because the same name can be bound in two (#396).
+      await vscode.commands.executeCommand(
+        'gemstone.explorer.findClass',
+        landOn.slot.className,
+        undefined,
+        dictionaryNameFor(session, landOn.slot.dict),
+      );
     } catch {
       /* the Explorer may not be active */
     }
