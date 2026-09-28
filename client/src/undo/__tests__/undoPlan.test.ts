@@ -184,4 +184,75 @@ describe('planUndo', () => {
       planUndo({ ...base, kind: 'refactoring', label: 'Rename class', sequence: 3 }),
     ).toBeUndefined();
   });
+
+  // A slot records its dictionary as a SymbolList INDEX as often as a name, and an index means
+  // nothing to a reader -- least of all when the whole point is telling two same-named classes
+  // apart. The plan stays pure, so the caller passes the lookup in (#396).
+  describe('naming the dictionary on each row', () => {
+    const lookup = (d: number | string | undefined): string | undefined =>
+      d === 7 ? 'DictionaryA' : typeof d === 'string' ? d : undefined;
+
+    it('qualifies a method row with its class’s dictionary', () => {
+      const plan = planUndo(
+        {
+          ...base,
+          kind: 'methodEdit',
+          label: 'Save Shadowed>>#bbc',
+          slots: [
+            { dict: 7, className: 'Shadowed', isMeta: false, selector: 'bbc', environmentId: 0 },
+          ],
+          before: [present('bbc\n\t^1')],
+          after: [present('bbc\n\t^2')],
+        },
+        lookup,
+      )!;
+
+      expect(plan.rows[0].target).toBe('Shadowed (DictionaryA) >> #bbc');
+    });
+
+    it('qualifies the class-variable rows and the declaration', () => {
+      const plan = planUndo(
+        {
+          ...base,
+          kind: 'classVarEdit',
+          label: 'Add class variable Registry to Shadowed',
+          slot: { dict: 7, className: 'Shadowed', varName: 'Registry' },
+          before: { defined: false },
+          after: { defined: true },
+          accessorSlots: [
+            {
+              dict: 7,
+              className: 'Shadowed',
+              isMeta: true,
+              selector: 'registry',
+              environmentId: 0,
+            },
+          ],
+          accessorBefore: [absent],
+          accessorAfter: [present('registry\n\t^Registry')],
+        },
+        lookup,
+      )!;
+
+      expect(plan.rows[0].target).toBe('Shadowed (DictionaryA) class >> #registry');
+      expect(plan.rows[1].target).toBe('Shadowed (DictionaryA)  Registry');
+    });
+
+    it('leaves a row unqualified when the dictionary cannot be resolved', () => {
+      // Less specific beats wrong -- the same rule the labels follow.
+      const plan = planUndo(
+        {
+          ...base,
+          kind: 'classComment',
+          label: 'Comment Shadowed',
+          slot: { dict: 99, className: 'Shadowed' },
+          before: 'a',
+          after: 'b',
+        },
+        lookup,
+      )!;
+
+      expect(plan.rows[0].target).toBe('Shadowed');
+    });
+  });
 });

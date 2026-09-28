@@ -91,6 +91,26 @@ describe('renderUndoPlanHtml', () => {
     expect(out).toContain('&lt;img src=x&gt;');
   });
 
+  // The script must wire ITSELF in the webview: exporting `wire` is enough for a test that calls
+  // it, and nothing else ever would -- so the panel rendered with dead buttons.
+  it('wires itself when the webview api is present, without anyone calling wire', () => {
+    const posted: unknown[] = [];
+    document.documentElement.innerHTML = html();
+    (globalThis as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi = () => ({
+      postMessage: (m: unknown) => posted.push(m),
+    });
+    try {
+      const source = fs.readFileSync(path.resolve(__dirname, '../undoPlanPanelView.js'), 'utf8');
+      new Function(source)();
+
+      (document.getElementById('apply') as HTMLButtonElement).click();
+
+      expect(posted).toEqual([{ command: 'apply' }]);
+    } finally {
+      delete (globalThis as unknown as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
+    }
+  });
+
   it('asks the host to apply, and to cancel', () => {
     const { posted } = mount();
 

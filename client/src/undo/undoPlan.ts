@@ -53,12 +53,27 @@ export interface UndoPlan {
   rows: UndoPlanRow[];
 }
 
-/** `Foo >> #bar`, or `Foo class >> #bar` for the meta side. */
-function methodTarget(slot: MethodSlot): string {
-  return `${slot.className}${slot.isMeta ? ' class' : ''} >> #${slot.selector}`;
+/**
+ * How a dictionary reference is turned into a name for a row, supplied by the caller.
+ *
+ * The plan stays PURE -- it runs no queries -- but a slot records its dictionary as a SymbolList
+ * index as often as a name, and an index means nothing to a reader. The dispatcher, which has the
+ * session, passes the lookup in. Undefined answers leave the row unqualified rather than wrong.
+ */
+export type DictNameLookup = (dict: number | string | undefined) => string | undefined;
+
+/** `Foo (Dict) >> #bar`, or `Foo (Dict) class >> #bar` for the meta side. */
+function methodTarget(slot: MethodSlot, dictNameFor?: DictNameLookup): string {
+  const cls = qualify(slot.className, dictNameFor?.(slot.dict));
+  return `${cls}${slot.isMeta ? ' class' : ''} >> #${slot.selector}`;
 }
 
-function planMethodEdit(e: MethodEditUndoEntry): UndoPlan {
+/** `Shadowed (DictionaryA)`, or plain `Shadowed` when the dictionary is unknown. */
+function qualify(className: string, dictName: string | undefined): string {
+  return dictName ? `${className} (${dictName})` : className;
+}
+
+function planMethodEdit(e: MethodEditUndoEntry, d?: DictNameLookup): UndoPlan {
   return {
     verb: undoVerb(e),
     label: e.label,
@@ -67,7 +82,7 @@ function planMethodEdit(e: MethodEditUndoEntry): UndoPlan {
       return {
         id: `m${i}`,
         action: had ? 'restore' : 'remove',
-        target: methodTarget(slot),
+        target: methodTarget(slot, d),
         detail: had
           ? `back to its source as of before the change${
               e.before[i]?.category ? `, in ${e.before[i]?.category}` : ''
@@ -78,7 +93,7 @@ function planMethodEdit(e: MethodEditUndoEntry): UndoPlan {
   };
 }
 
-function planClassEdit(e: ClassEditUndoEntry): UndoPlan {
+function planClassEdit(e: ClassEditUndoEntry, d?: DictNameLookup): UndoPlan {
   // A class edit is a REVERT and is named as such: GemStone re-versions a class rather than
   // rolling it back, so binding the earlier version leaves anything written since behind.
   const leavesBehind = e.slots.some((_, i) => e.before[i]?.bound === true && e.after[i]?.bound);
@@ -94,14 +109,14 @@ function planClassEdit(e: ClassEditUndoEntry): UndoPlan {
       return {
         id: `c${i}`,
         action: had ? 'rebind earlier version' : 'remove',
-        target: slot.className,
+        target: qualify(slot.className, d?.(slot.dict)),
         detail: had ? undefined : 'it was not bound before the change',
       };
     }),
   };
 }
 
-function planClassComment(e: ClassCommentUndoEntry): UndoPlan {
+function planClassComment(e: ClassCommentUndoEntry, d?: DictNameLookup): UndoPlan {
   return {
     verb: undoVerb(e),
     label: e.label,
@@ -109,14 +124,14 @@ function planClassComment(e: ClassCommentUndoEntry): UndoPlan {
       {
         id: 'comment',
         action: 'restore comment',
-        target: e.slot.className,
+        target: qualify(e.slot.className, d?.(e.slot.dict)),
         detail: e.before.length === 0 ? 'back to empty' : 'back to its earlier text',
       },
     ],
   };
 }
 
-function planClassVarEdit(e: ClassVarEditUndoEntry): UndoPlan {
+function planClassVarEdit(e: ClassVarEditUndoEntry, d?: DictNameLookup): UndoPlan {
   // Accessors first, then the declaration -- the order the reversal itself uses, so the class
   // never holds a method reading a class variable it no longer declares.
   const rows: UndoPlanRow[] = e.accessorSlots.map((slot, i) => {
@@ -124,7 +139,7 @@ function planClassVarEdit(e: ClassVarEditUndoEntry): UndoPlan {
     return {
       id: `a${i}`,
       action: had ? 'restore' : 'remove',
-      target: methodTarget(slot),
+      target: methodTarget(slot, d),
       detail: had ? 'it existed before the change and is put back' : undefined,
     };
   });
@@ -132,13 +147,14 @@ function planClassVarEdit(e: ClassVarEditUndoEntry): UndoPlan {
   rows.push({
     id: 'var',
     action: declared ? 'restore class variable' : 'remove class variable',
-    target: `${e.slot.className}  ${e.slot.varName}`,
+    target: `${qualify(e.slot.className, d?.(e.slot.dict))}  ${e.slot.varName}`,
   });
   return { verb: undoVerb(e), label: e.label, rows };
 }
 
-function planMethodCategory(e: MethodCategoryUndoEntry): UndoPlan {
-  const side = e.slot.isMeta ? `${e.slot.className} class` : e.slot.className;
+function planMethodCategory(e: MethodCategoryUndoEntry, d?: DictNameLookup): UndoPlan {
+  const cls = qualify(e.slot.className, d?.(e.slot.dict));
+  const side = e.slot.isMeta ? `${cls} class` : cls;
   return {
     verb: undoVerb(e),
     label: e.label,
@@ -152,14 +168,14 @@ function planMethodCategory(e: MethodCategoryUndoEntry): UndoPlan {
   };
 }
 
-function planClassCategory(e: ClassCategoryUndoEntry): UndoPlan {
+function planClassCategory(e: ClassCategoryUndoEntry, d?: DictNameLookup): UndoPlan {
   return {
     verb: undoVerb(e),
     label: e.label,
     rows: e.changes.map((c, i) => ({
       id: `cc${i}`,
       action: c.before === null ? 'clear category' : `set category back to ${c.before}`,
-      target: c.className,
+      target: qualify(c.className, d?.(e.dict)),
     })),
   };
 }
@@ -197,20 +213,20 @@ function planDictionary(e: DictionaryUndoEntry): UndoPlan {
  * across a hierarchy, and is paged from the server rather than derived from anything the client
  * holds. It already opens a panel, so it already matches; this covers every other kind.
  */
-export function planUndo(entry: UndoEntry): UndoPlan | undefined {
+export function planUndo(entry: UndoEntry, dictNameFor?: DictNameLookup): UndoPlan | undefined {
   switch (entry.kind) {
     case 'methodEdit':
-      return planMethodEdit(entry);
+      return planMethodEdit(entry, dictNameFor);
     case 'classEdit':
-      return planClassEdit(entry);
+      return planClassEdit(entry, dictNameFor);
     case 'classComment':
-      return planClassComment(entry);
+      return planClassComment(entry, dictNameFor);
     case 'classVarEdit':
-      return planClassVarEdit(entry);
+      return planClassVarEdit(entry, dictNameFor);
     case 'methodCategoryEdit':
-      return planMethodCategory(entry);
+      return planMethodCategory(entry, dictNameFor);
     case 'classCategoryEdit':
-      return planClassCategory(entry);
+      return planClassCategory(entry, dictNameFor);
     case 'dictionaryEdit':
       return planDictionary(entry);
     case 'refactoring':

@@ -9,5 +9,13 @@
       vscode.postMessage({ command: 'cancel' });
     });
   }
-  globalThis.UndoPlanPanel = { wire: wire };
+
+  const root = typeof globalThis !== 'undefined' ? globalThis : window;
+  root.UndoPlanPanel = { wire: wire };
+
+  // Self-wire in the real webview. Without this the page renders and the buttons do nothing:
+  // exporting `wire` is enough for a test that calls it, and nothing else ever would.
+  if (typeof acquireVsCodeApi === 'function') {
+    wire(document, acquireVsCodeApi());
+  }
 })();

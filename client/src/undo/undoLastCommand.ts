@@ -34,11 +34,12 @@
  *    client-side plan can describe.
  */
 import * as vscode from 'vscode';
-import { SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../sessionManager';
 import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
 import { refreshUndoUi } from './undoUi';
 import { planUndo } from './undoPlan';
+import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
 import { showUndoPlanPanel } from './undoPlanPanel';
 import { UndoEntry } from './undoTypes';
 import { reverseMethodEdit } from './reverseMethodEdit';
@@ -86,7 +87,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     // exemption: it opens a preview listing every reversal with its diff and its own
     // checkbox, which is a fuller form of this same question, and asking twice would read
     // as Jasper not trusting its own preview.
-    if (entry.kind !== 'refactoring' && !(await confirmUndo(entry))) {
+    if (entry.kind !== 'refactoring' && !(await confirmUndo(entry, session))) {
       logInfo(`[undo] #${entry.id} declined at the confirmation`);
       return;
     }
@@ -169,8 +170,11 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
  * consequence modals that some reversals raise afterwards are a different question — what
  * it costs, rather than which change it is — and are left where they are.
  */
-async function confirmUndo(entry: UndoEntry): Promise<boolean> {
-  const plan = planUndo(entry);
+async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<boolean> {
+  // The rows name each class with its dictionary. The plan stays pure, so the lookup is passed
+  // in: a slot records a SymbolList index as often as a name, and an index means nothing to a
+  // reader -- least of all when the point is telling two same-named classes apart (#396).
+  const plan = planUndo(entry, (d) => dictionaryNameFor(session, d));
   if (plan === undefined) return true;
   return showUndoPlanPanel({
     ...plan,
