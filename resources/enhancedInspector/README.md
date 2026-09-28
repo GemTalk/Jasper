@@ -48,4 +48,4 @@ correct that table (and `THIRD-PARTY.md`/`NOTICE`), then re-run the script, rath
 header by hand.
 
 See [`gs-src/enhancedInspector/README.md`](../../gs-src/enhancedInspector/README.md) for the
-regeneration workflow and its macOS warning.
+regeneration workflow.
