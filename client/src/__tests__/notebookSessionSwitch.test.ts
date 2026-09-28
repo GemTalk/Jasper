@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // End to end, short of a stone: a real SessionManager logs sessions in through a
 // fake GCI library, Switch Session picks one through the real session picker,
 // and a notebook cell runs through the real kernel — which must hand the cell to
-// the session the user picked, not to the one that happened to be active before.
+// the session the user picked (or the one the notebook is pinned to), not to
+// the one that happened to be active before.
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({ logInfo: vi.fn(), logError: vi.fn() }));
@@ -24,6 +25,9 @@ vi.mock('../gciLibrary', () => ({
     executeAndFetchString(_session: unknown, code: string) {
       return code.includes('System transactionMode asString,') ? 'autoBegin true' : 'installed';
     }
+    GciTsFetchUtf8() {
+      return { data: '7', err: { number: 0, message: '' } };
+    }
     GciTsCallInProgress() {
       return { result: 0, err: { number: 0, message: '' } };
     }
@@ -42,6 +46,16 @@ vi.mock('../gciLibrary', () => ({
     }
     close() {}
   },
+}));
+
+// The seam short of a stone: no fake GCI can answer the non-blocking execute
+// and its polling, so record the session a cell was sent to and hand back a result.
+const { sentTo } = vi.hoisted(() => ({ sentTo: [] as unknown[] }));
+vi.mock('../nbRunner', () => ({
+  runNbCall: vi.fn(async (session: unknown) => {
+    sentTo.push(session);
+    return 1n;
+  }),
 }));
 
 import { window, notebooks, __setConfig, __resetConfig } from '../__mocks__/vscode';
@@ -182,24 +196,11 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
     const first = login('DataCurator');
     new SessionKernels(manager, [smalltalkSessionKernel]);
     const second = login('SystemUser');
-    const evaluate = vi.fn((session: ActiveSession) => {
-      ranIn.push(session);
-      return '7';
-    });
-    // A pinned kernel as SessionKernels builds it, with evaluation recorded.
-    new GemStoneNotebookKernel(manager, {
-      id: 'pinned',
-      label: 'GemStone Smalltalk',
-      description: '',
-      supportedLanguages: ['gemstone-smalltalk'],
-      evaluate,
-      sessionId: first.id,
-    });
-    expect(controller(sessionKernelId(SMALLTALK_CONTROLLER_ID, second.id))).toBeDefined();
+    sentTo.length = 0;
 
     await switchSessionTo(second);
-    await runCell(controller('pinned'));
+    await runCell(controller(sessionKernelId(SMALLTALK_CONTROLLER_ID, first.id)));
 
-    expect(ranIn.at(-1)).toBe(first);
+    expect(sentTo).toEqual([first]);
   });
 });

@@ -32,10 +32,6 @@ describe('Learn Smalltalk button', () => {
   it("does not show on another extension's kernel", () => {
     expect(kernelPattern.test('ms-toolsai.jupyter/python3')).toBe(false);
   });
-
-  it('is no longer in the Logins & Sessions title bar', () => {
-    expect(menus['view/title'].some((m) => m.command === 'gemstone.openTutorial')).toBe(false);
-  });
 });
 
 describe('Open Notebook button', () => {

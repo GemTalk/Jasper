@@ -23,7 +23,7 @@ import { GemStoneNotebookKernel } from '../gemstoneNotebookKernel';
 
 const LOGIN = { gs_user: 'DataCurator', stone: 'gs64stone', gem_host: 'localhost' };
 
-// A session manager with sessions 1..n logged in, session 1 active.
+// A session manager with the given sessions logged in, session 1 active.
 function makeSessionManager(ids: number[]) {
   const added = new EventEmitter<number>();
   const removed = new EventEmitter<number>();

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
+import { multipleSessionMode } from './activeSessionDisplay';
 
 // One notebook kernel per logged-in session, so the kernel picker lists every
 // session: a kernel is added at login and removed at logout. They sit beside
@@ -18,10 +19,6 @@ export function sessionKernelId(baseId: string, sessionId: number): string {
 }
 
 type KernelFactory = (sessionManager: SessionManager, sessionId: number) => vscode.Disposable;
-
-function multipleSessionMode(): boolean {
-  return vscode.workspace.getConfiguration('gemstone').get<string>('sessionMode') === 'multiple';
-}
 
 export class SessionKernels implements vscode.Disposable {
   private readonly kernels = new Map<number, vscode.Disposable[]>();

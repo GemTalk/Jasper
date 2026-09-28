@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import { EventEmitter } from '../__mocks__/vscode';
+import { EventEmitter, workspace, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import {
   chooseActiveSession,
   WorkspaceSessionLensProvider,
@@ -51,6 +51,41 @@ function lens(provider: WorkspaceSessionLensProvider) {
 }
 
 describe('WorkspaceSessionLensProvider', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetConfig();
+    __setConfig('gemstone', 'sessionMode', 'multiple');
+  });
+
+  function changeSessionMode(mode: 'single' | 'multiple') {
+    __setConfig('gemstone', 'sessionMode', mode);
+    for (const [listener] of vi.mocked(workspace.onDidChangeConfiguration).mock.calls) {
+      (listener as (e: unknown) => void)({
+        affectsConfiguration: (key: string) => key === 'gemstone.sessionMode',
+      });
+    }
+  }
+
+  it('shows nothing in single-session mode, where there is only one session to run in', () => {
+    __setConfig('gemstone', 'sessionMode', 'single');
+    const { manager } = makeSessionManager([3], 3);
+    expect(new WorkspaceSessionLensProvider(manager).provideCodeLenses()).toEqual([]);
+  });
+
+  it('redraws when the mode setting changes, appearing and disappearing with it', () => {
+    __setConfig('gemstone', 'sessionMode', 'single');
+    const { manager } = makeSessionManager([3], 3);
+    const provider = new WorkspaceSessionLensProvider(manager);
+    const redraw = vi.fn();
+    provider.onDidChangeCodeLenses(redraw);
+
+    changeSessionMode('multiple');
+    expect(lens(provider).title).toContain('Session 3');
+    changeSessionMode('single');
+    expect(provider.provideCodeLenses()).toEqual([]);
+    expect(redraw).toHaveBeenCalledTimes(2);
+  });
+
   it('names the active session and switches it on click', () => {
     const { manager } = makeSessionManager([3], 3);
     const command = lens(new WorkspaceSessionLensProvider(manager));

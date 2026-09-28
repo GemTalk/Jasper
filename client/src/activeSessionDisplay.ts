@@ -6,6 +6,10 @@ import { SMALLTALK_LANGUAGE } from './languageIds';
 // Workspaces and notebooks run in the ACTIVE session, which can change under
 // them in multiple-session mode — so each names it, and redraws when it moves.
 
+export function multipleSessionMode(): boolean {
+  return vscode.workspace.getConfiguration('gemstone').get<string>('sessionMode') === 'multiple';
+}
+
 export function describeSession(session: ActiveSession): string {
   return `Session ${session.id} · ${loginLabel(session.login)}`;
 }
@@ -50,17 +54,27 @@ export const WORKSPACE_SESSION_SELECTORS: vscode.DocumentFilter[] = [
   { scheme: 'file', language: SMALLTALK_LANGUAGE },
 ];
 
-/** A line above the first line of a workspace naming the session it runs in. */
+/**
+ * A line above the first line of a workspace naming the session it runs in —
+ * in multiple-session mode only, like Switch Session; with one session there
+ * is nothing to tell apart.
+ */
 export class WorkspaceSessionLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.changed.event;
   private readonly subscription: vscode.Disposable;
 
   constructor(private readonly sessionManager: SessionManager) {
-    this.subscription = onDidChangeActiveSession(sessionManager, () => this.changed.fire());
+    this.subscription = vscode.Disposable.from(
+      onDidChangeActiveSession(sessionManager, () => this.changed.fire()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('gemstone.sessionMode')) this.changed.fire();
+      }),
+    );
   }
 
   provideCodeLenses(): vscode.CodeLens[] {
+    if (!multipleSessionMode()) return [];
     const top = new vscode.Range(0, 0, 0, 0);
     const session = this.sessionManager.getSelectedSession();
     if (session) {
