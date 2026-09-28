@@ -52,7 +52,7 @@ cls compileMethod: ${gsStringLiteral(existingSource)}
 fi := ${ENHANCED_INSPECTOR_FILE_IN_CLASS} new.
 fi currentCategory: '*ston-probe'.
 fi compileChunk: ${gsStringLiteral(payloadSource)} into: cls.
-answer := cls new probe printString.
+answer := cls new probe asString.
 recorded := (SessionTemps current at: ${KEPT_DIFFERENT} ifAbsent: [#()])
 	includes: 'JasperEnhancedInspectorRuleProbe>>probe'.
 SessionTemps current removeKey: ${KEPT_DIFFERENT} ifAbsent: [nil].
@@ -93,7 +93,7 @@ answer, ' ', recorded printString`).trim();
     requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
     expect(compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#payload')).toEqual({
-      answer: '#stone',
+      answer: 'stone',
       recorded: true,
     });
   });
@@ -102,7 +102,7 @@ answer, ' ', recorded printString`).trim();
     requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
     expect(compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#stone')).toEqual({
-      answer: '#stone',
+      answer: 'stone',
       recorded: false,
     });
   });
@@ -114,6 +114,6 @@ answer, ' ', recorded printString`).trim();
 
     expect(
       compileOverExisting('*GToolkit-Probe', 'probe ^#earlierPayload', 'probe ^#payload'),
-    ).toEqual({ answer: '#payload', recorded: false });
+    ).toEqual({ answer: 'payload', recorded: false });
   });
 });
