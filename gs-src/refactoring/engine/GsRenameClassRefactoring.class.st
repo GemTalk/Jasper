@@ -472,14 +472,26 @@ GsRenameClassRefactoring >> node: aNode declaresName: aSymbol [
 
 { #category : 'preconditions' }
 GsRenameClassRefactoring >> newNameCollision [
-	"nil if the new name is free to use, otherwise a short reason string: the new name
-	 is already bound to some OTHER global anywhere on the symbol list. Building the
-	 change set does not enforce this (the preview surfaces it); the apply would fail."
-	| existing |
-	existing := environment symbolList objectNamed: newName asSymbol.
+	"nil if the new name is free in the dictionary the renamed class will be bound into,
+	 otherwise a short reason string. Building the change set does not enforce this (the preview
+	 surfaces it); the apply would fail.
+
+	 Scoped to that ONE dictionary, not the whole symbol list. A class name bound in another
+	 dictionary is a shadow, which GemStone allows and which this engine handles throughout
+	 (#396) -- refusing on it made a legitimate rename impossible. The case that showed it is
+	 the rename BACK that undoing a rename performs: rename DictionaryB's Shadowed to something
+	 else and the reversal was refused, because DictionaryA still binds Shadowed. There was
+	 nothing the user could do about that, and nothing wrong with the rename.
+
+	 Any binding counts, not just a class: `at:ifAbsent:` catches a non-class global of that name
+	 in the destination, which is what the old `objectNamed:` was reaching for."
+	| dict existing |
+	dict := self dictObjectFor: definingClass.
+	existing := dict isNil ifTrue: [nil] ifFalse: [dict at: newName asSymbol ifAbsent: [nil]].
 	existing isNil ifTrue: [^nil].
 	existing == definingClass ifTrue: [^nil].
-	^'the name ', newName, ' is already in use'
+	^'the name ', newName, ' is already in use in ',
+	  (dict name isNil ifTrue: ['that dictionary'] ifFalse: [dict name asString])
 ]
 
 { #category : 'accessing' }

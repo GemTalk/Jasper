@@ -523,3 +523,53 @@ GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary
 	 self assert: (decoy at: #GsRCRenamed ifAbsent: [nil]) isNil]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenamingIntoADictionaryIsNotBlockedByAShadowElsewhere [
+	"The collision check asks whether the new name is free in the dictionary the class will be
+	 bound INTO, not anywhere on the symbol list. A name bound in another dictionary is a shadow,
+	 which GemStone allows -- refusing on it made a legitimate rename impossible.
+
+	 The case that showed it is the rename BACK that undoing a rename performs: rename
+	 DictionaryB's class away and the reversal was refused because DictionaryA still binds the
+	 old name. There was nothing the user could do about that (#396)."
+	| decoy ref json |
+	decoy := SymbolDictionary new name: #GsRCShadowCollisionDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsRCRenamed'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+
+	 "the target name is taken -- but only in a DIFFERENT dictionary"
+	 ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	 self assert: ref newNameCollision isNil.
+
+	 json := ref applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: (UserGlobals at: #GsRCRenamed ifAbsent: [nil]) isNil.
+	 "and the decoy's own binding of that name is untouched"
+	 self assert: (((decoy at: #GsRCRenamed) instVarNames collect: [:e | e asString])
+		includes: 'decoyOwn')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenamingOntoANameTakenInTheSameDictionaryStillDeclines [
+	"The other side of the same boundary: scoping the check must not make it toothless. A name
+	 already bound in the destination is a real collision -- the apply would fail -- and the
+	 message names the dictionary so the reason is checkable."
+	| ref |
+	Object
+		subclass: 'GsRCTaken'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ref := self renameTo: 'GsRCTaken' scope: #wholeSystem.
+
+	 self assert: ref newNameCollision notNil.
+	 self assert: ref newNameCollision includesSubstring: 'already in use'.
+	 self assert: ref newNameCollision includesSubstring: 'UserGlobals']
+		ensure: [UserGlobals removeKey: #GsRCTaken ifAbsent: []]
+]
