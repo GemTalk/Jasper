@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { COMMIT_GUARD_REASON, useIntegrationTest } from '../../__tests__/useIntegrationTest';
@@ -21,11 +22,6 @@ describe('GCI login (integration)', () => {
   const GS_ERR_LOGIN_DENIAL = 4051;
   const NET_ERR_NO_SUCH_STN = 4065;
   const ERR_IN_LOGIN = 4147;
-
-  // GciTsNbLoginFinished is a synchronous FFI call, so a login that never
-  // finishes would spin this loop past vitest's test timeout, which can't
-  // interrupt synchronous code.
-  const NB_LOGIN_DEADLINE_MS = 30_000;
 
   let gci: GciLibrary;
 
@@ -72,23 +68,22 @@ describe('GCI login (integration)', () => {
     expect(gci.GciTsLogout(session).success).toBe(true);
   }
 
-  function pollNbLoginFinished(session: unknown) {
-    const deadline = Date.now() + NB_LOGIN_DEADLINE_MS;
+  // Same 25ms cadence as sessionManager. The signal is the test's own, so a
+  // login that hangs fails on vitest's timeout and stops polling there too.
+  async function pollNbLoginFinished(session: unknown, signal: AbortSignal) {
     for (;;) {
       // eslint-disable-next-line no-restricted-syntax -- finishes the raw non-blocking logins below; finishNbLogin arms any session that succeeds
       const finished = gci.GciTsNbLoginFinished(session);
       if (finished.result !== 0) {
         return finished;
       }
-      if (Date.now() > deadline) {
-        throw new Error(`GciTsNbLoginFinished still pending after ${NB_LOGIN_DEADLINE_MS}ms`);
-      }
+      await sleep(25, undefined, { signal });
     }
   }
 
   // A non-blocking session is live only once polling reports success.
-  function finishNbLogin(session: unknown) {
-    const finished = pollNbLoginFinished(session);
+  async function finishNbLogin(session: unknown, signal: AbortSignal) {
+    const finished = await pollNbLoginFinished(session, signal);
     if (finished.result === 1) {
       armIfLive({ session });
     }
@@ -122,7 +117,7 @@ describe('GCI login (integration)', () => {
     return armIfLive(result);
   }
 
-  function gciTsNbLogin({ password = gsPassword } = {}) {
+  async function gciTsNbLogin(signal: AbortSignal, { password = gsPassword } = {}) {
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin(
       stoneNrs,
@@ -135,10 +130,10 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return finishNbLogin(session);
+    return finishNbLogin(session, signal);
   }
 
-  function gciTsNbLogin_() {
+  async function gciTsNbLogin_(signal: AbortSignal) {
     // eslint-disable-next-line no-restricted-syntax -- this file's subject; the one GciTsNbLogin_ call site, armed by finishNbLogin
     const { session } = gci.GciTsNbLogin_(
       stoneNrs,
@@ -152,7 +147,7 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return finishNbLogin(session);
+    return finishNbLogin(session, signal);
   }
 
   describe('successful login', () => {
@@ -166,19 +161,19 @@ describe('GCI login (integration)', () => {
       expectLiveSessionThenLogout(gciTsLogin_().session);
     });
 
-    it('GciTsNbLogin finishes with a live session', (ctx) => {
+    it('GciTsNbLogin finishes with a live session', async (ctx) => {
       requireGciCapability('GciTsNbLogin', ctx, gci);
 
-      const { session, result } = gciTsNbLogin();
+      const { session, result } = await gciTsNbLogin(ctx.signal);
 
       expect(result).toBe(1);
       expectLiveSessionThenLogout(session);
     });
 
-    it('GciTsNbLogin_ finishes with a live session', (ctx) => {
+    it('GciTsNbLogin_ finishes with a live session', async (ctx) => {
       requireGciCapability('GciTsNbLogin_', ctx, gci);
 
-      const { session, result } = gciTsNbLogin_();
+      const { session, result } = await gciTsNbLogin_(ctx.signal);
 
       expect(result).toBe(1);
       expectLiveSessionThenLogout(session);
@@ -217,10 +212,12 @@ describe('GCI login (integration)', () => {
       expect(err.number).toBe(ERR_IN_LOGIN);
     });
 
-    it('GciTsNbLogin reports a wrong password when polled', (ctx) => {
+    it('GciTsNbLogin reports a wrong password when polled', async (ctx) => {
       requireGciCapability('GciTsNbLogin', ctx, gci);
 
-      const { session, result, err } = gciTsNbLogin({ password: 'wrongPassword' });
+      const { session, result, err } = await gciTsNbLogin(ctx.signal, {
+        password: 'wrongPassword',
+      });
 
       // No logout afterward, matching production (sessionManager's
       // non-blocking login throws on -1 without logging out).
