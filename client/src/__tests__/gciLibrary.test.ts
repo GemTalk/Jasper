@@ -284,6 +284,27 @@ describe('GciLibrary', () => {
     expect(gciLibrary.executeAndFetchInteger(session, codeToEvaluate)).toBe(expectedResult);
   }
 
+  /**
+   * Asserts that no instance of the class named `className` is left in the
+   * session's PureExportSet.
+   *
+   * Checks for a fixture class's instances rather than for an unchanged
+   * PureExportSet: a failed GCI call leaves its exception object in the
+   * PureExportSet, and nothing currently releases it, so an unchanged
+   * PureExportSet can't be expected after a failure.
+   *
+   * @param className - The name of a class the test defined in UserGlobals.
+   */
+  function expectNoInstanceToRemainInPureExportSet(className: string) {
+    expectOopToBeTrue(
+      gciLibrary.execute(
+        session,
+        `((GsBitmap newForHiddenSet: #PureExportSet) asArray
+            anySatisfy: [:each | each class == ${className}]) not`,
+      ),
+    );
+  }
+
   /** A call to a non-blocking GCI operation, paired with the integer its resulting oop decodes to. */
   interface NonBlockingOperation {
     run: () => Promise<bigint>;
@@ -984,18 +1005,51 @@ describe('GciLibrary', () => {
             `
                     "executeAndFetchString sends #encodeAsUTF8 to the evaluated result, then
                     fetches bytes from whatever comes back, assuming it's a byte object. This
-                    class's encodeAsUTF8 lies about that -- it answers self, not a byte
-                    object -- to exercise what happens when the contract is broken."
+                    class's encodeAsUTF8 lies about that (it answers a new instance of
+                    itself, not a byte object) to exercise what happens when the contract
+                    is broken. A new instance, rather than self, keeps the evaluated result
+                    and the encoded one distinct oops, so a missed release of either shows up."
 
                     | encodeAsUTF8LiarClass |
                     encodeAsUTF8LiarClass := Object subclass: #EncodeAsUTF8Liar instVarNames: {} inDictionary: UserGlobals.
-                    encodeAsUTF8LiarClass compileMethod: 'encodeAsUTF8 ^ self'.
+                    encodeAsUTF8LiarClass compileMethod: 'encodeAsUTF8 ^ self class new'.
                     encodeAsUTF8LiarClass new
                 `,
           ),
         'a ArgumentTypeError occurred (error 2103), The object anEncodeAsUTF8Liar is not implemented as a byte object.',
       );
     }
+
+    it('throws when the evaluated code signals an error', () => {
+      expectToThrowExpectedGciLibraryError((signalExpectedErrorExpression) => {
+        gciLibrary.executeAndFetchString(session, signalExpectedErrorExpression);
+      });
+    });
+
+    function expectToThrowEncodingNotUnderstoodError() {
+      expectToThrowGciLibraryError(
+        () =>
+          gciLibrary.executeAndFetchString(
+            session,
+            `
+                    "Defines a class of its own, rather than using e.g. Object, so a test
+                    can tell its instances apart from anything else in the PureExportSet."
+                    (Object subclass: #EncodeAsUTF8Refuser instVarNames: {} inDictionary: UserGlobals) new
+                `,
+          ),
+        "a MessageNotUnderstood occurred (error 2010), a EncodeAsUTF8Refuser does not understand  #'encodeAsUTF8'",
+      );
+    }
+
+    it('fails when the result cannot be encoded as UTF-8', () => {
+      expectToThrowEncodingNotUnderstoodError();
+    });
+
+    it('releases the evaluated result when it cannot be encoded as UTF-8', () => {
+      expectToThrowEncodingNotUnderstoodError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Refuser');
+    });
 
     it('fails when trying to fetch a string from a non-string oop', () => {
       expectToThrowNonByteStringError();
@@ -1011,6 +1065,12 @@ describe('GciLibrary', () => {
       expectPureExportSetToStayUnchanged(() => {
         gciLibrary.executeAndFetchString(session, `'a'`);
       });
+    });
+
+    it('releases the evaluated and encoded results when the result cannot be fetched as a string', () => {
+      expectToThrowNonByteStringError();
+
+      expectNoInstanceToRemainInPureExportSet('EncodeAsUTF8Liar');
     });
 
     it('returns the result of code that uses a non-local return', () => {
