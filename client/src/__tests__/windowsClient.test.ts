@@ -380,6 +380,24 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
     expect(fs.existsSync(zipPath)).toBe(false);
   });
 
+  it('on a failed unpack, removes both the partial client and the zip', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
+    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+      async () => fs.writeFileSync(zipPath, ''),
+    );
+    fakeTar(2, () => fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true }));
+
+    await expect(
+      manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
+    ).rejects.toThrow('tar failed with exit code 2');
+
+    expect(fs.existsSync(clientDir)).toBe(false);
+    expect(fs.existsSync(zipPath)).toBe(false);
+  });
+
   it('downloads, extracts with tar, and removes the zip on success', async () => {
     const storage = new SysadminStorage();
     const manager = new VersionManager(storage);
