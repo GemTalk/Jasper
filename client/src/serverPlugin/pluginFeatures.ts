@@ -29,6 +29,7 @@ import { uninstallRefactoringSupport } from '../refactoring/refactoringUninstall
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
+  keptDifferentNote,
   supportsEnhancedInspector,
 } from '../enhancedInspector/enhancedInspectorInstall';
 import { uninstallEnhancedInspectorSupport } from '../enhancedInspector/enhancedInspectorUninstall';
@@ -43,8 +44,9 @@ export interface PluginInstallResult {
   success: boolean;
   /** Human-readable summary, suitable for a notification. */
   message: string;
-  /** A completeness report to surface, when the installer produced one (the
-   *  refactoring loader does; the Enhanced Inspector installer does not). */
+  /** A report to surface, when the installer produced one: the refactoring
+   *  loader's completeness report, or the Enhanced Inspector's list of kept
+   *  stone methods whose source differs from the payload's. */
   report?: string;
 }
 
@@ -119,7 +121,8 @@ export const pluginFeatures = {
     probe: isEnhancedInspectorInstalled,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installEnhancedInspectorSupport(session, payloadDir, onProgress);
-      return { success: r.success, message: r.message };
+      const report = keptDifferentNote(r.keptDifferent).trim();
+      return { success: r.success, message: r.message, ...(report ? { report } : {}) };
     },
     uninstall: async (session: ActiveSession, onProgress?: ProgressReporter) => {
       const r = await uninstallEnhancedInspectorSupport(session, onProgress);

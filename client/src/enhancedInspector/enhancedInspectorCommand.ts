@@ -23,8 +23,10 @@ import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailabili
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
+  keptDifferentNote,
   ENHANCED_INSPECTOR_FILES,
 } from './enhancedInspectorInstall';
+import { logWarning } from '../gciLog';
 import {
   obtainSystemUserSession,
   refreshWorkingSessionAfterInstall,
@@ -103,6 +105,9 @@ async function performInstall(
   if (!result.success) {
     vscode.window.showErrorMessage(`Enhanced inspector install failed: ${result.message}`);
     return false;
+  }
+  if (result.keptDifferent.length > 0) {
+    logWarning(`Enhanced inspector install:${keptDifferentNote(result.keptDifferent)}`);
   }
 
   const refreshed = await refreshWorkingSessionAfterInstall(
