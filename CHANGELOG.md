@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Enhanced Inspector installs on a rowan3 extent.** On a stone built from `extent0.rowan3.dbf` the install stopped partway through with `Duplicate definition of convertToBytes:` or `does not map to a known package`, and nothing was committed. Rowan's own copies of RemoteServiceReplication, STON and Announcements share 230 class names with the Enhanced Inspector's copies, and Rowan intercepts every method compile on the way in. The installer now files the payload in with its own dictionary first, and compiles each method the way a base extent does. A method a GemStone class already has is left as the stone's own. Verified on 3.7.5.1 and 3.7.6, base and rowan3: the inspector returns the same views on all four, Rowan's own projects audit clean, and uninstalling leaves the stone as it was. While it is installed on rowan3, Rowan's audit of the kernel lists the inspector's added methods as not belonging to any package. ([#636](https://github.com/GemTalk/Jasper/issues/636))
+
 ## [1.12.0] - 2026-09-24
 
 ### Added

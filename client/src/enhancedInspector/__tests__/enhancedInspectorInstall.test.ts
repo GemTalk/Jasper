@@ -20,6 +20,7 @@ import {
   isEnhancedInspectorInstalled,
   supportsEnhancedInspector,
   ENHANCED_INSPECTOR_FILES,
+  ENHANCED_INSPECTOR_FILE_IN_CLASS,
   ENHANCED_INSPECTOR_MIN_VERSION,
 } from '../enhancedInspectorInstall';
 
@@ -27,11 +28,20 @@ const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
 
 const PAYLOAD_DIR = '/payload/enhancedInspector';
 
+const FILE_IN = `${ENHANCED_INSPECTOR_FILE_IN_CLASS} fromPath`;
+const isFileIn = (code: string): boolean => code.includes(FILE_IN);
+// The three symbol-list snippets, told apart by what only each one does.
+const isPrepareDictionary = (code: string): boolean =>
+  code.includes('GsEnhancedInspector') && code.includes('AllUsers do:');
+const isPrepareFileIn = (code: string): boolean => code.includes('GsFileIn subclass:');
+const isRestoreOrder = (code: string): boolean =>
+  code.includes('insertDictionary: dict at: prof symbolList size + 1') && !isPrepareFileIn(code);
+
 // Default: gem can read everything, every file-in succeeds, verification passes.
 function happyPath(_s: unknown, code: string): string {
   if (code.includes('existsOnServer')) return 'true';
   if (code.includes('gtViewsInCurrentContext')) return 'true';
-  if (code.includes('GsFileIn fromPath')) return 'true';
+  if (isFileIn(code)) return 'ok';
   return 'nil';
 }
 
@@ -47,7 +57,7 @@ function createMockSession() {
 }
 
 function filedInFileFrom(code: string): string | undefined {
-  if (!code.includes('GsFileIn fromPath')) return undefined;
+  if (!isFileIn(code)) return undefined;
   return ENHANCED_INSPECTOR_FILES.find((f) => code.includes(f));
 }
 
@@ -118,9 +128,8 @@ describe('installEnhancedInspectorSupport', () => {
     const { session } = createMockSession();
     const events: string[] = [];
     executeFetchStringMock.mockImplementation((s, code: string) => {
-      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary'))
-        events.push('prepare');
-      if (code.includes('GsFileIn fromPath')) events.push('file-in');
+      if (isPrepareDictionary(code)) events.push('prepare');
+      if (isFileIn(code)) events.push('file-in');
       return happyPath(s, code);
     });
 
@@ -137,10 +146,7 @@ describe('installEnhancedInspectorSupport', () => {
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
     const prepareCode = String(
-      executeFetchStringMock.mock.calls.find(
-        (c) =>
-          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
-      )?.[1],
+      executeFetchStringMock.mock.calls.find((c) => isPrepareDictionary(String(c[1])))?.[1],
     );
     // Assert the SHAPE of the migration, not its exact wording: it looks at Published, it is
     // GATED on a legacy marker actually being bound there (so a stone that never carried the old
@@ -159,10 +165,7 @@ describe('installEnhancedInspectorSupport', () => {
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
     const prepareCode = String(
-      executeFetchStringMock.mock.calls.find(
-        (c) =>
-          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
-      )?.[1],
+      executeFetchStringMock.mock.calls.find((c) => isPrepareDictionary(String(c[1])))?.[1],
     );
     const gateAt = prepareCode.indexOf('includesKey: #GtRemotePhlowViewedObject');
     const sweepAt = prepareCode.indexOf('removeKey:');
@@ -173,7 +176,7 @@ describe('installEnhancedInspectorSupport', () => {
   it('aborts without committing when the dictionary cannot be prepared', async () => {
     const { session, commit, abort } = createMockSession();
     executeFetchStringMock.mockImplementation((s, code: string) => {
-      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary')) {
+      if (isPrepareDictionary(code)) {
         throw new Error('insertDictionary failed');
       }
       return happyPath(s, code);
@@ -183,6 +186,92 @@ describe('installEnhancedInspectorSupport', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('GsEnhancedInspector');
+    expect(commit).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  // A rowan3 extent binds 230 of the payload's class names in Globals, so the
+  // dictionary must lead the symbol list while the payload's bareword directives
+  // resolve, and must be back at the end before anything is committed.
+  it('files in through the file-in class with the dictionary first, then restores the order before committing', async () => {
+    const { session, commit } = createMockSession();
+    const events: string[] = [];
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (isPrepareDictionary(code)) events.push('prepare-dictionary');
+      else if (isPrepareFileIn(code)) events.push('prepare-file-in');
+      else if (isRestoreOrder(code)) events.push('restore-order');
+      else if (isFileIn(code)) events.push('file-in');
+      return happyPath(s, code);
+    });
+    commit.mockImplementation(() => {
+      events.push('commit');
+      return { success: true, err: { number: 0 } };
+    });
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(events).toEqual([
+      'prepare-dictionary',
+      'prepare-file-in',
+      ...ENHANCED_INSPECTOR_FILES.map(() => 'file-in'),
+      'restore-order',
+      'commit',
+    ]);
+    const prepare = String(
+      executeFetchStringMock.mock.calls.find((c) => isPrepareFileIn(String(c[1])))?.[1],
+    );
+    expect(prepare).toContain(`subclass: '${ENHANCED_INSPECTOR_FILE_IN_CLASS}'`);
+    expect(prepare).toContain('insertDictionary: dict at: 1');
+  });
+
+  // The two halves of the rowan3 fix, asserted by shape: the compile skips
+  // Rowan's packaging hook (the unpackaged `intoMethodDict: nil` compile), and a
+  // method is left alone only when a class the payload did NOT create already has it.
+  it('compiles each method unpackaged, keeping only a pre-existing class its own copy', async () => {
+    const { session } = createMockSession();
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    const prepare = String(
+      executeFetchStringMock.mock.calls.find((c) => isPrepareFileIn(String(c[1])))?.[1],
+    );
+    expect(prepare).toContain('intoMethodDict: nil intoCategories: nil');
+    expect(prepare).not.toContain('compileMethod: aString category:');
+    const ownerCheck = prepare.indexOf('== owner ifFalse:');
+    const keepExisting = prepare.indexOf('includesSelector: meth selector) ifTrue: [ ^nil ]');
+    expect(ownerCheck).toBeGreaterThan(-1);
+    expect(keepExisting).toBeGreaterThan(ownerCheck);
+  });
+
+  it('aborts without committing when the file-in class cannot be prepared', async () => {
+    const { session, commit, abort } = createMockSession();
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (isPrepareFileIn(code)) throw new Error('could not compile');
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.filedIn).toEqual([]);
+    expect(result.message).toContain('could not compile');
+    expect(executeFetchStringMock.mock.calls.some((c) => isFileIn(String(c[1])))).toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts without committing when the symbol list order cannot be restored', async () => {
+    const { session, commit, abort } = createMockSession();
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (isRestoreOrder(code)) throw new Error('removeDictionaryAt failed');
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.committed).toBe(false);
+    expect(result.message).toContain('removeDictionaryAt failed');
     expect(commit).not.toHaveBeenCalled();
     expect(abort).toHaveBeenCalledTimes(1);
   });
@@ -197,9 +286,7 @@ describe('installEnhancedInspectorSupport', () => {
     );
 
     const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) =>
-        String(c[1]).includes('GsFileIn fromPath'),
-      )?.[1],
+      executeFetchStringMock.mock.calls.find((c) => isFileIn(String(c[1])))?.[1],
     );
     expect(fileInCode).toContain('/mnt/d/a/Jasper/Jasper/resources/enhancedInspector');
     expect(fileInCode).not.toContain('D:\\');
@@ -219,14 +306,12 @@ describe('installEnhancedInspectorSupport', () => {
     expect(order).toEqual([...ENHANCED_INSPECTOR_FILES]);
   });
 
-  it('files each file in with a single server-side GsFileIn call', async () => {
+  it('files each file in with a single server-side file-in call', async () => {
     const { session } = createMockSession();
 
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
-    const fileInCalls = executeFetchStringMock.mock.calls.filter((c) =>
-      String(c[1]).includes('GsFileIn fromPath'),
-    );
+    const fileInCalls = executeFetchStringMock.mock.calls.filter((c) => isFileIn(String(c[1])));
     expect(fileInCalls).toHaveLength(ENHANCED_INSPECTOR_FILES.length);
   });
 
@@ -239,9 +324,7 @@ describe('installEnhancedInspectorSupport', () => {
 
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
-    const fileInCalls = executeFetchStringMock.mock.calls
-      .map((c) => String(c[1]))
-      .filter((code) => code.includes('GsFileIn fromPath'));
+    const fileInCalls = executeFetchStringMock.mock.calls.map((c) => String(c[1])).filter(isFileIn);
     expect(fileInCalls).toHaveLength(ENHANCED_INSPECTOR_FILES.length);
     for (const code of fileInCalls) {
       expect(code).toContain('on: #serverUtf8File to: nil');
@@ -267,7 +350,7 @@ describe('installEnhancedInspectorSupport', () => {
     const { session, commit, abort } = createMockSession();
     const failing = ENHANCED_INSPECTOR_FILES[1];
     executeFetchStringMock.mockImplementation((s, code: string) => {
-      if (code.includes('GsFileIn fromPath') && code.includes(failing)) {
+      if (isFileIn(code) && code.includes(failing)) {
         throw new Error('compile failed');
       }
       return happyPath(s, code);

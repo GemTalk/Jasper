@@ -3,9 +3,11 @@
  *
  * Files the vendored enhanced inspector support `.gs` payload into a stone over a GCI session.
  * Each file is filed in with a single server-side
- * `GsFileIn fromPath:on:#serverUtf8File to:` call (the gem reads and compiles
- * the file itself), in the dependency order the topaz loader uses, then the
- * work is committed and verified.
+ * `GsEnhancedInspectorFileIn fromPath:on:#serverUtf8File to:` call (the gem
+ * reads and compiles the file itself; the class is a `GsFileIn` subclass the
+ * installer creates first, see `ENHANCED_INSPECTOR_FILE_IN_CLASS`), in the
+ * dependency order the topaz loader uses, then the work is committed and
+ * verified.
  *
  * Server-side `GsFileIn` (rather than client-side per-method compilation) is
  * what keeps ~520 classes / ~3,700 methods from freezing the extension host.
@@ -151,6 +153,104 @@ pub := list detect: [:d | d name == #Published] ifNone: [nil].
 				ifTrue: [ pub removeKey: k ] ] ].
 'ok'`;
 
+/**
+ * The `GsFileIn` subclass the payload is filed in through. It lives in
+ * `GsEnhancedInspector`, so the uninstall's dictionary drop removes it too.
+ *
+ * On a rowan3 extent the stock compile hands every method to Rowan, which files
+ * a `*`-category method into the Rowan package that category names (the stone's
+ * own STON and RemoteServiceReplication, which reject our copies as duplicates)
+ * and refuses one on a packaged kernel class. A base extent's hook is a stub that
+ * runs the plain unpackaged compile; the subclass runs that on every extent.
+ *
+ * @see docs/explanation/enhanced-inspector.md#installing-on-a-rowan3-extent
+ */
+export const ENHANCED_INSPECTOR_FILE_IN_CLASS = 'GsEnhancedInspectorFileIn';
+
+/**
+ * The subclass's methods. `compileChunk:into:` also leaves alone a method that a
+ * class the payload did not create already has, the rule the refactoring engine
+ * applies to its kernel extensions: on 3.7.5 and 3.7.6 every such method is
+ * source-identical to the stone's own copy, and on rowan3 that copy belongs to a
+ * Rowan package.
+ */
+const FILE_IN_METHODS: readonly string[] = [
+  `methodBody
+	session notNil ifTrue: [ ^super methodBody ].
+	currentClassObj ifNil: [ self error: 'current class not defined' ].
+	^self compileChunk: self nextChunk into: currentClassObj`,
+  `classMethodBody
+	session notNil ifTrue: [ ^super classMethodBody ].
+	currentClassObj ifNil: [ self error: 'current class not defined' ].
+	^self compileChunk: self nextChunk into: currentClassObj class`,
+  `compileChunk: aString into: aBehavior
+	"Behavior>>compileMethod:dictionaries:category:environmentId: with Rowan's
+	 packaging hook replaced by the unpackaged compile a base extent runs."
+	| symList categ owner policy meth |
+	symList := GsCurrentSession currentSession symbolList.
+	categ := category asSymbol.
+	owner := aBehavior theNonMetaClass.
+	(${ENHANCED_INSPECTOR_DICTIONARY} at: owner name ifAbsent: [nil]) == owner ifFalse: [
+		meth := aBehavior compileMethod: aString dictionaries: symList category: categ
+			intoMethodDict: GsMethodDictionary new intoCategories: GsMethodDictionary new
+			environmentId: compileEnvironment.
+		(aBehavior includesSelector: meth selector) ifTrue: [ ^nil ] ].
+	policy := GsPackagePolicy current.
+	((policy methodAndCategoryDictionaryFor: aBehavior source: aString dictionaries: symList category: categ) at: 1) notNil
+		ifTrue: [ ^aBehavior compileMethod: aString dictionaries: symList category: categ environmentId: compileEnvironment ].
+	GsObjectSecurityPolicy setCurrent: aBehavior objectSecurityPolicy while: [
+		meth := aBehavior compileMethod: aString dictionaries: symList category: categ
+			intoMethodDict: nil intoCategories: nil environmentId: compileEnvironment.
+		(compileEnvironment == 0 and: [ policy enabled ])
+			ifTrue: [ policy setStamp: aBehavior changeStamp forBehavior: aBehavior forMethod: meth selector ] ].
+	^meth`,
+];
+
+/**
+ * Server-side snippet run after `PREPARE_DICTIONARY_SNIPPET`: create the file-in
+ * subclass, and move `GsEnhancedInspector` to the FRONT of the symbol list for
+ * the file-in, as `GsRefactoringLoader>>withDictionaryFirstDo:` does. The
+ * payload names its classes as barewords (`removeallmethods Announcement`), and
+ * rowan3 binds 230 of those names in `Globals`; with our dictionary last, the
+ * file-in would strip and overwrite Rowan's classes instead of ours.
+ *
+ * SystemUser's session symbol list is its persistent one, so an abort restores
+ * the order; on success `RESTORE_ORDER_SNIPPET` does, before the commit.
+ */
+const PREPARE_FILE_IN_SNIPPET = `
+| prof list idx dict cls |
+prof := System myUserProfile.
+list := prof symbolList.
+idx := (1 to: list size) detect: [:i | (list at: i) name == #${ENHANCED_INSPECTOR_DICTIONARY}].
+dict := list at: idx.
+cls := GsFileIn subclass: '${ENHANCED_INSPECTOR_FILE_IN_CLASS}'
+	instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+	inDictionary: dict options: #().
+{ ${FILE_IN_METHODS.map(gsStringLiteral).join('.\n  ')} } do: [:src |
+	| errs |
+	errs := cls compileMethod: src dictionaries: list category: 'Jasper-Installer'.
+	errs notNil ifTrue: [ Error signal: 'could not compile ${ENHANCED_INSPECTOR_FILE_IN_CLASS}: ', errs printString ] ].
+idx = 1 ifFalse: [
+	prof removeDictionaryAt: idx.
+	prof insertDictionary: dict at: 1 ].
+'ok'`;
+
+/**
+ * Server-side snippet run after the last file-in and before the commit: put
+ * `GsEnhancedInspector` back at the END of the installing user's symbol list,
+ * where it cannot shadow a kernel or Rowan class of the same name.
+ */
+const RESTORE_ORDER_SNIPPET = `
+| prof list idx dict |
+prof := System myUserProfile.
+list := prof symbolList.
+idx := (1 to: list size) detect: [:i | (list at: i) name == #${ENHANCED_INSPECTOR_DICTIONARY}].
+idx = list size ifFalse: [
+	dict := list at: idx.
+	prof removeDictionaryAt: idx.
+	prof insertDictionary: dict at: prof symbolList size + 1 ].
+'ok'`;
+
 export interface InstallResult {
   /** True only when every file filed in, the commit succeeded, and the
    *  end-state verification passed. */
@@ -235,7 +335,8 @@ export async function installEnhancedInspectorSupport(
 
   // Create + share the dedicated dictionary (and migrate any legacy Published
   // copies) before filing in, so the payload's `inDictionary: GsEnhancedInspector`
-  // bareword resolves and nothing stale shadows the fresh classes.
+  // bareword resolves and nothing stale shadows the fresh classes. Then create
+  // the file-in subclass and put the dictionary first for the file-in.
   onProgress('Preparing the GsEnhancedInspector dictionary…', stepIncrement);
   await yieldToEventLoop();
   try {
@@ -248,6 +349,19 @@ export async function installEnhancedInspectorSupport(
       verified: false,
       filedIn: [],
       message: `Could not create the GsEnhancedInspector dictionary: ${messageOf(e)}. No changes were committed.`,
+    };
+  }
+
+  try {
+    executeFetchString(session, PREPARE_FILE_IN_SNIPPET);
+  } catch (e: unknown) {
+    safeAbort(session);
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn: [],
+      message: `Could not prepare the file-in: ${messageOf(e)}. No changes were committed.`,
     };
   }
 
@@ -269,7 +383,7 @@ export async function installEnhancedInspectorSupport(
         // Must end in a String: executeFetchString sends #encodeAsUTF8 to the
         // result before fetching it, and a non-String result (e.g. the
         // boolean `true`) raises an error attempting that send.
-        `GsFileIn fromPath: ${gsStringLiteral(serverPath(file))} on: #serverUtf8File to: nil. 'ok'`,
+        `${ENHANCED_INSPECTOR_FILE_IN_CLASS} fromPath: ${gsStringLiteral(serverPath(file))} on: #serverUtf8File to: nil. 'ok'`,
       );
       filedIn.push(file);
     } catch (e: unknown) {
@@ -287,6 +401,18 @@ export async function installEnhancedInspectorSupport(
 
   onProgress('Committing…', stepIncrement);
   await yieldToEventLoop();
+  try {
+    executeFetchString(session, RESTORE_ORDER_SNIPPET);
+  } catch (e: unknown) {
+    safeAbort(session);
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn,
+      message: `Could not restore the symbol list order: ${messageOf(e)}. No changes were committed.`,
+    };
+  }
   const { success: committed, err } = session.gci.GciTsCommit(session.handle);
   if (!committed) {
     safeAbort(session);
