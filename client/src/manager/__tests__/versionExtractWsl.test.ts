@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -17,6 +18,7 @@ vi.mock('../../wslBridge', () => ({
 }));
 
 import { __resetConfig } from '../../__mocks__/vscode';
+import { appendSysadmin } from '../../sysadminChannel';
 import { SysadminStorage } from '../../sysadminStorage';
 import { wslSpawn } from '../../wslBridge';
 import { InstallCancelledError, VersionManager } from '../versionManager';
@@ -62,6 +64,29 @@ function wslExeThatLeavesItsChild(cmd: string, args: string[]): ChildProcess {
   return wslExe as unknown as ChildProcess;
 }
 
+/**
+ * wsl.exe as it is on a machine where it is slow to start: nothing the Linux
+ * side writes to stderr — the pid line first — gets through until `release`.
+ * Never released, it is a wsl.exe that never names the pid at all.
+ */
+function wslExeSlowToNameThePid(release: Promise<void>) {
+  return (cmd: string, args: string[]): ChildProcess => {
+    const child = wslExeThatLeavesItsChild(cmd, args);
+    const held = new PassThrough();
+    const linuxStderr = child.stderr!;
+    void release.then(() => linuxStderr.pipe(held));
+    return Object.assign(child, { stderr: held });
+  };
+}
+
+/** A wsl.exe that runs the work, but fails to start whenever Jasper tries to kill it. */
+function wslExeThatCannotKill(cmd: string, args: string[]): ChildProcess {
+  if (args[3] !== 'kill') return wslExeThatLeavesItsChild(cmd, args);
+  const child = Object.assign(new EventEmitter(), { stdout: null, stderr: null, kill: () => true });
+  setImmediate(() => child.emit('error', new Error('wsl.exe stopped responding')));
+  return child as unknown as ChildProcess;
+}
+
 /** The commands run inside WSL, as they reached the Linux side of the pid wrapper. */
 function commandsInWsl(): string[][] {
   return vi.mocked(wslSpawn).mock.calls.map(([, args]) => args.slice(3));
@@ -96,7 +121,10 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
       buildZip(f, realPython!);
     });
 
-    afterEach(() => tearDown(f));
+    afterEach(async () => {
+      VersionManager.pidWaitMs = 5000;
+      await tearDown(f);
+    });
 
     it('runs unzip inside WSL, on WSL paths, and unpacks the tree', async () => {
       await extract();
@@ -175,6 +203,71 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
 
         expect(fakePids(f).filter(isAlive)).toEqual([]);
         expect(fs.existsSync(f.productDir)).toBe(false);
+      });
+
+      it('waits for the Linux pid when the cancel comes before wsl.exe has named it', async () => {
+        let release!: () => void;
+        const pidArrives = new Promise<void>((r) => (release = r));
+        vi.mocked(wslSpawn).mockImplementation((cmd, args) =>
+          (args[3] === 'unzip' ? wslExeSlowToNameThePid(pidArrives) : wslExeThatLeavesItsChild)(
+            cmd,
+            args,
+          ),
+        );
+        // Left running, this rebuilds the tree after cleanup has removed it.
+        fakeCommand(
+          f,
+          'unzip',
+          `${partialTree(f.productDir)}\n` +
+            `while :; do mkdir -p "${f.productDir}" && echo x >> "${f.productDir}/late"; sleep 0.05; done`,
+        );
+        const source = cancelSource();
+        const extracting = extract(source);
+        await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
+
+        source.cancel();
+        await new Promise((r) => setTimeout(r, 100));
+        release();
+        await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
+        await new Promise((r) => setTimeout(r, 300));
+
+        expect(fakePids(f).filter(isAlive)).toEqual([]);
+        expect(fs.existsSync(f.productDir)).toBe(false);
+      });
+
+      it('still cancels when wsl.exe never names the Linux pid', async () => {
+        VersionManager.pidWaitMs = 200;
+        vi.mocked(wslSpawn).mockImplementation((cmd, args) =>
+          (args[3] === 'unzip' ? wslExeSlowToNameThePid(new Promise(() => {})) : linuxSide)(
+            cmd,
+            args,
+          ),
+        );
+        fakeCommand(f, 'unzip', `${partialTree(f.productDir)}\nexec sleep 30`);
+        const source = cancelSource();
+        const extracting = extract(source);
+        await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
+
+        source.cancel();
+
+        await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
+      });
+
+      it('still settles, and says so in the log, when stopping the Linux process fails', async () => {
+        vi.mocked(wslSpawn).mockImplementation(wslExeThatCannotKill);
+        fakeCommand(f, 'unzip', `${partialTree(f.productDir)}\nexec sleep 30`);
+        const source = cancelSource();
+        const extracting = extract(source);
+        await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
+
+        source.cancel();
+
+        await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
+        expect(vi.mocked(appendSysadmin)).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /^Cancelled, but could not stop Linux process \d+ inside WSL \(wsl\.exe stopped responding\); it may still be running\.$/,
+          ),
+        );
       });
     });
 

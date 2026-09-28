@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SysadminStorage } from './sysadminStorage';
-import { InstallCancelledError, VersionManager } from './manager/versionManager';
+import { installOutcomeText, showInstallOutcome, VersionManager } from './manager/versionManager';
 import { DatabaseManager } from './manager/databaseManager';
 import { ProcessManager } from './manager/processManager';
 import { LoginStorage } from './loginStorage';
@@ -121,8 +121,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
       version.downloaded = true;
       refreshVersions();
     } catch (e) {
-      if (e instanceof InstallCancelledError) vscode.window.showInformationMessage(e.message);
-      else vscode.window.showErrorMessage(`Download failed: ${e instanceof Error ? e.message : e}`);
+      showInstallOutcome(e, 'Download failed');
       return;
     }
   }
@@ -141,9 +140,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
       version.extracted = true;
       refreshVersions();
     } catch (e) {
-      if (e instanceof InstallCancelledError) vscode.window.showInformationMessage(e.message);
-      else
-        vscode.window.showErrorMessage(`Extraction failed: ${e instanceof Error ? e.message : e}`);
+      showInstallOutcome(e, 'Extraction failed');
       return;
     }
   }
@@ -245,11 +242,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
       }
       refreshVersions();
     } catch (e) {
-      appendSysadmin(
-        e instanceof InstallCancelledError
-          ? e.message
-          : `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-      );
+      appendSysadmin(installOutcomeText(e, 'Windows client install failed'));
       // Non-fatal: the user can still manually configure the GCI library
     }
   } else {

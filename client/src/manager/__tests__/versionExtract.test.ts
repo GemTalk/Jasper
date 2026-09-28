@@ -206,7 +206,7 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
         expect(fs.existsSync(f.productDir)).toBe(false);
       });
 
-      it('says it left alone a product directory that was there before', async () => {
+      it('keeps a product directory that was there before, and says the unpack may have changed it', async () => {
         fs.mkdirSync(f.productDir);
         fakeCommand(f, 'unzip', 'exec sleep 30');
         const source = cancelSource();
@@ -218,7 +218,7 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
 
         expect((error as Error).message).toBe(
           `Unpacking GemStone 3.7.5 cancelled. ${f.productDir} was there before, so it was ` +
-            'left as it is; the download is kept.',
+            'not removed; the unpack may have replaced some of its files. The download is kept.',
         );
         expect(fs.existsSync(f.productDir)).toBe(true);
       });

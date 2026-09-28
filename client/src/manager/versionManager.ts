@@ -25,6 +25,23 @@ export class InstallCancelledError extends Error {
   }
 }
 
+/**
+ * What to say when an install step did not finish: a cancel's own message, or
+ * `failure` with the error's. Every call site that runs an install goes
+ * through this, so a cancel never reads as a failure.
+ */
+export function installOutcomeText(e: unknown, failure: string): string {
+  if (e instanceof InstallCancelledError) return e.message;
+  return `${failure}: ${e instanceof Error ? e.message : String(e)}`;
+}
+
+/** Show {@link installOutcomeText}: a cancel as information, anything else as an error. */
+export function showInstallOutcome(e: unknown, failure: string): void {
+  const text = installOutcomeText(e, failure);
+  if (e instanceof InstallCancelledError) vscode.window.showInformationMessage(text);
+  else vscode.window.showErrorMessage(text);
+}
+
 const DOWNLOAD_CANCELLED = 'Download cancelled. The partly downloaded file was removed.';
 
 /**
@@ -87,6 +104,13 @@ export interface CatalogEntry {
 
 export class VersionManager {
   constructor(private storage: SysadminStorage) {}
+
+  /**
+   * How long a cancel through WSL waits for the Linux pid before killing
+   * wsl.exe anyway, so a wsl.exe that never names it cannot hold the cancel
+   * forever. A seam for tests.
+   */
+  static pidWaitMs = 5000;
 
   /** The unreadable version numbers last written to the log, so a list that has
    *  not changed is not written again. */
@@ -463,7 +487,8 @@ export class VersionManager {
         throw new InstallCancelledError(
           existed
             ? `Unpacking GemStone ${version.version} cancelled. ${productDir} was there before, ` +
-                'so it was left as it is; the download is kept.'
+                'so it was not removed; the unpack may have replaced some of its files. ' +
+                'The download is kept.'
             : `Unpacking GemStone ${version.version} cancelled. The partly unpacked files were ` +
                 'removed; the download is kept.',
         );
@@ -662,7 +687,11 @@ export class VersionManager {
    *
    * A cancel kills the child — and, through WSL, the Linux process behind
    * wsl.exe — and rejects only once both have gone, so the cleanup that follows
-   * never races a child still writing.
+   * never races a child still writing. Through WSL that needs the Linux pid, so
+   * a cancel that arrives before wsl.exe has named it waits for it, up to
+   * {@link VersionManager.pidWaitMs}: killing wsl.exe first would close the
+   * pipe the pid comes through. If stopping the Linux process fails, the cancel
+   * still rejects, and the failure goes to the sysadmin log.
    */
   private run(
     cmd: string,
@@ -691,9 +720,13 @@ export class VersionManager {
       let partial = '';
       let cancelled = false;
       let settled = false;
+      let pidWait: NodeJS.Timeout | undefined;
       const subscription = token?.onCancellationRequested(() => {
         cancelled = true;
-        proc.kill();
+        // Still waiting for the pid line: kill once it arrives, below.
+        if (firstLine !== undefined)
+          pidWait = setTimeout(() => proc.kill(), VersionManager.pidWaitMs);
+        else proc.kill();
       });
       proc.stderr?.on('data', (chunk: Buffer) => {
         let text = chunk.toString();
@@ -704,6 +737,10 @@ export class VersionManager {
           linuxPid = pid?.[1];
           text = pid ? firstLine.slice(pid[0].length) : firstLine;
           firstLine = undefined;
+          if (cancelled) {
+            clearTimeout(pidWait);
+            proc.kill();
+          }
         }
         // Only the tail is ever shown, and curl's progress bar would otherwise
         // grow this for the length of a download.
@@ -721,6 +758,7 @@ export class VersionManager {
       proc.on('error', (err: NodeJS.ErrnoException) => {
         if (settled) return;
         settled = true;
+        clearTimeout(pidWait);
         subscription?.dispose();
         // Through WSL, ENOENT means wsl.exe itself is missing; a command
         // missing inside WSL comes back from sh as 127 instead.
@@ -730,6 +768,7 @@ export class VersionManager {
       proc.on('close', (code) => {
         if (settled) return;
         settled = true;
+        clearTimeout(pidWait);
         subscription?.dispose();
         if (partial) onLine?.(partial);
         if (!cancelled) {
@@ -737,7 +776,14 @@ export class VersionManager {
           return;
         }
         const stopped = linuxPid ? this.stopInWsl(linuxPid) : Promise.resolve();
-        void stopped.then(() => reject(new InstallCancelledError('Cancelled')));
+        void stopped
+          .catch((err: unknown) =>
+            appendSysadmin(
+              `Cancelled, but could not stop Linux process ${linuxPid} inside WSL ` +
+                `(${err instanceof Error ? err.message : String(err)}); it may still be running.`,
+            ),
+          )
+          .then(() => reject(new InstallCancelledError('Cancelled')));
       });
     });
   }
@@ -883,8 +929,8 @@ export class VersionManager {
         throw new InstallCancelledError(
           created
             ? 'Windows client install cancelled. The partly unpacked files were removed.'
-            : `Windows client install cancelled. ${clientDir} was there before, so it was left ` +
-                'as it is; the unpack may have replaced some of its files.',
+            : `Windows client install cancelled. ${clientDir} was there before, so it was not ` +
+                'removed; the unpack may have replaced some of its files.',
         );
       }
       throw e;

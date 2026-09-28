@@ -354,27 +354,35 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
     });
   }
 
-  it('on cancel, stops tar and removes both the partial client and the zip', async () => {
-    const storage = new SysadminStorage();
-    const manager = new VersionManager(storage);
+  /**
+   * A 3.7.5 client install whose download only drops an empty zip where the
+   * real one would go, so each test says just how tar behaves and what it checks.
+   */
+  function setUpClientInstall() {
+    const manager = new VersionManager(new SysadminStorage());
     const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
     const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
     vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
       async () => fs.writeFileSync(zipPath, ''),
     );
+    const install = (token: unknown = noopToken) =>
+      manager.downloadAndExtractWindowsClient(
+        '3.7.5',
+        { report: vi.fn() },
+        token as vscode.CancellationToken,
+      );
+    return { manager, zipPath, clientDir, install };
+  }
+
+  it('on cancel, stops tar and removes both the partial client and the zip', async () => {
+    const { zipPath, clientDir, install } = setUpClientInstall();
     const source = new CancellationTokenSource();
     fakeTar(null, () => {
       fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true });
       setImmediate(() => source.cancel());
     });
 
-    const error = await manager
-      .downloadAndExtractWindowsClient(
-        '3.7.5',
-        { report: vi.fn() },
-        source.token as unknown as vscode.CancellationToken,
-      )
-      .catch((e: unknown) => e);
+    const error = await install(source.token).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(InstallCancelledError);
     expect((error as Error).message).toMatch(/Windows client install cancelled/);
@@ -383,58 +391,40 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
   });
 
   describe('a client folder that was there before', () => {
+    function setUpOverExistingClient() {
+      const setup = setUpClientInstall();
+      createWindowsClientDir('3.7.5');
+      fs.writeFileSync(path.join(setup.clientDir, 'mine'), '');
+      return setup;
+    }
+
     it('is left alone when the unpack fails', async () => {
-      const manager = new VersionManager(new SysadminStorage());
-      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-      const clientDir = createWindowsClientDir('3.7.5');
-      fs.writeFileSync(path.join(clientDir, 'mine'), '');
-      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-        async () => fs.writeFileSync(zipPath, ''),
-      );
+      const { clientDir, install } = setUpOverExistingClient();
       fakeTar(2);
 
-      await expect(
-        manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
-      ).rejects.toThrow('tar failed with exit code 2');
+      await expect(install()).rejects.toThrow('tar failed with exit code 2');
 
       expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
     });
 
-    it('is left alone when the unpack is cancelled, and the message says so', async () => {
-      const manager = new VersionManager(new SysadminStorage());
-      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-      const clientDir = createWindowsClientDir('3.7.5');
-      fs.writeFileSync(path.join(clientDir, 'mine'), '');
-      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-        async () => fs.writeFileSync(zipPath, ''),
-      );
+    it('is kept when the unpack is cancelled, and the message says the unpack may have changed it', async () => {
+      const { clientDir, install } = setUpOverExistingClient();
       const source = new CancellationTokenSource();
       fakeTar(null, () => setImmediate(() => source.cancel()));
 
-      const error = await manager
-        .downloadAndExtractWindowsClient(
-          '3.7.5',
-          { report: vi.fn() },
-          source.token as unknown as vscode.CancellationToken,
-        )
-        .catch((e: unknown) => e);
+      const error = await install(source.token).catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(InstallCancelledError);
       expect((error as Error).message).toBe(
-        `Windows client install cancelled. ${clientDir} was there before, so it was left as ` +
-          'it is; the unpack may have replaced some of its files.',
+        `Windows client install cancelled. ${clientDir} was there before, so it was not ` +
+          'removed; the unpack may have replaced some of its files.',
       );
       expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
     });
   });
 
   it('keeps the unpack’s own failure in the message when the partial client cannot be removed', async () => {
-    const manager = new VersionManager(new SysadminStorage());
-    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
-    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-      async () => fs.writeFileSync(zipPath, ''),
-    );
+    const { clientDir, install } = setUpClientInstall();
     fakeTar(2, () => fs.mkdirSync(clientDir));
     const rm = vi
       .spyOn(fs.promises, 'rm')
@@ -443,9 +433,7 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
       );
 
     try {
-      await expect(
-        manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
-      ).rejects.toThrow(
+      await expect(install()).rejects.toThrow(
         `The Windows client install failed (tar failed with exit code 2), and the partly ` +
           `unpacked files at ${clientDir} could not be removed (EBUSY: resource busy or locked). ` +
           'Remove that folder before installing again.',
@@ -458,14 +446,10 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
   it('runs tar on Windows itself even when GemStone lives in WSL', async () => {
     vi.mocked(needsWsl).mockReturnValue(true);
     try {
-      const manager = new VersionManager(new SysadminStorage());
-      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-        async () => fs.writeFileSync(zipPath, ''),
-      );
+      const { zipPath, install } = setUpClientInstall();
       fakeTar(0);
 
-      await manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken);
+      await install();
 
       expect(spawn).toHaveBeenCalledWith('tar', ['-xf', zipPath, '-C', tmpDir]);
       expect(wslSpawn).not.toHaveBeenCalled();
@@ -475,37 +459,20 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
   });
 
   it('on a failed unpack, removes both the partial client and the zip', async () => {
-    const storage = new SysadminStorage();
-    const manager = new VersionManager(storage);
-    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
-    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-      async () => fs.writeFileSync(zipPath, ''),
-    );
+    const { zipPath, clientDir, install } = setUpClientInstall();
     fakeTar(2, () => fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true }));
 
-    await expect(
-      manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
-    ).rejects.toThrow('tar failed with exit code 2');
+    await expect(install()).rejects.toThrow('tar failed with exit code 2');
 
     expect(fs.existsSync(clientDir)).toBe(false);
     expect(fs.existsSync(zipPath)).toBe(false);
   });
 
   it('downloads, extracts with tar, and removes the zip on success', async () => {
-    const storage = new SysadminStorage();
-    const manager = new VersionManager(storage);
-    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
-    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-      async () => {
-        // Simulate the download by dropping a file at the expected location.
-        fs.writeFileSync(zipPath, '');
-      },
-    );
-
+    const { zipPath, install } = setUpClientInstall();
     fakeTar(0);
 
-    await manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken);
+    await install();
 
     // Extraction ran tar as its own process, argv form — not PowerShell, and not
     // a shell string a quote in the root path could break.

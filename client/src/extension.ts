@@ -171,7 +171,11 @@ import { dedupeMethodResults } from './queries/methodSearch';
 import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
-import { InstallCancelledError, VersionManager } from './manager/versionManager';
+import {
+  InstallCancelledError,
+  showInstallOutcome,
+  VersionManager,
+} from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel, chooseRootFolder } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
@@ -2280,13 +2284,7 @@ export function activate(context: vscode.ExtensionContext) {
               }
               refreshVersions();
             } catch (e) {
-              if (e instanceof InstallCancelledError) {
-                vscode.window.showInformationMessage(e.message);
-              } else {
-                vscode.window.showErrorMessage(
-                  `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-                );
-              }
+              showInstallOutcome(e, 'Windows client install failed');
               return;
             }
           } else if (choice !== 'Browse...') {
@@ -4780,13 +4778,7 @@ export function activate(context: vscode.ExtensionContext) {
               versionManager.downloadAndExtractWindowsClient(version, progress, token),
           );
         } catch (e) {
-          if (e instanceof InstallCancelledError) {
-            vscode.window.showInformationMessage(e.message);
-          } else {
-            vscode.window.showErrorMessage(
-              `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-            );
-          }
+          showInstallOutcome(e, 'Windows client install failed');
           refreshVersions();
           return;
         }
