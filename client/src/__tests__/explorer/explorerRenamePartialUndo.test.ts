@@ -5,6 +5,7 @@ vi.mock('../../refactoring/renameClassEditor', () => ({ showRenameClassEditor: v
 vi.mock('../../refactoring/renameClassPanel', () => ({ showRenameClassPanel: vi.fn() }));
 vi.mock('../../refactoring/refactoringAppliedToast', () => ({
   notifyRefactoringApplied: vi.fn(),
+  armRefactoringUndo: vi.fn(),
 }));
 vi.mock('../../browserQueries', () => ({
   isKernelClass: vi.fn(() => false),
@@ -22,6 +23,10 @@ import * as vscode from 'vscode';
 import { showRenameClassEditor } from '../../refactoring/renameClassEditor';
 import { showRenameClassPanel } from '../../refactoring/renameClassPanel';
 import * as queries from '../../browserQueries';
+import {
+  armRefactoringUndo,
+  notifyRefactoringApplied,
+} from '../../refactoring/refactoringAppliedToast';
 import { ExplorerController } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
@@ -82,6 +87,11 @@ describe('a partially applied class rename is still undoable', () => {
     expect(call[2]).toBe('Shadowed'); // the class is bound under the NEW name now
     expect(call[4]).toBe('ShadowedAAAAA'); // and the reversal renames it back
     expect(call[6]).toBe('GsRenameClassRefactoring');
+
+    // Recording in the stone is only half of it: the button stays dark until an entry is
+    // pushed onto the client's stack, which this path used to return before doing.
+    expect(armRefactoringUndo).toHaveBeenCalled();
+    expect(notifyRefactoringApplied).not.toHaveBeenCalled(); // the failure toast is shown instead
   });
 
   it('still records it on a clean apply', async () => {
@@ -90,5 +100,7 @@ describe('a partially applied class rename is still undoable', () => {
     await makeController().renameClassNamed('ShadowedAAAAA', 5);
 
     expect(queries.recordReverseRename).toHaveBeenCalledTimes(1);
+    // The success path arms the undo through the toast, as it always has.
+    expect(notifyRefactoringApplied).toHaveBeenCalled();
   });
 });

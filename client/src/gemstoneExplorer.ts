@@ -164,7 +164,10 @@ import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
-import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
+import {
+  armRefactoringUndo,
+  notifyRefactoringApplied,
+} from './refactoring/refactoringAppliedToast';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -3440,10 +3443,10 @@ export class ExplorerController {
       'GsRenameInstanceVariableRefactoring',
     );
     if (result.failed.length > 0) {
-      // Recorded BEFORE the failure report, not after it. A partial apply has still CHANGED the
-      // stone -- the rename landed, some method did not recompile onto the new version -- and
-      // that is exactly when a way back is worth most. Returning first left the only recourse an
-      // abort, which discards every uncommitted change in the session rather than this one (#396).
+      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
+      // nothing reaches the user until an entry is pushed onto the client's stack, which is
+      // normally notifyRefactoringApplied's job and which this path returns before reaching.
+      armRefactoringUndo(session);
       this.reportRenameFailures(
         `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
         result,
@@ -3965,6 +3968,10 @@ export class ExplorerController {
     );
 
     if (result.failed.length > 0) {
+      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
+      // nothing reaches the user until an entry is pushed onto the client's stack, which is
+      // normally notifyRefactoringApplied's job and which this path returns before reaching.
+      armRefactoringUndo(session);
       this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
       return;
     }
@@ -4168,9 +4175,10 @@ export class ExplorerController {
       'GsRenameClassVariableRefactoring',
     );
     if (result.failed.length > 0) {
-      // Recorded BEFORE the failure report, not after it. A partial apply has still CHANGED the
-      // stone, and that is exactly when a way back is worth most. Returning first left the only
-      // recourse an abort, which discards every uncommitted change in the session (#396).
+      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
+      // nothing reaches the user until an entry is pushed onto the client's stack, which is
+      // normally notifyRefactoringApplied's job and which this path returns before reaching.
+      armRefactoringUndo(session);
       this.reportRenameFailures(
         `Rename class variable '${oldName}' → '${newName}' in ${className}`,
         result,
