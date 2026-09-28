@@ -10375,6 +10375,38 @@ testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalFirstMatch
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoInstVarAddAcceptsTheDictionaryAsASymbolListIndex
+	"The client identifies a dictionary by its 1-based SymbolList INDEX, not by name -- an index is
+	 unambiguous where a name is not. Recording coerced it with `asString`, so index 10 was stored
+	 as '10', matched no dictionary name, and the scoped lookup fell back to the first-match it
+	 exists to replace. The fallback is legitimate for a record made WITHOUT a dictionary, so
+	 nothing reported a problem: the reversal simply declined with 'no longer declares an instance
+	 variable named ...', naming a class the user had not touched (#396).
+
+	 The sibling tests pass a dictionary NAME and so never exercised the form the client sends."
+	| decoy idx |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	["the fixture's own dictionary, by index, exactly as the client resolves it"
+	 idx := System myUserProfile symbolList indexOf: (UserGlobals).
+	 GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil classDictName: idx
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+
+	 "an index must scope as well as a name: no decline, and the reversal acts on the fixture"
+	 self assert: GsRefactoringUndo currentEntry reverseUnavailableReason isNil.
+	 self undoAll.
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuExtra')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsRenameClassRefactoringTest
 assert: aString includesSubstring: aSubstring

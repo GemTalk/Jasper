@@ -11078,8 +11078,15 @@ recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk
 	op at: 6 put: (sdn isNil ifTrue: [nil] ifFalse: [sdn asString]).
 	"Slot 7 is the HOME dictionary of `cn` -- distinct from slot 6, which is a rename's SCOPE.
 	 Without it the reversal re-resolved `cn` by first-match and re-applied the opposite
-	 operation to a same-named class in another dictionary (#396)."
-	op at: 7 put: (cd isNil ifTrue: [nil] ifFalse: [cd asString]).
+	 operation to a same-named class in another dictionary (#396).
+
+	 An INDEX is kept as an Integer: `asString` on it produced '10', which matches no dictionary
+	 NAME, so the scoped lookup found nothing and fell back to the first-match it was meant to
+	 replace -- silently, since the fallback is a legitimate path for a record made without a
+	 dictionary. The client sends a SymbolList index, so this is the form that actually arrives."
+	op at: 7 put: (cd isNil
+		ifTrue: [nil]
+		ifFalse: [(cd isKindOf: Integer) ifTrue: [cd] ifFalse: [cd asString]]).
 	SessionTemps current
 		at: self entryKey
 		put: (self new
