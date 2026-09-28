@@ -171,7 +171,11 @@ import { dedupeMethodResults } from './queries/methodSearch';
 import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
-import { VersionManager } from './manager/versionManager';
+import {
+  InstallCancelledError,
+  showInstallOutcome,
+  VersionManager,
+} from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel, chooseRootFolder } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
@@ -2280,9 +2284,7 @@ export function activate(context: vscode.ExtensionContext) {
               }
               refreshVersions();
             } catch (e) {
-              vscode.window.showErrorMessage(
-                `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-              );
+              showInstallOutcome(e, 'Windows client install failed');
               return;
             }
           } else if (choice !== 'Browse...') {
@@ -4663,18 +4665,27 @@ export function activate(context: vscode.ExtensionContext) {
     // reads `item.version` from the row it was invoked on, and the Versions rows
     // now live in the Databases & Versions panel — typed into the palette they
     // arrive with no argument and throw. The panel invokes them by name.
+    //
+    // A cancel ends the download and unpack commands normally, with a message
+    // saying what was cleaned up, and the Databases & Versions panel reads what
+    // actually landed on disk to decide what comes next.
     vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionTarget) => {
       const version = item.version;
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Downloading GemStone ${version.version}...`,
-          cancellable: true,
-        },
-        async (progress, token) => {
-          await versionManager.download(version, progress, token);
-        },
-      );
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Downloading GemStone ${version.version}...`,
+            cancellable: true,
+          },
+          (progress, token) => versionManager.download(version, progress, token),
+        );
+      } catch (e) {
+        if (!(e instanceof InstallCancelledError)) throw e;
+        vscode.window.showInformationMessage(e.message);
+        refreshVersions();
+        return;
+      }
       vscode.window.showInformationMessage(`GemStone ${version.version} downloaded.`);
       refreshVersions();
     }),
@@ -4691,15 +4702,21 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.extractVersion', async (item: VersionTarget) => {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Extracting GemStone ${item.version.version}...`,
-        },
-        async (progress) => {
-          await versionManager.extract(item.version, progress);
-        },
-      );
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Extracting GemStone ${item.version.version}...`,
+            cancellable: true,
+          },
+          (progress, token) => versionManager.extract(item.version, progress, token),
+        );
+      } catch (e) {
+        if (!(e instanceof InstallCancelledError)) throw e;
+        vscode.window.showInformationMessage(e.message);
+        refreshVersions();
+        return;
+      }
       vscode.window.showInformationMessage(`GemStone ${item.version.version} extracted.`);
       refreshVersions();
     }),
@@ -4761,9 +4778,7 @@ export function activate(context: vscode.ExtensionContext) {
               versionManager.downloadAndExtractWindowsClient(version, progress, token),
           );
         } catch (e) {
-          vscode.window.showErrorMessage(
-            `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-          );
+          showInstallOutcome(e, 'Windows client install failed');
           refreshVersions();
           return;
         }
