@@ -163,6 +163,7 @@ describe('GCI login (integration)', () => {
 
     it('GciTsNbLogin finishes with a live session', async (ctx) => {
       requireGciCapability('GciTsNbLogin', ctx, gci);
+      requireGciCapability('GciTsNbLoginFinished', ctx, gci);
 
       const { session, result } = await gciTsNbLogin(ctx.signal);
 
@@ -172,6 +173,7 @@ describe('GCI login (integration)', () => {
 
     it('GciTsNbLogin_ finishes with a live session', async (ctx) => {
       requireGciCapability('GciTsNbLogin_', ctx, gci);
+      requireGciCapability('GciTsNbLoginFinished', ctx, gci);
 
       const { session, result } = await gciTsNbLogin_(ctx.signal);
 
@@ -215,6 +217,7 @@ describe('GCI login (integration)', () => {
 
     it('GciTsNbLogin reports a wrong password when polled', async (ctx) => {
       requireGciCapability('GciTsNbLogin', ctx, gci);
+      requireGciCapability('GciTsNbLoginFinished', ctx, gci);
 
       const { session, result, err } = await gciTsNbLogin(ctx.signal, {
         password: 'wrongPassword',
