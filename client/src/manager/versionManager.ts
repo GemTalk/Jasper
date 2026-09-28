@@ -373,11 +373,14 @@ export class VersionManager {
           res.pipe(file);
 
           file.on('finish', () => {
+            // A cancel closes the file too, which finishes it: that is not a download.
+            if (cancelled) return;
             cancel.dispose();
             resolve();
           });
 
           file.on('error', (err) => {
+            if (cancelled) return;
             cleanup();
             cancel.dispose();
             reject(err);
