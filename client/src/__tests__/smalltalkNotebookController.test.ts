@@ -450,7 +450,9 @@ describe('SmalltalkNotebookController', () => {
       ) => void;
       const doc = {
         notebookType: GEMSTONE_NOTEBOOK_TYPE,
-        getCells: () => [{ kind: 2, document: { languageId: SMALLTALK_LANGUAGE } }],
+        getCells: () => [
+          { kind: 2, document: { languageId: SMALLTALK_LANGUAGE, getText: () => '3 + 4' } },
+        ],
       };
       onOpen(doc);
       onSelected({ notebook: doc, selected: true });
