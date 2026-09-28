@@ -70,7 +70,7 @@ The **OS Configuration** view surfaces every host-level setting GemStone needs, 
 
 Versions live in the **Databases & Versions** panel, opened with **Manage Databases & Versions** in the **Databases** section title bar. Releases on this machine are listed with their status, size and release date, and each row offers:
 
-- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux). **Remove** takes away everything it put there.
+- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux, or python3 where unzip is missing). Both halves show their progress and can be cancelled. **Remove** takes away everything it put there.
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
