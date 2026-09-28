@@ -103,6 +103,26 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
       expect(increments.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(100);
     });
 
+    it('fills the bar by steps that add up to the percentage shown', async () => {
+      // Slowed to one line per 100 ms, so the quarter-second throttle lets
+      // several reports through.
+      fakeCommand(
+        f,
+        'unzip',
+        `"${realUnzip}" "$@" | while IFS= read -r line; do printf '%s\\n' "$line"; sleep 0.1; done`,
+      );
+      const { progress, messages, increments } = progressLog();
+
+      await extract(undefined, progress);
+
+      const percents = messages
+        .map((m) => /\((\d+)%\)/.exec(m)?.[1])
+        .filter((p): p is string => p !== undefined)
+        .map(Number);
+      expect(increments.length).toBeGreaterThanOrEqual(2);
+      expect(increments.reduce((a, b) => a + b, 0)).toBe(percents.at(-1));
+    });
+
     it('finds the total when the zip carries a comment after its index', async () => {
       fs.rmSync(f.archivePath);
       buildZip(f, realPython!, 'x'.repeat(5000));
@@ -163,6 +183,44 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
         expect(fakePids(f).filter(isAlive)).toEqual([]);
         expect(fs.existsSync(f.productDir)).toBe(false);
         expect(fs.existsSync(f.archivePath)).toBe(true);
+      });
+
+      it('waits for unzip to exit before cleaning up, even while it keeps writing', async () => {
+        // Stopped, it writes on for a moment more, as an unzip flushing its
+        // current entry would: cleanup that ran first would be undone.
+        fakeCommand(
+          f,
+          'unzip',
+          `trap 'for i in 1 2 3 4; do mkdir -p "${f.productDir}" && echo x > "${f.productDir}/late$i"; ` +
+            `sleep 0.05; done; exit 143' TERM\n${partialTree(f.productDir)}\n` +
+            'while :; do sleep 0.05; done',
+        );
+        const source = cancelSource();
+        const extracting = extract(source);
+        await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
+
+        source.cancel();
+        await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
+        await new Promise((r) => setTimeout(r, 300));
+
+        expect(fs.existsSync(f.productDir)).toBe(false);
+      });
+
+      it('says it left alone a product directory that was there before', async () => {
+        fs.mkdirSync(f.productDir);
+        fakeCommand(f, 'unzip', 'exec sleep 30');
+        const source = cancelSource();
+        const extracting = extract(source);
+        await until(() => fakePids(f).length > 0);
+
+        source.cancel();
+        const error = await extracting.catch((e: unknown) => e);
+
+        expect((error as Error).message).toBe(
+          `Unpacking GemStone 3.7.5 cancelled. ${f.productDir} was there before, so it was ` +
+            'left as it is; the download is kept.',
+        );
+        expect(fs.existsSync(f.productDir)).toBe(true);
       });
 
       it('starts nothing when cancelled before it begins', async () => {

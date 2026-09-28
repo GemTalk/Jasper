@@ -168,12 +168,16 @@ export async function until(condition: () => boolean): Promise<void> {
 }
 
 export async function tearDown(f: ExtractFixture): Promise<void> {
-  for (const run of f.inFlight) run.cancel();
-  // Killed before waiting, so even code whose cancel does not work cannot hang
-  // teardown on a child that never exits.
-  for (const pid of fakePids(f)) if (isAlive(pid)) process.kill(pid, 'SIGKILL');
-  await Promise.all(f.inFlight.map((run) => run.done.catch(() => undefined)));
-  process.env.PATH = f.savedPath;
-  if (fs.existsSync(f.tmpDir)) execFileSync('chmod', ['-R', 'u+w', f.tmpDir]);
-  fs.rmSync(f.tmpDir, { recursive: true, force: true });
+  try {
+    for (const run of f.inFlight) run.cancel();
+    // Killed before waiting, so even code whose cancel does not work cannot hang
+    // teardown on a child that never exits.
+    for (const pid of fakePids(f)) if (isAlive(pid)) process.kill(pid, 'SIGKILL');
+    await Promise.all(f.inFlight.map((run) => run.done.catch(() => undefined)));
+  } finally {
+    // Whatever went wrong above, the temp tree and PATH still go back.
+    process.env.PATH = f.savedPath;
+    if (fs.existsSync(f.tmpDir)) execFileSync('chmod', ['-R', 'u+w', f.tmpDir]);
+    fs.rmSync(f.tmpDir, { recursive: true, force: true });
+  }
 }

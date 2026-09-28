@@ -4668,9 +4668,9 @@ export function activate(context: vscode.ExtensionContext) {
     // now live in the Databases & Versions panel — typed into the palette they
     // arrive with no argument and throw. The panel invokes them by name.
     //
-    // A cancel ends the download and unpack commands normally, with a message:
-    // the partial files are already gone, and the Databases & Versions panel
-    // reads what actually landed on disk to decide what comes next.
+    // A cancel ends the download and unpack commands normally, with a message
+    // saying what was cleaned up, and the Databases & Versions panel reads what
+    // actually landed on disk to decide what comes next.
     vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionTarget) => {
       const version = item.version;
       try {

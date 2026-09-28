@@ -7,17 +7,19 @@ import { EventEmitter } from 'events';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 vi.mock('../wslBridge', () => ({
-  needsWsl: () => false,
+  needsWsl: vi.fn(() => false),
   getWslInfo: () => ({ available: false }),
   wslPathToWindows: (p: string) => p,
   windowsPathToWsl: (p: string) => p,
   wslExecSync: vi.fn(),
+  wslSpawn: vi.fn(),
 }));
 vi.mock('child_process');
 
 import { execSync, spawn, type ChildProcess } from 'child_process';
 
 import type * as vscode from 'vscode';
+import { needsWsl, wslSpawn } from '../wslBridge';
 import { __setConfig, __resetConfig, CancellationTokenSource } from '../__mocks__/vscode';
 import { SysadminStorage } from '../sysadminStorage';
 import { InstallCancelledError, VersionManager } from '../manager/versionManager';
@@ -378,6 +380,98 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
     expect((error as Error).message).toMatch(/Windows client install cancelled/);
     expect(fs.existsSync(clientDir)).toBe(false);
     expect(fs.existsSync(zipPath)).toBe(false);
+  });
+
+  describe('a client folder that was there before', () => {
+    it('is left alone when the unpack fails', async () => {
+      const manager = new VersionManager(new SysadminStorage());
+      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+      const clientDir = createWindowsClientDir('3.7.5');
+      fs.writeFileSync(path.join(clientDir, 'mine'), '');
+      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+        async () => fs.writeFileSync(zipPath, ''),
+      );
+      fakeTar(2);
+
+      await expect(
+        manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
+      ).rejects.toThrow('tar failed with exit code 2');
+
+      expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
+    });
+
+    it('is left alone when the unpack is cancelled, and the message says so', async () => {
+      const manager = new VersionManager(new SysadminStorage());
+      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+      const clientDir = createWindowsClientDir('3.7.5');
+      fs.writeFileSync(path.join(clientDir, 'mine'), '');
+      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+        async () => fs.writeFileSync(zipPath, ''),
+      );
+      const source = new CancellationTokenSource();
+      fakeTar(null, () => setImmediate(() => source.cancel()));
+
+      const error = await manager
+        .downloadAndExtractWindowsClient(
+          '3.7.5',
+          { report: vi.fn() },
+          source.token as unknown as vscode.CancellationToken,
+        )
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(InstallCancelledError);
+      expect((error as Error).message).toBe(
+        `Windows client install cancelled. ${clientDir} was there before, so it was left as ` +
+          'it is; the unpack may have replaced some of its files.',
+      );
+      expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
+    });
+  });
+
+  it('keeps the unpack’s own failure in the message when the partial client cannot be removed', async () => {
+    const manager = new VersionManager(new SysadminStorage());
+    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
+    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+      async () => fs.writeFileSync(zipPath, ''),
+    );
+    fakeTar(2, () => fs.mkdirSync(clientDir));
+    const rm = vi
+      .spyOn(fs.promises, 'rm')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }),
+      );
+
+    try {
+      await expect(
+        manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken),
+      ).rejects.toThrow(
+        `The Windows client install failed (tar failed with exit code 2), and the partly ` +
+          `unpacked files at ${clientDir} could not be removed (EBUSY: resource busy or locked). ` +
+          'Remove that folder before installing again.',
+      );
+    } finally {
+      rm.mockRestore();
+    }
+  });
+
+  it('runs tar on Windows itself even when GemStone lives in WSL', async () => {
+    vi.mocked(needsWsl).mockReturnValue(true);
+    try {
+      const manager = new VersionManager(new SysadminStorage());
+      const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+      vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+        async () => fs.writeFileSync(zipPath, ''),
+      );
+      fakeTar(0);
+
+      await manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken);
+
+      expect(spawn).toHaveBeenCalledWith('tar', ['-xf', zipPath, '-C', tmpDir]);
+      expect(wslSpawn).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(needsWsl).mockReturnValue(false);
+    }
   });
 
   it('on a failed unpack, removes both the partial client and the zip', async () => {

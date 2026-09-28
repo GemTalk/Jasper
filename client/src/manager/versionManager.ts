@@ -27,6 +27,13 @@ export class InstallCancelledError extends Error {
 
 const DOWNLOAD_CANCELLED = 'Download cancelled. The partly downloaded file was removed.';
 
+/**
+ * Put before a command run through WSL, so Jasper learns its Linux pid:
+ * `exec` hands the command the shell's own pid, which the shell has just named.
+ */
+const WSL_PID_WRAPPER = 'echo "jasper-pid $$" >&2; exec "$@"';
+const WSL_PID_LINE = /^jasper-pid (\d+)\r?\n/;
+
 /** How a child process ended. 127 also stands for "no such command", as a shell reports it. */
 interface ChildResult {
   code: number;
@@ -303,40 +310,27 @@ export class VersionManager {
 
     if (needsWsl()) {
       // On Windows, download via curl inside WSL
-      return new Promise<void>((resolve, reject) => {
-        const proc = wslSpawn('curl', ['-L', '-o', targetPath, '-#', version.url]);
-
-        token.onCancellationRequested(() => {
-          proc.kill();
-          try {
-            wslExecSync(`rm -f "${targetPath}"`);
-          } catch {
-            /* ignore */
-          }
-          reject(new InstallCancelledError(DOWNLOAD_CANCELLED));
+      const removePartial = () => this.run('rm', ['-f', targetPath]);
+      let curl: ChildResult;
+      try {
+        curl = await this.run('curl', ['-L', '-o', targetPath, '-#', version.url], {
+          token,
+          onStderr: (text) => {
+            const pctMatch = text.match(/([\d.]+)%/);
+            if (pctMatch) progress.report({ message: `${pctMatch[1]}%` });
+          },
         });
-
-        proc.stderr?.on('data', (data: Buffer) => {
-          const text = data.toString();
-          const pctMatch = text.match(/([\d.]+)%/);
-          if (pctMatch) {
-            progress.report({ message: `${pctMatch[1]}%` });
-          }
-        });
-
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            try {
-              wslExecSync(`rm -f "${targetPath}"`);
-            } catch {
-              /* ignore */
-            }
-            reject(new Error(`curl exited with code ${code}`));
-          } else {
-            resolve();
-          }
-        });
-      });
+      } catch (e) {
+        await removePartial();
+        throw e instanceof InstallCancelledError
+          ? new InstallCancelledError(DOWNLOAD_CANCELLED)
+          : e;
+      }
+      if (curl.code !== 0) {
+        await removePartial();
+        throw new Error(`curl exited with code ${curl.code}${stderrTail(curl.stderr)}`);
+      }
+      return;
     }
 
     return this.downloadFile(version.url, targetPath, progress, token);
@@ -419,6 +413,9 @@ export class VersionManager {
         });
 
         request.on('error', (err) => {
+          // Destroying a request before its response arrives fails it with
+          // "socket hang up": the cancel's own doing, which it reports.
+          if (cancelled) return;
           file.close(() => cleanup());
           cancel.dispose();
           reject(err);
@@ -464,8 +461,11 @@ export class VersionManager {
       if (!existed) await this.removePartial(productDir, version.version, e);
       if (e instanceof InstallCancelledError) {
         throw new InstallCancelledError(
-          `Unpacking GemStone ${version.version} cancelled. The partly unpacked files were ` +
-            'removed; the download is kept.',
+          existed
+            ? `Unpacking GemStone ${version.version} cancelled. ${productDir} was there before, ` +
+                'so it was left as it is; the download is kept.'
+            : `Unpacking GemStone ${version.version} cancelled. The partly unpacked files were ` +
+                'removed; the download is kept.',
         );
       }
       throw e;
@@ -660,8 +660,9 @@ export class VersionManager {
    * child as an argv, never through a shell, so a root path holding a quote or
    * a `$` arrives intact.
    *
-   * A cancel kills the child and rejects only once it has exited, so the cleanup
-   * that follows never races a child still writing.
+   * A cancel kills the child — and, through WSL, the Linux process behind
+   * wsl.exe — and rejects only once both have gone, so the cleanup that follows
+   * never races a child still writing.
    */
   private run(
     cmd: string,
@@ -669,24 +670,45 @@ export class VersionManager {
     opts: {
       token?: vscode.CancellationToken;
       onLine?: (line: string) => void;
+      onStderr?: (text: string) => void;
       native?: boolean;
     } = {},
   ): Promise<ChildResult> {
-    const { token, onLine } = opts;
+    const { token, onLine, onStderr } = opts;
     if (token?.isCancellationRequested)
       return Promise.reject(new InstallCancelledError('Cancelled'));
+    const viaWsl = needsWsl() && !opts.native;
     return new Promise((resolve, reject) => {
-      const proc: ChildProcess =
-        needsWsl() && !opts.native ? wslSpawn(cmd, args) : spawn(cmd, args);
+      // Through WSL the child Jasper holds is wsl.exe, and killing it need not
+      // stop the Linux process doing the work. The wrapper names that process,
+      // so a cancel can stop it too.
+      const proc: ChildProcess = viaWsl
+        ? wslSpawn('sh', ['-c', WSL_PID_WRAPPER, 'sh', cmd, ...args])
+        : spawn(cmd, args);
       let stderr = '';
+      let firstLine = viaWsl ? '' : undefined;
+      let linuxPid: string | undefined;
       let partial = '';
       let cancelled = false;
+      let settled = false;
       const subscription = token?.onCancellationRequested(() => {
         cancelled = true;
         proc.kill();
       });
       proc.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
+        let text = chunk.toString();
+        if (firstLine !== undefined) {
+          firstLine += text;
+          if (!firstLine.includes('\n')) return;
+          const pid = firstLine.match(WSL_PID_LINE);
+          linuxPid = pid?.[1];
+          text = pid ? firstLine.slice(pid[0].length) : firstLine;
+          firstLine = undefined;
+        }
+        // Only the tail is ever shown, and curl's progress bar would otherwise
+        // grow this for the length of a download.
+        stderr = (stderr + text).slice(-8192);
+        onStderr?.(text);
       });
       // Read even when nobody wants the lines: a child whose stdout pipe fills
       // stops until someone does.
@@ -697,17 +719,37 @@ export class VersionManager {
         lines.forEach(onLine);
       });
       proc.on('error', (err: NodeJS.ErrnoException) => {
+        if (settled) return;
+        settled = true;
         subscription?.dispose();
-        if (err.code === 'ENOENT') resolve({ code: 127, stderr: '' });
+        // Through WSL, ENOENT means wsl.exe itself is missing; a command
+        // missing inside WSL comes back from sh as 127 instead.
+        if (err.code === 'ENOENT' && !viaWsl) resolve({ code: 127, stderr: '' });
         else reject(err);
       });
       proc.on('close', (code) => {
+        if (settled) return;
+        settled = true;
         subscription?.dispose();
         if (partial) onLine?.(partial);
-        if (cancelled) reject(new InstallCancelledError('Cancelled'));
-        else resolve({ code: code ?? 1, stderr });
+        if (!cancelled) {
+          resolve({ code: code ?? 1, stderr });
+          return;
+        }
+        const stopped = linuxPid ? this.stopInWsl(linuxPid) : Promise.resolve();
+        void stopped.then(() => reject(new InstallCancelledError('Cancelled')));
       });
     });
+  }
+
+  /** Stop a Linux process a cancel may have left running inside WSL, and wait until it has gone. */
+  private async stopInWsl(pid: string): Promise<void> {
+    await this.run('kill', [pid]);
+    for (let i = 0; i < 50; i++) {
+      if ((await this.run('kill', ['-0', pid])).code !== 0) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await this.run('kill', ['-9', pid]);
   }
 
   /** Delete a downloaded file */
@@ -777,9 +819,9 @@ export class VersionManager {
    * Download, extract, and clean up the Windows client distribution for `version`.
    *
    * On HTTP 404 (GemTalk hasn't published a client for this version), throws a
-   * friendly error the caller can show verbatim. The zip is always deleted after
-   * a successful extract — the client distribution is small enough that keeping
-   * it around doesn't add value.
+   * friendly error the caller can show verbatim. The zip is always deleted
+   * afterwards, whether the unpack succeeded or not — the client distribution
+   * is small enough that keeping it around doesn't add value.
    */
   async downloadAndExtractWindowsClient(
     version: string,
@@ -822,10 +864,27 @@ export class VersionManager {
       }
       appendSysadmin(`Extracted Windows client: ${fileName}`);
     } catch (e) {
-      if (created) await fs.promises.rm(clientDir, { recursive: true, force: true });
+      if (created) {
+        try {
+          await fs.promises.rm(clientDir, { recursive: true, force: true });
+        } catch (rmError) {
+          // Said instead of the outcome, which it would otherwise replace: a
+          // virus scanner holding a fresh DLL is enough to make this fail.
+          const message =
+            `${e instanceof InstallCancelledError ? 'The Windows client install was cancelled' : `The Windows client install failed (${e instanceof Error ? e.message : String(e)})`}` +
+            `, and the partly unpacked files at ${clientDir} could not be removed ` +
+            `(${rmError instanceof Error ? rmError.message : String(rmError)}). ` +
+            'Remove that folder before installing again.';
+          appendSysadmin(message);
+          throw new Error(message, { cause: rmError });
+        }
+      }
       if (e instanceof InstallCancelledError) {
         throw new InstallCancelledError(
-          'Windows client install cancelled. The partly unpacked files were removed.',
+          created
+            ? 'Windows client install cancelled. The partly unpacked files were removed.'
+            : `Windows client install cancelled. ${clientDir} was there before, so it was left ` +
+                'as it is; the unpack may have replaced some of its files.',
         );
       }
       throw e;

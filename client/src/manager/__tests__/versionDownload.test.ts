@@ -28,6 +28,8 @@ import { cancelSource, until } from './extractFixture';
 
 let tmpDir: string;
 let body: PassThrough;
+/** Whether the fake server answers at all; a test that cancels while connecting turns it off. */
+let responds: boolean;
 let manager: VersionManager;
 let version: GemStoneVersion;
 
@@ -47,11 +49,30 @@ beforeEach(() => {
   };
   // A response that sends what the test writes to it and never ends by itself.
   body = new PassThrough();
+  responds = true;
+  vi.mocked(https.get).mockClear();
   vi.mocked(https.get).mockImplementation(((_url: string, onResponse: (res: unknown) => void) => {
-    const request = Object.assign(new EventEmitter(), { destroy: () => body.destroy() });
-    setImmediate(() =>
-      onResponse(Object.assign(body, { statusCode: 200, headers: { 'content-length': '1000' } })),
-    );
+    let answered = false;
+    const request = Object.assign(new EventEmitter(), {
+      // As Node does: destroyed before its response, a request fails with
+      // "socket hang up"; after it, the response is torn down instead.
+      destroy: () => {
+        if (answered) body.destroy();
+        else
+          setImmediate(() =>
+            request.emit(
+              'error',
+              Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+            ),
+          );
+      },
+    });
+    if (responds) {
+      setImmediate(() => {
+        answered = true;
+        onResponse(Object.assign(body, { statusCode: 200, headers: { 'content-length': '1000' } }));
+      });
+    }
     return request;
   }) as unknown as typeof https.get);
 });
@@ -79,6 +100,20 @@ describe('Cancelling a GemStone download', () => {
     expect((outcome as Error).message).toBe(
       'Download cancelled. The partly downloaded file was removed.',
     );
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('reports the cancel, not a failed connection, when cancelled before the server answers', async () => {
+    responds = false;
+    const target = path.join(tmpDir, version.fileName);
+    const source = cancelSource();
+    const downloading = manager.download(version, { report: vi.fn() }, source.token);
+    await until(() => vi.mocked(https.get).mock.calls.length > 0);
+
+    source.cancel();
+    const outcome = await downloading.catch((e: unknown) => e);
+
+    expect(outcome).toBeInstanceOf(InstallCancelledError);
     expect(fs.existsSync(target)).toBe(false);
   });
 
