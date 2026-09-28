@@ -305,10 +305,10 @@ describe('GciLibrary', () => {
     );
   }
 
-  /** A call to a non-blocking GCI operation, paired with the integer its resulting oop decodes to. */
-  interface NonBlockingOperation {
-    run: () => Promise<bigint>;
-    expectedResult: bigint;
+  /** A call to a non-blocking GCI operation, paired with the value its result decodes to. */
+  interface NonBlockingOperation<Result, Decoded> {
+    run: () => Promise<Result>;
+    expectedResult: Decoded;
   }
 
   /**
@@ -323,19 +323,25 @@ describe('GciLibrary', () => {
    * @param operations.quick - An operation that finishes right away. Its
    *   result must differ from `slow`'s, so a test can tell which operation
    *   a result came from.
+   * @param operations.decodeResult - Turns an operation's result into the
+   *   value compared against its `expectedResult`.
    */
-  function itBehavesLikeANonBlockingOperation(operations: {
-    slow: NonBlockingOperation;
-    quick: NonBlockingOperation;
+  function itBehavesLikeANonBlockingOperation<Result, Decoded>(operations: {
+    slow: NonBlockingOperation<Result, Decoded>;
+    quick: NonBlockingOperation<Result, Decoded>;
+    decodeResult: (result: Result) => Decoded;
   }) {
-    const { slow, quick } = operations;
+    const { slow, quick, decodeResult } = operations;
 
     if (slow.expectedResult === quick.expectedResult) {
       throw new Error('The slow and quick operations must resolve to different results.');
     }
 
-    function expectOperationToReturn(operation: NonBlockingOperation, resultOop: bigint) {
-      expect(gciLibrary.oopToInteger(session, resultOop)).toBe(operation.expectedResult);
+    function expectOperationToReturn(
+      operation: NonBlockingOperation<Result, Decoded>,
+      result: Result,
+    ) {
+      expect(decodeResult(result)).toBe(operation.expectedResult);
     }
 
     it('does not block the event loop while GemStone works on it', async () => {
@@ -488,6 +494,7 @@ describe('GciLibrary', () => {
         run: () => gciLibrary.executeAndFetchOop(session, `2`),
         expectedResult: 2n,
       },
+      decodeResult: (resultOop) => gciLibrary.oopToInteger(session, resultOop),
     });
   });
 
@@ -732,6 +739,7 @@ describe('GciLibrary', () => {
           ),
         expectedResult: 2n,
       },
+      decodeResult: (resultOop) => gciLibrary.oopToInteger(session, resultOop),
     });
   });
 
