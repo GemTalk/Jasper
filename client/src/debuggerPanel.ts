@@ -3416,8 +3416,9 @@ export class DebuggerPanel {
       // a looping method no longer freezes the extension host (see nbRunner.ts).
       // Forwarding opts wires the in-panel Cancel button for a runaway step.
       const result = await fn(this.session, this.gsProcess, level, opts);
-      // The sink buffers Transcript writes while debugging (a live forwarder
-      // send would swallow the step) — show whatever this step produced.
+      // The sink buffers Transcript writes while debugging (stepping runs
+      // outside clientForwarder mode, whose 2336 would swallow the step) —
+      // show whatever this step produced.
       appendTranscriptOutput(drainTranscript(this.session));
       if (this.disposed) return; // panel closed while the step ran
       if (result.completed) {

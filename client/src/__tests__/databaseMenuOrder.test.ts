@@ -1,3 +1,4 @@
+import { applies, inlineRank } from './menuWhenClause';
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -21,23 +22,6 @@ const pkg = JSON.parse(
 );
 const itemContext: MenuItem[] = pkg.contributes.menus['view/item/context'];
 
-function inlineRank(group: string): number {
-  const match = /inline@(\d+)/.exec(group);
-  return match ? Number(match[1]) : 0;
-}
-
-// Whether a `when` clause fires for a row carrying this context value. Both
-// forms are in use — an outright `viewItem == x` and a `viewItem =~ /…/` — and a
-// row sees both kinds at once, so the clause is evaluated rather than matched as
-// text. Matching as text is what stopped telling the truth the moment a clause
-// grew its `(Registered)?` alternative.
-function applies(when: string, viewItem: string): boolean {
-  const literal = /viewItem == ([A-Za-z]+)/.exec(when);
-  if (literal) return literal[1] === viewItem;
-  const pattern = /viewItem =~ \/(.+?)\//.exec(when);
-  return pattern ? new RegExp(pattern[1]).test(viewItem) : false;
-}
-
 /** The inline buttons a row with this context value shows, left to right. */
 function inlineOrderForViewItem(viewItem: string): string[] {
   return itemContext
@@ -59,10 +43,15 @@ describe('running stone row inline button order', () => {
   });
 
   it('surfaces the online extent backup on the running stone, not on the session row', () => {
+    // Evaluated, not matched as text: a session clause is `viewItem =~ /…/` now
+    // that each row says in its own context value what that session can do, so the
+    // old literal `viewItem == gemstoneSession` matches nothing and this assertion
+    // would pass however the button moved. The value below is the richest a
+    // session row carries, so every session clause fires for it.
     const onSession = itemContext.some(
       (m) =>
         m.command === 'gemstone.onlineExtentBackup' &&
-        (m.when ?? '').includes('viewItem == gemstoneSession'),
+        applies(m.when ?? '', 'gemstoneSession.canCommit.canBegin'),
     );
     const onRunningStone = itemContext.some(
       (m) =>

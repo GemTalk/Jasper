@@ -11,7 +11,8 @@ import {
   CLIENT_FORWARDER_SEND_ERR,
   TRANSCRIPT_CLIENT_OBJECT,
   installTranscriptSink,
-  setTranscriptLive,
+  startClientForwarderMode,
+  endClientForwarderMode,
   drainTranscript,
   isForwarderSendError,
   decodeTranscriptForwarderSend,
@@ -135,27 +136,59 @@ describe('transcriptSink', () => {
     });
   });
 
-  describe('setTranscriptLive / drainTranscript', () => {
-    it('returns the text drained during a mode switch', () => {
+  describe('startClientForwarderMode / endClientForwarderMode / drainTranscript', () => {
+    const sentCode = (gci: ReturnType<typeof makeGci>, call = 0): string =>
+      (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[call][1] as string;
+
+    it('returns the text drained when the mode starts', () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => 'buffered output'),
       });
 
-      expect(setTranscriptLive(makeSession(gci), true)).toBe('buffered output');
+      expect(startClientForwarderMode(makeSession(gci), '3 + 4')).toBe('buffered output');
     });
 
-    it('sends the requested mode to the sink', () => {
+    it('hands the sink the exact source, quotes doubled, so it can recognise the process', () => {
+      const gci = makeGci();
+
+      startClientForwarderMode(makeSession(gci), "Transcript show: 'it''s'. 42");
+
+      expect(sentCode(gci)).toContain(
+        "jasperStartClientForwarderModeFor: 'Transcript show: ''it''''s''. 42'",
+      );
+    });
+
+    it('sends non-ASCII source as UTF-8 hex, keeping the doit ASCII for the 3.6.x compiler', () => {
+      const gci = makeGci();
+
+      startClientForwarderMode(makeSession(gci), "'caf\u00e9'");
+
+      expect(sentCode(gci)).toContain(
+        "jasperStartClientForwarderModeFor: ((ByteArray fromHexString: '27636166c3a927') decodeFromUTF8)",
+      );
+      expect(sentCode(gci)).toMatch(/^\p{ASCII}*$/u);
+    });
+
+    it('drops the Transcript mutex when the mode starts, not when it ends', () => {
       const gci = makeGci();
       const session = makeSession(gci);
 
-      setTranscriptLive(session, true);
-      setTranscriptLive(session, false);
+      startClientForwarderMode(session, 'nil');
+      endClientForwarderMode(session);
 
-      const codes = (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls.map(
-        (c) => c[1] as string,
-      );
-      expect(codes[0]).toContain('jasperLive: true');
-      expect(codes[1]).toContain('jasperLive: false');
+      expect(sentCode(gci, 0)).toContain('removeKey: #TranscriptStream_SessionMutex');
+      expect(sentCode(gci, 1)).toContain('jasperEndClientForwarderMode');
+      expect(sentCode(gci, 1)).not.toContain('TranscriptStream_SessionMutex');
+    });
+
+    it('returns empty (not an exception) when the end is refused', () => {
+      const gci = makeGci({
+        executeAndFetchString: vi.fn(() => {
+          throw new Error('session has a GciTsNb operation in progress');
+        }),
+      });
+
+      expect(endClientForwarderMode(makeSession(gci))).toBe('');
     });
 
     it('drains via the sink and returns empty when nothing is buffered', () => {

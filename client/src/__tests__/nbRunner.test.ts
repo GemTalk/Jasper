@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../gciLog', async (orig) => ({ ...(await orig()), logInfo: vi.fn() }));
 
 import * as vscode from 'vscode';
+import { logInfo } from '../gciLog';
 import { runNbCall, pollNbResultReady, NbCancelledError, MIN_HARD_BREAK_GAP_MS } from '../nbRunner';
 import { ActiveSession } from '../sessionManager';
 
@@ -517,6 +519,83 @@ describe('after a hard break', () => {
     }
   });
 
+  it('runs onAbandonedCollected once the abandoned result is collected, not before', async () => {
+    // Execute It ends clientForwarder mode here: its own `finally` ran while
+    // the call was still being collected, and GemStone refused it.
+    vi.useFakeTimers();
+    try {
+      const session = makeSession([{ result: 0 }]);
+      const poll = session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      const collected = vi.fn(() => {
+        expect(session.gci.GciTsNbResult).toHaveBeenCalled();
+      });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+          onAbandonedCollected: collected,
+        },
+      );
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+      expect(collected).not.toHaveBeenCalled();
+
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(collected).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not run onAbandonedCollected when draining gives up', async () => {
+    // The session is still busy (or gone): an end call there would only be refused.
+    vi.useFakeTimers();
+    try {
+      const session = makeSession([{ result: 0 }]);
+      (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({
+        result: 0,
+        err: noErr,
+      });
+      const collected = vi.fn();
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+          onAbandonedCollected: collected,
+        },
+      );
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(collected).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('gives up draining a session that never answers', async () => {
     // Better a bounded background poll than one that outlives the window.
     vi.useFakeTimers();
@@ -550,6 +629,11 @@ describe('after a hard break', () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(session.gci.GciTsNbResult).not.toHaveBeenCalled();
+      // Silently giving up leaves a session that refuses every call with no
+      // trace of why.
+      expect(vi.mocked(logInfo)).toHaveBeenCalledWith(
+        expect.stringContaining('Gave up collecting a cancelled call'),
+      );
       const pollsAfterGivingUp = (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mock.calls
         .length;
       await vi.advanceTimersByTimeAsync(60_000);
@@ -577,7 +661,7 @@ describe('a hard break while the result is being read', () => {
     (session.gci as unknown as Record<string, ReturnType<typeof vi.fn>>)[name].mock.calls.length;
 
   /** A run whose onReady is still working when both cancels land. */
-  async function hardBreakDuringOnReady() {
+  async function hardBreakDuringOnReady(onAbandonedCollected?: () => void) {
     const session = makeSession([{ result: 1 }]);
     let finishOnReady: () => void = () => {};
     let signal: AbortSignal | undefined;
@@ -598,6 +682,7 @@ describe('a hard break while the result is being read', () => {
         onStart: (c) => {
           cancel = c;
         },
+        onAbandonedCollected,
       },
     );
     // Claimed now: the hard break rejects inside a timer tick, a turn before
@@ -622,6 +707,27 @@ describe('a hard break while the result is being read', () => {
       );
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       finishOnReady();
+    } finally {
+      // Run out, not cleared: the session's hold must lift, or every later
+      // test in this file waits on it.
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs onAbandonedCollected once the read finishes, not before', async () => {
+    vi.useFakeTimers();
+    try {
+      const collected = vi.fn();
+      const { run, finishOnReady } = await hardBreakDuringOnReady(collected);
+      await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(collected).not.toHaveBeenCalled();
+
+      finishOnReady();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(collected).toHaveBeenCalledTimes(1);
     } finally {
       // Run out, not cleared: the session's hold must lift, or every later
       // test in this file waits on it.

@@ -948,7 +948,9 @@ describe('backing up a stopped database', () => {
 });
 
 describe('session actions', () => {
-  function mountSession(current = false) {
+  // Defaults describe the autoBegin session almost everyone has: inside a
+  // transaction, so Commit applies and Begin has nothing to do.
+  function mountSession(current = false, session = {}) {
     mount(
       state({
         databases: [
@@ -959,7 +961,16 @@ describe('session actions', () => {
                 user: 'DataCurator',
                 stone: 'gs64stone',
                 host: 'localhost',
-                sessions: [{ id: 3, current }],
+                sessions: [
+                  {
+                    id: 3,
+                    current,
+                    transactionState: 'Auto-Begin',
+                    canCommit: true,
+                    canBegin: false,
+                    ...session,
+                  },
+                ],
               },
             ],
           }),
@@ -968,25 +979,66 @@ describe('session actions', () => {
     );
   }
 
+  function rowCommands(): (string | null)[] {
+    const row = root.querySelector('.db-session')!;
+    return Array.from(row.querySelectorAll('[data-cmd]')).map((b) => b.getAttribute('data-cmd'));
+  }
+
   // A session is a session: someone who found Commit in the sidebar should not
   // have to wonder whether the panel can do it.
   // Export Classes is deliberately absent: the sidebar's session row does not
   // show it as a button either (it is right-click only there).
-  it('offers the actions the Logins & Sessions row shows, and no more', () => {
+  // The one deliberate difference is Set Transaction Mode, which the sidebar keeps
+  // on its context menu: the panel has no per-row context menu, so it is a button
+  // here — the last one, away from Commit and Abort, since switching aborts.
+  it('offers the Logins & Sessions row’s actions, plus the mode switch it keeps on a menu', () => {
     mountSession();
     const row = root.querySelector('.db-session')!;
-    const commands = Array.from(row.querySelectorAll('[data-cmd]')).map((b) =>
-      b.getAttribute('data-cmd'),
-    );
-    expect(commands).toEqual([
+    expect(rowCommands()).toEqual([
       'gemstone.selectSession',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
       'gemstone.fullLogicalBackup',
       'gemstone.fullLogicalRestore',
+      'gemstone.setTransactionMode',
     ]);
     expect(row.querySelector('[data-action="showSessionConfiguration"]')).not.toBeNull();
     expect(row.querySelector('[data-action="logoutSession"]')).not.toBeNull();
+  });
+
+  // The same rule the Logins & Sessions rows follow: offer Begin and Commit only
+  // where the stone would accept them, so no button is on screen that can only
+  // fail.
+  it('offers Begin instead of Commit on a manual session that is outside a transaction', () => {
+    mountSession(false, {
+      transactionState: 'Manual · not in transaction',
+      canCommit: false,
+      canBegin: true,
+    });
+    expect(rowCommands()).toContain('gemstone.sessionBegin');
+    expect(rowCommands()).not.toContain('gemstone.sessionCommit');
+  });
+
+  it('offers neither on a transactionless session', () => {
+    mountSession(false, { transactionState: 'Transactionless', canCommit: false, canBegin: false });
+    expect(rowCommands()).not.toContain('gemstone.sessionBegin');
+    expect(rowCommands()).not.toContain('gemstone.sessionCommit');
+  });
+
+  it('keeps Abort and the mode switch on every session, whatever mode it is in', () => {
+    mountSession(false, { transactionState: 'Transactionless', canCommit: false, canBegin: false });
+    expect(rowCommands()).toContain('gemstone.sessionAbort');
+    expect(rowCommands()).toContain('gemstone.setTransactionMode');
+  });
+
+  it('says which transaction mode the session is in, beside its number', () => {
+    mountSession(false, { transactionState: 'Manual · in transaction' });
+    expect(root.querySelector('.session-tx-mode')?.textContent).toBe('Manual · in transaction');
+  });
+
+  it('says nothing about the mode before it has been read', () => {
+    mountSession(false, { transactionState: undefined });
+    expect(root.querySelector('.session-tx-mode')).toBeNull();
   });
 
   it('sends the command name and the session together', () => {

@@ -7,6 +7,10 @@ import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
+import {
+  TransactionConflicts,
+  tryTransactionConflicts as sharedTryTransactionConflicts,
+} from './queries/transactionConflicts';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -524,6 +528,17 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
  */
 export function abortSessionTransaction(session: ActiveSession): string {
   return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+}
+
+/**
+ * The conflict set left by a commit this session just had refused, or undefined
+ * when it could not be read (session busy, unreachable, unrecognized reply).
+ *
+ * Call it before anything else touches the transaction — why is the
+ * queries/transactionConflicts.ts header.
+ */
+export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
+  return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
 }
 
 /**

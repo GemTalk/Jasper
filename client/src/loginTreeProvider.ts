@@ -2,6 +2,13 @@ import * as vscode from 'vscode';
 import { GemStoneLogin, loginLabel, sessionsForLogin } from './loginTypes';
 import { LoginStorage } from './loginStorage';
 import { ActiveSession, SessionManager } from './sessionManager';
+import {
+  canBegin,
+  canCommit,
+  modeDescription,
+  transactionStateLabel,
+  transactionStateLabelIfKnown,
+} from './queries/transactionMode';
 import { McpOwnership } from './mcpServerTreeProvider';
 
 /** A configured login (tree root). Its active sessions appear as children. */
@@ -37,6 +44,48 @@ export class GemStoneLoginItem extends vscode.TreeItem {
       arguments: [this],
     };
   }
+}
+
+/**
+ * The row's `contextValue`, which is how `package.json` decides which inline
+ * buttons a session gets.
+ *
+ * A plain context key would not do: keys are global, so in multiple-session mode
+ * every row would show the buttons that suit whichever session happens to be
+ * selected. Encoding the two answers in the row's own contextValue keeps each
+ * row's buttons about that row. The `when` clauses match with `=~` rather than
+ * `==` for the same reason — see the session entries in package.json.
+ */
+function sessionContextValue(session: ActiveSession): string {
+  const { transactionMode, inTransaction } = session;
+  return (
+    'gemstoneSession' +
+    (canCommit(inTransaction) ? '.canCommit' : '') +
+    (canBegin(transactionMode, inTransaction) ? '.canBegin' : '')
+  );
+}
+
+/**
+ * The dimmed text beside a session row: which session, which stone, whether
+ * Claude's tools are pointed at it, and — once it has been read — which
+ * transaction mode.
+ *
+ * `· MCP` stays immediately after the version, where it can be scanned down a
+ * column of rows: at most one row across all windows ever carries it, while the
+ * mode is on every row and varies in length, so the mode trails rather than
+ * pushing the rarer marker around.
+ *
+ * The mode segment is dropped rather than shown as "Unknown" when the state has
+ * not been read: a row that has always said `Session 3 (3.7.2)` should not start
+ * announcing an absence. The tooltip still says the mode could not be read, for
+ * anyone who goes looking.
+ */
+function sessionDescription(session: ActiveSession, mcp: SessionMcpState = 'off'): string {
+  let text = `Session ${session.id} (${session.stoneVersion})`;
+  if (mcp === 'serving') text += ' · MCP';
+  const state = transactionStateLabelIfKnown(session.transactionMode, session.inTransaction);
+  if (state) text += ` · ${state}`;
+  return text;
 }
 
 /**
@@ -82,24 +131,46 @@ export class GemStoneSessionItem extends vscode.TreeItem {
     mcp: SessionMcpState = 'off',
   ) {
     super(loginLabel(activeSession.login), vscode.TreeItemCollapsibleState.None);
-    const { id, stoneVersion } = activeSession;
-    this.id = `session-${id}`;
-    this.description =
-      mcp === 'serving'
-        ? `Session ${id} (${stoneVersion}) · MCP`
-        : `Session ${id} (${stoneVersion})`;
-    this.tooltip = `Session ${id}: ${loginLabel(activeSession.login)} (${stoneVersion})`;
+    const { id, stoneVersion, transactionMode, inTransaction } = activeSession;
+    // Both the MCP marker and the transaction state are in the id, because VS Code
+    // reuses a node whose id is unchanged — which would leave the old text, and
+    // the old set of inline buttons, on screen after either one moves.
+    //
+    // The id carries the rendered description, not just the contextValue: the
+    // buttons and the text do not move together. `sessionContextValue` answers
+    // only canCommit/canBegin, and both are unchanged across the two transitions
+    // that matter most — undefined → autoBegin at login (the row gains `· Auto-
+    // Begin`), and autoBegin → manualBegin while in a transaction (the row must
+    // stop saying Auto-Begin). Neither half covers the other: under
+    // transactionless, an unread and a false in-transaction flag both draw
+    // `Transactionless` while Commit's button comes and goes, so both are keyed.
+    //
+    // The price is that the row is a new node whenever its text moves, so a
+    // selection on it is dropped — under autoBegin that is once, at login.
+    this.description = sessionDescription(activeSession, mcp);
+    this.id = `session-${id}-${mcp}-${sessionContextValue(activeSession)}-${this.description}`;
+    const tooltip = new vscode.MarkdownString();
+    tooltip.appendMarkdown(
+      `**Session ${id}** — ${loginLabel(activeSession.login)} (${stoneVersion})\n\n`,
+    );
     if (mcp === 'serving') {
-      this.tooltip +=
-        '\n\nClaude Code and Claude Desktop run their GemStone tools against this session.';
+      tooltip.appendMarkdown(
+        'Claude Code and Claude Desktop run their GemStone tools against this session.\n\n',
+      );
     }
+    tooltip.appendMarkdown(
+      `**${transactionStateLabel(transactionMode, inTransaction)}**\n\n${modeDescription(transactionMode)}`,
+    );
+    this.tooltip = tooltip;
     this.iconPath = new vscode.ThemeIcon(isSelected ? 'debug-start' : 'plug');
-    // Every session row keeps this one contextValue, MCP state included: each of
-    // the row's actions — File In, Commit, Abort, Session Configuration, Logout,
-    // and the backup pair in the context menu — is contributed for
-    // `viewItem == gemstoneSession`, so a row given a different value to mark it
-    // as the served one loses all of them. `· MCP` above is the marker instead.
-    this.contextValue = 'gemstoneSession';
+    // The contextValue says what THIS session can do — Begin and Commit are each
+    // offered only where the stone would accept them — so it is not one fixed
+    // string. The row's actions survive that because their `when` clauses match
+    // `viewItem =~ /^gemstoneSession/` rather than `== gemstoneSession`; see the
+    // session entries in package.json. MCP state is deliberately NOT encoded
+    // here: being the served session changes nothing about what the session can
+    // do, and `· MCP` in the description is its marker.
+    this.contextValue = sessionContextValue(activeSession);
   }
 }
 
@@ -123,6 +194,9 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     private mcpOwnership: () => McpOwnership | undefined = () => undefined,
   ) {
     sessionManager?.onDidChangeSelection(() => this.refresh());
+    // A mode switch changes what a session row says and which buttons it carries,
+    // and nothing else would redraw it — the selection has not moved.
+    sessionManager?.onDidChangeTransactionState(() => this.refresh());
   }
 
   // Logins with a connect attempt in flight, by identity. Held here rather than

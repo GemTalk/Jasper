@@ -1,7 +1,7 @@
 import { SessionManager, ActiveSession } from './sessionManager';
 import { wrapExecuteCode } from './queries/executeCode';
 import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
-import { setTranscriptLive, settleNbResult } from './transcriptSink';
+import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
@@ -29,9 +29,9 @@ export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
 const MAX_CELL_RESULT = 256 * 1024;
 
-// Cells run on the NON-BLOCKING execute path with the transcript sink in live
-// mode, so `Transcript show:` output streams to the GemStone Transcript channel
-// while the cell runs (and a long cell doesn't freeze the extension host).
+// Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
+// `Transcript show:` output streams to the GemStone Transcript channel while
+// the cell runs (and a long cell doesn't freeze the extension host).
 export async function evalSmalltalk(session: ActiveSession, source: string): Promise<string> {
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -41,7 +41,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
   }
 
   const code = wrapExecuteCode(source);
-  appendTranscriptOutput(setTranscriptLive(session, true));
+  appendTranscriptOutput(startClientForwarderMode(session, code));
   try {
     const resultOop = await runNbCall(
       session,
@@ -88,7 +88,13 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         }
         return result;
       },
-      { title: 'GemStone: Running cell…', disposableProcess: true },
+      {
+        title: 'GemStone: Running cell…',
+        disposableProcess: true,
+        // The `finally`'s end is refused while a hard-broken cell is being
+        // collected; this is where it can succeed.
+        onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+      },
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
@@ -102,7 +108,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
     }
     return data;
   } finally {
-    appendTranscriptOutput(setTranscriptLive(session, false));
+    appendTranscriptOutput(endClientForwarderMode(session));
   }
 }
 
