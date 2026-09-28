@@ -304,72 +304,80 @@ describe.runIf(process.platform === 'linux' && realUnzip && realPython)(
   },
 );
 
-describe.runIf(process.platform === 'darwin')('Unpacking a GemStone disk image on macOS', () => {
-  let volume: string;
+// Attaching and detaching a disk image takes seconds apiece on a CI runner,
+// which puts these past vitest's default 5 s.
+describe.runIf(process.platform === 'darwin')(
+  'Unpacking a GemStone disk image on macOS',
+  { timeout: 30_000 },
+  () => {
+    let volume: string;
 
-  beforeEach(() => {
-    setUp('dmg');
-    volume = `JasperTest${process.pid}${Date.now()}`;
-    buildDmg(f, volume);
-  });
+    beforeEach(() => {
+      setUp('dmg');
+      volume = `JasperTest${process.pid}${Date.now()}`;
+      buildDmg(f, volume);
+    }, 30_000);
 
-  afterEach(async () => {
-    await tearDown(f);
-    // Only if a test left it mounted; the point of these tests is that none does.
-    try {
-      execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
-    } catch {
-      /* not mounted */
-    }
-  });
+    afterEach(async () => {
+      await tearDown(f);
+      // Only if a test left it mounted; the point of these tests is that none does.
+      try {
+        execFileSync('hdiutil', ['detach', `/Volumes/${volume}`, '-force'], { stdio: 'ignore' });
+      } catch {
+        /* not mounted */
+      }
+    }, 30_000);
 
-  it('copies the tree out, counting against its total, and ejects the image', async () => {
-    const { progress, messages } = progressLog();
+    it('copies the tree out, counting against its total, and ejects the image', async () => {
+      const { progress, messages } = progressLog();
 
-    await extract(undefined, progress);
+      await extract(undefined, progress);
 
-    expect(fs.existsSync(path.join(f.productDir, 'bin', 'gem'))).toBe(true);
-    expect(messages).toContainEqual(expect.stringMatching(/^Copied \d+ of \d+ files \(\d+%\)/));
-    expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
-  });
+      expect(fs.existsSync(path.join(f.productDir, 'bin', 'gem'))).toBe(true);
+      expect(messages).toContainEqual(expect.stringMatching(/^Copied \d+ of \d+ files \(\d+%\)/));
+      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+    });
 
-  it('on cancel, stops the copy, removes the partial tree and ejects the image', async () => {
-    // cp's arguments are -Rv SRC DEST.
-    fakeCommand(f, 'cp', `${partialTree('$3')}\nexec sleep 30`);
-    const source = cancelSource();
-    const extracting = extract(source);
-    await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
+    it('on cancel, stops the copy, removes the partial tree and ejects the image', async () => {
+      // cp's arguments are -Rv SRC DEST.
+      fakeCommand(f, 'cp', `${partialTree('$3')}\nexec sleep 30`);
+      const source = cancelSource();
+      const extracting = extract(source);
+      await until(() => fs.existsSync(path.join(f.productDir, 'ro', 'f')));
 
-    source.cancel();
+      source.cancel();
 
-    await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
-    expect(fakePids(f).filter(isAlive)).toEqual([]);
-    expect(fs.existsSync(f.productDir)).toBe(false);
-    expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
-    expect(fs.existsSync(f.archivePath)).toBe(true);
-  });
+      await expect(extracting).rejects.toBeInstanceOf(InstallCancelledError);
+      expect(fakePids(f).filter(isAlive)).toEqual([]);
+      expect(fs.existsSync(f.productDir)).toBe(false);
+      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+      expect(fs.existsSync(f.archivePath)).toBe(true);
+    });
 
-  it('on a failed copy, removes the partial tree, ejects the image and passes on cp’s words', async () => {
-    fakeCommand(f, 'cp', `${partialTree('$3')}\necho "No space left on device" >&2\nexit 1`);
+    it('on a failed copy, removes the partial tree, ejects the image and passes on cp’s words', async () => {
+      fakeCommand(f, 'cp', `${partialTree('$3')}\necho "No space left on device" >&2\nexit 1`);
 
-    await expect(extract()).rejects.toThrow('cp failed with exit code 1: No space left on device');
+      await expect(extract()).rejects.toThrow(
+        'cp failed with exit code 1: No space left on device',
+      );
 
-    expect(fs.existsSync(f.productDir)).toBe(false);
-    expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
-  });
+      expect(fs.existsSync(f.productDir)).toBe(false);
+      expect(fs.existsSync(`/Volumes/${volume}`)).toBe(false);
+    });
 
-  it('warns, naming the volume, when the image will not eject', async () => {
-    fakeCommand(
-      f,
-      'hdiutil',
-      'if [ "$1" = detach ]; then echo "resource busy" >&2; exit 16; fi\nexec /usr/bin/hdiutil "$@"',
-    );
+    it('warns, naming the volume, when the image will not eject', async () => {
+      fakeCommand(
+        f,
+        'hdiutil',
+        'if [ "$1" = detach ]; then echo "resource busy" >&2; exit 16; fi\nexec /usr/bin/hdiutil "$@"',
+      );
 
-    await extract();
+      await extract();
 
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      `The GemStone disk image is still mounted at /Volumes/${volume}: resource busy. ` +
-        'Eject it in Finder.',
-    );
-  });
-});
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        `The GemStone disk image is still mounted at /Volumes/${volume}: resource busy. ` +
+          'Eject it in Finder.',
+      );
+    });
+  },
+);
