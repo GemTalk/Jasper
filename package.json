@@ -1426,7 +1426,7 @@
       },
       {
         "command": "gemstone.explorer.removeMethod",
-        "title": "Remove Method",
+        "title": "Remove…",
         "category": "GemStone",
         "icon": "$(trash)"
       },
@@ -3063,6 +3063,11 @@
           "command": "gemstone.explorer.removeMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "inline@6"
+        },
+        {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "5_remove@0"
         },
         {
           "command": "gemstone.explorer.renameClass",

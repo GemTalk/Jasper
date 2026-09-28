@@ -156,3 +156,45 @@ export function beginMethodDeletion(
   if (!recording.before[0].exists) return undefined;
   return { commit: () => recording.commit(`Delete ${slotLabel(slot)}`, [ABSENT]) };
 }
+
+/**
+ * Several deletions made as one action, recorded as ONE entry: one Undo puts them all back.
+ * The capture is one round trip for every slot, taken before any of them is removed.
+ *
+ *   const recording = beginMethodDeletions(session, slots, 'Array');
+ *   ... remove them in order, stopping at a failure ...
+ *   recording?.commit(slotsActuallyRemoved);
+ *
+ * `commit` takes the slots that really went, so a run that stopped part-way offers to restore
+ * only those — never a method GemStone refused to remove.
+ */
+export function beginMethodDeletions(
+  session: ActiveSession,
+  slots: MethodSlot[],
+  className: string,
+): { commit(removed: MethodSlot[]): UndoEntry | undefined } | undefined {
+  const recording = beginMethodEdit(session, slots);
+  if (!recording) return undefined;
+  return {
+    commit(removed: MethodSlot[]): UndoEntry | undefined {
+      const kept = slots
+        .map((slot, i) => ({ slot, before: recording.before[i] }))
+        .filter(({ slot, before }) => removed.includes(slot) && before.exists);
+      if (kept.length === 0) return undefined;
+      const label =
+        kept.length === 1
+          ? `Delete ${slotLabel(kept[0].slot)}`
+          : `Delete ${kept.length} methods from ${className}`;
+      const entry = pushUndoEntry({
+        kind: 'methodEdit',
+        sessionId: session.id,
+        label,
+        slots: kept.map((k) => k.slot),
+        before: kept.map((k) => k.before),
+        after: kept.map(() => ABSENT),
+      });
+      logInfo(`[undo] recorded #${entry.id} "${label}" (${kept.length} slot(s))`);
+      return entry;
+    },
+  };
+}

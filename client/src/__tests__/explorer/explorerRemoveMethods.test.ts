@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   canClassBeWritten: vi.fn(() => true),
-  deleteMethod: vi.fn(() => 'Deleted'),
+  deleteMethod: vi.fn(() => 'Deleted: Array >> at:'),
   getClassEnvironments: vi.fn(() => []),
   defaultQueryExecutorUsing: vi.fn(() => () => ''),
   sendersOf: vi.fn(() => []),
@@ -45,8 +45,10 @@ type SelectorInfo = {
 
 const SESSION = { id: 1 } as ActiveSession;
 
-function makeController(session: ActiveSession | undefined = SESSION): ExplorerController {
-  const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
+function makeController(session: ActiveSession | null = SESSION): ExplorerController {
+  const sessionManager = {
+    getSelectedSession: () => session ?? undefined,
+  } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   ctl.state.dictName = 'UserGlobals';
   ctl.state.dictIndex = 1;
@@ -114,7 +116,7 @@ beforeEach(() => {
   resetUndoStacks();
   window.tabGroups.all = [];
   canClassBeWritten.mockReturnValue(true);
-  deleteMethod.mockReturnValue('Deleted');
+  deleteMethod.mockReturnValue('Deleted: Array >> at:');
   sendersOf.mockReturnValue([]);
   hierarchyImplementorsOf.mockReturnValue([]);
   getClassEnvironments.mockReturnValue([]);
@@ -335,7 +337,7 @@ describe('removing several methods — one of them fails', () => {
   it('stops at the failure and names what failed, what was removed and what was not', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('removeSelector: refused');
-      return 'Deleted';
+      return 'Deleted: Array >> x';
     });
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
@@ -351,7 +353,7 @@ describe('removing several methods — one of them fails', () => {
 
   it('treats a non-"Deleted" status as a failure too', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
-      selector === 'a' ? 'Not found' : 'Deleted',
+      selector === 'a' ? 'Not found' : 'Deleted: Array >> b',
     );
 
     await removeMethods(makeController(), [row('a'), row('b')]);
@@ -363,7 +365,7 @@ describe('removing several methods — one of them fails', () => {
   it('still redraws the pane, which has lost the methods removed before the failure', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('refused');
-      return 'Deleted';
+      return 'Deleted: Array >> x';
     });
     const ctl = makeController();
     const reload = vi.spyOn(ctl, 'reloadCurrentClassMethods');
@@ -414,7 +416,7 @@ describe('removing several methods — undo', () => {
     });
     deleteMethod.mockImplementation(() => {
       order.push('delete');
-      return 'Deleted';
+      return 'Deleted: Array >> x';
     });
 
     await removeMethods(makeController(), [row('a'), row('b')]);
@@ -451,7 +453,7 @@ describe('removing several methods — undo', () => {
     everySlotHoldsAMethod();
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('refused');
-      return 'Deleted';
+      return 'Deleted: Array >> x';
     });
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
@@ -526,7 +528,7 @@ describe('removing several methods — guards', () => {
   });
 
   it('does nothing without a selected session', async () => {
-    await removeMethods(makeController(undefined), [row('at:'), row('size')]);
+    await removeMethods(makeController(null), [row('at:'), row('size')]);
 
     expect(showWarningMessage).not.toHaveBeenCalled();
     expect(deleteMethod).not.toHaveBeenCalled();

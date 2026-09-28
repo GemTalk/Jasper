@@ -18,7 +18,8 @@ only inside the selection is moved into the new method.
 
 The selection is DECLINED (an empty change set + a declineReason, surfaced in the
 preview, Apply blocked) when it does not resolve to whole statements / a single
-expression, assigns more than one variable used later, contains a ^ return, sends
+expression -- including a selection that takes in part of a statement, such as the
+closing ] of a block it started inside -- assigns more than one variable used later, contains a ^ return, sends
 to super, uses thisContext, or the new selector's arity does not match the argument
 count. A new selector already implemented in the hierarchy is a SOFT collision
 WARNING (surfaced, Apply still allowed).
@@ -276,6 +277,11 @@ GsExtractMethodRefactoring >> computeAnalysis [
 	tree := self parseTree.
 	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
 	stmts := self selectedStatementsIn: tree.
+	"Whole statements count only when they account for the whole selection. A
+	 selection that also takes in part of a statement -- e.g. the closing ] of a block
+	 it started inside -- would otherwise extract less than was selected, silently."
+	(stmts notEmpty and: [(self selectionOutside: (stmts first start to: stmts last stop) isOnly: '.') not])
+		ifTrue: [stmts := #()].
 	stmts notEmpty
 		ifTrue: [
 			selectedNodes := stmts.
@@ -284,7 +290,8 @@ GsExtractMethodRefactoring >> computeAnalysis [
 		ifFalse: [
 			node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
 			(node notNil and: [node isValue and: [node isReturn not
-				and: [node start >= (selStart - 1) and: [node stop <= (selStop + 1)]]]])
+				and: [(self selectionFits: node)
+				and: [self selectionOutside: (node start to: node stop) isOnly: '()']]]])
 				ifTrue: [
 					isExpression := true.
 					selectedNodes := Array with: node.
@@ -302,9 +309,6 @@ GsExtractMethodRefactoring >> computeAnalysis [
 
 { #category : 'private - analysis' }
 GsExtractMethodRefactoring >> selectedStatementsIn: tree [
-	"The statements of the deepest sequence covering the selection that OVERLAP the
-	 selection interval, in source order. Empty when the selection is not a statement
-	 run (it may be a single expression, resolved separately)."
 	"The statements FULLY inside the selection, taken from the OUTERMOST sequence that
 	 has any. Only whole-statement containment matters -- NOT where the sequence itself
 	 begins -- so selecting the leading indentation of the first line (or a trailing
@@ -323,6 +327,45 @@ GsExtractMethodRefactoring >> selectedStatementsIn: tree [
 			covered notEmpty ifTrue: [
 				(best isNil or: [n start < best start]) ifTrue: [best := n. bestStmts := covered]]]].
 	^bestStmts ifNil: [OrderedCollection new]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> selectionFits: aNode [
+	"Whether aNode lies within the selection. A parenthesised node's interval includes
+	 its parentheses, so selecting just the inside of (n * n) leaves it one character
+	 wider on each side -- allowed only when that character IS the parenthesis, so a
+	 selection that stops short of a block's closing ] does not stretch to take it."
+	| src |
+	src := self sourceString.
+	^(aNode start >= selStart or: [aNode start = (selStart - 1) and: [(src at: aNode start) = $(]])
+		and: [aNode stop <= selStop or: [aNode stop = (selStop + 1) and: [(src at: aNode stop) = $)]]]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> selectionOutside: anInterval isOnly: punctuation [
+	"Whether the selected text outside anInterval is only whitespace, comments and the
+	 characters in punctuation -- statement periods around whole statements, parentheses
+	 around an expression. That is the slack a selection dragged line to line picks up;
+	 anything else is code the extract would leave behind."
+	| src |
+	src := self sourceString.
+	^(self isSlack: src from: selStart to: anInterval first - 1 allowing: punctuation)
+		and: [self isSlack: src from: anInterval last + 1 to: selStop allowing: punctuation]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> isSlack: aString from: start to: stop allowing: punctuation [
+	| i ch |
+	i := start max: 1.
+	[i <= (stop min: aString size)] whileTrue: [
+		ch := aString at: i.
+		ch = $"
+			ifTrue: [
+				i := (aString indexOf: $" startingAt: i + 1) ifNil: [0].
+				(i = 0 or: [i > stop]) ifTrue: [^false]]
+			ifFalse: [(ch isSeparator or: [punctuation includes: ch]) ifFalse: [^false]].
+		i := i + 1].
+	^true
 ]
 
 { #category : 'private - analysis' }

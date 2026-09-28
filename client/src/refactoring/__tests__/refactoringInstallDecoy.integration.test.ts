@@ -9,9 +9,7 @@ import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeatureAbsent } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
-import { loginAsSystemUser, DEFAULT_SYSTEMUSER_PW } from '../../serverPlugin/installHelpers';
 import { installRefactoringSupport } from '../refactoringInstall';
-import { uninstallRefactoringSupport } from '../refactoringUninstall';
 
 /**
  * A real engine install on a stone where another dictionary already binds one of
@@ -26,23 +24,29 @@ import { uninstallRefactoringSupport } from '../refactoringUninstall';
  * full RBScanner that shadows a decoy added after it. So this runs in the
  * bare-stone pass and skips once the engine is present.
  *
- * The loader commits, and the harness's sessions refuse commits, so the work runs
- * on a SystemUser session of its own and is torn down unconditionally: the decoy
- * removed and the engine uninstalled, both committed. Either one left behind would
- * change every later test in the run.
+ * The install needs SystemUser (it shares the dictionary into every user's symbol
+ * list) and the loader commits on success or aborts on failure. The commit budget
+ * lands either in a nested transaction the harness discards afterwards, so the
+ * decoy and the engine both vanish with it and nothing needs uninstalling.
  */
 describe('refactoring engine install beside a dictionary that already binds RBScanner', () => {
   let gci: GciLibrary;
   let handle: unknown;
-  useIntegrationTest((testContext) => {
-    gci = testContext.gciLibrary;
-    handle = testContext.session;
-  });
+  let login: (options?: { user?: string }) => void;
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      handle = testContext.session;
+      login = testContext.login;
+    },
+    // The loader's one commit, or its one abort.
+    { allowedCommits: 1 },
+  );
   const session = (): ActiveSession => testActiveSession(gci, handle);
+  const exec = (code: string): string => q.executeFetchString(session(), code).trim();
 
   const DECOY = 'JasperTestDecoyRB';
   const payloadDir = path.resolve(__dirname, '..', '..', '..', '..', 'resources', 'refactoring');
-  const exec = (s: ActiveSession, code: string): string => q.executeFetchString(s, code).trim();
 
   const plantDecoy = `
 | d |
@@ -51,14 +55,7 @@ d name: #${DECOY}.
 Object subclass: 'RBScanner' instVarNames: #() classVars: #() classInstVars: #()
   poolDictionaries: #() inDictionary: d.
 System myUserProfile insertDictionary: d at: System myUserProfile symbolList size + 1.
-System commitTransaction printString`;
-
-  const removeDecoy = `
-| prof idx |
-prof := System myUserProfile.
-[idx := (1 to: prof symbolList size) detect: [:i | (prof symbolList at: i) name == #${DECOY}] ifNone: [nil].
- idx notNil] whileTrue: [prof removeDictionaryAt: idx].
-System commitTransaction printString`;
+'ok'`;
 
   /** Instance- plus class-side selector count of the RBScanner bound in `dictName`. */
   const rbScannerSelectorsIn = (dictName: string) => `
@@ -73,40 +70,16 @@ cls isNil ifTrue: ['none'] ifFalse: [(cls selectors size + cls class selectors s
       !pluginFeatures.refactoring.isApplicable(gci.GciTsVersion().version),
       'the refactoring engine does not support this stone version',
     );
-    let sys: ActiveSession;
-    try {
-      sys = loginAsSystemUser(session(), DEFAULT_SYSTEMUSER_PW);
-    } catch (e) {
-      return ctx.skip(`no SystemUser login on this stone: ${String(e)}`);
-    }
+    login({ user: 'SystemUser' });
+    expect(exec('System myUserProfile userId')).toBe('SystemUser');
 
-    let decoyRemoved: string;
-    let uninstalled: { success: boolean; message: string };
-    let engineLeftBehind: boolean | undefined;
-    try {
-      expect(exec(sys, plantDecoy)).toBe('true');
-      expect(exec(sys, rbScannerSelectorsIn(DECOY))).toBe('0');
+    expect(exec(plantDecoy)).toBe('ok');
+    expect(exec(rbScannerSelectorsIn(DECOY))).toBe('0');
 
-      const result = await installRefactoringSupport(sys, payloadDir);
+    const result = await installRefactoringSupport(session(), payloadDir);
 
-      expect(result.success, result.report).toBe(true);
-      expect(Number(exec(sys, rbScannerSelectorsIn('GsRefactoring')))).toBeGreaterThan(0);
-      expect(exec(sys, rbScannerSelectorsIn(DECOY))).toBe('0');
-    } finally {
-      try {
-        exec(sys, 'System abortTransaction. true printString');
-        decoyRemoved = exec(sys, removeDecoy);
-      } catch (e) {
-        decoyRemoved = String(e);
-      }
-      uninstalled = await uninstallRefactoringSupport(sys);
-      // Asked on this session: the harness's is still in a transaction opened before
-      // the install, so it could not see the engine either way.
-      engineLeftBehind = q.checkRefactoringSupportAvailable(sys);
-      gci.logout(sys.handle);
-    }
-    expect(decoyRemoved, 'the decoy dictionary was not removed').toBe('true');
-    expect(uninstalled.success, uninstalled.message).toBe(true);
-    expect(engineLeftBehind).toBe(false);
+    expect(result.success, result.report).toBe(true);
+    expect(Number(exec(rbScannerSelectorsIn('GsRefactoring')))).toBeGreaterThan(0);
+    expect(exec(rbScannerSelectorsIn(DECOY))).toBe('0');
   }, 180_000);
 });

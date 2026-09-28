@@ -229,11 +229,11 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     expect(focusedTheExplorerContainer()).toBe(true);
   });
 
-  it('leaves the row drawn as the ACTIVE selection, not handed back to the editor', async () => {
-    // The reveal takes the tree's focus to force the scroll, and an editor-driven
-    // sync hands it straight back. Doing that here leaves the row selected in a
-    // tree that has no focus, which VS Code paints in its inactive-selection
-    // colour -- the method arrives looking like nothing was landed on.
+  it('leaves the row drawn as the ACTIVE selection, with the tree focused', async () => {
+    // An editor-driven sync reveals without taking the tree's focus. Doing that
+    // here would leave the row selected in a tree that has no focus, which VS Code
+    // paints in its inactive-selection colour -- the method arrives looking like
+    // nothing was landed on.
     const ctl = controllerWithSunit();
     const views = withViews(ctl);
 
@@ -328,9 +328,8 @@ describe('Reveal in GemStone Explorer, from a test row', () => {
     // Keeping the tree's focus used to be a flag on the controller, raised for the
     // whole of the explicit reveal's sync. Anything else that reached the method
     // reveal inside that window — an editor-change sync, which arrives whenever a
-    // tab is clicked — read the same flag and skipped its own hand-back, stranding
-    // the cursor in the tree. Carried as an option, only the call that asked for it
-    // gets it.
+    // tab is clicked — read the same flag and took the tree's focus too, stranding
+    // the cursor there. Carried as an option, only the call that asked for it gets it.
     const ctl = controllerWithSunit();
     const views = withViews(ctl);
 

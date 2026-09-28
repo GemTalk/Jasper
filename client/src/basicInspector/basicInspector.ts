@@ -1096,6 +1096,11 @@ export class BasicInspector {
   <div id="methodCtxMenu" class="ctx-menu">
     <div class="ctx-item" data-action="browseMethod">Browse Method</div>
   </div>
+  <!-- The column header and the Meta tab's header are read-only labels, so the
+       host's Cut and Paste mean nothing over them; this menu keeps only Copy. -->
+  <div id="headerCtxMenu" class="ctx-menu">
+    <div class="ctx-item" data-action="copy">Copy</div>
+  </div>
   <script nonce="${nonce}">${evaluatePaneJs}</script>
   <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">${basicInspectorViewJs}</script>
@@ -1104,6 +1109,7 @@ export class BasicInspector {
       strip: document.getElementById('columnStrip'),
       ctxMenu: document.getElementById('rowCtxMenu'),
       methodCtxMenu: document.getElementById('methodCtxMenu'),
+      headerCtxMenu: document.getElementById('headerCtxMenu'),
       vscode: acquireVsCodeApi(),
       pageSize: ${PAGE_SIZE},
       defaultColumnWidth: ${DEFAULT_COLUMN_WIDTH},

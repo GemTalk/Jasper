@@ -34,7 +34,13 @@ import * as vscode from 'vscode';
 import { MethodSearchResult } from '../queries/methodSearch';
 import { showMethodResults } from '../methodResultsPicker';
 
-export type SafeDeleteKind = 'method' | 'class' | 'instance variable' | 'class variable';
+export type SafeDeleteKind =
+  | 'method'
+  | 'class'
+  | 'instance variable'
+  | 'class variable'
+  // Several methods removed as one action, e.g. `3 methods`.
+  | `${number} methods`;
 
 /** What is about to be deleted, and everything known about why it might not be safe. */
 export interface SafeDeleteTarget {
