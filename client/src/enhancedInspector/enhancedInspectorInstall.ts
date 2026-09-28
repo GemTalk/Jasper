@@ -168,11 +168,21 @@ pub := list detect: [:d | d name == #Published] ifNone: [nil].
 export const ENHANCED_INSPECTOR_FILE_IN_CLASS = 'GsEnhancedInspectorFileIn';
 
 /**
+ * The `SessionTemps` key under which `compileChunk:into:` collects the methods it
+ * kept the stone's copy of although their source differs from the payload's.
+ * Session-scoped, so nothing of it is committed.
+ */
+const KEPT_DIFFERENT_KEY = 'JasperEnhancedInspectorKeptDifferent';
+
+/**
  * The subclass's methods. `compileChunk:into:` also leaves alone a method that a
- * class the payload did not create already has, the rule the refactoring engine
- * applies to its kernel extensions: on 3.7.5 and 3.7.6 every such method is
- * source-identical to the stone's own copy, and on rowan3 that copy belongs to a
- * Rowan package.
+ * class the payload did not create already has, unless the method is one of ours
+ * (a `*GToolkit…` category, the anchor the uninstall removes by): the stone keeps
+ * its own STON and Announcements methods, which on rowan3 belong to Rowan
+ * packages, while a re-install still replaces our own kernel extensions. A kept
+ * method whose source differs from the payload's is recorded under
+ * `KEPT_DIFFERENT_KEY`, so a release that changes one shows up in the install
+ * result rather than as an inspector bug.
  */
 const FILE_IN_METHODS: readonly string[] = [
   `methodBody
@@ -186,7 +196,7 @@ const FILE_IN_METHODS: readonly string[] = [
   `compileChunk: aString into: aBehavior
 	"Behavior>>compileMethod:dictionaries:category:environmentId: with Rowan's
 	 packaging hook replaced by the unpackaged compile a base extent runs."
-	| symList categ owner policy meth |
+	| symList categ owner policy meth sel kept ws |
 	symList := GsCurrentSession currentSession symbolList.
 	categ := category asSymbol.
 	owner := aBehavior theNonMetaClass.
@@ -194,7 +204,17 @@ const FILE_IN_METHODS: readonly string[] = [
 		meth := aBehavior compileMethod: aString dictionaries: symList category: categ
 			intoMethodDict: GsMethodDictionary new intoCategories: GsMethodDictionary new
 			environmentId: compileEnvironment.
-		(aBehavior includesSelector: meth selector) ifTrue: [ ^nil ] ].
+		sel := meth selector.
+		((aBehavior includesSelector: sel)
+			and: [ (((aBehavior categoryOfSelector: sel) ifNil: ['']) asString beginsWith: '*GToolkit') not ])
+				ifTrue: [
+					(aBehavior compiledMethodAt: sel) sourceString = meth sourceString ifFalse: [
+						kept := SessionTemps current at: #${KEPT_DIFFERENT_KEY} ifAbsent: [nil].
+						kept ifNil: [ SessionTemps current at: #${KEPT_DIFFERENT_KEY} put: (kept := OrderedCollection new) ].
+						ws := WriteStream on: String new.
+						ws nextPutAll: owner name; nextPutAll: (aBehavior isMeta ifTrue: [' class>>'] ifFalse: ['>>']); nextPutAll: sel.
+						kept add: ws contents ].
+					^nil ] ].
 	policy := GsPackagePolicy current.
 	((policy methodAndCategoryDictionaryFor: aBehavior source: aString dictionaries: symList category: categ) at: 1) notNil
 		ifTrue: [ ^aBehavior compileMethod: aString dictionaries: symList category: categ environmentId: compileEnvironment ].
@@ -230,6 +250,7 @@ cls := GsFileIn subclass: '${ENHANCED_INSPECTOR_FILE_IN_CLASS}'
 	| errs |
 	errs := cls compileMethod: src dictionaries: list category: 'Jasper-Installer'.
 	errs notNil ifTrue: [ Error signal: 'could not compile ${ENHANCED_INSPECTOR_FILE_IN_CLASS}: ', errs printString ] ].
+SessionTemps current removeKey: #${KEPT_DIFFERENT_KEY} ifAbsent: [nil].
 idx = 1 ifFalse: [
 	prof removeDictionaryAt: idx.
 	prof insertDictionary: dict at: 1 ].
@@ -238,10 +259,11 @@ idx = 1 ifFalse: [
 /**
  * Server-side snippet run after the last file-in and before the commit: put
  * `GsEnhancedInspector` back at the END of the installing user's symbol list,
- * where it cannot shadow a kernel or Rowan class of the same name.
+ * where it cannot shadow a kernel or Rowan class of the same name. Answers the
+ * methods recorded under `KEPT_DIFFERENT_KEY`, one per line (empty when none).
  */
 const RESTORE_ORDER_SNIPPET = `
-| prof list idx dict |
+| prof list idx dict ws |
 prof := System myUserProfile.
 list := prof symbolList.
 idx := (1 to: list size) detect: [:i | (list at: i) name == #${ENHANCED_INSPECTOR_DICTIONARY}].
@@ -249,7 +271,9 @@ idx = list size ifFalse: [
 	dict := list at: idx.
 	prof removeDictionaryAt: idx.
 	prof insertDictionary: dict at: prof symbolList size + 1 ].
-'ok'`;
+ws := WriteStream on: String new.
+(SessionTemps current at: #${KEPT_DIFFERENT_KEY} ifAbsent: [#()]) do: [:m | ws nextPutAll: m; lf].
+ws contents`;
 
 export interface InstallResult {
   /** True only when every file filed in, the commit succeeded, and the
@@ -261,8 +285,23 @@ export interface InstallResult {
   filedIn: string[];
   /** The file whose file-in stopped the install, if any. */
   failedFile?: string;
+  /** Methods (`Class>>selector`) where the stone's own copy was kept although its
+   *  source differs from the payload's. Empty unless the install got that far. */
+  keptDifferent: string[];
   /** Human-readable summary, suitable for surfacing to the user. */
   message: string;
+}
+
+/**
+ * The sentence the install result carries when the stone kept its own copy of
+ * methods that differ from the payload's; empty when there are none.
+ */
+export function keptDifferentNote(keptDifferent: readonly string[]): string {
+  if (keptDifferent.length === 0) return '';
+  return (
+    ` The stone kept its own copy of ${keptDifferent.length} method(s) whose source ` +
+    `differs from the payload's: ${keptDifferent.join(', ')}.`
+  );
 }
 
 /** Reports incremental progress: a message plus a 0–100 increment for this step. */
@@ -326,6 +365,7 @@ export async function installEnhancedInspectorSupport(
       committed: false,
       verified: false,
       filedIn: [],
+      keptDifferent: [],
       message:
         `The database's gem cannot read the payload files (${unreadable.join(', ')}) under ` +
         `${gemPayloadDir}. Server-side install requires a local stone whose gem shares this ` +
@@ -348,6 +388,7 @@ export async function installEnhancedInspectorSupport(
       committed: false,
       verified: false,
       filedIn: [],
+      keptDifferent: [],
       message: `Could not create the GsEnhancedInspector dictionary: ${messageOf(e)}. No changes were committed.`,
     };
   }
@@ -361,6 +402,7 @@ export async function installEnhancedInspectorSupport(
       committed: false,
       verified: false,
       filedIn: [],
+      keptDifferent: [],
       message: `Could not prepare the file-in: ${messageOf(e)}. No changes were committed.`,
     };
   }
@@ -393,6 +435,7 @@ export async function installEnhancedInspectorSupport(
         committed: false,
         verified: false,
         filedIn,
+        keptDifferent: [],
         failedFile: file,
         message: `File-in of ${file} failed: ${messageOf(e)}. No changes were committed.`,
       };
@@ -401,8 +444,12 @@ export async function installEnhancedInspectorSupport(
 
   onProgress('Committing…', stepIncrement);
   await yieldToEventLoop();
+  let keptDifferent: string[];
   try {
-    executeFetchString(session, RESTORE_ORDER_SNIPPET);
+    keptDifferent = executeFetchString(session, RESTORE_ORDER_SNIPPET)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
   } catch (e: unknown) {
     safeAbort(session);
     return {
@@ -410,6 +457,7 @@ export async function installEnhancedInspectorSupport(
       committed: false,
       verified: false,
       filedIn,
+      keptDifferent: [],
       message: `Could not restore the symbol list order: ${messageOf(e)}. No changes were committed.`,
     };
   }
@@ -421,6 +469,7 @@ export async function installEnhancedInspectorSupport(
       committed: false,
       verified: false,
       filedIn,
+      keptDifferent: [],
       message: `Commit failed: ${err.message || `GCI error ${err.number}`}`,
     };
   }
@@ -431,9 +480,11 @@ export async function installEnhancedInspectorSupport(
     committed: true,
     verified,
     filedIn,
-    message: verified
-      ? 'Enhanced inspector support installed and verified.'
-      : 'Payload committed, but verification failed: the expected classes/methods ' +
-        'were not found. The install may be incomplete.',
+    keptDifferent,
+    message:
+      (verified
+        ? 'Enhanced inspector support installed and verified.'
+        : 'Payload committed, but verification failed: the expected classes/methods ' +
+          'were not found. The install may be incomplete.') + keptDifferentNote(keptDifferent),
   };
 }

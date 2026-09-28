@@ -42,6 +42,7 @@ function happyPath(_s: unknown, code: string): string {
   if (code.includes('existsOnServer')) return 'true';
   if (code.includes('gtViewsInCurrentContext')) return 'true';
   if (isFileIn(code)) return 'ok';
+  if (isRestoreOrder(code)) return '';
   return 'nil';
 }
 
@@ -224,23 +225,29 @@ describe('installEnhancedInspectorSupport', () => {
     expect(prepare).toContain('insertDictionary: dict at: 1');
   });
 
-  // The two halves of the rowan3 fix, asserted by shape: the compile skips
-  // Rowan's packaging hook (the unpackaged `intoMethodDict: nil` compile), and a
-  // method is left alone only when a class the payload did NOT create already has it.
-  it('compiles each method unpackaged, keeping only a pre-existing class its own copy', async () => {
+  // Which methods the compile rule keeps is asserted against a live stone in
+  // enhancedInspectorInstall.integration.test.ts; here, only how the list reaches the result.
+  it('reports the kept stone methods whose source differs from the payload', async () => {
+    const { session } = createMockSession();
+    executeFetchStringMock.mockImplementation((s, code: string) =>
+      isRestoreOrder(code) ? 'Object>>stonOn:\nDate class>>fromSton:\n' : happyPath(s, code),
+    );
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(true);
+    expect(result.keptDifferent).toEqual(['Object>>stonOn:', 'Date class>>fromSton:']);
+    expect(result.message).toContain('2 method(s)');
+    expect(result.message).toContain('Object>>stonOn:, Date class>>fromSton:');
+  });
+
+  it('says nothing about kept methods when none differ', async () => {
     const { session } = createMockSession();
 
-    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
-    const prepare = String(
-      executeFetchStringMock.mock.calls.find((c) => isPrepareFileIn(String(c[1])))?.[1],
-    );
-    expect(prepare).toContain('intoMethodDict: nil intoCategories: nil');
-    expect(prepare).not.toContain('compileMethod: aString category:');
-    const ownerCheck = prepare.indexOf('== owner ifFalse:');
-    const keepExisting = prepare.indexOf('includesSelector: meth selector) ifTrue: [ ^nil ]');
-    expect(ownerCheck).toBeGreaterThan(-1);
-    expect(keepExisting).toBeGreaterThan(ownerCheck);
+    expect(result.keptDifferent).toEqual([]);
+    expect(result.message).toBe('Enhanced inspector support installed and verified.');
   });
 
   it('aborts without committing when the file-in class cannot be prepared', async () => {
