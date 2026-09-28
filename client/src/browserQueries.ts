@@ -222,7 +222,10 @@ import {
   getMethodHistory as sharedGetMethodHistory,
   removeMethodHistory as sharedRemoveMethodHistory,
 } from './methodHistory/queries/methodHistory';
-import { globalNameInUse as sharedGlobalNameInUse } from './refactoring/queries/globalNameInUse';
+import {
+  globalNameInUse as sharedGlobalNameInUse,
+  globalNameInUseInDictionary as sharedGlobalNameInUseInDictionary,
+} from './refactoring/queries/globalNameInUse';
 import { isKernelClass as sharedIsKernelClass } from './refactoring/queries/isKernelClass';
 import {
   getGrailStubReflection as sharedGetGrailStubReflection,
@@ -2106,6 +2109,14 @@ export function removeMethodHistory(
     isMeta,
     dict,
   );
+}
+
+export function globalNameInUseInDictionary(
+  session: ActiveSession,
+  name: string,
+  dict: number | string | undefined,
+): boolean {
+  return sharedGlobalNameInUseInDictionary(defaultQueryExecutorUsing(session), name, dict);
 }
 
 export function globalNameInUse(session: ActiveSession, name: string): boolean {

@@ -3704,19 +3704,68 @@ export class ExplorerController {
     return this.session()?.rbSupportAvailable === true;
   }
 
-  // Validate a proposed rename target: the name's format AND that it isn't already
-  // bound to another global in the stone. Runs as the rename input's live validator
-  // (showRenameClassEditor), so catching a collision here surfaces it inline while the
-  // user is still typing — they correct the name in place, instead of the rename starting
-  // and failing server-side with a costlier, later error. Returns an error string or undefined.
-  private validateRenameTarget(newName: string, oldName: string): string | undefined {
+  /**
+   * Validate a proposed rename target: the name's format, and that it is not already bound IN
+   * THE DICTIONARY the renamed class will be filed into.
+   *
+   * Scoped to that one dictionary, not the whole symbol list. Two bindings of a name in the same
+   * dictionary is the case the image cannot represent and the apply would fail on. A binding in
+   * a DIFFERENT dictionary is a shadow — legal in GemStone, handled throughout this engine, and
+   * quite possibly what the user means — so refusing on it blocked a rename that would have
+   * worked, with no way around it (#396). The shadow is warned about instead, once, before the
+   * preview opens.
+   *
+   * Runs as the rename input's live validator, so a real collision surfaces inline while the
+   * user is still typing rather than as a costlier server-side failure later.
+   */
+  private validateRenameTarget(
+    newName: string,
+    oldName: string,
+    dict: number | string | undefined,
+  ): string | undefined {
     const fmt = validateNewClassName(newName, oldName);
     if (fmt) return fmt;
     const session = this.session();
-    if (session && queries.globalNameInUse(session, newName)) {
-      return `The name ${newName} is already in use. Choose another.`;
+    if (session && queries.globalNameInUseInDictionary(session, newName, dict)) {
+      return `The name ${newName} is already used in this dictionary. Choose another.`;
     }
     return undefined;
+  }
+
+  /**
+   * Ask before a rename creates a shadow, and answer whether to go on.
+   *
+   * Renaming onto a name another dictionary already binds is allowed, but it is worth saying out
+   * loud: from then on an unqualified reference to that name resolves to whichever dictionary
+   * comes first on the symbol list, which may not be this one.
+   */
+  private async confirmShadowingRename(
+    session: ActiveSession,
+    newName: string,
+    dictName: string | undefined,
+  ): Promise<boolean> {
+    let elsewhere: string[];
+    try {
+      elsewhere = queries
+        .dictionariesContainingClass(session, newName)
+        .filter((d) => d !== dictName);
+    } catch {
+      return true; // a failed probe must not block a rename
+    }
+    if (elsewhere.length === 0) return true;
+    const PROCEED = 'Rename anyway';
+    const choice = await vscode.window.showWarningMessage(
+      `${newName} is already defined in ${elsewhere.join(', ')}.`,
+      {
+        modal: true,
+        detail:
+          `Renaming to it leaves two classes called ${newName}. That is allowed, but an ` +
+          'unqualified reference to the name then resolves to whichever dictionary comes first ' +
+          'on the symbol list, which may not be this one.',
+      },
+      PROCEED,
+    );
+    return choice === PROCEED;
   }
 
   // Re-cascade the class panes onto a (renamed or reshaped) class so the Classes
@@ -3814,11 +3863,16 @@ export class ExplorerController {
       /* keep the Explorer selection as a best-effort fallback */
     }
 
+    // The class is filed back into its OWN dictionary, so that is what a collision is measured
+    // against -- `scopeDictName` is where it lives, resolved above.
     const edit = await showRenameClassEditor({ oldName, dictName: scopeDictName }, (newName) =>
-      this.validateRenameTarget(newName, oldName),
+      this.validateRenameTarget(newName, oldName, dictArg ?? scopeDictName),
     );
     if (!edit) return;
     const { newName, scope, options } = edit;
+
+    // Allowed, but said out loud once: the rename is about to leave two classes of this name.
+    if (!(await this.confirmShadowingRename(session, newName, scopeDictName))) return;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const safeClear = (): void => {
