@@ -163,18 +163,26 @@ describe('GciLibrary', () => {
   }
 
   /**
-   * Forces the next `releaseObject` call to throw for the duration of
-   * `callback`, then restores it.
+   * Forces every `releaseObject` call to throw for the duration of
+   * `callback`, then restores it. Fails if `callback` never released
+   * anything, since the rigged failure would then have gone untested.
    *
    * @param callback - The operation to run while `releaseObject` is rigged to fail.
    */
   function simulateReleaseObjectFailure(callback: () => void) {
-    const spy = vi.spyOn(gciLibrary, 'releaseObject').mockImplementationOnce(() => {
+    // Resolving the Utf8 class on first use releases an oop of its own, which
+    // would satisfy the called-at-all check below without `callback`
+    // releasing anything.
+    gciLibrary.utf8ClassOop(session);
+
+    const spy = vi.spyOn(gciLibrary, 'releaseObject').mockImplementation(() => {
       throw GciLibraryError.withMessage('Simulated releaseObject failure');
     });
 
     try {
       callback();
+
+      expect(spy).toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
@@ -943,7 +951,7 @@ describe('GciLibrary', () => {
       expectEvaluatedStringToBe(`'${expectedResult}'`, expectedResult);
     });
 
-    it('returns the result of code that evaluates to a string that fills exactly more than one fetch page', () => {
+    it('returns the result of code that evaluates to a string that fills several fetch pages exactly', () => {
       const expectedResult = 'a'.repeat(GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES * 2);
 
       expectEvaluatedStringToBe(`'${expectedResult}'`, expectedResult);
@@ -993,7 +1001,7 @@ describe('GciLibrary', () => {
       expectToThrowNonByteStringError();
     });
 
-    it('still throws the original error when the callback and its cleanup both fail', () => {
+    it('still reports the fetch error when releasing the results also fails', () => {
       simulateReleaseObjectFailure(() => {
         expectToThrowNonByteStringError();
       });
