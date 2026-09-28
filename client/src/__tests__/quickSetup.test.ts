@@ -315,6 +315,30 @@ describe('runQuickSetup', () => {
     expect(deps.databaseManager.createDatabaseDirect).not.toHaveBeenCalled();
   });
 
+  it('stops with a message, not an error, when the download is cancelled', async () => {
+    const version = makeVersion();
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const deps = makeDeps({
+      versionManager: {
+        fetchAvailableVersions: vi.fn(async () => [version]),
+        download: vi.fn(async () => {
+          throw new InstallCancelledError(
+            'Download cancelled. The partly downloaded file was removed.',
+          );
+        }),
+        extract: vi.fn(),
+      } as unknown as VersionManager,
+    });
+
+    await runQuickSetup(deps);
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      'Download cancelled. The partly downloaded file was removed.',
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.versionManager.extract).not.toHaveBeenCalled();
+  });
+
   it('stops with a message, not an error, when the unpack is cancelled', async () => {
     const version = makeVersion({ downloaded: true });
     mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
