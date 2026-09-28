@@ -193,14 +193,14 @@ describe('GCI login (integration)', () => {
       });
 
       expect(session).toBeNull();
-      expect(err.number).toBe(NET_ERR_NO_SUCH_STN);
+      expect(err.number, err.message).toBe(NET_ERR_NO_SUCH_STN);
     });
 
     it('GciTsLogin rejects a wrong password', () => {
       const { session, err } = gciTsLogin({ password: 'wrongPassword' });
 
       expect(session).toBeNull();
-      expect(err.number).toBe(GS_ERR_LOGIN_DENIAL);
+      expect(err.number, err.message).toBe(GS_ERR_LOGIN_DENIAL);
     });
 
     it('GciTsLogin rejects an unknown NetLDI in the gem NRS', () => {
@@ -211,7 +211,7 @@ describe('GCI login (integration)', () => {
       });
 
       expect(session).toBeNull();
-      expect(err.number).toBe(ERR_IN_LOGIN);
+      expect(err.number, err.message).toBe(ERR_IN_LOGIN);
       expect(err.message).toContain("NetLDI service 'jasperNoSuchNetldi'");
     });
 
@@ -227,7 +227,7 @@ describe('GCI login (integration)', () => {
       // non-blocking login throws on -1 without logging out).
       expect(session).not.toBeNull();
       expect(result).toBe(-1);
-      expect(err.number).toBe(GS_ERR_LOGIN_DENIAL);
+      expect(err.number, err.message).toBe(GS_ERR_LOGIN_DENIAL);
     });
   });
 
