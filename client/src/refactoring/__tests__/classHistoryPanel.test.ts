@@ -139,14 +139,13 @@ describe('class history viewer behaviour', () => {
   // each with its own history, and Restore rewrites whichever one the panel is showing. These
   // pin that the panel says WHICH -- the help the user had no way to get before (#396).
   describe('naming the dictionary the history belongs to', () => {
-    const html = (dictName?: string, alsoDefinedIn?: string[]): string =>
+    const html = (dictName?: string): string =>
       renderClassHistoryHtml({
         className: 'Shadowed',
         versions,
         nonce: 'n',
         script: '',
         dictName,
-        alsoDefinedIn,
       });
 
     it('names the dictionary beside the class in the header', () => {
@@ -155,40 +154,13 @@ describe('class history viewer behaviour', () => {
       );
     });
 
-    it('says nothing about a dictionary when none was given', () => {
-      const out = html(undefined);
-      expect(out).toContain('Definition history of <code>Shadowed</code></div>');
-      expect(out).not.toContain('<div class="shadow-note">');
-    });
-
-    it('warns that the name is also defined elsewhere, naming the other dictionary', () => {
-      const out = html('DictionaryB', ['DictionaryA']);
-      expect(out).toContain('<div class="shadow-note">');
-      expect(out).toContain('This name is also defined in <code>DictionaryA</code>');
-      expect(out).toContain('that is a different class');
-    });
-
-    it('says the warning in the plural when the name is bound in several other dictionaries', () => {
-      const out = html('DictionaryB', ['DictionaryA', 'Globals']);
-      expect(out).toContain('<code>DictionaryA</code>, <code>Globals</code>');
-      expect(out).toContain('those are different classes');
-    });
-
-    it('spells out that Restore and Remove act only on this dictionary\u2019s class', () => {
-      const out = html('DictionaryB', ['DictionaryA']);
-      expect(out).toContain('<b>Restore</b>');
-      expect(out).toContain('<b>Remove</b>');
-      expect(out).toContain("applies only to <code>DictionaryB</code>'s <code>Shadowed</code>");
-    });
-
-    it('shows no warning when the name is bound in only one dictionary', () => {
-      expect(html('DictionaryB', [])).not.toContain('<div class="shadow-note">');
+    it('leaves the header unqualified when no dictionary was given', () => {
+      expect(html(undefined)).toContain('Definition history of <code>Shadowed</code></div>');
     });
 
     it('escapes a dictionary name rather than letting it reach the DOM as markup', () => {
-      const out = html('<img src=x>', ['<b>evil</b>']);
+      const out = html('<img src=x>');
       expect(out).not.toContain('<img src=x>');
-      expect(out).not.toContain('<b>evil</b>');
       expect(out).toContain('&lt;img src=x&gt;');
     });
   });

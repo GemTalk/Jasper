@@ -31,14 +31,12 @@ export function showClassHistoryPanel(
   className: string,
   versions: ClassVersion[],
   handlers: ClassHistoryPanelHandlers,
-  // Which class this history belongs to, beyond its name. `dictName` is the dictionary the user
-  // selected; `alsoDefinedIn` are the OTHER dictionaries binding the same name. A class name is
-  // not unique, and Restore rewrites a class -- so the tab, the header and the confirmation all
-  // say which one, rather than leaving two identical-looking histories side by side.
-  scope?: { dictName?: string; alsoDefinedIn?: string[] },
+  // The dictionary this history belongs to. A class name is not unique across dictionaries and
+  // Restore rewrites a class, so the tab, the header and the confirmations all say which one --
+  // otherwise two histories of the same name are indistinguishable side by side.
+  scope?: { dictName?: string },
 ): vscode.WebviewPanel {
   const dictName = scope?.dictName;
-  const alsoDefinedIn = scope?.alsoDefinedIn ?? [];
   const qualified = dictName ? `${className} (${dictName})` : className;
   const panel = vscode.window.createWebviewPanel(
     'gemstoneClassHistory',
@@ -54,7 +52,6 @@ export function showClassHistoryPanel(
     nonce,
     script: panelJs,
     dictName,
-    alsoDefinedIn,
   });
 
   let busy = false;

@@ -4117,11 +4117,10 @@ export class ExplorerController {
     // change between restores; track it so the follow-up history fetch, the tree
     // refresh, and a second restore all target the right (current) name.
     let currentName = className;
-    // Which dictionary this history belongs to, and whether the name is shadowed. Both are shown
-    // in the panel: the versions listed, and anything Restore or Remove does, belong to exactly
-    // one of the classes sharing this name, and nothing else on screen says which (#396).
+    // Which dictionary this history belongs to. The versions listed, and anything Restore or
+    // Remove does, belong to exactly one of the classes sharing this name, and nothing else on
+    // screen says which (#396).
     const dictName = this.dictionaryNameForHistory(session, historyDict);
-    const alsoDefinedIn = this.otherDictionariesBinding(session, className, dictName);
     showClassHistoryPanel(
       className,
       versions,
@@ -4177,7 +4176,7 @@ export class ExplorerController {
           return { result, versions: refreshed };
         },
       },
-      { dictName, alsoDefinedIn },
+      { dictName },
     );
   }
 
@@ -4203,24 +4202,6 @@ export class ExplorerController {
       return queries.getDictionaryNames(session)[dictRef - 1];
     } catch {
       return undefined;
-    }
-  }
-
-  /**
-   * The OTHER dictionaries binding `className` — empty unless the name is shadowed. The panel
-   * names them, because two dictionaries' classes of the same name produce two histories that
-   * look identical, and a Restore aimed at the wrong one rewrites a class the user never chose.
-   */
-  private otherDictionariesBinding(
-    session: ActiveSession,
-    className: string,
-    dictName: string | undefined,
-  ): string[] {
-    try {
-      const all = queries.dictionariesContainingClass(session, className);
-      return dictName === undefined ? [] : all.filter((d) => d !== dictName);
-    } catch {
-      return [];
     }
   }
 

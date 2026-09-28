@@ -198,16 +198,5 @@ describe('showClassHistoryPanel restore wiring', () => {
         expect.anything(),
       );
     });
-
-    it('passes the shadowing dictionaries through to the rendered page', () => {
-      const panel = showClassHistoryPanel(
-        'Shadowed',
-        versions,
-        { restore: vi.fn(), remove: vi.fn() },
-        { dictName: 'DictionaryB', alsoDefinedIn: ['DictionaryA'] },
-      );
-
-      expect(panel.webview.html).toContain('This name is also defined in <code>DictionaryA</code>');
-    });
   });
 });
