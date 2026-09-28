@@ -210,6 +210,7 @@ describe('GCI login (integration)', () => {
 
       expect(session).toBeNull();
       expect(err.number).toBe(ERR_IN_LOGIN);
+      expect(err.message).toContain("NetLDI service 'jasperNoSuchNetldi'");
     });
 
     it('GciTsNbLogin reports a wrong password when polled', async (ctx) => {
