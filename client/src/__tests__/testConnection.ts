@@ -85,18 +85,23 @@ function requireValue(label: string, value: string | undefined): string {
 }
 
 // This throws rather than returning `undefined` like `parseStoneNrs` itself,
-// because its caller (`testActiveSession`, for the SystemUser elevation in
-// `installServerPluginMain.ts`) rebuilds a real `GemStoneLogin` from the
-// result: a silent fallback to a bogus host/stone there risks a SystemUser
-// login that either fails with a confusing GCI error or, worse, silently
-// succeeds against the wrong stone (e.g. a coincidental default at
-// `localhost`). That risk is specific to *reconstructing a login* — a caller
-// that only ever passes `stoneNrs` through to GCI opaquely (as
-// `resolveTestConnection`'s other 17 callers do) has nothing to protect, so
-// the requirement lives here, in the one function that needs parsed
-// `gem_host`/`stone`, not in `resolveTestConnection`. Legal-but-unrecognized
-// shapes (a bare `gs64stone`, `#netldi:`/`#auth:` forms) are fine for that
-// opaque use; this only rejects a shape none of them are.
+// because its callers build new NRSs or logins from the result, where a
+// silent fallback to a bogus host/stone does harm:
+// - `testActiveSession` rebuilds a real `GemStoneLogin` for the SystemUser
+//   elevation in `installServerPluginMain.ts`; a wrong host/stone there risks
+//   a login that either fails with a confusing GCI error or, worse, silently
+//   succeeds against the wrong stone (e.g. a coincidental default at
+//   `localhost`).
+// - `gciLogin.integration.test.ts` builds deliberately bad NRSs on the real
+//   host; a wrong host would turn the "no such stone/NetLDI" failures it
+//   asserts into "no such host" ones.
+// That risk is specific to *deriving* from the parsed parts — a caller that
+// only ever passes `stoneNrs` through to GCI opaquely has nothing to protect,
+// so the requirement lives here, not in `resolveTestConnection`, and callers
+// should invoke it only on the paths that need `gem_host`/`stone`.
+// Legal-but-unrecognized shapes (a bare `gs64stone`, `#netldi:`/`#auth:`
+// forms) are fine for that opaque use; this only rejects a shape none of
+// them are.
 export function requireParsedStoneNrs(stoneNrs: string): Pick<GemStoneLogin, 'gem_host' | 'stone'> {
   const parsed = parseStoneNrs(stoneNrs);
   if (parsed === undefined) {
