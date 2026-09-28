@@ -37,11 +37,15 @@ describe('GCI login (integration)', () => {
 
   // The lint exemption above also lifts the rule that would make these
   // sessions arm the commit guard, so arm them by hand even though the tests
-  // never run anything on them.
+  // never run anything on them. Log out even if arming throws, so a failure
+  // doesn't leave the session open until the worker exits.
   function expectLiveSessionThenLogout(session: unknown) {
     expect(session).not.toBeNull();
-    gci.disableCommitsUntilLogout(session, COMMIT_GUARD_REASON);
-    expect(gci.GciTsLogout(session).success).toBe(true);
+    try {
+      gci.disableCommitsUntilLogout(session, COMMIT_GUARD_REASON);
+    } finally {
+      expect(gci.GciTsLogout(session).success).toBe(true);
+    }
   }
 
   function pollNbLoginFinished(session: unknown) {
