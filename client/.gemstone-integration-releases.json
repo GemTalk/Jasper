@@ -24,7 +24,7 @@
   {
     "version": "3.7.4.3",
     "reasons": [
-      "Introduced GciTsLogin_ (the netldiName login variant) and stricter GCI login flag validation — previously invalid flag combinations were silently ignored, now they error.",
+      "Matrix build of the 3.7.4.x line, where GciTsLogin_ (the netldiName login variant, first in 3.7.4.1) is available, and stricter GCI login flag validation — previously invalid flag combinations were silently ignored, now they error.",
       "Validates Jasper's login path against this stricter behavior."
     ]
   },

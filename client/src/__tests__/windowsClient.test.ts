@@ -2,24 +2,27 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { EventEmitter } from 'events';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 vi.mock('../wslBridge', () => ({
-  needsWsl: () => false,
+  needsWsl: vi.fn(() => false),
   getWslInfo: () => ({ available: false }),
   wslPathToWindows: (p: string) => p,
   windowsPathToWsl: (p: string) => p,
   wslExecSync: vi.fn(),
+  wslSpawn: vi.fn(),
 }));
 vi.mock('child_process');
 
-import { execSync } from 'child_process';
+import { execSync, spawn, type ChildProcess } from 'child_process';
 
 import type * as vscode from 'vscode';
-import { __setConfig, __resetConfig } from '../__mocks__/vscode';
+import { needsWsl, wslSpawn } from '../wslBridge';
+import { __setConfig, __resetConfig, CancellationTokenSource } from '../__mocks__/vscode';
 import { SysadminStorage } from '../sysadminStorage';
-import { VersionManager } from '../manager/versionManager';
+import { InstallCancelledError, VersionManager } from '../manager/versionManager';
 import { GemStoneVersion } from '../sysadminTypes';
 
 /** VersionManager's private download helpers, exposed as a narrow surface for spying. */
@@ -334,24 +337,147 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
     ).rejects.toThrow(/ECONNREFUSED/);
   });
 
-  it('downloads, extracts with tar, and removes the zip on success', async () => {
-    const storage = new SysadminStorage();
-    const manager = new VersionManager(storage);
+  /** A stand-in for the tar child: exits with `code` at once, or when killed if `code` is null. */
+  function fakeTar(code: number | null, onStart?: () => void): void {
+    vi.mocked(spawn).mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => {
+          setImmediate(() => child.emit('close', null));
+          return true;
+        },
+      });
+      onStart?.();
+      if (code !== null) setImmediate(() => child.emit('close', code));
+      return child as unknown as ChildProcess;
+    });
+  }
+
+  /**
+   * A 3.7.5 client install whose download only drops an empty zip where the
+   * real one would go, so each test says just how tar behaves and what it checks.
+   */
+  function setUpClientInstall() {
+    const manager = new VersionManager(new SysadminStorage());
     const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
     vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
-      async () => {
-        // Simulate the download by dropping a file at the expected location.
-        fs.writeFileSync(zipPath, '');
-      },
+      async () => fs.writeFileSync(zipPath, ''),
     );
+    const install = (token: unknown = noopToken) =>
+      manager.downloadAndExtractWindowsClient(
+        '3.7.5',
+        { report: vi.fn() },
+        token as vscode.CancellationToken,
+      );
+    return { manager, zipPath, clientDir, install };
+  }
 
-    await manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken);
+  it('on cancel, stops tar and removes both the partial client and the zip', async () => {
+    const { zipPath, clientDir, install } = setUpClientInstall();
+    const source = new CancellationTokenSource();
+    fakeTar(null, () => {
+      fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true });
+      setImmediate(() => source.cancel());
+    });
 
-    // Extraction used tar, not PowerShell
-    expect(execSync).toHaveBeenCalledWith(expect.stringContaining('tar -xf'), expect.anything());
-    for (const call of vi.mocked(execSync).mock.calls) {
-      expect(String(call[0]).toLowerCase()).not.toContain('powershell');
+    const error = await install(source.token).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(InstallCancelledError);
+    expect((error as Error).message).toMatch(/Windows client install cancelled/);
+    expect(fs.existsSync(clientDir)).toBe(false);
+    expect(fs.existsSync(zipPath)).toBe(false);
+  });
+
+  describe('a client folder that was there before', () => {
+    function setUpOverExistingClient() {
+      const setup = setUpClientInstall();
+      createWindowsClientDir('3.7.5');
+      fs.writeFileSync(path.join(setup.clientDir, 'mine'), '');
+      return setup;
     }
+
+    it('is left alone when the unpack fails', async () => {
+      const { clientDir, install } = setUpOverExistingClient();
+      fakeTar(2);
+
+      await expect(install()).rejects.toThrow('tar failed with exit code 2');
+
+      expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
+    });
+
+    it('is kept when the unpack is cancelled, and the message says the unpack may have changed it', async () => {
+      const { clientDir, install } = setUpOverExistingClient();
+      const source = new CancellationTokenSource();
+      fakeTar(null, () => setImmediate(() => source.cancel()));
+
+      const error = await install(source.token).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(InstallCancelledError);
+      expect((error as Error).message).toBe(
+        `Windows client install cancelled. ${clientDir} was there before, so it was not ` +
+          'removed; the unpack may have replaced some of its files.',
+      );
+      expect(fs.existsSync(path.join(clientDir, 'mine'))).toBe(true);
+    });
+  });
+
+  it('keeps the unpack’s own failure in the message when the partial client cannot be removed', async () => {
+    const { clientDir, install } = setUpClientInstall();
+    fakeTar(2, () => fs.mkdirSync(clientDir));
+    const rm = vi
+      .spyOn(fs.promises, 'rm')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }),
+      );
+
+    try {
+      await expect(install()).rejects.toThrow(
+        `The Windows client install failed (tar failed with exit code 2), and the partly ` +
+          `unpacked files at ${clientDir} could not be removed (EBUSY: resource busy or locked). ` +
+          'Remove that folder before installing again.',
+      );
+    } finally {
+      rm.mockRestore();
+    }
+  });
+
+  it('runs tar on Windows itself even when GemStone lives in WSL', async () => {
+    vi.mocked(needsWsl).mockReturnValue(true);
+    try {
+      const { zipPath, install } = setUpClientInstall();
+      fakeTar(0);
+
+      await install();
+
+      expect(spawn).toHaveBeenCalledWith('tar', ['-xf', zipPath, '-C', tmpDir]);
+      expect(wslSpawn).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(needsWsl).mockReturnValue(false);
+    }
+  });
+
+  it('on a failed unpack, removes both the partial client and the zip', async () => {
+    const { zipPath, clientDir, install } = setUpClientInstall();
+    fakeTar(2, () => fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true }));
+
+    await expect(install()).rejects.toThrow('tar failed with exit code 2');
+
+    expect(fs.existsSync(clientDir)).toBe(false);
+    expect(fs.existsSync(zipPath)).toBe(false);
+  });
+
+  it('downloads, extracts with tar, and removes the zip on success', async () => {
+    const { zipPath, install } = setUpClientInstall();
+    fakeTar(0);
+
+    await install();
+
+    // Extraction ran tar as its own process, argv form — not PowerShell, and not
+    // a shell string a quote in the root path could break.
+    expect(spawn).toHaveBeenCalledWith('tar', ['-xf', zipPath, '-C', tmpDir]);
+    expect(execSync).not.toHaveBeenCalled();
     // Zip cleaned up after extract
     expect(fs.existsSync(zipPath)).toBe(false);
   });
