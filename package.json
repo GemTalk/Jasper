@@ -1426,9 +1426,14 @@
       },
       {
         "command": "gemstone.explorer.removeMethod",
-        "title": "Remove…",
+        "title": "Remove Method",
         "category": "GemStone",
         "icon": "$(trash)"
+      },
+      {
+        "command": "gemstone.explorer.removeMethods",
+        "title": "Remove…",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.removeClass",
@@ -2420,6 +2425,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeMethods",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeClass",
           "when": "false"
         },
@@ -3065,7 +3074,7 @@
           "group": "inline@6"
         },
         {
-          "command": "gemstone.explorer.removeMethod",
+          "command": "gemstone.explorer.removeMethods",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "5_remove@0"
         },

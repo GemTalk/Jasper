@@ -4969,7 +4969,7 @@ export class ExplorerController {
   }
 
   // Remove one method from its class (the row's 🗑 button, or Remove… on a one-row
-  // selection; several rows go through removeMethods). Guarded by a sender scan: a
+  // selection). Guarded by a sender scan: a
   // selector nothing sends goes without a question and is announced afterwards, while one
   // that still has senders raises a confirmation naming them (see safeDelete.ts). Nothing
   // is committed either way (the user commits explicitly, same as every other Explorer
@@ -8640,12 +8640,22 @@ export function registerGemStoneExplorer(
         });
       },
     ),
-    // A context-menu or inline command in a multi-select tree is handed the clicked row AND
-    // the selection. The selection wins when the clicked row is part of it; a click on a row
-    // outside the selection means that row alone, so the trash button never removes rows the
-    // user did not click.
+    // VS Code hands a command in a multi-select tree the clicked row AND the selection,
+    // whether it was invoked from the row's inline button or the context menu. So the two
+    // gestures are two commands: the 🗑 is drawn on one row and removes that row, even when
+    // it is one of several selected; Remove… on the context menu removes the selection.
+    vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: unknown) => {
+      if (!(node instanceof MethodItem)) return;
+      void ctl.removeMethod(node).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+    // The selection wins when the right-clicked row is part of it. VS Code does not select
+    // a row right-clicked outside the selection, so that row means itself alone.
     vscode.commands.registerCommand(
-      'gemstone.explorer.removeMethod',
+      'gemstone.explorer.removeMethods',
       (node?: unknown, selection?: unknown[]) => {
         const selected = (Array.isArray(selection) ? selection : []).filter(
           (n): n is MethodItem => n instanceof MethodItem,
@@ -8656,7 +8666,7 @@ export function registerGemStoneExplorer(
         if (rows.length === 0) return;
         void ctl.removeMethods(rows).catch((e: unknown) => {
           void vscode.window.showErrorMessage(
-            `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+            `Remove methods failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         });
       },

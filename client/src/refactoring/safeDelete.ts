@@ -191,8 +191,10 @@ export function groupReferencesByReceiver(references: MethodSearchResult[]): str
 
 function detailFor(target: SafeDeleteTarget): string {
   const lines: string[] = [];
+  // A multi-method removal is several targets at once.
+  const it = target.kind.endsWith('methods') ? 'them' : 'it';
   if (target.scanFailed) {
-    lines.push(`Could not check what references it: ${target.scanFailed}`);
+    lines.push(`Could not check what references ${it}: ${target.scanFailed}`);
   }
   if (target.references.length > 0) {
     const n = target.references.length;
@@ -208,7 +210,7 @@ function detailFor(target: SafeDeleteTarget): string {
     const atCap = target.truncated === true;
     const count = atCap ? `At least ${n}` : `${n}`;
     lines.push(
-      `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} it${atCap ? ' (the list below is not complete)' : ''}:`,
+      `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} ${it}${atCap ? ' (the list below is not complete)' : ''}:`,
     );
     // One line per referencing class, so the block reads as a list rather than a paragraph.
     lines.push(groupReferencesByReceiver(target.references).join('\n'));
