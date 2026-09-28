@@ -23,6 +23,9 @@ GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
     building/applying compiles-in-stone-only and never commits.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it (children first).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
+halves: the re-versioned anchor, and the placement of the brand-new superclass (`dictObjectForNewClass`).
 "
 Class {
 	#name : 'GsExtractSuperclassRefactoringTest',
@@ -656,4 +659,63 @@ GsExtractSuperclassRefactoringTest >> testCandidatesJsonCarriesClassifiedMembers
 	self assert: json includesSubstring: '"kind":"identical"'.
 	self assert: json includesSubstring: '"kind":"divergent"'.
 	self assert: json includesSubstring: '"name":"name"'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsOwnDictionary [
+	"Extracting a superclass re-versions the anchor and its siblings, each bound through
+	 `dictObjectFor:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
+	 takes the anchor's new version. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the anchor the user picked is the one re-parented onto the new superclass"
+	 self assert: (UserGlobals at: #GsESDog) superclass name asString equals: 'GsESPet'.
+	 self assert: (decoy at: #GsESDog) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractSuperclassRefactoringTest >> testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary [
+	"`dictObjectForNewClass` falls through to `dictObjectFor: anchorClass` when the caller names no
+	 dictionary, so a shadowed ANCHOR name misfiles the brand-new superclass too -- it is created in
+	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
+	 misplaces a class that did not exist before. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowNewDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the new superclass belongs beside its anchor, not in the shadowing dictionary"
+	 self deny: (UserGlobals at: #GsESPet ifAbsent: [nil]) isNil.
+	 self assert: (decoy at: #GsESPet ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
 ]

@@ -14,6 +14,10 @@ native classHistory:
 
 setUp builds a two-version fixture in UserGlobals (a shape change plus a modified,
 an unchanged, and an added method) and tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: both the read
+(forClassNamed:) and the restore resolve the class through an unscoped `objectNamed:`, so a name
+bound in an earlier dictionary is described, and reverted, in place of the one asked for.
 "
 Class {
 	#name : 'GsClassHistoryTest',
@@ -237,4 +241,49 @@ GsClassHistoryTest >> testRemoveVersionDoesNotCommit [
 GsClassHistoryTest >> testRevertOutOfRangeIsError [
 	self assert: (GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 99)
 		includesSubstring: '"error"'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsClassHistoryTest >> testForClassNamedReadsTheDictionaryScopedClassNotAGlobalFirstMatch [
+	"forClassNamed: resolves through `symbolList objectNamed:`, so with the same class name bound in
+	 a dictionary earlier in the symbol list it describes the WRONG class's history -- the versions,
+	 definitions and changed methods shown belong to a class the user did not select. See #396."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsCHShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := GsClassHistory forClassNamed: 'GsCHFixture'.
+
+	 "the history read belongs to the fixture, which never had an instance variable named decoyOwn"
+	 self deny: json includesSubstring: 'decoyOwn']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsClassHistoryTest >> testRevertActsOnTheDictionaryScopedClassNotAGlobalFirstMatch [
+	"The destructive half. revertClassNamed:toIndex: resolves the same unscoped way and then hands
+	 the class to GsRenameClassRefactoring restoreClass:toVersion:, which re-parents subclasses and
+	 rewrites references image-wide -- against the wrong class. See #396."
+	| decoy decoyClass res |
+	decoy := SymbolDictionary new name: #GsCHShadowRevertDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 res := GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 1.
+
+	 self assert: res includesSubstring: '"reverted":true'.
+	 "the restore applied in full"
+	 self assert: res includesSubstring: '"failed":[]'.
+	 "the fixture is the class restored to its version-1 shape"
+	 self assert: (UserGlobals at: #GsCHFixture) instVarNames asArray equals: #(#'a').
+	 "and the shadowing dictionary's class is left alone"
+	 self assert: (decoy at: #GsCHFixture) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

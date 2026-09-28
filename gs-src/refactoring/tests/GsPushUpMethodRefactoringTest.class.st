@@ -30,6 +30,16 @@ This suite pins down:
     left in place on the subclass, rather than stripped from both classes.
 
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
+
+The destination superclass is the shadowed one here: the pushed method is added through a change
+that names it, so the decoy receives the method and the real superclass never does.
 "
 Class {
 	#name : 'GsPushUpMethodRefactoringTest',
@@ -486,4 +496,26 @@ GsPushUpMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnErr
 GsPushUpMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsPushUpMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsPushUpMethodRefactoringTest >> testPushUpCompilesOntoTheRealSuperclassNotAGlobalFirstMatch [
+	"The pushed method is added to the superclass through a change that records the class by NAME,
+	 re-resolved at apply time with `environment classNamed:`. A decoy binding GsPUSuper ahead of
+	 UserGlobals receives the method instead, and the real superclass never gets it. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsPUShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsPUSuper'
+		instVarNames: #('shared')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self push: #pureCompute) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self superFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (self subFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

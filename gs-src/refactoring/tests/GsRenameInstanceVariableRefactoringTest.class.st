@@ -15,6 +15,9 @@ Correctness of the rename-instance-variable refactoring:
 setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The block-argument fixtures shadow the instance variable on purpose, which
 the compiler warns about; the warning is resumed so the fixture still installs.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: the reshaped
+class must be bound in its own dictionary, not in whichever dictionary binds its name first.
 "
 Class {
 	#name : 'GsRenameInstanceVariableRefactoringTest',
@@ -348,4 +351,30 @@ GsRenameInstanceVariableRefactoringTest >> testApplyDropsOnlyTheDeselectedMethod
 	self assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
 	self assertSelectorsOf: base include: #(count increment mixed blockOnly getOther).
 	self assertSelectorsOf: base class include: #(makeOne)
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameInstanceVariableRefactoringTest >> testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary [
+	"Renaming an instance variable reshapes the declaring class and its subtree through
+	 makeNewVersionOf:, which binds each new version through `dictObjectFor:` -- resolved by class
+	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals takes the new version. See #396."
+	| decoy decoyClass ref json |
+	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: 'tally'.
+	 ref changeSet.
+	 json := ref applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsRIVBase) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsRIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

@@ -45,7 +45,12 @@ setUp builds a throwaway hierarchy plus an unrelated sender class in UserGlobals
 and tearDown removes them. Fixture selectors are spellings unique to the fixture
 (movePointX:y:, csPing, ~>, csComputeWith:unused:, ...), so an image-wide
 implementor/sender search finds only the fixture.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -77,6 +82,10 @@ native classHistory:
 
 setUp builds a two-version fixture in UserGlobals (a shape change plus a modified,
 an unchanged, and an added method) and tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: both the read
+(forClassNamed:) and the restore resolve the class through an unscoped `objectNamed:`, so a name
+bound in an earlier dictionary is described, and reverted, in place of the one asked for.
 '.
 true.
 %
@@ -126,7 +135,12 @@ This suite pins down:
     the two core changes) without committing.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -167,6 +181,9 @@ GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
     building/applying compiles-in-stone-only and never commits.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it (children first).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
+halves: the re-versioned anchor, and the placement of the brand-new superclass (`dictObjectForNewClass`).
 '.
 true.
 %
@@ -211,7 +228,12 @@ This suite pins down:
     never commits; preview / token round-trip work.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -257,7 +279,12 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 Target selectors that must be the LAST sender in a test use image-unique names
 (gsim...) so no unrelated sender in the image perturbs the count.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -298,7 +325,12 @@ This suite pins down:
     never commits; preview / token round-trip work.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -341,6 +373,12 @@ new-version machinery is covered; tearDown removes it. Applying an operation cre
 delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
 the full committing migrate / delete-history round trip (which needs a clean committed transaction)
 is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, apart from the
+one control that passes: it pins that an add/remove must reshape the class the caller passed, and
+bind the new version in THAT class''s dictionary, when another dictionary earlier in the symbol list
+binds the same class name. The control (decoy appended instead of inserted first) shows the outcome
+turns only on symbol-list order.
 '.
 true.
 %
@@ -383,6 +421,10 @@ This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
     correctly parented, and building compiles/commits nothing.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. The existing
+dictionary-scope tests above cover which class a move BINDS; this one covers where the reshaped
+class is then WRITTEN, which is the half `dictObjectFor:` gets wrong.
 '.
 true.
 %
@@ -430,7 +472,12 @@ This suite pins down:
     than counted as moved.
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -477,7 +524,12 @@ This suite pins down:
     method in place); apply never commits; a token round-trip works.
 
 setUp builds a throwaway base + two subclasses in UserGlobals; tearDown removes them.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -525,7 +577,12 @@ This suite pins down:
     left in place on the subclass, rather than stripped from both classes.
 
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -678,6 +735,18 @@ same-named method elsewhere in the image, and every scope used is #class.
 
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, and it covers all
+THREE undo mechanisms, because each resolves its class by name:
+
+  - #changeSet replay re-resolves every recorded change through `env classNamed:` (first-match), the
+    same lookup the forward apply uses -- so the safety net has the hole it is meant to catch;
+  - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the engine
+    gets wrong, including `dictObjectFor:`;
+  - #historyRevert captures and replays by name through `GsClassHistory revertClassNamed:toIndex:`.
+
+Each test shadows the class name only AFTER the forward refactoring has landed, so the refactoring
+itself is correct and the undo alone is on trial.
 '.
 true.
 %
@@ -721,6 +790,10 @@ Correctness of the rename-class refactoring:
 setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
 rename target name).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: a rename must
+file the renamed class in the dictionary that held the class being renamed. This is the same helper
+the Class History restore goes through.
 '.
 true.
 %
@@ -762,6 +835,11 @@ apply recompiles in the stone but never commits. setUp builds a throwaway
 two-class hierarchy in UserGlobals and tearDown removes it. The block-argument
 fixtures shadow the class variable on purpose, which the compiler warns about;
 the warning is resumed so the fixture still installs.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+creates no new class version, so it is not the `dictObjectFor:` defect: it is the wider one, where a
+staged change records its class by NAME and the apply re-resolves it with `environment classNamed:`
+(documented first-match). The rename lands on the wrong class and half-applies.
 '.
 true.
 %
@@ -795,6 +873,9 @@ Correctness of the rename-instance-variable refactoring:
 setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The block-argument fixtures shadow the instance variable on purpose, which
 the compiler warns about; the warning is resumed so the fixture still installs.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: the reshaped
+class must be bound in its own dictionary, not in whichever dictionary binds its name first.
 '.
 true.
 %
@@ -832,6 +913,10 @@ Correctness of the rename-method refactoring:
 setUp builds a throwaway hierarchy plus an unrelated sender class in UserGlobals
 and tearDown removes them. The rename target (#movePointX:y:) is a spelling
 unique to the fixture, so image-wide implementor/sender search finds only it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. A method rename
+reshapes nothing, so it shows the defect at its widest: the apply re-resolves the change''s class by
+NAME through `environment classNamed:`, and compiles onto the wrong class.
 '.
 true.
 %
@@ -885,7 +970,12 @@ a 1-based source OFFSET into the method that identifies the clicked occurrence
 setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The shadowing fixture shadows a temporary with a block parameter on purpose,
 which the compiler warns about; the warning is resumed so the fixture installs.
-'.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`'.
 true.
 %
 
@@ -911,6 +1001,9 @@ Extracting #(extractC extractD) into GsSCComponent is the clean-cut case. Declin
 straddling / super-sending / retained-calling method, or a subclass use, or a bad name.
 
 Fixture names are substring-safe against the decline keywords, and all emitted Smalltalk is ASCII.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
+the re-versioned source and the placement of the new component class.
 '.
 true.
 %
@@ -1553,6 +1646,32 @@ testDictionaryScopeExcludesSameNamedImplementorInAnotherDictionary
 			sl remove: dictB ifAbsent: []]
 %
 
+category: 'tests - shadowed class name'
+method: GsChangeSignatureRefactoringTest
+testChangeSignatureCompilesOntoTheActedOnClassNotAGlobalFirstMatch
+	"The existing dictionary-scope test here stops at the change set -- which implementors are in
+	 scope. This is the apply half: each staged change records its class by NAME and is re-resolved
+	 with `environment classNamed:`, first-match across the symbol list, so a decoy binding GsCSBase
+	 ahead of UserGlobals receives the new signature. See #396."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsCSShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsCSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #class) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	 self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsClassHistoryTest
 assert: aString includesSubstring: aSubstring
@@ -1788,6 +1907,53 @@ method: GsClassHistoryTest
 testRevertOutOfRangeIsError
 	self assert: (GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 99)
 		includesSubstring: '"error"'
+%
+
+category: 'tests - shadowed class name'
+method: GsClassHistoryTest
+testForClassNamedReadsTheDictionaryScopedClassNotAGlobalFirstMatch
+	"forClassNamed: resolves through `symbolList objectNamed:`, so with the same class name bound in
+	 a dictionary earlier in the symbol list it describes the WRONG class's history -- the versions,
+	 definitions and changed methods shown belong to a class the user did not select. See #396."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsCHShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := GsClassHistory forClassNamed: 'GsCHFixture'.
+
+	 "the history read belongs to the fixture, which never had an instance variable named decoyOwn"
+	 self deny: json includesSubstring: 'decoyOwn']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsClassHistoryTest
+testRevertActsOnTheDictionaryScopedClassNotAGlobalFirstMatch
+	"The destructive half. revertClassNamed:toIndex: resolves the same unscoped way and then hands
+	 the class to GsRenameClassRefactoring restoreClass:toVersion:, which re-parents subclasses and
+	 rewrites references image-wide -- against the wrong class. See #396."
+	| decoy decoyClass res |
+	decoy := SymbolDictionary new name: #GsCHShadowRevertDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 res := GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 1.
+
+	 self assert: res includesSubstring: '"reverted":true'.
+	 "the restore applied in full"
+	 self assert: res includesSubstring: '"failed":[]'.
+	 "the fixture is the class restored to its version-1 shape"
+	 self assert: (UserGlobals at: #GsCHFixture) instVarNames asArray equals: #(#'a').
+	 "and the shadowing dictionary's class is left alone"
+	 self assert: (decoy at: #GsCHFixture) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -2339,6 +2505,31 @@ testApplyHonoursDuplicateDeselectionButNotCoreChanges
 	"a non-deselected duplicate WAS rewritten"
 	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
 		includesSubstring: 'self sideEffects'
+%
+
+category: 'tests - shadowed class name'
+method: GsExtractMethodRefactoringTest
+testExtractMethodCompilesOntoTheActedOnClassNotAGlobalFirstMatch
+	"Extract method adds the new method and rewrites the original, both through changes that record
+	 their class by NAME and are re-resolved at apply time with `environment classNamed:`. A decoy
+	 binding GsEMBase ahead of UserGlobals takes both writes. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsEMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsEMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture includesSelector: #sideEffects).
+	 self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'.
+	 self deny: (decoyClass includesSelector: #sideEffects)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -3016,6 +3207,67 @@ testCandidatesJsonCarriesClassifiedMembers
 	self assert: json includesSubstring: '"name":"name"'
 %
 
+category: 'tests - shadowed class name'
+method: GsExtractSuperclassRefactoringTest
+testExtractBindsTheReversionedAnchorInItsOwnDictionary
+	"Extracting a superclass re-versions the anchor and its siblings, each bound through
+	 `dictObjectFor:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
+	 takes the anchor's new version. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the anchor the user picked is the one re-parented onto the new superclass"
+	 self assert: (UserGlobals at: #GsESDog) superclass name asString equals: 'GsESPet'.
+	 self assert: (decoy at: #GsESDog) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsExtractSuperclassRefactoringTest
+testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary
+	"`dictObjectForNewClass` falls through to `dictObjectFor: anchorClass` when the caller names no
+	 dictionary, so a shadowed ANCHOR name misfiles the brand-new superclass too -- it is created in
+	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
+	 misplaces a class that did not exist before. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowNewDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the new superclass belongs beside its anchor, not in the shadowing dictionary"
+	 self deny: (UserGlobals at: #GsESPet ifAbsent: [nil]) isNil.
+	 self assert: (decoy at: #GsESPet ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
+%
+
 category: 'asserting'
 method: GsExtractTemporaryRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -3520,6 +3772,31 @@ method: GsExtractTemporaryRefactoringTest
 testPageForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsExtractTemporaryRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+%
+
+category: 'tests - shadowed class name'
+method: GsExtractTemporaryRefactoringTest
+testExtractTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch
+	"Extracting a temporary recompiles one method, through a change that records its class by NAME
+	 and is re-resolved at apply time with `environment classNamed:`. A decoy binding GsETBase ahead
+	 of UserGlobals takes the recompile. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsETShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsETBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #justExpr) sourceString
+		includesSubstring: 'doubled := count * 2'.
+	 self deny: (decoyClass compiledMethodAt: #justExpr environmentId: 0 otherwise: nil) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -4146,6 +4423,32 @@ testApplyForTokenOnAnExpiredSessionAnswersAnError
 		includesSubstring: 'expired'
 %
 
+category: 'tests - shadowed class name'
+method: GsInlineMethodRefactoringTest
+testInlineRewritesTheActedOnClassNotAGlobalFirstMatch
+	"An inline compiles the rewritten caller and removes the inlined method, both through changes
+	 that record their class by NAME and are re-resolved at apply time with
+	 `environment classNamed:` -- first-match across the symbol list. A decoy binding GsIMBase
+	 ahead of UserGlobals takes the write. See #396."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsIMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self inlineIn: base selector: #runBump atSendOf: 'bump') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (base compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	 self assert: (decoyClass compiledMethodAt: #runBump environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsInlineTemporaryRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -4510,6 +4813,31 @@ method: GsInlineTemporaryRefactoringTest
 testApplyForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsInlineTemporaryRefactoring applyForToken: 'nope' deselected: #())
 		includesSubstring: 'expired'
+%
+
+category: 'tests - shadowed class name'
+method: GsInlineTemporaryRefactoringTest
+testInlineTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch
+	"Inlining a temporary recompiles one method, through a change that records its class by NAME and
+	 is re-resolved at apply time with `environment classNamed:`. A decoy binding GsITBase ahead of
+	 UserGlobals takes the recompile. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsITShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsITBase'
+		instVarNames: #('count' 'factor')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: '^ count * 2'.
+	 self deny: (decoyClass compiledMethodAt: #oneRead environmentId: 0 otherwise: nil) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -5315,6 +5643,101 @@ testShadowScanIgnoresMethodsThatMerelyMentionTheName
 	self compile: 'sendsIt ^self respondsTo: #tally' in: self sub.
 	ref := self add: 'tally'.
 	self assert: ref willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarRefactoringTest
+testAddBindsTheNewVersionInTheActedOnClassOwnDictionary
+	"A dictionary EARLIER in the symbol list that binds the same class NAME must not receive the
+	 reshaped class. `dictObjectFor:` resolves the target dictionary from the class's name and takes
+	 the first match, discarding the class object it was handed, so the new version is bound into
+	 the decoy: the class the user acted on never gains the variable, and the decoy's own same-named
+	 class is replaced by a copy of the acted-on one. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 "the whole change set applied -- nothing left half-done"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 "the class the user acted on is the one that gains the variable"
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 "and the same-named class in the shadowing dictionary is untouched"
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarRefactoringTest
+testAddIsCorrectWhenTheShadowingDictionaryComesAfterTheOwnOne
+	"The ordering control. Same two dictionaries, but the decoy is APPENDED after UserGlobals rather
+	 than inserted before it, so name-first-match happens to be the acted-on class's own dictionary
+	 and the reshape lands correctly. This passes today: it is what makes the companion tests a
+	 statement about symbol-list ORDER, not about a second dictionary merely existing."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDictAfter; yourself.
+	System myUserProfile symbolList add: decoy.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile symbolList remove: decoy ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarRefactoringTest
+testAddBindsAReversionedSubclassInItsOwnDictionary
+	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
+	 base re-versions every subclass as well, and each of those new versions is bound through the
+	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not, so
+	 the base reshapes correctly while GsIVSub's new version is bound into the decoy."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVSub'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsIVSub) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsIVSub) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarRefactoringTest
+testRemoveBindsTheNewVersionInTheActedOnClassOwnDictionary
+	"The remove half of the same defect -- both operations reshape through makeNewVersionOf:, so
+	 both bind the result through dictObjectFor:."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowRemoveDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self remove: 'other') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: ((UserGlobals at: #GsIVBase) instVarNames includes: #other).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -6258,6 +6681,30 @@ testPushUpLeavesAMultiStatementSetterBehind
 	self deny: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:')
 %
 
+category: 'tests - shadowed class name'
+method: GsInstVarStructureRefactoringTest
+testPushUpBindsTheDestinationNewVersionInItsOwnDictionary
+	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
+	 its destination. This is the apply half. Both classes a push-up reshapes (source and
+	 destination) are re-created through `dictObjectFor:`, which picks their dictionary by NAME, so a
+	 decoy binding GsVSBase ahead of UserGlobals takes the destination's new version. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsVSBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushUpInstVar: 'mid')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsVSBase) instVarNames includes: #mid).
+	 self assert: (decoy at: #GsVSBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsMoveMethodRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -6650,6 +7097,30 @@ method: GsMoveMethodRefactoringTest
 testPageForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsMoveMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+%
+
+category: 'tests - shadowed class name'
+method: GsMoveMethodRefactoringTest
+testMoveRemovesFromTheRealSourceNotAGlobalFirstMatch
+	"The SOURCE side of a move is the half that is re-resolved at apply time by NAME through
+	 `environment classNamed:` (the destination is chosen by name up front, which is a separate
+	 concern). A decoy binding GsMMSource ahead of UserGlobals means the removal is attempted
+	 against the decoy, so the real source keeps the method it was supposed to give away. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsMMSource'
+		instVarNames: #('balance')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self targetFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (self sourceFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -7070,6 +7541,29 @@ method: GsPushDownMethodRefactoringTest
 testPageForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsPushDownMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+%
+
+category: 'tests - shadowed class name'
+method: GsPushDownMethodRefactoringTest
+testPushDownCompilesOntoTheRealSubclassesNotAGlobalFirstMatch
+	"Each subclass receiving the pushed method is named in its own change and re-resolved at apply
+	 time with `environment classNamed:`. A decoy binding GsPDA ahead of UserGlobals takes A's copy,
+	 so the real GsPDA never receives it while the base loses the method anyway. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsPDShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsPDA'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self push: #pureCompute) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsPDA) compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: ((UserGlobals at: #GsPDB) compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -7561,6 +8055,29 @@ method: GsPushUpMethodRefactoringTest
 testPageForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsPushUpMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+%
+
+category: 'tests - shadowed class name'
+method: GsPushUpMethodRefactoringTest
+testPushUpCompilesOntoTheRealSuperclassNotAGlobalFirstMatch
+	"The pushed method is added to the superclass through a change that records the class by NAME,
+	 re-resolved at apply time with `environment classNamed:`. A decoy binding GsPUSuper ahead of
+	 UserGlobals receives the method instead, and the real superclass never gets it. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsPUShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsPUSuper'
+		instVarNames: #('shared')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self push: #pureCompute) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self superFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (self subFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'tests'
@@ -9527,6 +10044,300 @@ testAHistoryRevertCommitsNothing
 	self assert: System needsCommit equals: before
 %
 
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+shadowDecoyFor: aClassName
+	"A decoy class of the given name in a dictionary inserted at the FRONT of the symbol list, so
+	 an unscoped name lookup finds it before the fixture's own class in UserGlobals. Callers must
+	 remove the dictionary with `System myUserProfile removeDictionaryAt: 1` in an ensure:."
+	| decoy |
+	decoy := SymbolDictionary new name: #GsUndoShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	^Object
+		subclass: aClassName
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoRenameMethodRestoresTheActedOnClassNotAGlobalFirstMatch
+	"Undo records the inverse of a refactoring as changes keyed by class NAME, and replays them
+	 through `env classNamed:` -- first-match across the symbol list, exactly like the forward
+	 apply. So the safety net has the same hole as the thing it is meant to catch: introduce a
+	 decoy binding the fixture's name ahead of UserGlobals between apply and undo, and the undo
+	 restores the decoy instead, leaving the real class renamed with no way back. See #396."
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuTotal in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoExtractMethodRestoresTheActedOnClassNotAGlobalFirstMatch
+	| decoy before start undoJson |
+	before := self snapshotOf: self fixture.
+	start := self offsetIn: self fixture selector: #gsuTotal at: '40 + 2'.
+	self applyRecording: (GsExtractMethodRefactoring
+		class: self fixture
+		selector: #gsuTotal
+		meta: false
+		selStart: start
+		selStop: start + '40 + 2' size - 1
+		newSelector: 'gsuAnswer').
+	self assert: (self sourceOf: #gsuAnswer in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuAnswer in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoInlineMethodRestoresTheActedOnClassNotAGlobalFirstMatch
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsInlineMethodRefactoring
+		class: self fixture
+		selector: #gsuReport
+		meta: false
+		atOffset: (self offsetIn: self fixture selector: #gsuReport at: 'gsuTotal printString')).
+	self assert: (self sourceOf: #gsuTotal in: self fixture) isNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuTotal in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoMoveMethodRestoresBothActedOnClassesNotAGlobalFirstMatch
+	"Both ends of a move are keyed by name, so a decoy on either side breaks the undo. This one
+	 shadows the SOURCE; the target half is restored from the same change set through the same
+	 `classNamed:`."
+	| decoy beforeSource beforeTarget undoJson |
+	beforeSource := self snapshotOf: self fixture.
+	beforeTarget := self snapshotOf: self otherFixture.
+	self applyRecording: (GsMoveMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false
+		toClassNamed: 'GsUndoLedger'
+		toMeta: false).
+	self assert: (self sourceOf: #gsuPure in: self otherFixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeSource restoredFor: self fixture.
+	 self assertSnapshot: beforeTarget restoredFor: self otherFixture.
+	 self assert: (self sourceOf: #gsuPure in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoPushDownMethodRestoresBothActedOnClassesNotAGlobalFirstMatch
+	| decoy beforeParent beforeChild undoJson |
+	beforeParent := self snapshotOf: self fixture.
+	beforeChild := self snapshotOf: self subFixture.
+	self applyRecording: (GsPushDownMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false).
+	self assert: (self sourceOf: #gsuPure in: self subFixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoSavings'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeParent restoredFor: self fixture.
+	 self assertSnapshot: beforeChild restoredFor: self subFixture.
+	 self assert: (self sourceOf: #gsuPure in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoChangeSignatureRestoresTheActedOnClassNotAGlobalFirstMatch
+	| decoy before undoJson |
+	self compile: 'gsuScaleBy: aNumber ^ 42 * aNumber' in: self fixture category: 'computing'.
+	self compile: 'gsuUseScale ^ self gsuScaleBy: 2' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsChangeSignatureRefactoring
+		class: self fixture
+		meta: false
+		changeSelector: #'gsuScaleBy:'
+		toParts: #('gsuTimes:')
+		permutation: #(1)
+		argNames: #('aNumber')
+		defaults: (Array with: nil)
+		scope: #class).
+	self assert: (self sourceOf: #'gsuTimes:' in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #'gsuTimes:' in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoRenameTemporaryRestoresTheActedOnClassNotAGlobalFirstMatch
+	| decoy before undoJson |
+	self compile: 'gsuWithTemp | t | t := 3. ^ t + 1' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsRenameTemporaryRefactoring
+		class: self fixture
+		selector: #gsuWithTemp
+		meta: false
+		renameTemp: 't'
+		to: 'count'
+		atOffset: (self offsetIn: self fixture selector: #gsuWithTemp at: 't := 3')).
+	self assert: (self sourceOf: #gsuWithTemp in: self fixture) includesSubstring: 'count'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuWithTemp in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoClassSideRenameRestoresTheActedOnClassNotAGlobalFirstMatch
+	"The meta side is reached as `cls class` after the same `classNamed:` lookup, so a shadowed
+	 name misdirects a class-side undo exactly as it does an instance-side one."
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuMake' to: 'gsuBuild').
+	self assert: (self sourceOf: #gsuBuild in: self fixture class) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuBuild in: decoy class) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch
+	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
+	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
+	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal reshapes the wrong
+	 class and the variable stays on the real one. See #396."
+	| decoy |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	self recordInstVarAddOf: 'gsuExtra'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	 self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'balance').
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuExtra')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoInstVarRemovePutsItBackOnTheActedOnClassNotAGlobalFirstMatch
+	"The mirror of the test above: reversing a REMOVE re-runs the add, through the same defect."
+	| decoy |
+	(GsInstVarRefactoring class: self fixture removeInstVar: 'owner')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	self recordInstVarRemoveOf: 'owner'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'owner')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch
+	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
+	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
+	 UserGlobals, the rename-back files the class in the decoy. See #396."
+	| decoy |
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self deny: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) isNil.
+	self assert: (self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger') equals: 'ok'.
+
+	decoy := self shadowDecoyFor: 'GsUndoOldLedger'.
+	[self undoAll.
+
+	 "the class is back under its original name, in the dictionary that held it"
+	 self deny: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
+	 self assert: (decoy class) == (decoy class)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalFirstMatch
+	"The third undo mechanism. A class reshape records no change set; it is reversed by putting each
+	 reshaped class back to its pre-apply classHistory version. Both halves resolve by NAME:
+	 `captureClassHistoryOf:` through `env classNamed:`, and the replay through
+	 `GsClassHistory revertClassNamed:toIndex:`. Reshape the fixture, then introduce a decoy binding
+	 its name ahead of UserGlobals before undoing: the revert is aimed at the decoy, so the real
+	 class keeps the variable the undo was supposed to take back out. See #396."
+	| decoy before |
+	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuReshaped').
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 "the fixture is back to its pre-reshape shape, with its methods"
+	 self assert: (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray equals: before.
+	 self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	 "and the decoy was not the class reverted"
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuReshaped')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsRenameClassRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -10020,6 +10831,32 @@ testDictionaryScopeExcludesSameNamedClassReferenceInAnotherDictionary
 			#(#GsRCRefInB #GsRCShadowT) do: [:s | dictB removeKey: s ifAbsent: []].
 			sl remove: dictA ifAbsent: [].
 			sl remove: dictB ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsRenameClassRefactoringTest
+testRenameBindsTheRenamedClassInItsOwnDictionary
+	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
+	 resolves by the OLD class's name and takes the first match. With a decoy binding GsRCBase ahead
+	 of UserGlobals, the renamed class is filed in the decoy: the user's own dictionary loses the
+	 class outright. This is the same helper the Class History restore goes through. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRCShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the renamed class lands in the dictionary that held the class the user renamed"
+	 self deny: (UserGlobals at: #GsRCRenamed ifAbsent: [nil]) isNil.
+	 "and the shadowing dictionary keeps its own binding, unrenamed"
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass.
+	 self assert: (decoy at: #GsRCRenamed ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -10578,6 +11415,40 @@ testCollisionSurfacedInPreviewPayload
 	self assert: free includesSubstring: '"collision":null'
 %
 
+category: 'tests - shadowed class name'
+method: GsRenameClassVariableRefactoringTest
+testRenameEditsTheActedOnClassNotAGlobalFirstMatch
+	"A class-variable rename creates NO new class version -- it edits the class reflectively
+	 (addClassVarName: / removeClassVarName:) and never reaches `dictObjectFor:`. It is broken
+	 anyway, by a second and wider root cause: a staged change records its class by NAME, and
+	 `applyClassDefinitionEdit:` re-resolves it with `environment classNamed:`, documented as
+	 'the first class bound to aName across all dictionaries'. With a decoy binding GsRCVBase
+	 ahead of UserGlobals the new class variable is created on the DECOY, so the acted-on class
+	 keeps its old name and the methods rewritten to the new one no longer compile. See #396."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsRCVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCVBase'
+		instVarNames: #()
+		classVars: #('Counter') classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := UserGlobals at: #GsRCVBase.
+	 json := (GsRenameClassVariableRefactoring class: base renameClassVar: 'Counter' to: 'Tally')
+		applyDeselected: #().
+
+	 "nothing may be left half-applied: today the referencing methods are rewritten to a name
+	  their own class does not have, and report 'did not recompile: undefined symbol'"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the rename lands on the class the user acted on"
+	 self assert: ((base classVarNames collect: [:e | e asString]) includes: 'Tally').
+	 self deny: ((base classVarNames collect: [:e | e asString]) includes: 'Counter').
+	 "the decoy's own class variable is left alone"
+	 self assert: ((decoyClass classVarNames collect: [:e | e asString]) includes: 'Counter').
+	 self deny: ((decoyClass classVarNames collect: [:e | e asString]) includes: 'Tally')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
 category: 'asserting'
 method: GsRenameInstanceVariableRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -10932,6 +11803,33 @@ testApplyDropsOnlyTheDeselectedMethod
 	self assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
 	self assertSelectorsOf: base include: #(count increment mixed blockOnly getOther).
 	self assertSelectorsOf: base class include: #(makeOne)
+%
+
+category: 'tests - shadowed class name'
+method: GsRenameInstanceVariableRefactoringTest
+testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary
+	"Renaming an instance variable reshapes the declaring class and its subtree through
+	 makeNewVersionOf:, which binds each new version through `dictObjectFor:` -- resolved by class
+	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals takes the new version. See #396."
+	| decoy decoyClass ref json |
+	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: 'tally'.
+	 ref changeSet.
+	 json := ref applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsRIVBase) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsRIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -11313,6 +12211,35 @@ testUnarySelectorRenames
 	self assert: change newSelector asString equals: 'pong'.
 	"The sender's #ping send is rewritten to #pong."
 	self assert: (self senderChangeFor: #caller in: cs) newSource includesSubstring: 'self pong'
+%
+
+category: 'tests - shadowed class name'
+method: GsRenameMethodRefactoringTest
+testRenameCompilesOntoTheActedOnClassNotAGlobalFirstMatch
+	"A method rename reshapes nothing, so `dictObjectFor:` is never involved -- but every staged
+	 change still records its class by NAME, and the apply re-resolves it with
+	 `environment classNamed:`, which is first-match across the symbol list. With a decoy binding
+	 GsRMBase ahead of UserGlobals, the renamed method is compiled onto the decoy and the class the
+	 user acted on is left with the old selector. See #396."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsRMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRMBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class)
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the acted-on class carries the new selector and no longer the old one"
+	 self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	 self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	 "and nothing was compiled onto the same-named class in the shadowing dictionary"
+	 self assert: (decoyClass compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'asserting'
@@ -11792,6 +12719,29 @@ testApplyDoesNotCommit
 	before := System needsCommit.
 	(self renameComputeTempTo: 'sum') applyDeselected: #().
 	self assert: System needsCommit equals: before
+%
+
+category: 'tests - shadowed class name'
+method: GsRenameTemporaryRefactoringTest
+testRenameTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch
+	"A temporary rename touches exactly one method, recompiled through a change that records its
+	 class by NAME and is re-resolved at apply time with `environment classNamed:`. A decoy binding
+	 GsRTBase ahead of UserGlobals takes the recompile. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRTShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRTBase'
+		instVarNames: #('count' 'total')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameComputeTempTo: 'sum') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture compiledMethodAt: #computeTemp) sourceString
+		includesSubstring: 'sum'.
+	 self assert: (decoyClass compiledMethodAt: #computeTemp environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 category: 'running'
@@ -12364,6 +13314,49 @@ testClearTokenRemovesThePreviewSession
 	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) notNil.
 	GsSplitClassRefactoring clearToken: 'v8cleartok'.
 	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) isNil
+%
+
+category: 'tests - shadowed class name'
+method: GsSplitClassRefactoringTest
+testSplitBindsTheReversionedSourceInItsOwnDictionary
+	"Splitting a class re-versions the source (it loses the extracted instance variables) and binds
+	 that new version through `dictObjectFor:` -- by class NAME, first match. A decoy binding
+	 GsSCSource ahead of UserGlobals takes it. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsSCShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := self ref applyDeselected: #().
+
+	 self assert: (json includesString: '"failed":[]').
+	 self deny: ((UserGlobals at: #GsSCSource) instVarNames includes: #extractC).
+	 self assert: (decoy at: #GsSCSource) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed class name'
+method: GsSplitClassRefactoringTest
+testSplitPlacesTheNewComponentInTheSourceOwnDictionary
+	"`dictObjectForNewClass` falls through to `dictObjectFor: sourceClass` when the caller names no
+	 dictionary, so a shadowed SOURCE name misfiles the brand-new component class as well. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsSCShadowNewDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := self ref applyDeselected: #().
+
+	 self assert: (json includesString: '"failed":[]').
+	 self deny: (UserGlobals at: #GsSCComponent ifAbsent: [nil]) isNil.
+	 self assert: (decoy at: #GsSCComponent ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
 ! Extension methods

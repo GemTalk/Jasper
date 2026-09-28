@@ -35,6 +35,13 @@ a 1-based source OFFSET into the method that identifies the clicked occurrence
 setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The shadowing fixture shadows a temporary with a block parameter on purpose,
 which the compiler warns about; the warning is resumed so the fixture installs.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
 "
 Class {
 	#name : 'GsRenameTemporaryRefactoringTest',
@@ -480,3 +487,25 @@ GsRenameTemporaryRefactoringTest >> testApplyDoesNotCommit [
 	self assert: System needsCommit equals: before
 ]
 </content>
+
+{ #category : 'tests - shadowed class name' }
+GsRenameTemporaryRefactoringTest >> testRenameTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch [
+	"A temporary rename touches exactly one method, recompiled through a change that records its
+	 class by NAME and is re-resolved at apply time with `environment classNamed:`. A decoy binding
+	 GsRTBase ahead of UserGlobals takes the recompile. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRTShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRTBase'
+		instVarNames: #('count' 'total')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameComputeTempTo: 'sum') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture compiledMethodAt: #computeTemp) sourceString
+		includesSubstring: 'sum'.
+	 self assert: (decoyClass compiledMethodAt: #computeTemp environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]

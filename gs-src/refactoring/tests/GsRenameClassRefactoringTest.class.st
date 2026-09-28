@@ -25,6 +25,10 @@ Correctness of the rename-class refactoring:
 setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
 rename target name).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed: a rename must
+file the renamed class in the dictionary that held the class being renamed. This is the same helper
+the Class History restore goes through.
 "
 Class {
 	#name : 'GsRenameClassRefactoringTest',
@@ -493,4 +497,29 @@ GsRenameClassRefactoringTest >> testDictionaryScopeExcludesSameNamedClassReferen
 			#(#GsRCRefInB #GsRCShadowT) do: [:s | dictB removeKey: s ifAbsent: []].
 			sl remove: dictA ifAbsent: [].
 			sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary [
+	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
+	 resolves by the OLD class's name and takes the first match. With a decoy binding GsRCBase ahead
+	 of UserGlobals, the renamed class is filed in the decoy: the user's own dictionary loses the
+	 class outright. This is the same helper the Class History restore goes through. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRCShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the renamed class lands in the dictionary that held the class the user renamed"
+	 self deny: (UserGlobals at: #GsRCRenamed ifAbsent: [nil]) isNil.
+	 "and the shadowing dictionary keeps its own binding, unrenamed"
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass.
+	 self assert: (decoy at: #GsRCRenamed ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

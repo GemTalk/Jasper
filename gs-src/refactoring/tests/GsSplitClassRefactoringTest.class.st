@@ -8,6 +8,9 @@ Extracting #(extractC extractD) into GsSCComponent is the clean-cut case. Declin
 straddling / super-sending / retained-calling method, or a subclass use, or a bad name.
 
 Fixture names are substring-safe against the decline keywords, and all emitted Smalltalk is ASCII.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, covering both
+the re-versioned source and the placement of the new component class.
 "
 Class {
 	#name : 'GsSplitClassRefactoringTest',
@@ -532,4 +535,45 @@ GsSplitClassRefactoringTest >> testClearTokenRemovesThePreviewSession [
 	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) notNil.
 	GsSplitClassRefactoring clearToken: 'v8cleartok'.
 	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) isNil
+]
+
+{ #category : 'tests - shadowed class name' }
+GsSplitClassRefactoringTest >> testSplitBindsTheReversionedSourceInItsOwnDictionary [
+	"Splitting a class re-versions the source (it loses the extracted instance variables) and binds
+	 that new version through `dictObjectFor:` -- by class NAME, first match. A decoy binding
+	 GsSCSource ahead of UserGlobals takes it. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsSCShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := self ref applyDeselected: #().
+
+	 self assert: (json includesString: '"failed":[]').
+	 self deny: ((UserGlobals at: #GsSCSource) instVarNames includes: #extractC).
+	 self assert: (decoy at: #GsSCSource) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsSplitClassRefactoringTest >> testSplitPlacesTheNewComponentInTheSourceOwnDictionary [
+	"`dictObjectForNewClass` falls through to `dictObjectFor: sourceClass` when the caller names no
+	 dictionary, so a shadowed SOURCE name misfiles the brand-new component class as well. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsSCShadowNewDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := self ref applyDeselected: #().
+
+	 self assert: (json includesString: '"failed":[]').
+	 self deny: (UserGlobals at: #GsSCComponent ifAbsent: [nil]) isNil.
+	 self assert: (decoy at: #GsSCComponent ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

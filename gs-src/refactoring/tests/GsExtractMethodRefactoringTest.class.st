@@ -31,6 +31,13 @@ This suite pins down:
     the two core changes) without committing.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
 "
 Class {
 	#name : 'GsExtractMethodRefactoringTest',
@@ -545,4 +552,28 @@ GsExtractMethodRefactoringTest >> testApplyHonoursDuplicateDeselectionButNotCore
 	"a non-deselected duplicate WAS rewritten"
 	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
 		includesSubstring: 'self sideEffects'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractMethodRefactoringTest >> testExtractMethodCompilesOntoTheActedOnClassNotAGlobalFirstMatch [
+	"Extract method adds the new method and rewrites the original, both through changes that record
+	 their class by NAME and are re-resolved at apply time with `environment classNamed:`. A decoy
+	 binding GsEMBase ahead of UserGlobals takes both writes. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsEMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsEMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture includesSelector: #sideEffects).
+	 self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'.
+	 self deny: (decoyClass includesSelector: #sideEffects)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

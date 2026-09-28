@@ -23,6 +23,13 @@ This suite pins down:
     never commits; preview / token round-trip work.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
 "
 Class {
 	#name : 'GsInlineTemporaryRefactoringTest',
@@ -362,4 +369,28 @@ GsInlineTemporaryRefactoringTest >> testTokenRoundTripStartThenApply [
 GsInlineTemporaryRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsInlineTemporaryRefactoring applyForToken: 'nope' deselected: #())
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInlineTemporaryRefactoringTest >> testInlineTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch [
+	"Inlining a temporary recompiles one method, through a change that records its class by NAME and
+	 is re-resolved at apply time with `environment classNamed:`. A decoy binding GsITBase ahead of
+	 UserGlobals takes the recompile. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsITShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsITBase'
+		instVarNames: #('count' 'factor')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: '^ count * 2'.
+	 self deny: (decoyClass compiledMethodAt: #oneRead environmentId: 0 otherwise: nil) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

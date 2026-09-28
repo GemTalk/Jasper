@@ -29,6 +29,16 @@ This suite pins down:
     than counted as moved.
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
+
+The SOURCE end is what the shadow test covers. Choosing the destination by name up front is a
+separate concern, already covered on the resolve side elsewhere in the suite.
 "
 Class {
 	#name : 'GsMoveMethodRefactoringTest',
@@ -394,4 +404,27 @@ GsMoveMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError
 GsMoveMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsMoveMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsMoveMethodRefactoringTest >> testMoveRemovesFromTheRealSourceNotAGlobalFirstMatch [
+	"The SOURCE side of a move is the half that is re-resolved at apply time by NAME through
+	 `environment classNamed:` (the destination is chosen by name up front, which is a separate
+	 concern). A decoy binding GsMMSource ahead of UserGlobals means the removal is attempted
+	 against the decoy, so the real source keeps the method it was supposed to give away. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsMMSource'
+		instVarNames: #('balance')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self targetFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (self sourceFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

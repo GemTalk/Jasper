@@ -25,6 +25,12 @@ new-version machinery is covered; tearDown removes it. Applying an operation cre
 delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
 the full committing migrate / delete-history round trip (which needs a clean committed transaction)
 is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, apart from the
+one control that passes: it pins that an add/remove must reshape the class the caller passed, and
+bind the new version in THAT class's dictionary, when another dictionary earlier in the symbol list
+binds the same class name. The control (decoy appended instead of inserted first) shows the outcome
+turns only on symbol-list order.
 "
 Class {
 	#name : 'GsInstVarRefactoringTest',
@@ -769,4 +775,95 @@ GsInstVarRefactoringTest >> testShadowScanIgnoresMethodsThatMerelyMentionTheName
 	self compile: 'sendsIt ^self respondsTo: #tally' in: self sub.
 	ref := self add: 'tally'.
 	self assert: ref willNotRecompileSelectorCount equals: 0
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddBindsTheNewVersionInTheActedOnClassOwnDictionary [
+	"A dictionary EARLIER in the symbol list that binds the same class NAME must not receive the
+	 reshaped class. `dictObjectFor:` resolves the target dictionary from the class's name and takes
+	 the first match, discarding the class object it was handed, so the new version is bound into
+	 the decoy: the class the user acted on never gains the variable, and the decoy's own same-named
+	 class is replaced by a copy of the acted-on one. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 "the whole change set applied -- nothing left half-done"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 "the class the user acted on is the one that gains the variable"
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 "and the same-named class in the shadowing dictionary is untouched"
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddIsCorrectWhenTheShadowingDictionaryComesAfterTheOwnOne [
+	"The ordering control. Same two dictionaries, but the decoy is APPENDED after UserGlobals rather
+	 than inserted before it, so name-first-match happens to be the acted-on class's own dictionary
+	 and the reshape lands correctly. This passes today: it is what makes the companion tests a
+	 statement about symbol-list ORDER, not about a second dictionary merely existing."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDictAfter; yourself.
+	System myUserProfile symbolList add: decoy.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile symbolList remove: decoy ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddBindsAReversionedSubclassInItsOwnDictionary [
+	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
+	 base re-versions every subclass as well, and each of those new versions is bound through the
+	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not, so
+	 the base reshapes correctly while GsIVSub's new version is bound into the decoy."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVSub'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsIVSub) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsIVSub) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testRemoveBindsTheNewVersionInTheActedOnClassOwnDictionary [
+	"The remove half of the same defect -- both operations reshape through makeNewVersionOf:, so
+	 both bind the result through dictObjectFor:."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowRemoveDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self remove: 'other') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: ((UserGlobals at: #GsIVBase) instVarNames includes: #other).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

@@ -28,6 +28,13 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 Target selectors that must be the LAST sender in a test use image-unique names
 (gsim...) so no unrelated sender in the image perturbs the count.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. This refactoring
+reshapes no class, so it is not the `dictObjectFor:` half of that defect; it is the wider one, where
+a staged change records its class by NAME and the apply re-resolves it through
+`environment classNamed:` (documented first-match across the symbol list). Each test also asserts
+`"failed":[]`, so a fix that redirects the write but leaves the refactoring half-applied does not
+satisfy it.
 "
 Class {
 	#name : 'GsInlineMethodRefactoringTest',
@@ -607,4 +614,29 @@ GsInlineMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnErro
 GsInlineMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsInlineMethodRefactoring applyForToken: 'nope' deselected: #())
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInlineMethodRefactoringTest >> testInlineRewritesTheActedOnClassNotAGlobalFirstMatch [
+	"An inline compiles the rewritten caller and removes the inlined method, both through changes
+	 that record their class by NAME and are re-resolved at apply time with
+	 `environment classNamed:` -- first-match across the symbol list. A decoy binding GsIMBase
+	 ahead of UserGlobals takes the write. See #396."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsIMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self inlineIn: base selector: #runBump atSendOf: 'bump') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (base compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	 self assert: (decoyClass compiledMethodAt: #runBump environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

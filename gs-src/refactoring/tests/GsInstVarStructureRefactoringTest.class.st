@@ -24,6 +24,10 @@ This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
     correctly parented, and building compiles/commits nothing.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed. The existing
+dictionary-scope tests above cover which class a move BINDS; this one covers where the reshaped
+class is then WRITTEN, which is the half `dictObjectFor:` gets wrong.
 "
 Class {
 	#name : 'GsInstVarStructureRefactoringTest',
@@ -906,4 +910,27 @@ GsInstVarStructureRefactoringTest >> testPushUpLeavesAMultiStatementSetterBehind
 
 	self assert: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
 	self deny: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:')
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testPushUpBindsTheDestinationNewVersionInItsOwnDictionary [
+	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
+	 its destination. This is the apply half. Both classes a push-up reshapes (source and
+	 destination) are re-created through `dictObjectFor:`, which picks their dictionary by NAME, so a
+	 decoy binding GsVSBase ahead of UserGlobals takes the destination's new version. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsVSBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushUpInstVar: 'mid')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsVSBase) instVarNames includes: #mid).
+	 self assert: (decoy at: #GsVSBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

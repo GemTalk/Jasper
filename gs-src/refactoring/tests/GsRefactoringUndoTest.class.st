@@ -30,6 +30,18 @@ same-named method elsewhere in the image, and every scope used is #class.
 
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
+
+The `tests - shadowed class name` category is expected to FAIL until #396 is fixed, and it covers all
+THREE undo mechanisms, because each resolves its class by name:
+
+  - #changeSet replay re-resolves every recorded change through `env classNamed:` (first-match), the
+    same lookup the forward apply uses -- so the safety net has the hole it is meant to catch;
+  - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the engine
+    gets wrong, including `dictObjectFor:`;
+  - #historyRevert captures and replays by name through `GsClassHistory revertClassNamed:toIndex:`.
+
+Each test shadows the class name only AFTER the forward refactoring has landed, so the refactoring
+itself is correct and the undo alone is on trial.
 "
 Class {
 	#name : 'GsRefactoringUndoTest',
@@ -1195,4 +1207,285 @@ GsRefactoringUndoTest >> testAHistoryRevertCommitsNothing [
 	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
 	self undoAll.
 	self assert: System needsCommit equals: before
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> shadowDecoyFor: aClassName [
+	"A decoy class of the given name in a dictionary inserted at the FRONT of the symbol list, so
+	 an unscoped name lookup finds it before the fixture's own class in UserGlobals. Callers must
+	 remove the dictionary with `System myUserProfile removeDictionaryAt: 1` in an ensure:."
+	| decoy |
+	decoy := SymbolDictionary new name: #GsUndoShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	^Object
+		subclass: aClassName
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoRenameMethodRestoresTheActedOnClassNotAGlobalFirstMatch [
+	"Undo records the inverse of a refactoring as changes keyed by class NAME, and replays them
+	 through `env classNamed:` -- first-match across the symbol list, exactly like the forward
+	 apply. So the safety net has the same hole as the thing it is meant to catch: introduce a
+	 decoy binding the fixture's name ahead of UserGlobals between apply and undo, and the undo
+	 restores the decoy instead, leaving the real class renamed with no way back. See #396."
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuTotal in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoExtractMethodRestoresTheActedOnClassNotAGlobalFirstMatch [
+	| decoy before start undoJson |
+	before := self snapshotOf: self fixture.
+	start := self offsetIn: self fixture selector: #gsuTotal at: '40 + 2'.
+	self applyRecording: (GsExtractMethodRefactoring
+		class: self fixture
+		selector: #gsuTotal
+		meta: false
+		selStart: start
+		selStop: start + '40 + 2' size - 1
+		newSelector: 'gsuAnswer').
+	self assert: (self sourceOf: #gsuAnswer in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuAnswer in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoInlineMethodRestoresTheActedOnClassNotAGlobalFirstMatch [
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsInlineMethodRefactoring
+		class: self fixture
+		selector: #gsuReport
+		meta: false
+		atOffset: (self offsetIn: self fixture selector: #gsuReport at: 'gsuTotal printString')).
+	self assert: (self sourceOf: #gsuTotal in: self fixture) isNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuTotal in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoMoveMethodRestoresBothActedOnClassesNotAGlobalFirstMatch [
+	"Both ends of a move are keyed by name, so a decoy on either side breaks the undo. This one
+	 shadows the SOURCE; the target half is restored from the same change set through the same
+	 `classNamed:`."
+	| decoy beforeSource beforeTarget undoJson |
+	beforeSource := self snapshotOf: self fixture.
+	beforeTarget := self snapshotOf: self otherFixture.
+	self applyRecording: (GsMoveMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false
+		toClassNamed: 'GsUndoLedger'
+		toMeta: false).
+	self assert: (self sourceOf: #gsuPure in: self otherFixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeSource restoredFor: self fixture.
+	 self assertSnapshot: beforeTarget restoredFor: self otherFixture.
+	 self assert: (self sourceOf: #gsuPure in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoPushDownMethodRestoresBothActedOnClassesNotAGlobalFirstMatch [
+	| decoy beforeParent beforeChild undoJson |
+	beforeParent := self snapshotOf: self fixture.
+	beforeChild := self snapshotOf: self subFixture.
+	self applyRecording: (GsPushDownMethodRefactoring
+		sourceClass: self fixture
+		selectors: #('gsuPure')
+		meta: false).
+	self assert: (self sourceOf: #gsuPure in: self subFixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoSavings'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeParent restoredFor: self fixture.
+	 self assertSnapshot: beforeChild restoredFor: self subFixture.
+	 self assert: (self sourceOf: #gsuPure in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoChangeSignatureRestoresTheActedOnClassNotAGlobalFirstMatch [
+	| decoy before undoJson |
+	self compile: 'gsuScaleBy: aNumber ^ 42 * aNumber' in: self fixture category: 'computing'.
+	self compile: 'gsuUseScale ^ self gsuScaleBy: 2' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsChangeSignatureRefactoring
+		class: self fixture
+		meta: false
+		changeSelector: #'gsuScaleBy:'
+		toParts: #('gsuTimes:')
+		permutation: #(1)
+		argNames: #('aNumber')
+		defaults: (Array with: nil)
+		scope: #class).
+	self assert: (self sourceOf: #'gsuTimes:' in: self fixture) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #'gsuTimes:' in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoRenameTemporaryRestoresTheActedOnClassNotAGlobalFirstMatch [
+	| decoy before undoJson |
+	self compile: 'gsuWithTemp | t | t := 3. ^ t + 1' in: self fixture category: 'computing'.
+	before := self snapshotOf: self fixture.
+	self applyRecording: (GsRenameTemporaryRefactoring
+		class: self fixture
+		selector: #gsuWithTemp
+		meta: false
+		renameTemp: 't'
+		to: 'count'
+		atOffset: (self offsetIn: self fixture selector: #gsuWithTemp at: 't := 3')).
+	self assert: (self sourceOf: #gsuWithTemp in: self fixture) includesSubstring: 'count'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuWithTemp in: decoy) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoClassSideRenameRestoresTheActedOnClassNotAGlobalFirstMatch [
+	"The meta side is reached as `cls class` after the same `classNamed:` lookup, so a shadowed
+	 name misdirects a class-side undo exactly as it does an instance-side one."
+	| decoy before undoJson |
+	before := self snapshotOf: self fixture.
+	self applyRecording: (self renameInFixture: 'gsuMake' to: 'gsuBuild').
+	self assert: (self sourceOf: #gsuBuild in: self fixture class) notNil.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: before restoredFor: self fixture.
+	 self assert: (self sourceOf: #gsuBuild in: decoy class) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch [
+	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
+	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
+	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal reshapes the wrong
+	 class and the variable stays on the real one. See #396."
+	| decoy |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	self recordInstVarAddOf: 'gsuExtra'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	 self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'balance').
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuExtra')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoInstVarRemovePutsItBackOnTheActedOnClassNotAGlobalFirstMatch [
+	"The mirror of the test above: reversing a REMOVE re-runs the add, through the same defect."
+	| decoy |
+	(GsInstVarRefactoring class: self fixture removeInstVar: 'owner')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	self recordInstVarRemoveOf: 'owner'.
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'owner')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch [
+	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
+	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
+	 UserGlobals, the rename-back files the class in the decoy. See #396."
+	| decoy |
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self deny: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) isNil.
+	self assert: (self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger') equals: 'ok'.
+
+	decoy := self shadowDecoyFor: 'GsUndoOldLedger'.
+	[self undoAll.
+
+	 "the class is back under its original name, in the dictionary that held it"
+	 self deny: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
+	 self assert: (decoy class) == (decoy class)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalFirstMatch [
+	"The third undo mechanism. A class reshape records no change set; it is reversed by putting each
+	 reshaped class back to its pre-apply classHistory version. Both halves resolve by NAME:
+	 `captureClassHistoryOf:` through `env classNamed:`, and the replay through
+	 `GsClassHistory revertClassNamed:toIndex:`. Reshape the fixture, then introduce a decoy binding
+	 its name ahead of UserGlobals before undoing: the revert is aimed at the decoy, so the real
+	 class keeps the variable the undo was supposed to take back out. See #396."
+	| decoy before |
+	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuReshaped').
+
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self undoAll.
+
+	 "the fixture is back to its pre-reshape shape, with its methods"
+	 self assert: (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray equals: before.
+	 self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	 "and the decoy was not the class reverted"
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuReshaped')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
