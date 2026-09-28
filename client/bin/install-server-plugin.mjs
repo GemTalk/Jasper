@@ -13,7 +13,9 @@
 // modules reachable from the main script (transitively, gciLog.ts) `require
 // ('vscode')` at load time to get an output channel for incidental logging we
 // don't care about here; there's no real `vscode` module outside the
-// extension host.
+// extension host. `withProgress` is needed too: the refactoring load runs
+// through the non-blocking runner, which opens a progress notification once a
+// call passes its threshold (a few seconds) — routine on a slow or rowan3 stone.
 //
 // Follow-up ticket (Grail): retire this stub by making the GCI install path
 // loadable outside the extension host, so this indirection goes away too.
@@ -26,8 +28,17 @@ const originalModuleLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === 'vscode') {
     return {
+      ProgressLocation: { Notification: 15 },
       window: {
         createOutputChannel: () => ({ appendLine: () => {}, show: () => {}, dispose: () => {} }),
+        withProgress: (_options, task) =>
+          task(
+            { report: () => {} },
+            {
+              isCancellationRequested: false,
+              onCancellationRequested: () => ({ dispose: () => {} }),
+            },
+          ),
       },
     };
   }
