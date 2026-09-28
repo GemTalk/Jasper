@@ -54,8 +54,9 @@ onSupportedPosixDescribe('apply_jasper_transforms.sh', () => {
     withTemporaryFolderDo((dir) => {
       copyPayload(dir);
 
-      run(dir);
+      const result = run(dir);
 
+      expect(result.status, result.stderr).toBe(0);
       for (const f of payloadFiles()) {
         expect(fs.statSync(path.join(dir, f)).mode & 0o777, f).toBe(0o644);
       }
