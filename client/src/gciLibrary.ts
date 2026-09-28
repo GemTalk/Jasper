@@ -2321,6 +2321,10 @@ export class GciLibrary {
    * released oop. Async callbacks are rejected at the type level for this
    * reason; there is no equivalent check for an oop returned directly.
    *
+   * The release drops the oop from the PureExportSet even if the caller
+   * already held it exported (e.g. `code` answers a global the caller
+   * fetched earlier), since the PureExportSet doesn't count exports.
+   *
    * @param session - The GemStone session to operate in.
    * @param code - Smalltalk source to evaluate.
    * @param callback - Receives the oop `code` evaluated to. Must be
@@ -2644,6 +2648,11 @@ export class GciLibrary {
    * released oop. Async callbacks are rejected at the type level for this
    * reason; there is no equivalent check for an oop returned directly.
    *
+   * The release drops the oop from the PureExportSet even if the caller
+   * already held it exported, since the PureExportSet doesn't count
+   * exports. That includes `receiverOop` itself when the send answers the
+   * receiver (e.g. `encodeAsUTF8` sent to a Utf8).
+   *
    * @param session - The GemStone session to operate in.
    * @param receiverOop - The oop of the message's receiver.
    * @param selector - The unary selector to send.
@@ -2776,6 +2785,11 @@ export class GciLibrary {
 
   /**
    * Releases a single oop from the session's PureExportSet.
+   *
+   * The PureExportSet doesn't count exports: an object exported several
+   * times (e.g. by evaluating the same global twice) is held once, and a
+   * single release drops it for every holder of that oop, not just the one
+   * that released it.
    *
    * @param session - The GemStone session to operate in.
    * @param oop - The oop to release.
@@ -3283,6 +3297,12 @@ export class GciLibrary {
    * instead. The extra round-trip this costs is a deliberate trade-off for
    * that correctness, not an oversight -- do not collapse the two sends
    * back into one to save a round-trip.
+   *
+   * Both the evaluated result and its `encodeAsUTF8` result are released
+   * once the bytes are read, even if the caller already held either one
+   * exported (e.g. `code` answers a global the caller fetched earlier),
+   * since the PureExportSet doesn't count exports. A Utf8 result is both at
+   * once, as `encodeAsUTF8` answers the receiver itself.
    *
    * @param session - The GemStone session to operate in.
    * @param code - Smalltalk source to evaluate.
