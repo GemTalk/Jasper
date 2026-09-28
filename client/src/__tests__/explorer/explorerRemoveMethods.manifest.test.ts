@@ -3,9 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * The Methods pane offers Remove… on its context menu, where a multi-row selection
- * can reach it. The inline 🗑 stays; the palette entry stays hidden, because the
- * command needs a row to act on.
+ * The Methods pane's two removals are separate commands, because VS Code hands both
+ * gestures the selection: the inline 🗑 (`removeMethod`) acts on its own row, and
+ * **Remove…** on the context menu (`removeMethods`) acts on the selection. Neither is
+ * in the Command Palette, because both need a row to act on.
  */
 
 interface Command {
@@ -24,7 +25,8 @@ const pkg = JSON.parse(
 
 const itemContext = pkg.contributes.menus['view/item/context'];
 const palette = pkg.contributes.menus['commandPalette'];
-const REMOVE = 'gemstone.explorer.removeMethod';
+const REMOVE_ROW = 'gemstone.explorer.removeMethod';
+const REMOVE_SELECTION = 'gemstone.explorer.removeMethods';
 const METHODS = 'gemstoneExplorerMethods';
 
 const admits = (when: string, view: string, viewItem: string): boolean => {
@@ -36,24 +38,29 @@ const admits = (when: string, view: string, viewItem: string): boolean => {
   return new RegExp(re[1]).test(viewItem);
 };
 
-const entriesOn = (viewItem: string) =>
-  itemContext.filter((e) => e.command === REMOVE && admits(e.when ?? '', METHODS, viewItem));
+const entriesOn = (command: string, viewItem: string) =>
+  itemContext.filter((e) => e.command === command && admits(e.when ?? '', METHODS, viewItem));
+const isInline = (e: MenuEntry) => (e.group ?? '').startsWith('inline');
+const titleOf = (command: string) =>
+  pkg.contributes.commands.find((c) => c.command === command)?.title;
 
-describe('Remove on the Methods pane', () => {
-  it('is on the right-click menu of a method row, not only inline', () => {
-    const menu = entriesOn('explorerMethod').filter((e) => !(e.group ?? '').startsWith('inline'));
+describe('Removing methods from the Methods pane', () => {
+  it('offers the trash button inline, and only inline', () => {
+    const entries = entriesOn(REMOVE_ROW, 'explorerMethod');
 
-    expect(menu).toHaveLength(1);
+    expect(entries.filter(isInline)).toHaveLength(1);
+    expect(entries.filter((e) => !isInline(e))).toHaveLength(0);
   });
 
-  it('keeps the inline trash button', () => {
-    const inline = entriesOn('explorerMethod').filter((e) => (e.group ?? '').startsWith('inline'));
+  it('offers Remove… on the right-click menu, and only there', () => {
+    const entries = entriesOn(REMOVE_SELECTION, 'explorerMethod');
 
-    expect(inline).toHaveLength(1);
+    expect(entries.filter((e) => !isInline(e))).toHaveLength(1);
+    expect(entries.filter(isInline)).toHaveLength(0);
   });
 
-  it('sits in a group of its own at the bottom of the menu, apart from File Out', () => {
-    const menu = entriesOn('explorerMethod').find((e) => !(e.group ?? '').startsWith('inline'))!;
+  it('puts Remove… in a group of its own below File Out', () => {
+    const menu = entriesOn(REMOVE_SELECTION, 'explorerMethod')[0];
     const fileOut = itemContext.find((e) => e.command === 'gemstone.explorer.fileOutMethods')!;
 
     expect(menu.group).toBeDefined();
@@ -61,13 +68,16 @@ describe('Remove on the Methods pane', () => {
     expect(menu.group! > fileOut.group!).toBe(true);
   });
 
-  it('is titled "Remove…", since it asks before it removes', () => {
-    const title = pkg.contributes.commands.find((c) => c.command === REMOVE)!.title;
-
-    expect(title).toMatch(/^Remove.*…$/);
+  it('titles the menu item "Remove…", since it asks before it removes', () => {
+    expect(titleOf(REMOVE_SELECTION)).toMatch(/^Remove.*…$/);
   });
 
-  it('stays out of the Command Palette', () => {
-    expect(palette.find((e) => e.command === REMOVE)?.when).toBe('false');
+  it('keeps the trash button titled for the one method it removes', () => {
+    expect(titleOf(REMOVE_ROW)).toBe('Remove Method');
+  });
+
+  it('keeps both out of the Command Palette', () => {
+    expect(palette.find((e) => e.command === REMOVE_ROW)?.when).toBe('false');
+    expect(palette.find((e) => e.command === REMOVE_SELECTION)?.when).toBe('false');
   });
 });

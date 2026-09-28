@@ -225,6 +225,20 @@ describe('removing several methods something still sends — the one confirmatio
     expect(text).toContain('Array class');
   });
 
+  it('speaks of the methods in the plural', async () => {
+    sendersOf.mockImplementation((_s: unknown, selector: string) => {
+      if (selector === 'size') throw new Error('a SecurityError occurred');
+      return [sender()];
+    });
+
+    await removeMethods(makeController(), [row('at:'), row('size')]);
+
+    const text = dialogText();
+    expect(text).toContain('still references them');
+    expect(text).toContain('Could not check what references them');
+    expect(text).not.toMatch(/references it\b/);
+  });
+
   it('lists the surviving senders of every method in one list', async () => {
     sendersOf.mockImplementation((_s: unknown, selector: string) =>
       selector === 'at:'
