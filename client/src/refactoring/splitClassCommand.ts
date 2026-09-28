@@ -16,6 +16,7 @@
  * the new class name on success so the caller can reveal it.
  */
 import * as vscode from 'vscode';
+import { dictionaryNameFor, qualifiedClassName } from './dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
@@ -152,7 +153,7 @@ export async function splitClassCommand(
   }
 
   // 5. Paginated preview + apply.
-  const heading = `Split ${className} — extract ${newName}`;
+  const heading = `Split ${qualifiedClassName(className, dictionaryNameFor(session, dict))} — extract ${newName}`;
   const token = `split_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const safeClear = (): void => {
     try {

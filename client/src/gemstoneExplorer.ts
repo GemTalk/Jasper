@@ -154,6 +154,7 @@ import {
 } from './refactoring/classHistoryModel';
 import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { dictionaryNameFor, qualifiedClassName } from './refactoring/dictionaryLabel';
 import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
 import {
   showMethodHistoryPanel,
@@ -3413,7 +3414,7 @@ export class ExplorerController {
       className,
       newName,
       oldName,
-      `Rename instance variable ${oldName} to ${newName} in ${className}`,
+      `Rename instance variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
       'GsRenameInstanceVariableRefactoring',
     );
     notifyRefactoringApplied(
@@ -3873,7 +3874,7 @@ export class ExplorerController {
       newName,
       newName,
       oldName,
-      `Rename class ${oldName} to ${newName}`,
+      `Rename class ${qualifiedClassName(oldName, this.state.dictName)} to ${newName}`,
       'GsRenameClassRefactoring',
       { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
     );
@@ -4073,7 +4074,7 @@ export class ExplorerController {
       className,
       newName,
       oldName,
-      `Rename class variable ${oldName} to ${newName} in ${className}`,
+      `Rename class variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
       'GsRenameClassVariableRefactoring',
     );
     notifyRefactoringApplied(
@@ -4192,17 +4193,9 @@ export class ExplorerController {
     session: ActiveSession,
     dictRef: number | string | undefined,
   ): string | undefined {
-    if (typeof dictRef === 'string') return dictRef;
-    if (dictRef === undefined) return undefined;
     // The tree's own name for the selected dictionary, when it has one — no round trip, and it
     // is the name the user is looking at in the Dictionaries pane.
-    if (this.state.dictName) return this.state.dictName;
-    try {
-      // getDictionaryNames answers the symbol list in order, so the 1-based index selects it.
-      return queries.getDictionaryNames(session)[dictRef - 1];
-    } catch {
-      return undefined;
-    }
+    return this.state.dictName ?? dictionaryNameFor(session, dictRef);
   }
 
   // Show one method's recorded source history (context menu on a method row). The

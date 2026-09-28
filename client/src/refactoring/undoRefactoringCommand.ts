@@ -83,7 +83,16 @@ async function revealWhatCameBack(start: UndoStartPreview): Promise<void> {
   const landOn =
     classRow.kind === 'classRename' ? (classRow.newName ?? classRow.className) : classRow.className;
   try {
-    await vscode.commands.executeCommand('gemstone.explorer.findClass', landOn);
+    // The dictionary matters as much as the name: findClass resolves a bare name against the
+    // whole symbol list and lands on the FIRST match, so undoing a change to a shadowed class
+    // jumped the Explorer to somebody else's class of the same name (#396). The method branch
+    // above already passes its row's dictionary; this one now does too.
+    await vscode.commands.executeCommand(
+      'gemstone.explorer.findClass',
+      landOn,
+      undefined,
+      classRow.dictName ?? undefined,
+    );
   } catch {
     /* best-effort */
   }

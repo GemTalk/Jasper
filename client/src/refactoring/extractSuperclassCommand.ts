@@ -14,6 +14,7 @@
  * the caller can reveal it.
  */
 import * as vscode from 'vscode';
+import { dictionaryNameFor, qualifiedClassName } from './dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
@@ -313,7 +314,7 @@ export async function insertSuperclassCommand(
 
   return runExtractSuperclass(
     ctx,
-    `Insert superclass '${newName}' above ${ctx.className}`,
+    `Insert superclass '${newName}' above ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}`,
     newName,
     [],
     { methods: [], instVars: [] },
@@ -386,7 +387,7 @@ export async function extractSuperclassCommand(
   const where = siblings.length > 0 ? ` (with ${siblings.join(', ')})` : '';
   return runExtractSuperclass(
     ctx,
-    `Extract superclass '${newName}' from ${ctx.className}${where}`,
+    `Extract superclass '${newName}' from ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}${where}`,
     newName,
     siblings,
     hoist,
