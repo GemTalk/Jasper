@@ -2,7 +2,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { execSync, spawnSync } from 'child_process';
+import { ChildProcess, execSync, spawn } from 'child_process';
 import { SysadminStorage, ExtractedVersionInfo } from '../sysadminStorage';
 import { GemStoneVersion } from '../sysadminTypes';
 import { appendSysadmin } from '../sysadminChannel';
@@ -13,6 +13,30 @@ import { compareGemStoneVersions, isComparableGemStoneVersion } from '../gemSton
 
 const WIN_CLIENT_BASE_URL = 'https://downloads.gemtalksystems.com/pub/GemStone64/';
 const MINIMUM_SUPPORTED_GEMSTONE_VERSION = '3.6.2';
+
+/**
+ * The user cancelled a download or an unpack, and what it had written is gone.
+ * The message says so; callers show it as information, not as an error.
+ */
+export class InstallCancelledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InstallCancelledError';
+  }
+}
+
+const DOWNLOAD_CANCELLED = 'Download cancelled. The partly downloaded file was removed.';
+
+/** How a child process ended. 127 also stands for "no such command", as a shell reports it. */
+interface ChildResult {
+  code: number;
+  stderr: string;
+}
+
+/** The last few lines of a child's stderr, for an error message. */
+function stderrTail(stderr: string): string {
+  return stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : '';
+}
 
 /** One row of the downloads page — what the catalog says before any disk is read. */
 export interface CatalogEntry {
@@ -258,7 +282,7 @@ export class VersionManager {
           } catch {
             /* ignore */
           }
-          reject(new Error('Download cancelled'));
+          reject(new InstallCancelledError(DOWNLOAD_CANCELLED));
         });
 
         proc.stderr?.on('data', (data: Buffer) => {
@@ -308,9 +332,12 @@ export class VersionManager {
         const cancel = token.onCancellationRequested(() => {
           cancelled = true;
           request.destroy();
-          file.close(() => cleanup());
           cancel.dispose();
-          reject(new Error('Download cancelled'));
+          // Rejected only once the file is gone, because the message says it is.
+          file.close(() => {
+            cleanup();
+            reject(new InstallCancelledError(DOWNLOAD_CANCELLED));
+          });
         });
 
         const request = https.get(downloadUrl, (res) => {
@@ -368,37 +395,87 @@ export class VersionManager {
     return doDownload(url);
   }
 
-  /** Extract a downloaded version */
+  /**
+   * Unpack a downloaded version. The unpack runs in child processes, so the
+   * editor keeps answering, and its progress messages arrive while it works.
+   *
+   * On a cancel or a failure the product directory this run was creating is
+   * removed, so the version list never offers a half-unpacked install as
+   * installed. The downloaded archive is kept: it is the expensive part, and
+   * unpacking it again is cheap.
+   */
   async extract(
     version: GemStoneVersion,
     progress: vscode.Progress<{ message?: string }>,
+    token: vscode.CancellationToken,
   ): Promise<void> {
+    // Removed afterwards only if this run is what created it.
+    const existed = this.storage.getGemstonePath(version.version) !== undefined;
+    // Linux and Windows (via WSL) both unpack a zip, in WSL's own paths on Windows.
+    const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    const productDir = `${rootPath}/GemStone64Bit${version.version}${this.storage.getPlatformSuffix()}`;
     try {
       if (process.platform === 'darwin') {
-        const rootPath = this.storage.getRootPath();
-        const filePath = path.join(rootPath, version.fileName);
-        await this.extractDmg(filePath, rootPath, progress);
+        await this.extractDmg(path.join(rootPath, version.fileName), rootPath, progress, token);
       } else {
-        // Linux and Windows (via WSL) both use zip
-        const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
-        const filePath = `${rootPath}/${version.fileName}`;
-        await this.extractZip(filePath, rootPath, progress);
+        await this.extractZip(`${rootPath}/${version.fileName}`, rootPath, progress, token);
       }
+    } catch (e) {
+      if (!existed) await this.removePartial(productDir, version.version, e);
+      if (e instanceof InstallCancelledError) {
+        throw new InstallCancelledError(
+          `Unpacking GemStone ${version.version} cancelled. The partly unpacked files were ` +
+            'removed; the download is kept.',
+        );
+      }
+      throw e;
     } finally {
       this.storage.invalidateExtractedCache();
     }
+  }
+
+  /** Remove what a cancelled or failed unpack left, or say plainly that it could not. */
+  private async removePartial(dir: string, version: string, cause: unknown): Promise<void> {
+    if (this.storage.getGemstonePath(version) === undefined) return;
+    // GemStone ships read-only files and directories, which rm -rf cannot delete from.
+    await this.run('chmod', ['-R', 'u+w', dir]);
+    const rm = await this.run('rm', ['-rf', dir]);
+    if (rm.code === 0) return;
+    const what =
+      cause instanceof InstallCancelledError
+        ? 'Unpacking was cancelled'
+        : `Unpacking failed (${cause instanceof Error ? cause.message : String(cause)})`;
+    const message =
+      `${what}, and the partly unpacked files at ${dir} could not be removed` +
+      `${stderrTail(rm.stderr)}. Remove that folder before installing again.`;
+    appendSysadmin(message);
+    throw new Error(message, { cause });
   }
 
   private async extractDmg(
     dmgPath: string,
     destDir: string,
     progress: vscode.Progress<{ message?: string }>,
+    token: vscode.CancellationToken,
   ): Promise<void> {
-    progress.report({ message: 'Mounting DMG...' });
-    const attachOutput = execSync(`hdiutil attach -nobrowse "${dmgPath}"`, { encoding: 'utf-8' });
+    progress.report({ message: 'Mounting disk image...' });
+    // Not cancellable: an attach killed partway can leave the image mounted with
+    // no mount point to detach. It takes seconds; the copy is what takes minutes.
+    const attachLines: string[] = [];
+    const attach = await this.run('hdiutil', ['attach', '-nobrowse', dmgPath], {
+      onLine: (line) => attachLines.push(line),
+    });
+    if (attach.code !== 0) {
+      throw new Error(
+        `hdiutil attach failed with exit code ${attach.code}${stderrTail(attach.stderr)}`,
+      );
+    }
     // Parse mount point from last line: /dev/diskXsY  Apple_HFS  /Volumes/GemStone64Bit...
-    const lines = attachOutput.trim().split('\n');
-    const lastLine = lines[lines.length - 1];
+    const lastLine =
+      attachLines
+        .filter((l) => l.trim())
+        .at(-1)
+        ?.trimEnd() ?? '';
     const mountMatch = lastLine.match(/\t(\/Volumes\/.+)$/);
     if (!mountMatch) {
       throw new Error(`Failed to parse mount point from: ${lastLine}`);
@@ -406,23 +483,35 @@ export class VersionManager {
     const mountPoint = mountMatch[1];
 
     try {
-      progress.report({ message: 'Copying files...' });
       // Find the GemStone directory in the mount point
-      const entries = fs.readdirSync(mountPoint);
+      const entries = await fs.promises.readdir(mountPoint);
       const gsDir = entries.find((e) => e.startsWith('GemStone64Bit'));
       if (!gsDir) {
         throw new Error(`No GemStone directory found in mounted DMG at ${mountPoint}`);
       }
-      const srcPath = path.join(mountPoint, gsDir);
-      const destPath = path.join(destDir, gsDir);
-      execSync(`cp -R "${srcPath}" "${destPath}"`);
+      progress.report({ message: 'Copying files...' });
+      // -v prints a line per file, which is all the progress cp can give.
+      const cp = await this.run(
+        'cp',
+        ['-Rv', path.join(mountPoint, gsDir), path.join(destDir, gsDir)],
+        {
+          token,
+          onLine: this.fileCounter(progress, 'Copied'),
+        },
+      );
+      if (cp.code !== 0) {
+        throw new Error(`cp failed with exit code ${cp.code}${stderrTail(cp.stderr)}`);
+      }
       appendSysadmin(`Extracted ${gsDir} to ${destDir}`);
     } finally {
-      progress.report({ message: 'Unmounting DMG...' });
-      try {
-        execSync(`hdiutil detach "${mountPoint}"`);
-      } catch {
-        // Best effort unmount
+      progress.report({ message: 'Unmounting disk image...' });
+      const detach = await this.run('hdiutil', ['detach', mountPoint]);
+      if (detach.code !== 0) {
+        const message =
+          `The GemStone disk image is still mounted at ${mountPoint}` +
+          `${stderrTail(detach.stderr)}. Eject it in Finder.`;
+        appendSysadmin(message);
+        void vscode.window.showWarningMessage(message);
       }
     }
   }
@@ -431,74 +520,131 @@ export class VersionManager {
     zipPath: string,
     destDir: string,
     progress: vscode.Progress<{ message?: string }>,
+    token: vscode.CancellationToken,
   ): Promise<void> {
-    progress.report({ message: 'Extracting zip...' });
-    if (needsWsl()) {
-      // WSL distros (Ubuntu, Debian) usually don't ship unzip, but python3 is
-      // nearly always present. Try unzip first; on "command not found" fall
-      // back to python3 -m zipfile.
-      const unzip = await this.runWslExtract('unzip', ['-o', '-q', zipPath, '-d', destDir]);
-      if (unzip.code === 0) {
-        appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir}`);
-        return;
-      }
-      if (unzip.code !== 127) {
-        throw new Error(
-          `unzip failed with exit code ${unzip.code}` +
-            (unzip.stderr ? `: ${unzip.stderr.trim().split('\n').slice(-3).join(' | ')}` : ''),
-        );
-      }
-      // Unlike `python3 -m zipfile -e`, this preserves the Unix mode bits
-      // recorded in each zip entry, so extracted binaries keep their +x bit.
-      // Two-pass: extract everything first, then chmod in reverse depth order
-      // so a locked-down dir mode (e.g. 0o555) doesn't block writes into it.
-      const pyScript =
-        'import zipfile,os,sys\n' +
-        'p=sys.argv[2]\n' +
-        'with zipfile.ZipFile(sys.argv[1]) as z:\n' +
-        '  infos=z.infolist()\n' +
-        '  z.extractall(p)\n' +
-        '  for i in sorted(infos,key=lambda x:-len(x.filename)):\n' +
-        '    m=(i.external_attr>>16)&0o7777\n' +
-        '    if not m: continue\n' +
-        '    try: os.chmod(os.path.join(p,i.filename),m)\n' +
-        '    except OSError: pass\n';
-      const py = await this.runWslExtract('python3', ['-c', pyScript, zipPath, destDir]);
-      if (py.code === 0) {
-        appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir} (via python3)`);
-        return;
-      }
-      if (py.code === 127) {
-        throw new Error(
-          "Neither 'unzip' nor 'python3' is available in your WSL distro. " +
-            'Install one with: wsl -e sudo apt-get install -y unzip',
-        );
-      }
-      throw new Error(
-        `python3 zipfile extract failed with exit code ${py.code}` +
-          (py.stderr ? `: ${py.stderr.trim().split('\n').slice(-3).join(' | ')}` : ''),
-      );
-    } else {
-      const result = spawnSync('unzip', ['-o', zipPath, '-d', destDir], { stdio: 'ignore' });
-      if (result.error) {
-        throw result.error;
-      }
-      if (result.status !== 0) {
-        throw new Error(`unzip failed with exit code ${result.status}`);
-      }
+    progress.report({ message: 'Unpacking...' });
+    // WSL distros (Ubuntu, Debian) and minimal Linux installs often don't ship
+    // unzip, but python3 is nearly always present. Try unzip first; on "command
+    // not found" fall back to python3 -m zipfile.
+    const unzip = await this.run('unzip', ['-o', zipPath, '-d', destDir], {
+      token,
+      // One indented "inflating: …" / "creating: …" line per entry, after an
+      // unindented "Archive:" header.
+      onLine: this.fileCounter(progress, 'Unpacked', /^\s+\w+:/),
+    });
+    if (unzip.code === 0) {
+      appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir}`);
+      return;
     }
-    appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir}`);
+    if (unzip.code !== 127) {
+      throw new Error(`unzip failed with exit code ${unzip.code}${stderrTail(unzip.stderr)}`);
+    }
+    progress.report({ message: 'Unpacking with python3 (no file count)...' });
+    // Unlike `python3 -m zipfile -e`, this preserves the Unix mode bits
+    // recorded in each zip entry, so extracted binaries keep their +x bit.
+    // Two-pass: extract everything first, then chmod in reverse depth order
+    // so a locked-down dir mode (e.g. 0o555) doesn't block writes into it.
+    const pyScript =
+      'import zipfile,os,sys\n' +
+      'p=sys.argv[2]\n' +
+      'with zipfile.ZipFile(sys.argv[1]) as z:\n' +
+      '  infos=z.infolist()\n' +
+      '  z.extractall(p)\n' +
+      '  for i in sorted(infos,key=lambda x:-len(x.filename)):\n' +
+      '    m=(i.external_attr>>16)&0o7777\n' +
+      '    if not m: continue\n' +
+      '    try: os.chmod(os.path.join(p,i.filename),m)\n' +
+      '    except OSError: pass\n';
+    const py = await this.run('python3', ['-c', pyScript, zipPath, destDir], { token });
+    if (py.code === 0) {
+      appendSysadmin(`Extracted ${path.basename(zipPath)} to ${destDir} (via python3)`);
+      return;
+    }
+    if (py.code === 127) {
+      throw new Error(
+        needsWsl()
+          ? "Neither 'unzip' nor 'python3' is available in your WSL distro. " +
+              'Install one with: wsl -e sudo apt-get install -y unzip'
+          : "Neither 'unzip' nor 'python3' is installed. " +
+              'Install unzip with your package manager, for example: sudo apt-get install -y unzip',
+      );
+    }
+    throw new Error(
+      `python3 zipfile extract failed with exit code ${py.code}${stderrTail(py.stderr)}`,
+    );
   }
 
-  private runWslExtract(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
+  /** A line handler that reports a running file count, at most four times a second. */
+  private fileCounter(
+    progress: vscode.Progress<{ message?: string }>,
+    verb: string,
+    counts: RegExp = /./,
+  ): (line: string) => void {
+    let files = 0;
+    let lastReport = 0;
+    return (line) => {
+      if (!counts.test(line)) return;
+      files++;
+      const now = Date.now();
+      if (now - lastReport < 250) return;
+      lastReport = now;
+      progress.report({ message: `${verb} ${files.toLocaleString()} files...` });
+    };
+  }
+
+  /**
+   * Run a command without blocking the extension host and say how it ended —
+   * through WSL when GemStone lives there, unless `native`. Arguments reach the
+   * child as an argv, never through a shell, so a root path holding a quote or
+   * a `$` arrives intact.
+   *
+   * A cancel kills the child and rejects only once it has exited, so the cleanup
+   * that follows never races a child still writing.
+   */
+  private run(
+    cmd: string,
+    args: string[],
+    opts: {
+      token?: vscode.CancellationToken;
+      onLine?: (line: string) => void;
+      native?: boolean;
+    } = {},
+  ): Promise<ChildResult> {
+    const { token, onLine } = opts;
+    if (token?.isCancellationRequested)
+      return Promise.reject(new InstallCancelledError('Cancelled'));
     return new Promise((resolve, reject) => {
-      const proc = wslSpawn(cmd, args);
+      const proc: ChildProcess =
+        needsWsl() && !opts.native ? wslSpawn(cmd, args) : spawn(cmd, args);
       let stderr = '';
+      let partial = '';
+      let cancelled = false;
+      const subscription = token?.onCancellationRequested(() => {
+        cancelled = true;
+        proc.kill();
+      });
       proc.stderr?.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
       });
-      proc.on('close', (code) => resolve({ code: code ?? 1, stderr }));
-      proc.on('error', reject);
+      // Read even when nobody wants the lines: a child whose stdout pipe fills
+      // stops until someone does.
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        if (!onLine) return;
+        const lines = (partial + chunk.toString()).split('\n');
+        partial = lines.pop() ?? '';
+        lines.forEach(onLine);
+      });
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        subscription?.dispose();
+        if (err.code === 'ENOENT') resolve({ code: 127, stderr: '' });
+        else reject(err);
+      });
+      proc.on('close', (code) => {
+        subscription?.dispose();
+        if (partial) onLine?.(partial);
+        if (cancelled) reject(new InstallCancelledError('Cancelled'));
+        else resolve({ code: code ?? 1, stderr });
+      });
     });
   }
 
@@ -601,10 +747,26 @@ export class VersionManager {
       throw e;
     }
 
+    // The archive holds one directory named after it, removed on a cancelled or
+    // failed unpack only if this run is what created it.
+    const clientDir = path.join(rootPath, fileName.replace(/\.zip$/, ''));
+    const created = !fs.existsSync(clientDir);
     try {
       progress.report({ message: 'Extracting...' });
-      execSync(`tar -xf "${zipPath}" -C "${rootPath}"`, { stdio: 'ignore' });
+      // Native, not WSL: the Windows client is unpacked for Windows itself.
+      const tar = await this.run('tar', ['-xf', zipPath, '-C', rootPath], { token, native: true });
+      if (tar.code !== 0) {
+        throw new Error(`tar failed with exit code ${tar.code}${stderrTail(tar.stderr)}`);
+      }
       appendSysadmin(`Extracted Windows client: ${fileName}`);
+    } catch (e) {
+      if (created) await fs.promises.rm(clientDir, { recursive: true, force: true });
+      if (e instanceof InstallCancelledError) {
+        throw new InstallCancelledError(
+          'Windows client install cancelled. The partly unpacked files were removed.',
+        );
+      }
+      throw e;
     } finally {
       if (fs.existsSync(zipPath)) {
         try {

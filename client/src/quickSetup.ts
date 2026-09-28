@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SysadminStorage } from './sysadminStorage';
-import { VersionManager } from './manager/versionManager';
+import { InstallCancelledError, VersionManager } from './manager/versionManager';
 import { DatabaseManager } from './manager/databaseManager';
 import { ProcessManager } from './manager/processManager';
 import { LoginStorage } from './loginStorage';
@@ -121,7 +121,8 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
       version.downloaded = true;
       refreshVersions();
     } catch (e) {
-      vscode.window.showErrorMessage(`Download failed: ${e instanceof Error ? e.message : e}`);
+      if (e instanceof InstallCancelledError) vscode.window.showInformationMessage(e.message);
+      else vscode.window.showErrorMessage(`Download failed: ${e instanceof Error ? e.message : e}`);
       return;
     }
   }
@@ -133,13 +134,16 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
         {
           location: vscode.ProgressLocation.Notification,
           title: `Quick Setup: Extracting GemStone ${version.version}...`,
+          cancellable: true,
         },
-        (progress) => versionManager.extract(version, progress),
+        (progress, token) => versionManager.extract(version, progress, token),
       );
       version.extracted = true;
       refreshVersions();
     } catch (e) {
-      vscode.window.showErrorMessage(`Extraction failed: ${e instanceof Error ? e.message : e}`);
+      if (e instanceof InstallCancelledError) vscode.window.showInformationMessage(e.message);
+      else
+        vscode.window.showErrorMessage(`Extraction failed: ${e instanceof Error ? e.message : e}`);
       return;
     }
   }
@@ -241,7 +245,11 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
       }
       refreshVersions();
     } catch (e) {
-      appendSysadmin(`Windows client install failed: ${e instanceof Error ? e.message : e}`);
+      appendSysadmin(
+        e instanceof InstallCancelledError
+          ? e.message
+          : `Windows client install failed: ${e instanceof Error ? e.message : e}`,
+      );
       // Non-fatal: the user can still manually configure the GCI library
     }
   } else {

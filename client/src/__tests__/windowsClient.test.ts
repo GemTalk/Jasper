@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { EventEmitter } from 'events';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
@@ -14,12 +15,12 @@ vi.mock('../wslBridge', () => ({
 }));
 vi.mock('child_process');
 
-import { execSync } from 'child_process';
+import { execSync, spawn, type ChildProcess } from 'child_process';
 
 import type * as vscode from 'vscode';
-import { __setConfig, __resetConfig } from '../__mocks__/vscode';
+import { __setConfig, __resetConfig, CancellationTokenSource } from '../__mocks__/vscode';
 import { SysadminStorage } from '../sysadminStorage';
-import { VersionManager } from '../manager/versionManager';
+import { InstallCancelledError, VersionManager } from '../manager/versionManager';
 import { GemStoneVersion } from '../sysadminTypes';
 
 /** VersionManager's private download helpers, exposed as a narrow surface for spying. */
@@ -334,6 +335,51 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
     ).rejects.toThrow(/ECONNREFUSED/);
   });
 
+  /** A stand-in for the tar child: exits with `code` at once, or when killed if `code` is null. */
+  function fakeTar(code: number | null, onStart?: () => void): void {
+    vi.mocked(spawn).mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => {
+          setImmediate(() => child.emit('close', null));
+          return true;
+        },
+      });
+      onStart?.();
+      if (code !== null) setImmediate(() => child.emit('close', code));
+      return child as unknown as ChildProcess;
+    });
+  }
+
+  it('on cancel, stops tar and removes both the partial client and the zip', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const zipPath = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT.zip');
+    const clientDir = path.join(tmpDir, 'GemStone64BitClient3.7.5-x86.Windows_NT');
+    vi.spyOn(manager as unknown as PrivateDownloadHost, 'downloadFile').mockImplementation(
+      async () => fs.writeFileSync(zipPath, ''),
+    );
+    const source = new CancellationTokenSource();
+    fakeTar(null, () => {
+      fs.mkdirSync(path.join(clientDir, 'bin'), { recursive: true });
+      setImmediate(() => source.cancel());
+    });
+
+    const error = await manager
+      .downloadAndExtractWindowsClient(
+        '3.7.5',
+        { report: vi.fn() },
+        source.token as unknown as vscode.CancellationToken,
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(InstallCancelledError);
+    expect((error as Error).message).toMatch(/Windows client install cancelled/);
+    expect(fs.existsSync(clientDir)).toBe(false);
+    expect(fs.existsSync(zipPath)).toBe(false);
+  });
+
   it('downloads, extracts with tar, and removes the zip on success', async () => {
     const storage = new SysadminStorage();
     const manager = new VersionManager(storage);
@@ -345,13 +391,14 @@ describe('VersionManager.downloadAndExtractWindowsClient', () => {
       },
     );
 
+    fakeTar(0);
+
     await manager.downloadAndExtractWindowsClient('3.7.5', { report: vi.fn() }, noopToken);
 
-    // Extraction used tar, not PowerShell
-    expect(execSync).toHaveBeenCalledWith(expect.stringContaining('tar -xf'), expect.anything());
-    for (const call of vi.mocked(execSync).mock.calls) {
-      expect(String(call[0]).toLowerCase()).not.toContain('powershell');
-    }
+    // Extraction ran tar as its own process, argv form — not PowerShell, and not
+    // a shell string a quote in the root path could break.
+    expect(spawn).toHaveBeenCalledWith('tar', ['-xf', zipPath, '-C', tmpDir]);
+    expect(execSync).not.toHaveBeenCalled();
     // Zip cleaned up after extract
     expect(fs.existsSync(zipPath)).toBe(false);
   });
