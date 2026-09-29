@@ -391,6 +391,33 @@ describe('ProcessManager', () => {
       expect(procs[0].responding).toBe(false);
     });
 
+    it('does not let a long status swallow the version when only one space separates them', () => {
+      // A status wide enough to fill its column leaves a single space, which is the one
+      // shape where the greedy status capture can reach across and take the version with
+      // it. Every other row in this suite is padded, so none of them cover it.
+      const line = 'unknown(EPERM) 4.0.0.a2 jfoster 4106 49677 May 17 19:57 Stone gs64stone';
+      const procs = parseGslist(line);
+      expect(procs).toHaveLength(1);
+      expect(procs[0].status).toBe('unknown(EPERM)');
+      expect(procs[0].version).toBe('4.0.0.a2');
+      expect(procs[0].name).toBe('gs64stone');
+    });
+
+    // A build identifies itself as "4.0.0.a2" or "4.0.0-a3" while the install it
+    // came from is registered as 4.0.0. A digits-and-dots version pattern matched
+    // neither, so the row vanished and a running server read as stopped.
+    it.each(['4.0.0.a2', '4.0.0-a3'])(
+      'keeps the version %s rather than dropping the whole row',
+      (version) => {
+        const line = `OK           ${version}  jfoster      10923 50377 May 24 07:06 Netldi      ldi40`;
+        const procs = parseGslist(line);
+        expect(procs).toHaveLength(1);
+        expect(procs[0].version).toBe(version);
+        expect(procs[0].name).toBe('ldi40');
+        expect(procs[0].port).toBe(50377);
+      },
+    );
+
     it('skips the header row and separator line', () => {
       const onlyHeaders = [
         'Status        Version    Owner       Pid   Port   Started     Type       Name',

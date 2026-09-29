@@ -173,6 +173,39 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    preview pane, leaving the results list in place; set it `false` for the classic pivot that replaces
    the whole list (backed out with ← / Esc).
 
+   The `#refindicator` chip that says you are in that mode — and leaves it when clicked — lives
+   **inside the search field**, at its right edge before the ✕. It used to sit at the end of the
+   toolbar row, where it was a sixth chip among five that all describe what the NEXT search will do;
+   it is the only one that describes the mode you are already in, and there it went unnoticed. In the
+   field it takes its room from the typing area, so the field visibly narrows while references are
+   up, and it sits near the row ↗ that was just clicked. It arrives with a short scale-up
+   (`refindicator-pop`, dropped under `prefers-reduced-motion`) because it appears mid-session in a
+   bar the eye has already stopped scanning.
+
+6b. **The expanded source marks the SEND, not the characters.** A reference row expands to show its
+   source, and what is marked in it is where the searched symbol is actually sent. A literal
+   substring search cannot express that: a keyword selector is never one token in source (`on:do:`
+   is written `on: Error do: [...]`), a one-keyword selector is a substring of a longer one (`at:`
+   inside `at:put:`), and any selector is a substring of a longer identifier (`printString` inside
+   `printStringLimitedTo:`). So `sendRanges` (`omniSearchView.js`) lexes the source as Smalltalk and
+   groups the keyword tokens at one bracket depth — uninterrupted by a statement end or a cascade —
+   into one send, marking a run only when it spells the whole selector. Comments, strings, symbols
+   and literal arrays are single tokens and so never match, and the method's own pattern is skipped
+   so opening an implementor does not mark its signature as a call to itself. It is a scan, not a
+   parse: the vendored AST is not available in the webview, and source that will not lex degrades to
+   fewer marks rather than an error. A term that is neither a selector nor a global name falls back
+   to the plain substring highlight, which is still right for a free-text Source preview.
+
+   **Both ways of looking at references go through it**, which is not one code path. In the sticky
+   list the marks are laid down by `fillReferenceSource`, using the `highlightTerm` that rides on the
+   `refPreview` message. The classic pivot has no such message — its preview pane is the ORDINARY
+   source preview (`showPreview`), which marks the typed query — so the pivot's target travels on the
+   `results` message as `pivotTarget` and `showPreview` marks the send while a pivot is up. Without
+   it the pivot marked the typed text, and in a pivot the typed text is the selector spelled as a
+   selector (`on:do:`), which no source spells that way: the pane highlighted nothing at all, in the
+   one mode where the whole list is senders. An ordinary search still highlights literally, because
+   "where does what I typed appear" is a different question with a different right answer.
+
 6a. **A scope belongs to the search, not to a references view.** The pivot is not a search: it
    is a fixed list of rows already fetched from the stone, and **every one of them is a method**
    (`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
@@ -409,6 +442,34 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   on what you are hunting for. The chip shows the current algorithm as its own label (no legend
   needed) and cycles on click. The engine owns the live value, exactly as it owns case sensitivity,
   and echoes it on every results message.
+
+  ⚠️ **The chip is global, so a scope that ignores it tells the user something untrue.** Every
+  name-based scope takes it through `rankAndLimit`, and Methods applies it to the selector. **Source**
+  applies it too, but cannot take the name-oriented meanings literally: its target is a whole method
+  body, so `Prefix` means *the match starts at a word boundary* rather than "the body starts with the
+  query", and it is narrowed server-side (`searchMethodSource`) because the rows carry no source text
+  to test on the client and the result cap is server-side. That boundary is a strict `\b` — NOT
+  `omniMatch`'s `isWordStart`, which counts a camelCase hump and so would keep `doFooling` as a hit
+  for `foo`, the mid-word noise the setting exists to remove. `Fuzzy` over Source is letters-in-order **within one
+  identifier** (`ordcol` finds a mention of `OrderedCollection`) rather than across the whole body,
+  which would match nearly anything; constrained that way it means what the chip means everywhere
+  else, applied to the names the body mentions. It is the one mode that cannot ride on
+  `substringSearch:` — a subsequence is not a substring, so the engine scan would never surface the
+  methods it must find — so it walks the symbol list itself, measured at ~315ms over a 16.5k-method
+  image against ~50ms for the engine scan. Affordable only because Source is `explicitOnly`,
+  debounced and gated behind `methodMinQueryLength`. It folds case one character at a time rather
+  than lowercasing each method body: a copy of every body in the image, inside one doit, is the
+  allocation shape `classOrganizer.ts` records as producing `AlmostOutOfMemoryError` (6022).
+
+  ⚠️ **A term that cannot be an identifier falls back to substring** (`effectiveScanMode`). The
+  fuzzy scan advances its needle only across identifier characters and resets at anything else, so
+  `printOn:`, `at:put:` or a phrase like `no such element` would match *no method at all* — silently,
+  which reads as "the text is not in the image" rather than "that mode cannot express this". Nor
+  does stripping the term rescue it: the source token is broken at the colon too, so `atput` cannot
+  span `at:put:`. The per-identifier reading simply does not apply, so those terms run as substring
+  and the chip's help text says so.
+  **Literals still ignores the chip** — that half is #471, and it wants #479's `exact` mode first so
+  that honouring the chip does not cost the scope its precision.
   ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the
   value baked in when the engine was constructed — so switching algorithms did nothing while a
   references list was open. It now reads the engine's live `matchMode`; there is a test pinning it.
@@ -462,5 +523,7 @@ Every pure module is unit-tested: the matcher/ranker (`omniMatch`, via providers
 (`omniEngine`), config, actions, and references. Query providers test the generated Smalltalk + result
 parsing against a mocked `QueryExecutor` (the `methodSearch.test.ts` pattern). The webview DOM
 (`omniSearchView.js`) is jsdom-tested. `omniSettings.test.ts` guards the contributed `ui` enum (exactly
-`panel` + `spotter`); `keybindings.test.ts` covers the trigger. A live-stone integration test
-(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query.
+`panel` + `spotter`); `keybindings.test.ts` covers the trigger. Live-stone integration tests
+(`queries/__tests__/methodSearch.integration.test.ts`) cover the Literals symbol query and the
+hierarchy-implementors walk — the two places where the generated Smalltalk compiles and runs but the
+engine API underneath it can still mean something other than what the query assumed.

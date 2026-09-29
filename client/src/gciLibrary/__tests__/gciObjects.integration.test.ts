@@ -8,6 +8,7 @@ import {
   OOP_NIL,
 } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { requireGciCapability } from './requireGciCapability';
 
 /**
  * The GCI's object-creation and object-inquiry calls: making Strings, Symbols,
@@ -154,6 +155,48 @@ describe('GCI object creation and inquiry (integration)', () => {
     });
   });
 
+  describe('GciTsNewStringFromUtf16', () => {
+    it('creates a String from UTF-16 code units (ASCII text)', (ctx) => {
+      requireGciCapability('GciTsNewStringFromUtf16', ctx, gci);
+
+      // 'Hello' as UTF-16 code units
+      const utf16 = [0x48, 0x65, 0x6c, 0x6c, 0x6f]; // H e l l o
+
+      const { result, err } = gci.GciTsNewStringFromUtf16(session, utf16, 0);
+
+      expect(err.number).toBe(0);
+      expect(result).not.toBe(OOP_ILLEGAL);
+      expect(gci.GciTsFetchUtf8(session, result, 1024).data).toBe('Hello');
+    });
+
+    it('creates a String from UTF-16 with non-ASCII characters', (ctx) => {
+      requireGciCapability('GciTsNewStringFromUtf16', ctx, gci);
+
+      // 'café' as UTF-16: c=0x63, a=0x61, f=0x66, é=0xE9
+      const utf16 = [0x63, 0x61, 0x66, 0xe9];
+
+      const { result, err } = gci.GciTsNewStringFromUtf16(session, utf16, 0);
+
+      expect(err.number).toBe(0);
+      expect(result).not.toBe(OOP_ILLEGAL);
+      expect(gci.GciTsFetchUtf8(session, result, 1024).data).toBe('café');
+    });
+
+    it('creates a Unicode string with unicodeKind=1', (ctx) => {
+      requireGciCapability('GciTsNewStringFromUtf16', ctx, gci);
+
+      const utf16 = [0x48, 0x65, 0x6c, 0x6c, 0x6f];
+
+      const { result, err } = gci.GciTsNewStringFromUtf16(session, utf16, 1);
+
+      expect(err.number).toBe(0);
+      expect(result).not.toBe(OOP_ILLEGAL);
+      // Verify the class is Unicode7 (not String)
+      expect(gci.GciTsFetchClass(session, result).result).toBe(classOop('Unicode7'));
+      expect(gci.GciTsFetchUtf8(session, result, 1024).data).toBe('Hello');
+    });
+  });
+
   describe('GciTsFetchObjInfo', () => {
     it('reports the identity and class of an object in one call', () => {
       const { result: oop } = gci.GciTsNewString(session, 'info test');
@@ -163,6 +206,58 @@ describe('GCI object creation and inquiry (integration)', () => {
       expect(result).toBeGreaterThanOrEqual(0n);
       expect(info.objId).toBe(oop);
       expect(info.objClass).toBe(OOP_CLASS_STRING);
+    });
+  });
+
+  describe('GciTsFetchGbjInfo', () => {
+    it('fetches info for a String object', (ctx) => {
+      requireGciCapability('GciTsFetchGbjInfo', ctx, gci);
+
+      const { result: oop } = gci.GciTsNewString(session, 'hello gbjInfo');
+
+      const { result, info, data, err } = gci.GciTsFetchGbjInfo(session, oop, false, 1024);
+
+      expect(err.number).toBe(0);
+      expect(result).toBeGreaterThanOrEqual(0n);
+      expect(info.objClass).toBe(OOP_CLASS_STRING);
+      expect(info.objSize).toBe(13n); // 'hello gbjInfo' is 13 bytes
+      // bytesReturned should match the string length
+      expect(info.bytesReturned).toBe(13n);
+      // data buffer should contain the string bytes
+      expect(data.subarray(0, Number(info.bytesReturned)).toString('utf8')).toBe('hello gbjInfo');
+    });
+
+    it('fetches info for an Array object', (ctx) => {
+      requireGciCapability('GciTsFetchGbjInfo', ctx, gci);
+
+      const { result: oop } = gci.GciTsExecute(
+        session,
+        'Array new: 5',
+        OOP_CLASS_STRING,
+        OOP_ILLEGAL,
+        OOP_NIL,
+        0,
+        0,
+      );
+      expect(oop).not.toBe(OOP_ILLEGAL);
+
+      const { result, info, err } = gci.GciTsFetchGbjInfo(session, oop, false, 1024);
+
+      expect(err.number).toBe(0);
+      expect(result).toBeGreaterThanOrEqual(0n);
+      expect(info.objClass).toBe(classOop('Array'));
+      expect(info.objSize).toBe(5n); // 5 slots
+    });
+
+    it('returns a negative result for a non-existent object', (ctx) => {
+      requireGciCapability('GciTsFetchGbjInfo', ctx, gci);
+
+      const bogusOop = 0xffffffffn;
+
+      const { result } = gci.GciTsFetchGbjInfo(session, bogusOop, false, 64);
+
+      // result should be -2 (object does not exist) or -1 (error)
+      expect(result).toBeLessThan(0n);
     });
   });
 

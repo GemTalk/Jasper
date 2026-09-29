@@ -13,6 +13,11 @@
  * it rather than re-reading it: there is no source left to read, and a tab left open over a
  * method the stone does not have is the same re-done-on-the-next-save trap, only worse,
  * because saving it compiles the method back — see `closeEditorsForRemovedMethods`.
+ *
+ * A session ABORT is the same hazard with a wider blast radius, so it reuses the two editor
+ * halves here rather than growing its own: see `afterAbort.ts`. The difference is that an
+ * undo knows which methods it removed and an abort does not, which is why `openMethodSlots`
+ * exists — it reads what is open so the abort can ask the stone which of them survived.
  */
 import * as vscode from 'vscode';
 import { MethodUriRef, parseMethodUri } from '../gemstoneFileSystemProvider';
@@ -61,7 +66,8 @@ function sameDictionary(slotDict: number | string | undefined, ref: MethodUriRef
 }
 
 /**
- * Close the editors showing methods the undo has just DELETED.
+ * Close the editors showing methods that are GONE — removed by an undo, or discarded by an
+ * abort (`afterAbort.ts`, which supplies the slots it worked out by probing the stone).
  *
  * `reloadGemstoneEditors` below puts an open editor back in step by re-reading its source,
  * which is the right answer for a method that changed. For one that no longer exists there is
@@ -118,6 +124,46 @@ export async function closeEditorsForRemovedMethods(
   } catch {
     /* best-effort: a tab that will not close must not fail the undo */
   }
+}
+
+/**
+ * The methods open in clean `gemstone://` editors for `sessionId`, as slots.
+ *
+ * The read half of {@link closeEditorsForRemovedMethods}: that one is told which
+ * methods went, and an abort — which discards everything uncommitted rather than
+ * one recorded change — does not know. This enumerates what is open so the caller
+ * can ask the stone which of them survived (see `afterAbort.ts`).
+ *
+ * Dirty tabs are left out, on the same line both functions here draw: what the
+ * user has typed is not ours to discard, and a dirty tab is not going to be
+ * silently closed or reverted either way.
+ *
+ * Diff views are left out too — a base / session-override view is read-only, so
+ * it cannot be saved back over anything, and its "method" is a historical
+ * snapshot rather than a slot the stone still has to hold.
+ *
+ * Slots can repeat: the same method may be open under more than one URI, which
+ * `closeEditorsForRemovedMethods` already handles by matching coordinates rather
+ * than URI strings.
+ */
+export function openMethodSlots(sessionId: number): MethodSlot[] {
+  const slots: MethodSlot[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputText)) continue;
+      if (tab.isDirty) continue;
+      const ref = parseMethodUri(tab.input.uri);
+      if (!ref || ref.sessionId !== sessionId || ref.diffView) continue;
+      slots.push({
+        dict: ref.dictIndex ?? ref.dictName,
+        className: ref.className,
+        isMeta: ref.isMeta,
+        selector: ref.selector,
+        environmentId: ref.environmentId,
+      });
+    }
+  }
+  return slots;
 }
 
 /**

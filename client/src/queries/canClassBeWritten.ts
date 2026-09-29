@@ -1,7 +1,9 @@
 import { QueryExecutor } from './types';
 import { classLookupExpr } from './util';
 
-// Whether a class may be written (not in a read-only repository segment). `dict`
+// Whether a class may be written BY THIS SESSION. This is an authorization answer,
+// not a property of the class: on a 3.7.5 rowan3 stone every class in Globals
+// answers true as SystemUser and false as DataCurator. `dict`
 // (a 1-based SymbolList index, or a name) scopes the lookup to a specific
 // dictionary so the same key registered in two dictionaries resolves to the
 // intended class; a missing class is treated as not writable.

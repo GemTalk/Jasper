@@ -6,10 +6,11 @@ import { expect } from 'vitest';
  * every `pollTimeMs` accumulates at least `expectedIdleTimeMs` of real
  * elapsed time between firings before `callback` settles.
  *
- * Accumulates the actual elapsed time between firings (via `Date.now()`),
- * rather than crediting a fixed `pollTimeMs` per firing, so a firing
- * delayed by a busy event loop still counts for what it actually observed
- * instead of under- or over-counting relative to wall-clock time.
+ * Accumulates the actual elapsed time between firings (via
+ * `performance.now()`, a monotonic clock — this measures elapsed time, not
+ * what time it is, so a wall-clock step can't distort it), rather than
+ * crediting a fixed `pollTimeMs` per firing, so a firing delayed by a busy
+ * event loop still counts for what it actually observed.
  *
  * @param pollTimeMs - how often, in milliseconds, to sample the event loop's idle time.
  * @param expectedIdleTimeMs - the minimum accumulated idle time, in
@@ -22,9 +23,9 @@ export async function expectEventLoopToRemainResponsiveDuring(
   callback: () => Promise<unknown>,
 ) {
   let totalIdleTimeMs = 0;
-  let lastSampleAt = Date.now();
+  let lastSampleAt = performance.now();
   const timer = setInterval(() => {
-    const now = Date.now();
+    const now = performance.now();
     totalIdleTimeMs += now - lastSampleAt;
     lastSampleAt = now;
   }, pollTimeMs);

@@ -11,6 +11,15 @@ export { Uri };
 // ── Configuration mock ─────────────────────────────────────
 
 const configStore: Record<string, Record<string, unknown>> = {};
+/** Which inspect() field a seeded value answers under, per key. */
+const scopeStore: Record<string, Record<string, string>> = {};
+/** Every configuration update the code under test made, newest last. */
+export const __configUpdates: {
+  section: string;
+  key: string;
+  value: unknown;
+  target?: number;
+}[] = [];
 
 function getConfiguration(section: string) {
   if (!configStore[section]) {
@@ -28,15 +37,20 @@ function getConfiguration(section: string) {
       workspaceFolderValue?: T;
     } {
       const val = configStore[section][key];
-      // A seeded value stands in for an explicitly-set (global-scope) value;
-      // otherwise all scope fields are absent, matching the real API's shape
-      // for a key the user never set.
-      return val !== undefined
-        ? { key: `${section}.${key}`, globalValue: val as T }
-        : { key: `${section}.${key}` };
+      // A seeded value stands in for an explicitly-set value, at the scope the
+      // seeding named — global unless a test said otherwise; otherwise all
+      // scope fields are absent, matching the real API's shape for a key the
+      // user never set.
+      if (val === undefined) return { key: `${section}.${key}` };
+      const field = scopeStore[section]?.[key] ?? 'globalValue';
+      return { key: `${section}.${key}`, [field]: val as T };
     },
-    update: vi.fn(async (key: string, value: unknown, _target?: number) => {
+    update: vi.fn(async (key: string, value: unknown, target?: number) => {
       configStore[section][key] = value;
+      // getConfiguration() hands back a fresh object each call, so a test
+      // cannot spy on this one: what was written, and at which layer, is
+      // recorded here instead.
+      __configUpdates.push({ section, key, value, target });
     }),
   };
 }
@@ -46,14 +60,28 @@ export function __resetConfig(): void {
   for (const key of Object.keys(configStore)) {
     delete configStore[key];
   }
+  for (const key of Object.keys(scopeStore)) {
+    delete scopeStore[key];
+  }
+  __configUpdates.length = 0;
 }
 
 /** Pre-seed a config section for testing. */
-export function __setConfig(section: string, key: string, value: unknown): void {
+export function __setConfig(
+  section: string,
+  key: string,
+  value: unknown,
+  /** Which layer the value is to look as though it came from. */
+  scope: 'global' | 'workspace' = 'global',
+): void {
   if (!configStore[section]) {
     configStore[section] = {};
   }
   configStore[section][key] = value;
+  if (!scopeStore[section]) {
+    scopeStore[section] = {};
+  }
+  scopeStore[section][key] = `${scope}Value`;
 }
 
 // ── TreeItem mock ──────────────────────────────────────────
@@ -302,6 +330,7 @@ export const QuickPickItemKind = {
 export const window = {
   activeTextEditor: undefined as unknown,
   activeNotebookEditor: undefined as unknown,
+  onDidChangeActiveNotebookEditor: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
   createWebviewPanel: vi.fn((_viewType: string, title: string, showOptions?: unknown) => {
     const panel = createMockPanel();
     panel.title = title;
@@ -356,6 +385,9 @@ export const window = {
     show: vi.fn(),
     sendText: vi.fn(),
     dispose: vi.fn(),
+    // Undefined while the shell is alive, as the real API has it. Tests that
+    // care about a finished terminal assign a TerminalExitStatus over this.
+    exitStatus: undefined as { code: number | undefined } | undefined,
   })),
   onDidCloseTerminal: vi.fn((_handler: (terminal: unknown) => void) => ({ dispose: vi.fn() })),
   setStatusBarMessage: vi.fn(),
@@ -539,11 +571,24 @@ export class WorkspaceEdit {
   delete(uri: Uri, range: Range): void {
     this.edits.push({ uri, edit: TextEdit.delete(range) });
   }
+  readonly notebookEdits: Array<{ uri: Uri; edits: unknown[] }> = [];
+  set(uri: Uri, edits: unknown[]): void {
+    this.notebookEdits.push({ uri, edits });
+  }
+}
+
+export class NotebookEdit {
+  static insertCells(index: number, newCells: unknown[]) {
+    return { kind: 'insertCells', index, newCells };
+  }
+  static updateNotebookMetadata(newMetadata: Record<string, unknown>) {
+    return { kind: 'updateNotebookMetadata', newMetadata };
+  }
 }
 
 export const workspace = {
   getConfiguration,
-  onDidChangeConfiguration: vi.fn(() => ({ dispose: () => {} })),
+  onDidChangeConfiguration: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
   onDidChangeTextDocument: vi.fn(() => ({ dispose: () => {} })),
   onDidSaveTextDocument: vi.fn(() => ({ dispose: () => {} })),
   onWillSaveTextDocument: vi.fn(() => ({ dispose: () => {} })),
@@ -558,11 +603,17 @@ export const workspace = {
     getText: vi.fn(() => ''),
     isDirty: false,
   })),
-  openNotebookDocument: vi.fn(async (notebookType: string, data?: unknown) => ({
-    notebookType,
-    data,
-  })),
+  // (notebookType, data) opens an anonymous untitled notebook; (uri) opens a
+  // named one, which starts empty.
+  openNotebookDocument: vi.fn(async (typeOrUri: unknown, data?: unknown) =>
+    typeof typeOrUri === 'string'
+      ? { notebookType: typeOrUri, data }
+      : { uri: typeOrUri, notebookType: 'jupyter-notebook', cellCount: 0, metadata: {} },
+  ),
   applyEdit: vi.fn(async () => true),
+  onDidOpenNotebookDocument: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+  onDidCloseNotebookDocument: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+  notebookDocuments: [] as unknown[],
   textDocuments: [] as unknown[],
   workspaceFolders: undefined as { uri: { fsPath: string; path: string } }[] | undefined,
 };
@@ -1075,6 +1126,11 @@ export class NotebookCellOutput {
   constructor(public readonly items: NotebookCellOutputItem[]) {}
 }
 
+export const NotebookControllerAffinity = {
+  Default: 1,
+  Preferred: 2,
+} as const;
+
 export const NotebookCellKind = {
   Markup: 1,
   Code: 2,
@@ -1118,7 +1174,8 @@ function createMockNotebookController(id: string, notebookType: string, label: s
     executeHandler: undefined as unknown,
     interruptHandler: undefined as unknown,
     createNotebookCellExecution: vi.fn((cell: unknown) => createMockCellExecution(cell)),
-    onDidChangeSelectedNotebooks: vi.fn(() => ({ dispose: () => {} })),
+    onDidChangeSelectedNotebooks: vi.fn((_listener: unknown) => ({ dispose: () => {} })),
+    updateNotebookAffinity: vi.fn(),
     dispose: vi.fn(),
   };
 }

@@ -1,6 +1,6 @@
 /**
- * Shared Smalltalk selector-shape helpers, used by BOTH the rename-method (R2,
- * `renameMethodPreview.ts`) and change-signature (M5, `changeSignaturePreview.ts`)
+ * Shared Smalltalk selector-shape helpers, used by BOTH the rename-method
+ * (`renameMethodPreview.ts`) and change-signature (`changeSignaturePreview.ts`)
  * refactorings. Extracted so the two can't drift (they previously carried
  * byte-identical copies); each module re-exports these for its own importers.
  */

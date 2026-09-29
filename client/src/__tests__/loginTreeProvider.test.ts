@@ -30,6 +30,7 @@ function stubSessionManager(
 ): SessionManager {
   return {
     onDidChangeSelection: vi.fn(),
+    onDidChangeTransactionState: vi.fn(),
     getSessions: () => sessions,
     selectedId,
   } as unknown as SessionManager;
@@ -189,12 +190,23 @@ describe('GemStoneLoginItem', () => {
 describe('GemStoneSessionItem', () => {
   beforeEach(() => _resetAutoCommitStateForTests());
 
+  function sessionInMode(
+    mode: ActiveSession['transactionMode'],
+    inTransaction: boolean | undefined,
+  ): ActiveSession {
+    return {
+      ...makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3),
+      transactionMode: mode,
+      inTransaction,
+    };
+  }
+
   it('describes the session and marks the selected one', () => {
     const session = makeSession(makeLogin({ gs_user: 'Admin', stone: 'prod', gem_host: 'db' }), 3);
     const selected = new GemStoneSessionItem(session, true);
     expect(selected.label).toBe('Admin on prod (db)');
     expect(selected.description).toBe('Session 3 (3.7.2) · auto-commit off');
-    expect(selected.contextValue).toBe('gemstoneSession');
+    expect(selected.contextValue).toBe('gemstoneSession.canCommit');
     expect((selected.iconPath as { id: string }).id).toBe('debug-start');
 
     const idle = new GemStoneSessionItem(session, false);
@@ -266,29 +278,86 @@ describe('GemStoneSessionItem', () => {
   it('names its auto-commit state in the contextValue, which picks the row button', () => {
     const session = makeSession(makeLogin(), 3);
 
-    expect(new GemStoneSessionItem(session, false).contextValue).toBe('gemstoneSession');
+    expect(new GemStoneSessionItem(session, false).contextValue).toBe('gemstoneSession.canCommit');
 
     registerSessionAutoCommit(3, true);
     expect(new GemStoneSessionItem(session, false).contextValue).toBe(
-      'gemstoneSessionAutoCommitOn',
+      'gemstoneSessionAutoCommitOn.canCommit',
     );
 
     setAutoCommitStatus(3, 'failed');
     expect(new GemStoneSessionItem(session, false).contextValue).toBe(
-      'gemstoneSessionAutoCommitFailed',
+      'gemstoneSessionAutoCommitFailed.canCommit',
     );
   });
 
   it('spells out in the tooltip what the armed state costs — Abort stops being a way back', () => {
     const session = makeSession(makeLogin(), 3);
     registerSessionAutoCommit(3, true);
-    expect(String(new GemStoneSessionItem(session, false).tooltip)).toMatch(
+    expect((new GemStoneSessionItem(session, false).tooltip as { value: string }).value).toMatch(
       /Abort will not take one back/,
     );
 
     setAutoCommitStatus(3, 'failed');
-    expect(String(new GemStoneSessionItem(session, false).tooltip)).toMatch(
+    expect((new GemStoneSessionItem(session, false).tooltip as { value: string }).value).toMatch(
       /NOT in the repository/,
     );
+  });
+
+  // The label's own wording is transactionStateLabel's, pinned in
+  // transactionMode.test.ts; what the row owns is where it goes.
+  it('says which transaction mode the session is in, after its number', () => {
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).description).toBe(
+      'Session 3 (3.7.2) · Manual · not in transaction · auto-commit off',
+    );
+  });
+
+  it('leaves the row as it always read when the mode has not been read', () => {
+    // A row that has always named no mode should not start announcing an
+    // absence; the tooltip is where "could not be read" belongs.
+    const item = new GemStoneSessionItem(sessionInMode(undefined, undefined), true);
+    expect(item.description).toBe('Session 3 (3.7.2) · auto-commit off');
+    expect((item.tooltip as { value: string }).value).toContain('could not be read');
+  });
+
+  it('explains the mode in the tooltip, so the GemStone name is not the whole answer', () => {
+    const tooltip = new GemStoneSessionItem(sessionInMode('manualBegin', false), true).tooltip as {
+      value: string;
+    };
+    expect(tooltip.value).toContain('Manual · not in transaction');
+    expect(tooltip.value).toContain('Begin Transaction puts it back in');
+  });
+
+  // The contextValue is what package.json's `when` clauses read to decide which
+  // inline buttons this row gets — per row, because a context key would describe
+  // the selected session on every row instead.
+  it('carries this session’s own answer about Begin and Commit', () => {
+    expect(new GemStoneSessionItem(sessionInMode('autoBegin', true), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', false), true).contextValue).toBe(
+      'gemstoneSession.canBegin',
+    );
+    expect(new GemStoneSessionItem(sessionInMode('manualBegin', true), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+    expect(
+      new GemStoneSessionItem(sessionInMode('transactionless', false), true).contextValue,
+    ).toBe('gemstoneSession');
+  });
+
+  it('keeps Commit on a row whose transaction state could not be read', () => {
+    // canCommit's rule: an unread state keeps Commit, and the stone says no.
+    expect(new GemStoneSessionItem(sessionInMode(undefined, undefined), true).contextValue).toBe(
+      'gemstoneSession.canCommit',
+    );
+  });
+
+  it('gives a row a new id when its transaction state moves, so VS Code redraws it', () => {
+    // VS Code reuses a node whose id is unchanged, which would leave the old mode
+    // — and the old set of inline buttons — on screen after a switch.
+    const before = new GemStoneSessionItem(sessionInMode('manualBegin', false), true);
+    const after = new GemStoneSessionItem(sessionInMode('manualBegin', true), true);
+    expect(before.id).not.toBe(after.id);
   });
 });

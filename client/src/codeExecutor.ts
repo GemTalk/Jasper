@@ -13,7 +13,12 @@ import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
 import { clearStack, getObjectPrintString } from './debugQueries';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
-import { setTranscriptLive, drainTranscript, settleNbResult } from './transcriptSink';
+import {
+  startClientForwarderMode,
+  endClientForwarderMode,
+  drainTranscript,
+  settleNbResult,
+} from './transcriptSink';
 import { pollNbToCompletion, NbCancelledError } from './nbRunner';
 
 const MAX_RESULT_SIZE = 64 * 1024;
@@ -113,6 +118,15 @@ export class CodeExecutor {
       this.executing.add(sessionId);
     } else {
       this.executing.delete(sessionId);
+      // User code is the one thing that can move a session's transaction state
+      // without going through a Jasper command: a workspace is free to send
+      // `System commitTransaction`, `System beginTransaction`, or change the mode
+      // outright. Re-read it here, at the single point every Display It / Execute
+      // It / Inspect It passes through on its way out, so the status bar and the
+      // session rows are not left describing the session as it was before the
+      // expression ran. One small doit per execution, against a session that has
+      // just paid for a round trip of its own.
+      this.sessionManager.refreshTransactionState(sessionId);
     }
     const isExecuting = this.executing.size > 0;
     vscode.commands.executeCommand('setContext', 'gemstone.executing', isExecuting);
@@ -182,10 +196,10 @@ export class CodeExecutor {
       GCI_PERFORM_FLAG_ENABLE_DEBUG |
       GCI_PERFORM_FLAG_INTERPRETED |
       (mode === 'debug' ? GCI_PERFORM_FLAG_SINGLE_STEP : 0);
-    // Transcript writes stream live to the output channel while this execute
-    // runs (see transcriptSink). Any residue buffered since the last drain is
-    // displayed now. Switched back to buffered mode in finally.
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    // clientForwarder mode: Transcript writes stream to the output channel
+    // while this execute's process runs (see transcriptSink). Any residue
+    // buffered since the last drain is displayed now. Ended in finally.
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -245,8 +259,8 @@ export class CodeExecutor {
         // It is intentionally silent, so no callback.)
         const onComplete = displayResult
           ? (resultOop: bigint): void => {
-              // The debugger runs with the sink in buffered mode; show what
-              // accumulated while stepping/resuming to completion.
+              // The debugger runs outside clientForwarder mode, so writes are
+              // buffered; show what accumulated while stepping/resuming.
               appendTranscriptOutput(drainTranscript(session));
               const resultString = getObjectPrintString(session, resultOop, MAX_RESULT_SIZE);
               // Capture the editor's column now, while it is still visible — by the
@@ -271,10 +285,11 @@ export class CodeExecutor {
       }
     } finally {
       editor.setDecorations(executingDecorationType, []);
-      // Back to buffered mode; display anything that raced the switch. (After
-      // a hard-break cancel the gem may still be settling — the switch then
-      // fails quietly and the next execute's switch-on drains the residue.)
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      // End clientForwarder mode; display anything that raced the end. (After
+      // a hard-break cancel the gem may still be settling — the end then
+      // fails quietly, and runs again once the call is collected; see
+      // pollForCompletion.)
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -506,7 +521,7 @@ export class CodeExecutor {
 
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
     this.setExecuting(session.id, true);
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -544,7 +559,7 @@ export class CodeExecutor {
       }
       throw e instanceof Error ? e : new Error(msg);
     } finally {
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -597,9 +612,9 @@ export class CodeExecutor {
    *
    * GemStone error messages for compile errors typically contain a 1-based
    * character offset into the source string (e.g. "...near source character 45").
-   * Since the user code is wrapped in a Transcript-capture template, we subtract
-   * the wrapper prefix length to map back to the user's original code, then
-   * convert to a line/column position relative to the editor selection.
+   * `wrapperPrefixLength` is subtracted to map back to the user's original
+   * code (every caller passes 0: Execute It sends the code unwrapped), then the
+   * offset is converted to a line/column position relative to the selection.
    */
   private showCompileError(
     editor: vscode.TextEditor,
@@ -700,28 +715,39 @@ export class CodeExecutor {
     return new vscode.Range(pos, lineEnd);
   }
 
-  private pollForCompletion<T>(session: ActiveSession, onReady: () => Promise<T>): Promise<T> {
+  private pollForCompletion<T>(
+    session: ActiveSession,
+    onReady: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     // Delegates to the shared non-blocking poll loop (nbRunner) so Execute/Display
     // It and the debugger's step/trim share ONE cancel/break/backoff/progress
     // implementation (no divergence). The Nb call is already started by the caller
     // (GciTsNbExecute above), so we only poll it to completion here.
-    return pollNbToCompletion(session, onReady, { title: 'GemStone: Executing…' });
+    return pollNbToCompletion(session, onReady, {
+      title: 'GemStone: Executing…',
+      disposableProcess: true,
+      // Every caller runs in clientForwarder mode, and after a hard break the
+      // `finally`'s end is refused; this is where it can succeed.
+      onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+    });
   }
 
   private pollForResult(session: ActiveSession): Promise<string> {
-    return this.pollForCompletion(session, () => this.fetchResultString(session));
+    return this.pollForCompletion(session, (signal) => this.fetchResultString(session, signal));
   }
 
   private pollForResultOop(session: ActiveSession): Promise<bigint> {
-    return this.pollForCompletion(session, () => this.fetchResultOop(session));
+    return this.pollForCompletion(session, (signal) => this.fetchResultOop(session, signal));
   }
 
-  private async fetchResultOop(session: ActiveSession): Promise<bigint> {
+  private async fetchResultOop(session: ActiveSession, signal?: AbortSignal): Promise<bigint> {
     // Transcript writes arrive here as forwarder sends (error 2336) while the
     // code is still running: settleNbResult displays each one and resumes the
     // execution, only returning when a real result or error arrives.
-    const { result: resultOop, err: resultErr } = await settleNbResult(session, (text) =>
-      appendTranscriptOutput(text),
+    const { result: resultOop, err: resultErr } = await settleNbResult(
+      session,
+      (text) => appendTranscriptOutput(text),
+      signal,
     );
     if (resultErr.number !== 0) {
       const msg = resultErr.message || `GemStone error ${resultErr.number}`;
@@ -735,8 +761,8 @@ export class CodeExecutor {
     return resultOop;
   }
 
-  private async fetchResultString(session: ActiveSession): Promise<string> {
-    const resultOop = await this.fetchResultOop(session);
+  private async fetchResultString(session: ActiveSession, signal?: AbortSignal): Promise<string> {
+    const resultOop = await this.fetchResultOop(session, signal);
 
     return session.gci.executeAndFetchString(
       session.handle,
@@ -807,8 +833,8 @@ export class CodeExecutor {
     }
 
     this.setExecuting(session.id, true);
-    // Live transcript for the duration; see execute() above.
-    appendTranscriptOutput(setTranscriptLive(session, true));
+    // clientForwarder mode for the duration; see execute() above.
+    appendTranscriptOutput(startClientForwarderMode(session, code));
     try {
       // Interpreted so a halt/error is steppable in the debugger; see execute().
       const { success, err: startErr } = session.gci.GciTsNbExecute(
@@ -849,7 +875,7 @@ export class CodeExecutor {
       if (editor) {
         editor.setDecorations(executingDecorationType, []);
       }
-      appendTranscriptOutput(setTranscriptLive(session, false));
+      appendTranscriptOutput(endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }

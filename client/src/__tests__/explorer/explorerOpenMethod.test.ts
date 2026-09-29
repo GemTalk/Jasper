@@ -64,9 +64,15 @@ function methodItem(over: Partial<SelectorInfo> = {}, isMeta = false): MethodIte
   return new MethodItem(isMeta, i, i.category);
 }
 
-// A minimal TreeView-shaped stub for setViews.
+// A minimal TreeView-shaped stub for setViews. `visible` matters: cascade reveals
+// are skipped while a pane is closed, so an expanded pane has to say it is open.
 function fakeView() {
-  return { reveal: vi.fn(async () => {}), selection: [] as unknown[], description: '' };
+  return {
+    reveal: vi.fn(async () => {}),
+    selection: [] as unknown[],
+    description: '',
+    visible: true,
+  };
 }
 function withViews(ctl: ExplorerController) {
   const method = fakeView();

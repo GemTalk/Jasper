@@ -3,7 +3,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   sessionNeedsCommit: vi.fn(() => false),
-  transactionConflicts: vi.fn(() => 'Write-Write (1):\n    an Account'),
+  transactionConflicts: vi.fn(() => ({
+    commitResult: 'failure',
+    categories: [
+      { key: 'Write-Write', total: 1, objects: [{ oop: '12200449', className: 'Account' }] },
+    ],
+  })),
 }));
 
 import * as vscode from 'vscode';

@@ -12,7 +12,7 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
-import { getClassComment, setClassComment } from '../browserQueries';
+import { getStoredClassComment, setClassComment } from '../browserQueries';
 import { logInfo } from '../gciLog';
 import { ClassCommentUndoEntry } from './undoTypes';
 import { refreshExplorer, refreshSearch, reloadGemstoneEditors } from './afterUndo';
@@ -25,7 +25,10 @@ export async function reverseClassComment(
 ): Promise<boolean> {
   let now: string;
   try {
-    now = getClassComment(session, entry.slot.className, entry.slot.dict);
+    // The STORED comment, the same thing the recording read — `Class>>comment`
+    // synthesises a placeholder for a class with none, which would never compare
+    // equal to the empty `before` an undo back to "no comment" is aiming at.
+    now = getStoredClassComment(session, entry.slot.className, entry.slot.dict);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the current comment on ${entry.slot.className} ` +

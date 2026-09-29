@@ -241,6 +241,11 @@ export async function decideSafeDelete(
   // just asked to see would be an interruption, and one whose default action is
   // destructive. Closing the list without opening anything is the opposite: they looked at
   // the list, learned what it said, and are still deciding — so ask again.
+  //
+  // With exactly ONE reference there is no list to close: showMethodResults opens the single
+  // result outright, so Show References… ends the deletion in a single click and starting it
+  // again is how you go through with it. That is the same rule, not an exception to it — the
+  // user is now reading that method either way — and it errs toward not deleting.
   for (;;) {
     const choice = await vscode.window.showWarningMessage(
       message,

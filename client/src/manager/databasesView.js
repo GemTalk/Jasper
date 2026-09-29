@@ -135,6 +135,12 @@
     folderOpen: 'folder-opened',
     trash: 'trash',
     play: 'play',
+    // Begin Transaction. Deliberately NOT `play`: that is the glyph marking the
+    // current session on the very same row, and two identical triangles side by
+    // side read as one control repeated. A filled circle is also what the status
+    // bar shows for a session that is in a transaction, so the button wears the
+    // state it produces.
+    record: 'record',
     stop: 'debug-stop',
     terminal: 'terminal',
     reveal: 'eye',
@@ -247,7 +253,8 @@
       (a.login ? ` data-login="${esc(a.login)}"` : '') +
       (a.name ? ` data-name="${esc(a.name)}"` : '') +
       (a.session !== undefined ? ` data-session="${esc(String(a.session))}"` : '') +
-      (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '');
+      (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '') +
+      (a.setting ? ` data-setting="${esc(a.setting)}"` : '');
     const tip = tipAttr(a.title || label);
     const off = a.disabled ? ' disabled' : '';
     const extra = a.extraClass ? ` ${a.extraClass}` : '';
@@ -625,6 +632,21 @@
           'target',
           'Make this session the active one — Display It, Inspect It and the Explorer all follow the active session',
         );
+    // Begin and Commit are offered only where the stone would accept them: a
+    // commit outside a transaction can only raise 2030, and a begin inside one
+    // has nothing to do. The Logins & Sessions tree hides the same two buttons on
+    // the same rule, so the two surfaces agree about what a session can do.
+    const begin = session.canBegin
+      ? act(
+          'gemstone.sessionBegin',
+          'Begin Transaction',
+          'record',
+          'Begin a transaction in this session',
+        )
+      : '';
+    const commit = session.canCommit
+      ? act('gemstone.sessionCommit', 'Commit', 'check', 'Commit this session')
+      : '';
     return (
       pingResultHtml(session.id) +
       makeActive +
@@ -633,7 +655,8 @@
         iconOnly: true,
         title: 'Check that this session is alive and responsive',
       }) +
-      act('gemstone.sessionCommit', 'Commit', 'check', 'Commit this session') +
+      begin +
+      commit +
       act('gemstone.sessionAbort', 'Abort', 'discard', 'Abort this session') +
       // With Commit and Abort, because it is the same subject: this session's transaction.
       act(
@@ -659,6 +682,16 @@
         'restore',
         'Full logical restore through this session',
       ) +
+      // Inline here, where the Logins & Sessions tree keeps it on the context
+      // menu: the panel has no per-row context menu, so a button is the only way
+      // to offer it. It goes last, away from Commit and Abort, because switching
+      // aborts; the confirmation it raises says so before anything happens.
+      act(
+        'gemstone.setTransactionMode',
+        'Transaction Mode',
+        'arrow-swap',
+        'Change this session’s transaction mode (this aborts the current transaction)',
+      ) +
       btn('logoutSession', 'Log out', null, 'btn-secondary', {
         session: session.id,
         title: `Log out session ${session.id}`,
@@ -677,8 +710,13 @@
     const tip = session.current
       ? 'The session Display It, Inspect It and the Explorer are working in'
       : `An open session on ${db.stoneName}`;
+    // The transaction mode rides in the same dim run as the session number: it is
+    // state the reader wants at a glance, and it costs no button and no row.
+    const state = session.transactionState
+      ? `<span class="dim session-tx-mode">${esc(session.transactionState)}</span>`
+      : '';
     return `<div class="db-line db-session${session.current ? ' db-session-current' : ''}"${tipAttr(tip)}>
-        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span>${autoCommitLabel(session)}</span>
+        <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span>${state}${autoCommitLabel(session)}</span>
         <span class="db-line-actions">${sessionActions(session)}</span>
       </div>`;
   }
@@ -1131,6 +1169,35 @@
     // Registering does not: the installation it adopts brings its own version,
     // which is the case a machine with nothing installed is most likely in.
     const register = btn('beginRegister', 'Register Existing\u2026', 'link', 'btn-secondary');
+    // Where all of this was found, said quietly and always — not only when the
+    // folder is empty or unreadable, which is where it used to appear. Two
+    // windows pointed at different roots look identical without it, and "why is
+    // my version not listed?" has no answer on screen. Each line names the
+    // setting behind it and opens it, because in both cases that setting is the
+    // whole of the answer and it can be written at more than one layer.
+    const settingLink = (key, what) =>
+      btn('openSetting', 'Edit', 'edit', null, {
+        iconOnly: true,
+        setting: key,
+        title: `Open the ${key} setting, which is where ${what}`,
+      });
+    const logins = (state.logins || []).length;
+    const where =
+      `<div class="gm-where">${ICONS.folder}<span class="mono">${esc(state.rootPath || '')}</span>
+        <span class="gm-where-src">gemstone.rootPath \u00b7 ${esc(state.rootFrom || 'default')}</span>
+        ${settingLink('gemstone.rootPath', 'this folder is chosen')}
+      </div>` +
+      // Logins have no folder to name — that is the point of the line. Jasper
+      // keeps them itself, which is why a full list of them can sit beside a
+      // root holding no databases at all. Where it keeps them is Jasper's
+      // business: they are added and edited from the rows here and in the
+      // sidebar, never by hand.
+      `<div class="gm-where gm-where-logins">${ICONS.login}<span>${
+        logins
+          ? `${logins} login${logins === 1 ? '' : 's'}, kept by Jasper settings rather than in that folder`
+          : 'Logins are kept by Jasper settings, not in that folder'
+      }</span></div>`;
+
     return `<div class="gm-head">
       <div class="gm-head-text"><span class="gm-head-lead">${esc(lead)}</span></div>
       <div class="gm-head-acts">
@@ -1138,7 +1205,7 @@
         ${register}
         ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new versions' })}
       </div>
-    </div>`;
+    </div>${where}`;
   }
 
   function orderedSections(state) {
@@ -1220,10 +1287,45 @@
   // dropped on arrival — the panel only stopped looking busy — so an action that
   // failed was indistinguishable from one that did nothing, which is how a
   // registration refused for an unwritable root read as "nothing happened".
+  // Only ever drawn beside something that went wrong. A banner has room for the
+  // reason and no more, and the log carries which folder, what was being read
+  // and what would fix it — so the panel offers the way there rather than
+  // leaving it to be known about. It is not in the header: a panel with nothing
+  // wrong has nothing there worth reading.
+  function logBtn() {
+    return btn('showLog', 'Show log', 'output', 'btn-secondary', {
+      title: 'Open Output \u2192 GemStone Admin, where the full reason is written',
+    });
+  }
+
   function renderFailure() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${logBtn()}
       ${btn('dismissFailure', 'Dismiss', 'close', 'btn-secondary')}
+    </div>`;
+  }
+
+  // The same failure with nothing behind it. Before the first state there is no
+  // screen for the banner to sit on, so the message was dropped and the skeleton
+  // stayed up for good. Dismiss would leave an empty tab, so this one carries the
+  // retry instead — the header's Refresh, which is unreachable from here.
+  function renderFailureOnly() {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${logBtn()}
+      ${btn('refresh', 'Try Again', 'refresh', 'btn-secondary')}
+    </div>`;
+  }
+
+  // The versions folder is there but cannot be opened. Every listing under it
+  // comes back empty, so without this the panel reads as a machine with nothing
+  // on it — and offers to make a database in a folder it cannot even read.
+  function renderRootProblem(state) {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>Cannot read <strong>${esc(state.rootPath)}</strong> — ${esc(state.rootProblem)}. Nothing in it can be listed until that is fixed.</span></span>
+      ${logBtn()}
+      ${btn('chooseRoot', 'Choose another folder\u2026', 'folderOpen', 'btn-secondary')}
     </div>`;
   }
 
@@ -1446,6 +1548,8 @@
 
     els.root.innerHTML =
       renderHeader(state) +
+      // The standing condition leads: it explains every empty list below it.
+      (state.rootProblem ? renderRootProblem(state) : '') +
       (lastFailure ? renderFailure() : '') +
       (registering
         ? renderRegister(state)
@@ -1516,7 +1620,17 @@
     createForm.allowNfs = false;
   }
 
+  /** Commands that only look at something — the log, a setting, the clipboard.
+   *  Pressing one is how a reader follows up a failure, not a new attempt. */
+  const LOOK_ONLY_COMMANDS = new Set(['showLog', 'openSetting', 'copyText', 'copyNetldiHost']);
+
   function post(msg) {
+    // A new attempt retires the last failure — it described the attempt before
+    // this one, and a panel still saying "permission denied" after the
+    // permission is back is worse than saying nothing. A new failure arrives
+    // with its own actionFailed, so the banner comes straight back if it has to.
+    // Following the banner's own Show log must not take it away mid-read.
+    if (!LOOK_ONLY_COMMANDS.has(msg.command)) lastFailure = '';
     vscode.postMessage(msg);
   }
 
@@ -1749,6 +1863,7 @@
       version: el.dataset.version,
       dirName: el.dataset.dir,
       folder: el.dataset.folder,
+      id: el.dataset.setting,
       login: el.dataset.login,
       name: el.dataset.name,
       path: el.dataset.path,
@@ -1952,6 +2067,12 @@
         creating = false;
       }
       if (lastState) render(lastState);
+      // Nothing drawn yet, so nothing to draw it onto: the failure becomes the
+      // screen rather than being dropped behind the skeleton.
+      else {
+        hideTip();
+        els.root.innerHTML = renderFailureOnly();
+      }
     } else if (msg.command === 'pingResult') {
       setPingNotice(
         Number(msg.sessionId),

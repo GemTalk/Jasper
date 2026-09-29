@@ -173,14 +173,23 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 	 Recording is strictly best-effort and never allowed to break an apply: if the
 	 snapshot or the diff raises, the previous entry is cleared (never left stale) and
 	 the apply's own result is returned unchanged."
-	| ref slots before result after undo recorded |
+	| ref slots before result after undo recorded histSlots histBefore |
 	ref := SessionTemps current at: token asSymbol ifAbsent: [nil].
 	ref isNil ifTrue: [^'{"applied":0,"failed":[],"error":"preview session expired","undoRecorded":false}'].
 	slots := [self slotsTouchedIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
 	before := slots isNil ifTrue: [nil] ifFalse: [[self snapshot: slots] on: Error do: [:ex | nil]].
+	"Method HISTORY is not bound to undo eligibility. slotsTouchedIn: answers nil as soon as any
+	 change reshapes a class, because no Tier-1 undo can reverse that -- but the method changes in
+	 that same change set still happened, and their history is still owed. So the history pair is
+	 taken over the method slots alone, whether or not an undo entry will be recorded."
+	histSlots := [self methodSlotsIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
+	histBefore := histSlots isNil ifTrue: [nil] ifFalse: [[self snapshot: histSlots] on: Error do: [:ex | nil]].
 	"The apply itself is NEVER wrapped: it must behave exactly as it does without undo."
 	result := ref applyDeselected: deselectedIds.
 	recorded := false.
+	histBefore isNil ifFalse: [
+		[self recordMethodHistoryFrom: histBefore to: (self snapshot: histSlots)]
+			on: Error do: [:ex | nil]].
 	before isNil
 		ifTrue: [self clear]
 		ifFalse: [
@@ -193,6 +202,71 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> methodSlotsIn: aChangeSet deselected: deselectedIds [
+	"Every METHOD SLOT the applying changes touch, de-duplicated -- the same list
+	 slotsTouchedIn: builds, except that a change which is NOT a method change is skipped rather
+	 than abandoning the whole answer.
+
+	 That difference is the point. slotsTouchedIn: answers nil for a change set that reshapes a
+	 class, because undo cannot reverse one; method history has no such limit, and the methods such
+	 a refactoring recompiles are owed their versions either way."
+	| ids kinds slots seen |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	kinds := self methodKinds asIdentitySet.
+	slots := OrderedCollection new.
+	seen := Set new.
+	aChangeSet changes do: [:change |
+		((ids includes: change id asSymbol) not
+			and: [kinds includes: change kind asSymbol]) ifTrue: [
+				self add: change selector forChange: change to: slots seen: seen.
+				change newSelector isNil ifFalse: [
+					self add: change newSelector forChange: change to: slots seen: seen]]].
+	^slots asArray
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> recordMethodHistoryFrom: beforeStates to: afterStates [
+	"Add the version this refactoring just compiled to each recompiled method's history.
+
+	 Method history is otherwise bracketed around the CLIENT's compile query only, so a
+	 method changed by a refactoring gained no version and its history silently stopped at
+	 the last hand edit. This is the one place that fixes it for every refactoring at once:
+	 the before/after snapshots taken for the undo entry are exactly the pair history wants,
+	 already narrowed to the method slots the change set touched.
+
+	 Only slots that EXIST afterwards are recorded -- the old selector of a rename is gone,
+	 and a removal is not a version of anything. A slot that did not exist before (the new
+	 selector of a rename) has nothing to seed, so its history starts at the source the
+	 rename compiled.
+
+	 The recorder is JasperMethodHistory, which the Jasper client installs into SessionTemps
+	 at login; it is absent on a session that never ran that bootstrap (a plain topaz login,
+	 say), and this is then a no-op. Guarded and best-effort throughout, exactly like the
+	 undo recording it rides along with: a refactoring must never fail because history could
+	 not be written."
+	| hist env |
+	hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	hist isNil ifTrue: [^self].
+	env := GsRefactoringEnvironment new.
+	1 to: beforeStates size do: [:i |
+		[| b a slot cls target |
+		 b := beforeStates at: i.
+		 a := afterStates at: i.
+		 (a at: 2) ifTrue: [
+			slot := a at: 1.
+			cls := env classNamed: (slot at: 2).
+			cls isNil ifFalse: [
+				target := (slot at: 3) ifTrue: [cls class] ifFalse: [cls].
+				hist
+					recordRefactoredIn: target
+					selector: (slot at: 4) asSymbol
+					oldSource: ((b at: 2) ifTrue: [b at: 3] ifFalse: [nil])
+					newSource: (a at: 3)
+					category: (a at: 4)]]]
+			on: Error do: [:ex | nil]]
 ]
 
 { #category : 'recording' }

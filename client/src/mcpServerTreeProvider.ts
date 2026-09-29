@@ -3,9 +3,16 @@ import { loginLabel } from './loginTypes';
 import { ActiveSession } from './sessionManager';
 import { McpOwnerInfo, isPidAlive, readOwnerSidecar } from './mcpOwnerSidecar';
 
-// Three states the tree view can be in. Resolved fresh on every getChildren()
-// call — cheap (one sidecar read) and avoids drift between "real" state and
-// cached state when other windows claim/release.
+// No view is contributed for the tree provider below any more: MCP state is
+// reported on the session rows in Logins & Sessions (see loginTreeProvider's
+// sessionMcpState), because which session MCP serves is a property of a
+// session. resolveOwnership is the live part — it is what those rows call.
+// The provider and its renderers are kept so that contributing a pane again is
+// a package.json change and nothing more.
+
+// Three states ownership can be in. Resolved fresh on every call — cheap (one
+// sidecar read) and avoids drift between "real" state and cached state when
+// other windows claim/release.
 export type McpOwnership =
   | { kind: 'this'; selectedSession?: ActiveSession; socketPath: string; httpsUrl?: string }
   | { kind: 'other'; info: McpOwnerInfo }

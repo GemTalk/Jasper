@@ -36,12 +36,20 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
     ],
     pivot: false,
     pivotTitle: 'Senders of foo',
+    pivotTarget: 'foo',
     pivotHint: 'Esc to go back',
     ...over,
   };
 }
 
 describe('resultsMessage', () => {
+  it('carries the pivot target, which the preview needs to mark the send', () => {
+    // Without it the preview pane falls back to marking the TYPED term, and a keyword selector never
+    // appears in source as one token — so a pivot on `on:do:` would highlight nothing at all.
+    const msg = resultsMessage(viewData({ pivot: true, pivotTarget: 'on:do:' }), chrome);
+    expect(msg.pivotTarget).toBe('on:do:');
+  });
+
   it('carries the truncation list to the webview', () => {
     const msg = resultsMessage(viewData(), chrome);
     expect(msg.truncations).toEqual([

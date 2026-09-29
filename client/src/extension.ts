@@ -12,7 +12,18 @@ import { LoginStorage } from './loginStorage';
 import { getLoginPassword, deleteLoginPassword } from './loginCredentials';
 import { runStopStone } from './stopStoneManager';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
+import { registerTransactionStatusBar } from './transactionStatusBar';
+import { explainGciError } from './gciLibraryError';
+import {
+  TRANSACTION_MODES,
+  canBegin,
+  canCommit,
+  modeDescription,
+  modeLabel,
+  transactionStateLabel,
+} from './queries/transactionMode';
 import { showConfigurationCommand } from './configuration/showConfigurationCommand';
+import { resolveCommandSession, sessionTransactionCommand } from './sessionTransactionCommand';
 import {
   DEFAULT_GS_PW,
   GemStoneLogin,
@@ -25,6 +36,7 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
+import { refreshTonelAvailability } from './tonelAvailability';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
@@ -97,6 +109,7 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { refreshUndoUi } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
 import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
+import { resyncEditorsAfterAbort } from './afterAbort';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { forgetSessionAutoCommit, registerSessionAutoCommit } from './autoCommit/autoCommitState';
 import { setAutoCommitFailureHandler } from './autoCommit/autoCommitRunner';
@@ -120,12 +133,24 @@ import {
   installStaleGemstoneTabReaper,
   parseMethodUri,
   isMethodEditorUri,
+  isClassCommentUri,
 } from './gemstoneFileSystemProvider';
-import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
+import {
+  GCI_PROVIDER_SELECTORS,
+  METHOD_LANGUAGE,
+  SMALLTALK_LANGUAGE,
+  gemstoneDocumentLanguage,
+} from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
+import { openScratchNotebook } from './scratchNotebook';
+import {
+  chooseActiveSession,
+  WorkspaceSessionLensProvider,
+  WORKSPACE_SESSION_SELECTORS,
+} from './activeSessionDisplay';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
-import { openTutorialNotebook } from './tutorialNotebook';
+import { openTutorialNotebook, registerTutorialContext } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
@@ -149,21 +174,27 @@ import { StepPointHintsProvider } from './stepPointHints';
 import { StepPointHoverProvider } from './stepPointHover';
 import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
-import { GrailNotebookController } from './grailNotebookController';
-import { SmalltalkNotebookController } from './smalltalkNotebookController';
+import { GrailNotebookController, grailSessionKernel } from './grailNotebookController';
+import { SmalltalkNotebookController, smalltalkSessionKernel } from './smalltalkNotebookController';
+import { SessionKernels } from './sessionKernels';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
-import { getGciLog } from './gciLog';
+import { getGciLog, logError, logWarning } from './gciLog';
+import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
-import { VersionManager } from './manager/versionManager';
+import {
+  InstallCancelledError,
+  showInstallOutcome,
+  VersionManager,
+} from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
-import { DatabasesPanel } from './manager/databasesPanel';
+import { DatabasesPanel, chooseRootFolder } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
 import {
   isRegisteredDatabase,
@@ -193,7 +224,12 @@ import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
 import { buildRefreshPromptDeps, promptClaudeCodeRefresh } from './claudeCodeRefreshPrompt';
-import { McpServerTreeProvider } from './mcpServerTreeProvider';
+import { McpOwnership, McpServerTreeDeps, resolveOwnership } from './mcpServerTreeProvider';
+import { NO_WORKSPACE_RECORDED } from './mcpOwnerSidecar';
+import { mcpReport } from './mcpWindowStatus';
+import { defaultReleaseRequestPath } from './mcpReleaseRequest';
+import { McpOwnershipController } from './mcpOwnership';
+import { McpPanel } from './mcpPanel';
 import { DEFAULT_MCP_HTTP_PORT, McpHttpServer } from './mcpHttpServer';
 import { readMcpSetting } from './mcpSettings';
 import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
@@ -262,26 +298,44 @@ async function logJasperError(message: string, scope: string, error: unknown) {
  * `commit` is injected so the flow is unit-testable without a live session, and
  * `undefined` is treated like `true`: a failed probe is not evidence of a clean
  * transaction, so we prompt rather than silently discard.
+ *
+ * `sessionLabel` is the login behind the number, for the same reason every other
+ * Commit and Abort message carries it: a slot number says nothing about which
+ * stone the commit that just failed was headed for.
+ *
+ * `inTransaction` decides which BUTTONS the prompt carries, not whether it is
+ * shown: a session outside a transaction can still hold uncommitted work (see
+ * `canCommit`), so the warning still fires, and what is dropped is "Commit &
+ * Logout", which there could only fail. `undefined` keeps the button, on
+ * `canCommit`'s terms.
  */
 export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
+  sessionLabel: string,
   needsCommit: boolean | undefined,
   commit: (id: number) => { success: boolean; err: { number: number; message: string } },
+  inTransaction?: boolean,
 ): Promise<'proceed' | 'cancel'> {
   if (needsCommit === false) return 'proceed';
 
+  const commitIsPossible = canCommit(inTransaction);
   const title =
     needsCommit === true
       ? `Session ${sessionId} has uncommitted changes.`
       : `Session ${sessionId} may have uncommitted changes.`;
-  const detail =
+  const stake =
     needsCommit === true
-      ? 'Logging out discards them. Commit first to keep your work.'
+      ? 'Logging out discards them.'
       : 'Its commit state could not be checked; logging out may discard uncommitted work.';
+  // Outside a transaction the work cannot be saved at all, so say that rather
+  // than "commit first" over a button the dialog is not offering.
+  const detail = commitIsPossible
+    ? `${stake} Commit first to keep your work.`
+    : `${stake} This session is not in a transaction, so the changes cannot be committed — begin a transaction before making them, or let them go.`;
   const choice = await vscode.window.showWarningMessage(
     title,
     { modal: true, detail },
-    'Commit & Logout',
+    ...(commitIsPossible ? (['Commit & Logout'] as const) : []),
     'Logout Anyway',
   );
 
@@ -289,15 +343,19 @@ export async function confirmLogoutWithUncommittedChanges(
     try {
       const { success, err } = commit(sessionId);
       if (!success) {
+        // Same refused/failed split the session Commit draws, minus the conflict
+        // set: this flow is handed a `commit` callback rather than a session, so
+        // there is nothing here to read `System transactionConflicts` with.
+        const { verb, reason } = commitFailureMessage(err, undefined);
         vscode.window.showErrorMessage(
-          `Session ${sessionId}: Commit failed — ${err.message || `error ${err.number}`}. Not logging out.`,
+          `Session ${sessionId} — ${sessionLabel}: Commit ${verb} — ${reason} Not logging out.`,
         );
         return 'cancel';
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(
-        `Session ${sessionId}: Commit failed — ${msg}. Not logging out.`,
+        `Session ${sessionId} — ${sessionLabel}: Commit failed — ${msg}. Not logging out.`,
       );
       return 'cancel';
     }
@@ -306,6 +364,17 @@ export async function confirmLogoutWithUncommittedChanges(
 
   return choice === 'Logout Anyway' ? 'proceed' : 'cancel';
 }
+
+/** The button on a refused-commit toast; also what the choice is compared against. */
+export const SHOW_CONFLICTS = 'Show Conflicts';
+
+/**
+ * The one wording for "your exported .gs edits are about to go", shared by the
+ * abort's warning and the commit's: the two sit a few lines apart and drifting
+ * apart would read as two different hazards.
+ */
+export const UNSAVED_EXPORT_EDITS_WARNING =
+  'Exported .gs files have unsaved edits that will be overwritten.';
 
 /**
  * The confirmation message to show before aborting, or `null` when the abort is
@@ -326,9 +395,109 @@ export function abortConfirmMessage(
     parts.push('This may discard uncommitted changes (the commit state could not be checked).');
   }
   if (hasUnsavedEditors) {
-    parts.push('Exported .gs files have unsaved edits that will be overwritten.');
+    parts.push(UNSAVED_EXPORT_EDITS_WARNING);
   }
   return parts.length ? parts.join('\n') : null;
+}
+
+/**
+ * The detail line of the confirmation shown before a transaction-mode switch.
+ *
+ * Switching modes aborts — GemStone does that as part of switching, and there is
+ * no way to ask it not to — so the dialog always says that, and then says what
+ * {@link abortConfirmMessage} would say about the same abort, on the same terms.
+ * Unlike the abort, the switch always asks, so it says so when nothing is lost.
+ *
+ * Exported, like {@link abortConfirmMessage}, so the wording is testable without
+ * a live session behind a modal.
+ */
+export function transactionModeSwitchDetail(
+  needsCommit: boolean | undefined,
+  hasUnsavedEditors = false,
+): string {
+  const stake =
+    abortConfirmMessage(needsCommit, hasUnsavedEditors) ??
+    'This session has no uncommitted changes, so nothing is lost.';
+  return `Changing the transaction mode aborts the current transaction.\n\n${stake}`;
+}
+
+/**
+ * The modal a Commit or Abort should put up first, or `null` for "just do it".
+ *
+ * Two things can call for one. A `warning` from {@link abortConfirmMessage} (or
+ * the commit's own unsaved-editors check) says something is about to be lost.
+ * `ask` says the caller did not name a session: the Command Palette invokes
+ * these commands with no argument and acts in the current session, which is not
+ * something the palette shows you — so it says which one, by number and by
+ * login, before it acts. A session row, the Databases & Versions panel and the
+ * Explorer's Actions & Navigation toolbar all name their session by where the
+ * click landed, and pass `ask` false.
+ *
+ * Exported for the same reason `abortConfirmMessage` is: the wording is worth
+ * pinning without standing up a whole activation.
+ */
+export function sessionActionConfirmation(options: {
+  action: 'Commit' | 'Abort';
+  sessionId: number;
+  sessionLabel: string;
+  warning: string | null;
+  ask: boolean;
+}): { message: string; detail: string; confirmLabel: string } | null {
+  const { action, sessionId, sessionLabel, warning, ask } = options;
+  if (!warning && !ask) return null;
+  return {
+    message: `${action} session ${sessionId}?`,
+    // The login under the question, and what stands to be lost under that.
+    detail: warning ? `${sessionLabel}\n\n${warning}` : sessionLabel,
+    // "Anyway" is the answer to a warning; with nothing to warn about it is the
+    // answer to no question at all.
+    confirmLabel: warning ? `${action} Anyway` : action,
+  };
+}
+
+/**
+ * What the user is shown once a Commit, Abort or Begin has actually run: an
+ * information toast on success, an error toast on failure, both headed by the
+ * session — `Session 3 — DataCurator on gs64stone (localhost): Commit
+ * succeeded.` A commit that says nothing is indistinguishable from a commit
+ * that never happened, which is the whole reason the toast is not optional.
+ *
+ * Shared by the commit, the abort and the begin, and by both of their failure
+ * routes (the GCI call answering `success: false`, and the call throwing — a
+ * session that has gone answers "Session not found" from the throw path), so the
+ * messages cannot drift into different shapes. Exported so the contract is testable
+ * without standing up an activation, like `abortConfirmMessage` and
+ * `sessionActionConfirmation` above.
+ */
+export function announceSessionAction(
+  action: 'Commit' | 'Abort' | 'Begin Transaction',
+  sessionDescription: string,
+  result:
+    | { success: true }
+    | { success: false; reason: string; verb?: 'refused' | 'failed'; details?: string },
+): void {
+  if (result.success) {
+    vscode.window.showInformationMessage(`${sessionDescription}: ${action} succeeded.`);
+    return;
+  }
+  const message = `${sessionDescription}: ${action} ${result.verb ?? 'failed'} — ${result.reason}`;
+  if (!result.details) {
+    vscode.window.showErrorMessage(message);
+    return;
+  }
+  const details = result.details;
+  // `Promise.resolve` rather than `.then` on the return value: a toast that has
+  // no one to answer it resolves to undefined, and so does a stub in a test that
+  // never set one.
+  void Promise.resolve(vscode.window.showErrorMessage(message, SHOW_CONFLICTS)).then((choice) => {
+    if (choice !== SHOW_CONFLICTS) return;
+    // Show BEFORE appending. The channel holds routine GCI traffic, so opening it
+    // first and writing second is what puts the report on screen: VS Code scrolls
+    // the Output view on new content, and there is no command to scroll it after
+    // the fact — only a toggle that would risk turning the user's auto-scroll off.
+    getGciLog().show(true);
+    logWarning(`${sessionDescription}: ${action} ${result.verb ?? 'failed'}.\n${details}`);
+  });
 }
 
 export async function handleMethodCompiled(event: MethodCompiledEvent) {
@@ -725,7 +894,70 @@ export function activate(context: vscode.ExtensionContext) {
   // Must run after sessionManager exists (the reaper checks for a live session).
   context.subscriptions.push(installStaleGemstoneTabReaper(sessionManager));
 
-  const treeProvider = new LoginTreeProvider(storage, sessionManager);
+  // Answers "is this window serving MCP, and for which session" for the session
+  // rows. Assigned by the MCP block later in activate(); until then — and for
+  // the whole run when `jasper.mcp.enabled` is off or no folder is open — it
+  // returns undefined and the rows show no MCP state at all.
+  let mcpOwnership: () => McpOwnership | undefined = () => undefined;
+  const treeProvider = new LoginTreeProvider(storage, sessionManager, () => mcpOwnership());
+
+  // MCP is a property of this window, so its readout goes on the Databases
+  // section header — of which there is exactly one — and the detail goes in the
+  // MCP Server tab. The header is created further down, after the MCP block, so
+  // the view is held here and the redraw is a no-op until it exists.
+  const databases: { view?: vscode.TreeView<DatabaseNode> } = {};
+  const refreshMcpSurfaces = () => {
+    treeProvider.refresh();
+    if (databases.view) {
+      databases.view.description = mcpReport(mcpOwnership()).headline;
+    }
+    McpPanel.refreshIfOpen();
+  };
+  // Claim, Stop and the release request, as the MCP Server tab calls them.
+  // Replaced by the MCP block when the surface is running; until then they
+  // explain why nothing is going to happen rather than failing silently.
+  const mcpUnavailable = async () => {
+    vscode.window.showWarningMessage(
+      'MCP is not running in this window. Set jasper.mcp.enabled to true and open a folder, ' +
+        'then reload the window.',
+    );
+  };
+  let mcpClaim: () => Promise<void> = mcpUnavailable;
+  let mcpStop: () => Promise<void> = mcpUnavailable;
+  let mcpRequestRelease: () => Promise<void> = mcpUnavailable;
+
+  /**
+   * Focus the VS Code window that owns the MCP server. Opening a folder that is
+   * already open focuses that window rather than opening a second one, which is
+   * the only handle an extension has on another window. It is a best effort: an
+   * owner with no folder recorded, or a multi-root workspace (whose sidecar
+   * records only the first folder), cannot be reached this way and says so
+   * instead of opening something the user did not ask for.
+   */
+  const revealMcpOwner = async (workspacePath: string) => {
+    if (!workspacePath || workspacePath === NO_WORKSPACE_RECORDED) {
+      vscode.window.showWarningMessage(
+        'The window serving MCP did not record a workspace folder, so Jasper cannot open it. ' +
+          'Look for another VS Code window with Jasper active and stop MCP there.',
+      );
+      return;
+    }
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspacePath), {
+      forceNewWindow: false,
+    });
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jasper.showMcpServer', () =>
+      McpPanel.show({
+        report: () => mcpReport(mcpOwnership()),
+        claim: () => mcpClaim(),
+        stop: () => mcpStop(),
+        requestRelease: () => mcpRequestRelease(),
+        revealOwner: revealMcpOwner,
+      }),
+    ),
+  );
 
   const treeView = vscode.window.createTreeView('gemstoneLogins', {
     treeDataProvider: treeProvider,
@@ -882,14 +1114,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
-  const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
-    { scheme: 'gemstone', language: METHOD_LANGUAGE },
-    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
   const selectorResolver = {
     getSelector: (uri: string, position: vscode.Position) =>
       client.sendRequest<string | null>('gemstone/selectorAtPosition', {
@@ -901,13 +1125,16 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
+  const workspaceSessionLens = new WorkspaceSessionLensProvider(sessionManager);
   context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
-    vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
-    vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
+    vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
+    vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
+    vscode.languages.registerCompletionItemProvider(GCI_PROVIDER_SELECTORS, completionProvider),
     completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
+    vscode.languages.registerCodeLensProvider(WORKSPACE_SESSION_SELECTORS, workspaceSessionLens),
+    workspaceSessionLens,
     // Hosts the RB family under the native "Refactor…" menu in a saved
     // (scheme:gemstone) method editor — and there alone; see
     // REFACTOR_CODE_ACTION_SELECTOR for why that is narrower than it was.
@@ -958,7 +1185,17 @@ export function activate(context: vscode.ExtensionContext) {
           const uri = event.uri;
           if (uri.scheme === 'gemstone') {
             const parts = uri.path.split('/').map(decodeURIComponent);
-            // parts: ['', dictName, className, side, category, selector]
+            // parts: ['', dictName, className, side, category, selector] for a method.
+            // A class comment is recognised by isClassCommentUri instead — it has two
+            // path shapes, and that predicate lives beside the builder that emits them.
+            // A comment save is not a method compile. Forwarding it as one cost a
+            // getClassEnvironments round trip that redrew the Methods pane — the one
+            // pane a comment cannot change — while leaving the Classes pane, whose row
+            // really did change, alone. The 📖 button is updated from the provider's
+            // own onClassCommentSaved event instead, which carries the saved text's
+            // verdict. Asked of the module that owns the URI format rather than by
+            // path index, because a comment URI has two shapes.
+            if (isClassCommentUri(uri)) continue;
             if (parts.length >= 3) {
               const sessionId = parseInt(uri.authority, 10);
               const className = parts[2];
@@ -996,6 +1233,11 @@ export function activate(context: vscode.ExtensionContext) {
         omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
+    // A comment save changes one thing in the Explorer — whether the class's row
+    // offers the 📖 button — and no compile event reports it.
+    gemstoneFs.onClassCommentSaved((e) =>
+      explorer.onClassCommentSaved(e.sessionId, e.dictName, e.className, e.hasComment),
+    ),
   );
 
   context.subscriptions.push(
@@ -1103,6 +1345,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(grailNotebookController);
   const smalltalkNotebookController = new SmalltalkNotebookController(sessionManager);
   context.subscriptions.push(smalltalkNotebookController);
+  context.subscriptions.push(
+    new SessionKernels(sessionManager, [smalltalkSessionKernel, grailSessionKernel]),
+  );
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -1235,6 +1480,44 @@ export function activate(context: vscode.ExtensionContext) {
     sessionManager.onDidChangeSelection(() => updateRefactoringSupportContext()),
   );
   updateRefactoringSupportContext();
+
+  // Drive `gemstone.tonelAvailable` the same way (issue #616). Unlike the two
+  // above it is not a latch the user can install: it asks the stone whether the
+  // Rowan classes the feature drives are reachable, so switching to a base-extent
+  // session hides the Tonel entries and switching back shows them again.
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() =>
+      refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined),
+    ),
+  );
+  refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined);
+
+  // ── Transaction mode ───────────────────────────────────
+  // Drive `gemstone.canCommit` / `gemstone.canBegin` off the selected session's
+  // transaction state, for the command-palette entries that act on it. The
+  // Sessions tree does NOT use these: its rows each carry their own answer in
+  // their contextValue, because a context key is global and would describe the
+  // selected session on every row.
+  function updateTransactionContextKeys(): void {
+    const selected = sessionManager.getSelectedSession();
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canCommit',
+      !!selected && canCommit(selected.inTransaction),
+    );
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canBegin',
+      !!selected && canBegin(selected.transactionMode, selected.inTransaction),
+    );
+  }
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() => updateTransactionContextKeys()),
+    sessionManager.onDidAddSession(() => updateTransactionContextKeys()),
+    sessionManager.onDidChangeTransactionState(() => updateTransactionContextKeys()),
+  );
+  updateTransactionContextKeys();
+  registerTransactionStatusBar(context, sessionManager);
 
   // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
   // switching sessions switches which undo (if any) is on offer.
@@ -1448,17 +1731,36 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Commit / Abort a session, with the same confirmations and post-action
-  // refreshes whether invoked from the Sessions tree (a session item) or the
-  // GemStone Explorer toolbar (the currently selected session).
-  const commitSession = async (session: ActiveSession): Promise<void> => {
-    if (fileInManager.hasUnsavedChanges(session)) {
+  /**
+   * Which session a message is about: its number, and the login behind it. The
+   * number alone is a slot in this window's list and says nothing about which
+   * stone the work landed in.
+   */
+  const sessionDescription = (session: ActiveSession): string =>
+    `Session ${session.id} — ${loginLabel(session.login)}`;
+
+  // Commit / Abort a session, with the same post-action refreshes whether
+  // invoked from the Sessions tree (a session item), the Databases panel, the
+  // GemStone Explorer toolbar (the currently selected session) or the Command
+  // Palette — which names no session, and so is the one that asks first.
+  const commitSession = async (
+    session: ActiveSession,
+    options?: { ask?: boolean },
+  ): Promise<void> => {
+    const confirmation = sessionActionConfirmation({
+      action: 'Commit',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: fileInManager.hasUnsavedChanges(session) ? UNSAVED_EXPORT_EDITS_WARNING : null,
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        'Exported .gs files have unsaved edits that will be overwritten.',
-        { modal: true },
-        'Commit Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Commit Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.commit(session.id);
@@ -1466,7 +1768,7 @@ export function activate(context: vscode.ExtensionContext) {
         // A manual commit that lands has settled whatever conflict a failed auto-commit
         // was stuck on, so auto-commit stops shouting and starts committing again.
         autoCommitTransactionSettled(session.id);
-        vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
+        announceSessionAction('Commit', sessionDescription(session), { success: true });
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
@@ -1476,14 +1778,179 @@ export function activate(context: vscode.ExtensionContext) {
         clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
-        vscode.window.showErrorMessage(
-          `Session ${session.id}: Commit failed — ${err.message || `error ${err.number}`}`,
-        );
+        // Only a refusal has a conflict set, so an errored commit costs no extra
+        // round trip. Read first — see the transactionConflicts.ts header.
+        const conflicts = isCommitConflict(err) ? queries.transactionConflicts(session) : undefined;
+        const failure = commitFailureMessage(err, conflicts);
+        announceSessionAction('Commit', sessionDescription(session), {
+          success: false,
+          verb: failure.verb,
+          reason: failure.reason,
+          details: failure.details,
+        });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Commit failed: ${msg}`);
+      // Named, like the failure above it: `sessionManager.commit` throws
+      // "Session not found" for a session that has gone, and that sentence on
+      // its own does not say which one.
+      announceSessionAction('Commit', sessionDescription(session), { success: false, reason: msg });
     }
+  };
+
+  /**
+   * Bring every view back in line with a session whose transaction view has just
+   * been replaced wholesale.
+   *
+   * Three things do that, and they all need the same cascade: an abort, a
+   * transaction-mode switch (which aborts as part of switching), and a begin from
+   * outside a transaction (which moves the session onto a newer view of the
+   * repository, so commits landed elsewhere become visible).
+   *
+   * Factored out of abortSession so the three cannot drift apart — a browser left
+   * showing a view that no longer exists is the same bug however it got there.
+   */
+  const refreshAfterViewReplaced = async (session: ActiveSession): Promise<void> => {
+    // The transaction a failed auto-commit was stuck on is gone with the old view,
+    // so auto-commit has something to work with again.
+    autoCommitTransactionSettled(session.id);
+    await exportManager.refreshSession(session);
+    SystemBrowser.refresh(session.id);
+    // The new view can hold classes/globals/dicts committed by other sessions —
+    // rebuild an open GemStone Search's cached corpora so they show up, and drop
+    // the cached ClassOrganizer whose class list they would be searched against.
+    clearClassOrganizer(session);
+    omniSearch?.notifySessionSynced(session.id);
+    explorer.onSessionAborted(session.id);
+    // The view moved underneath every recorded undo, so each entry now describes a
+    // "before" state that never existed in the transaction the session is now in.
+    // Offering them would put back source this view never had.
+    clearUndoStack(session.id);
+    refreshUndoUi(sessionManager.getSelectedSession());
+    // Last, and behind its own guard. The editors were the one thing this resync
+    // did not reach: a tab left over a method the new view does not have stays
+    // editable, and saving it compiles the method straight back into a transaction
+    // that no longer holds it. It runs after the state above because the view has
+    // already moved and cannot be moved back — anything that throws here must not
+    // leave the undo stack un-cleared, nor reach a caller's catch, which would
+    // report a failure over an operation that succeeded and was already announced.
+    try {
+      await resyncEditorsAfterAbort(session);
+    } catch (e: unknown) {
+      logError(
+        session.id,
+        `Could not resync open editors after the view moved: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  };
+
+  /**
+   * Begin a transaction on a session that is outside one — the manualBegin mode's
+   * way back in.
+   *
+   * `GciTsBegin` is `System beginTransaction`, which moves the session onto a
+   * newer view: it discards whatever the session wrote while it was outside a
+   * transaction (such writes are allowed — see `canCommit`), and the refresh that
+   * follows rewrites the exported `.gs` mirror. Both losses are an abort's, so it
+   * asks with the abort's wording, via {@link abortConfirmMessage}. Nothing to
+   * lose means no modal, as before.
+   */
+  const beginSession = async (session: ActiveSession): Promise<void> => {
+    const warning = abortConfirmMessage(
+      queries.sessionNeedsCommit(session),
+      fileInManager.hasUnsavedChanges(session),
+    );
+    if (warning) {
+      const choice = await vscode.window.showWarningMessage(
+        `Begin a transaction on session ${session.id}?`,
+        { modal: true, detail: `${loginLabel(session.login)}\n\n${warning}` },
+        'Begin Transaction',
+      );
+      if (choice !== 'Begin Transaction') return;
+    }
+    try {
+      const { success, err } = sessionManager.begin(session.id);
+      if (!success) {
+        announceSessionAction('Begin Transaction', sessionDescription(session), {
+          success: false,
+          reason: explainGciError(err) || `error ${err.number}`,
+        });
+        return;
+      }
+      announceSessionAction('Begin Transaction', sessionDescription(session), { success: true });
+      await refreshAfterViewReplaced(session);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      announceSessionAction('Begin Transaction', sessionDescription(session), {
+        success: false,
+        reason: msg,
+      });
+    }
+  };
+
+  /**
+   * Change a session's transaction mode, warning about the abort first.
+   *
+   * The mode is re-read from the stone before the list is drawn rather than
+   * trusted from the cache: another tool sharing the session could have changed
+   * it, and a picker that marks the wrong entry as current is worse than no
+   * marking at all.
+   *
+   * Switching aborts — GemStone does that as part of switching, and there is no
+   * way to ask it not to — so the confirmation says so, and says how much is at
+   * stake when the session holds uncommitted work. Cancelling changes nothing.
+   */
+  const setTransactionModeFor = async (session: ActiveSession): Promise<void> => {
+    sessionManager.refreshTransactionState(session.id);
+    const current = session.transactionMode;
+
+    const pick = await vscode.window.showQuickPick(
+      TRANSACTION_MODES.map((mode) => ({
+        label: mode === current ? `$(check) ${modeLabel(mode)}` : modeLabel(mode),
+        description: mode === current ? 'current' : undefined,
+        detail: modeDescription(mode),
+        mode,
+      })),
+      {
+        placeHolder: `Session ${session.id}: transaction mode (currently ${modeLabel(current)})`,
+        matchOnDetail: true,
+      },
+    );
+    if (!pick || pick.mode === current) return;
+
+    const choice = await vscode.window.showWarningMessage(
+      `Switch session ${session.id} to ${modeLabel(pick.mode)}?`,
+      {
+        modal: true,
+        detail: `${loginLabel(session.login)}\n\n${transactionModeSwitchDetail(
+          queries.sessionNeedsCommit(session),
+          fileInManager.hasUnsavedChanges(session),
+        )}`,
+      },
+      'Switch Mode',
+    );
+    if (choice !== 'Switch Mode') return;
+
+    try {
+      sessionManager.setTransactionMode(session.id, pick.mode);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(
+        `${sessionDescription(session)}: could not switch mode — ${msg}`,
+      );
+      // The switch may have got part-way — GemStone aborts as part of switching,
+      // so a switch that lands in the wrong mode has usually still replaced the
+      // view. Ask the stone rather than leave the cached mode describing a session
+      // that is no longer in it, and bring the browsers along while it is still
+      // logged in.
+      sessionManager.refreshTransactionState(session.id);
+      if (sessionManager.getSession(session.id)) await refreshAfterViewReplaced(session);
+      return;
+    }
+    await refreshAfterViewReplaced(session);
+    vscode.window.showInformationMessage(
+      `${sessionDescription(session)}: ${transactionStateLabel(session.transactionMode, session.inTransaction)}.`,
+    );
   };
 
   // `uncommittedAlreadyConfirmed` is for the ONE caller that has already asked about that
@@ -1494,50 +1961,66 @@ export function activate(context: vscode.ExtensionContext) {
   // warning still stands.
   const abortSession = async (
     session: ActiveSession,
-    opts?: { uncommittedAlreadyConfirmed?: boolean },
+    options?: { ask?: boolean; uncommittedAlreadyConfirmed?: boolean },
   ): Promise<void> => {
-    const message = abortConfirmMessage(
-      opts?.uncommittedAlreadyConfirmed ? false : queries.sessionNeedsCommit(session),
-      fileInManager.hasUnsavedChanges(session),
-    );
-    if (message) {
+    const confirmation = sessionActionConfirmation({
+      action: 'Abort',
+      sessionId: session.id,
+      sessionLabel: loginLabel(session.login),
+      warning: abortConfirmMessage(
+        options?.uncommittedAlreadyConfirmed ? false : queries.sessionNeedsCommit(session),
+        fileInManager.hasUnsavedChanges(session),
+      ),
+      ask: options?.ask ?? false,
+    });
+    if (confirmation) {
       const choice = await vscode.window.showWarningMessage(
-        message,
-        { modal: true },
-        'Abort Anyway',
+        confirmation.message,
+        { modal: true, detail: confirmation.detail },
+        confirmation.confirmLabel,
       );
-      if (choice !== 'Abort Anyway') return;
+      if (choice !== confirmation.confirmLabel) return;
     }
     try {
       const { success, err } = sessionManager.abort(session.id);
       if (success) {
-        // Same reasoning as the commit path: the transaction is settled, so a failed
-        // auto-commit has something to work with again.
-        autoCommitTransactionSettled(session.id);
-        vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
-        await exportManager.refreshSession(session);
-        SystemBrowser.refresh(session.id);
-        // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
-        // Search's cached corpora so they show up, and drop the cached
-        // ClassOrganizer for the same reason the commit does.
-        clearClassOrganizer(session);
-        omniSearch?.notifySessionSynced(session.id);
-        explorer.onSessionAborted(session.id);
-        // An abort rewinds the stone underneath every recorded undo, so each entry now
-        // describes a "before" state that never existed in the transaction the session is
-        // now in. Offering them would put back source the abort already discarded.
-        clearUndoStack(session.id);
-        refreshUndoUi(sessionManager.getSelectedSession());
+        announceSessionAction('Abort', sessionDescription(session), { success: true });
+        await refreshAfterViewReplaced(session);
       } else {
-        vscode.window.showErrorMessage(
-          `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
-        );
+        announceSessionAction('Abort', sessionDescription(session), {
+          success: false,
+          reason: explainGciError(err) || `error ${err.number}`,
+        });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(`Abort failed: ${msg}`);
+      // Named for the same reason the commit's is.
+      announceSessionAction('Abort', sessionDescription(session), { success: false, reason: msg });
     }
   };
+
+  const sessionTransactionDeps = {
+    sessionManager,
+    commit: commitSession,
+    abort: abortSession,
+  };
+
+  /**
+   * The session a Begin Transaction or Set Transaction Mode should act in: the
+   * one the row named, or the current one when nothing named a row — the Command
+   * Palette and the status bar both invoke these with no argument.
+   *
+   * A row's session is read back by id rather than taken off the item, the rule
+   * {@link sessionTransactionCommand} writes down for Commit and Abort: a tree
+   * item outlives the session it was built from, and a mode switch aborts, so a
+   * stale row would otherwise raise a confirmation naming what is at stake and
+   * then fail with "Session not found".
+   */
+  const sessionForBeginOrModeCommand = (item?: GemStoneSessionItem) =>
+    resolveCommandSession(sessionManager, item, {
+      gone: (id) => `Session ${id} is no longer logged in.`,
+      none: 'No active GemStone session.',
+    })?.session;
 
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
@@ -1631,11 +2114,20 @@ export function activate(context: vscode.ExtensionContext) {
       await openWorkspace();
     }),
 
+    vscode.commands.registerCommand('gemstone.switchSession', () =>
+      chooseActiveSession(sessionManager),
+    ),
+
+    vscode.commands.registerCommand('gemstone.openNotebook', async () => {
+      await openScratchNotebook();
+    }),
+
     registerStartHere(),
 
     vscode.commands.registerCommand('gemstone.openTutorial', async () => {
       await openTutorialNotebook();
     }),
+    registerTutorialContext(),
 
     vscode.commands.registerCommand('gemstone.installServerSupport', async () => {
       await runInstallServerSupport(sessionManager, context.extensionPath);
@@ -1862,9 +2354,7 @@ export function activate(context: vscode.ExtensionContext) {
               }
               refreshVersions();
             } catch (e) {
-              vscode.window.showErrorMessage(
-                `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-              );
+              showInstallOutcome(e, 'Windows client install failed');
               return;
             }
           } else if (choice !== 'Browse...') {
@@ -2099,16 +2589,44 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.sessionCommit', (item: GemStoneSessionItem) =>
-      commitSession(item.activeSession),
+    // A session row names the session to act in; the Command Palette hands over
+    // nothing, so a session is resolved for it and named before anything is
+    // committed or discarded. Both live in sessionTransactionCommand, where that
+    // dispatch can be tested without an activation. These are the palette's
+    // GemStone: Commit and GemStone: Abort.
+    vscode.commands.registerCommand('gemstone.sessionCommit', (item?: GemStoneSessionItem) =>
+      sessionTransactionCommand(sessionTransactionDeps, 'Commit', item),
     ),
 
-    vscode.commands.registerCommand('gemstone.sessionAbort', (item: GemStoneSessionItem) =>
-      abortSession(item.activeSession),
+    vscode.commands.registerCommand('gemstone.sessionAbort', (item?: GemStoneSessionItem) =>
+      sessionTransactionCommand(sessionTransactionDeps, 'Abort', item),
     ),
+
+    // Begin and Set Transaction Mode go through sessionForBeginOrModeCommand
+    // instead, not through sessionTransactionCommand: that one's job is the modal
+    // naming the session before work is committed or discarded, and neither of
+    // these needs it. A begin has nothing at stake, and a mode switch raises a
+    // confirmation of its own that already names what the abort behind it costs.
+    // The mode is reachable from a session row, from the status bar (which names
+    // no row) and from the palette.
+    vscode.commands.registerCommand('gemstone.sessionBegin', (item?: GemStoneSessionItem) => {
+      const session = sessionForBeginOrModeCommand(item);
+      if (!session) return;
+      return beginSession(session);
+    }),
+
+    vscode.commands.registerCommand('gemstone.setTransactionMode', (item?: GemStoneSessionItem) => {
+      const session = sessionForBeginOrModeCommand(item);
+      if (!session) return;
+      return setTransactionModeFor(session);
+    }),
 
     // Explorer toolbar variants: act on the currently selected session so Commit /
-    // Abort are reachable without switching to the Sessions view.
+    // Abort are reachable without switching to the Sessions view. They carry the
+    // same titles as the commands above, so package.json keeps them out of the
+    // Command Palette — two identical GemStone: Commit entries is a coin toss,
+    // not a choice. Begin has no variant of its own: gemstone.sessionBegin
+    // already falls back to the selected session when no row named one.
     vscode.commands.registerCommand('gemstone.explorer.commit', () => {
       const session = sessionManager.getSelectedSession();
       if (!session) {
@@ -2357,8 +2875,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
         const decision = await confirmLogoutWithUncommittedChanges(
           session.id,
+          loginLabel(session.login),
           queries.sessionNeedsCommit(session),
           (id) => sessionManager.commit(id),
+          session.inTransaction,
         );
         if (decision === 'cancel') return;
         // Keep the class mirror on disk: it's keyed by connection target and is
@@ -2415,7 +2935,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (item) {
           sessionManager.selectSession(item.activeSession.id);
         } else {
-          await sessionManager.resolveSession();
+          await chooseActiveSession(sessionManager);
         }
         treeProvider.refresh();
       },
@@ -2588,8 +3108,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Offered on a row in the Testing view. A plain click there deliberately does
-    // not move the Explorer (the two navigations are independent), so this is how
-    // you ask for it.
+    // not move the Explorer (the two navigations are independent, and the activity
+    // bar shows one container at a time, so a click that took the sidebar would
+    // have to be clicked back before the next test), so this is how you ask for
+    // it — and asking brings the Explorer's container up as well as cascading its
+    // panes, the mirror of revealInTestExplorer focusing the Testing view first.
     vscode.commands.registerCommand(
       'gemstone.revealTestInExplorer',
       async (item?: { uri?: vscode.Uri }) => {
@@ -3146,28 +3669,49 @@ export function activate(context: vscode.ExtensionContext) {
   // user-scope config on every activation — the configs always point at the
   // same well-known socket, regardless of which Jasper window owns it.
   //
-  // Ownership of the live socket (and the HTTPS port) is claimed on the
-  // first GemStone login in this window, not on activation. That way the
-  // window MCP talks to is the one actually working with GemStone — a window
-  // that opens but never logs in stays passive.
+  // The whole surface is off when `jasper.mcp.enabled` is false: no socket is
+  // claimed, no HTTPS listener starts, no client config is written, and the MCP
+  // commands are not registered. The setting is read once here, so changing it
+  // takes effect on the next window reload — matching how a claimed socket
+  // behaves anyway (it stays bound for the rest of the VS Code run).
+  //
+  // Ownership of the live socket (and the HTTPS port) is claimed eagerly at
+  // activation — see tryClaimMcpOwnership below for why it cannot wait for a
+  // login.
   //
   // Once claimed, the socket stays bound for the rest of this VS Code run,
   // even if the user logs out. That keeps Claude Code's MCP connection alive
   // across logout/login cycles — tools just return "no session selected"
-  // during the gap and resume working when the user logs back in.
+  // during the gap and resume working when the user logs back in. The one
+  // thing that releases it is Stop MCP, which exists because a socket held by
+  // one window cannot be taken by another.
   //
   // Claude Code:    user-scope `mcpServers.jasper` in `~/.claude.json`.
   // Claude Desktop: `mcpServers.jasper` in `claude_desktop_config.json`.
   const workspaceRoots = vscode.workspace.workspaceFolders;
-  if (workspaceRoots && workspaceRoots.length > 0) {
+  const mcpEnabled = readMcpSetting<boolean>('enabled', true);
+  // Gates the MCP commands that would fail — Claim, Stop, the copy pair, the
+  // cert install and the inspector. False when the setting is off and when no
+  // folder is open, which are exactly the cases where none of them is
+  // registered. Show MCP Server is deliberately not gated on it: with MCP off,
+  // that tab is the thing that says so.
+  void vscode.commands.executeCommand(
+    'setContext',
+    'jasper.mcpAvailable',
+    mcpEnabled && !!workspaceRoots && workspaceRoots.length > 0,
+  );
+  if (mcpEnabled && workspaceRoots && workspaceRoots.length > 0) {
     const workspacePath = workspaceRoots[0].uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
+      onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
       getSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `${loginLabel(session.login)} (id ${session.id})` : undefined;
       },
       workspacePath,
+      workspaceName: vscode.workspace.name,
+      workspaceFile: vscode.workspace.workspaceFile?.fsPath,
     });
     const registerDesktop = readMcpSetting<boolean>('registerWithClaudeDesktop', true);
 
@@ -3218,31 +3762,37 @@ export function activate(context: vscode.ExtensionContext) {
     let httpServer: McpHttpServer | undefined;
     let httpStarted = false;
 
-    // Tree view that exposes who owns the MCP server right now. Reads its
-    // state on demand from the socket server + sidecar file, so a refresh is
-    // all that's needed when ownership or session selection changes.
-    const mcpTreeProvider = new McpServerTreeProvider({
+    // Where a window asks the current owner to let go. Beside the sidecar, so
+    // the directory watcher below already sees it appear.
+    const releaseRequestPath = defaultReleaseRequestPath();
+
+    // Who owns the MCP server, and which session it answers for. resolveOwnership
+    // reads it on demand from the socket server + sidecar file, so redrawing is
+    // all that's needed when either changes.
+    const mcpDeps: McpServerTreeDeps = {
       isOwner: () => mcpSocketServer.isOwner,
       socketPath: mcpSocketServer.socketPath,
       httpsUrl: () => (httpStarted && httpServer ? httpServer.url : undefined),
       getSession: () => sessionManager.getSelectedSession(),
       sidecarPath: mcpSocketServer.sidecarPath,
-    });
-    const mcpTreeView = vscode.window.createTreeView('jasperMcpServer', {
-      treeDataProvider: mcpTreeProvider,
-      showCollapseAll: false,
-    });
-    context.subscriptions.push(mcpTreeView);
-    context.subscriptions.push(
-      sessionManager.onDidChangeSelection(() => mcpTreeProvider.refresh()),
-    );
+    };
+    mcpOwnership = () => resolveOwnership(mcpDeps);
+    refreshMcpSurfaces();
     // Watch the sidecar file so passive windows pick up ownership changes
-    // from elsewhere without polling.
+    // from elsewhere without polling — including another window releasing the
+    // server, which is what makes a claim from here start working.
     const sidecarWatcher = fs.watch(
       path.dirname(mcpSocketServer.sidecarPath),
       (_event, filename) => {
-        if (!filename || filename === path.basename(mcpSocketServer.sidecarPath)) {
-          mcpTreeProvider.refresh();
+        const name = filename ?? '';
+        // A null filename means "something here changed", so both arms run.
+        // A request naming this process is another window asking for the
+        // server; handleReleaseRequest ignores anything else.
+        if (name === '' || name === path.basename(releaseRequestPath)) {
+          void mcpController.handleReleaseRequest();
+        }
+        if (name === '' || name === path.basename(mcpSocketServer.sidecarPath)) {
+          refreshMcpSurfaces();
         }
       },
     );
@@ -3259,78 +3809,105 @@ export function activate(context: vscode.ExtensionContext) {
     // and serve "no session selected" until you log in there or hand off
     // ownership (disable Jasper in that workspace; click "Claim MCP Server"
     // in the workspace you actually want).
-    let claimAttemptInFlight = false;
-    const tryClaimMcpOwnership = async () => {
-      if (mcpSocketServer.isOwner || claimAttemptInFlight) return;
-      claimAttemptInFlight = true;
+    // Bringing up the HTTPS/SSE listener, which rides along with socket
+    // ownership. Kept here rather than in the controller because it owns the
+    // TLS cert this extension also offers to install.
+    const startMcpHttps = async () => {
+      const tls = await ensureSelfSignedCert(context.globalStorageUri.fsPath);
+      certPathForTrust = tls.certPath;
+      if (tls.generated) {
+        appendSysadmin(`Generated self-signed MCP TLS cert at ${tls.certPath}`);
+        appendSysadmin(`Trust it once with: ${trustCertCommand(tls.certPath)}`);
+        appendSysadmin(`Or run the "GemStone: Install MCP TLS Certificate" command.`);
+      }
+      httpServer = new McpHttpServer({
+        getSession: () => sessionManager.getSelectedSession(),
+        onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
+        port: httpPort,
+        tls: { cert: tls.cert, key: tls.key },
+      });
       try {
-        const claimed = await mcpSocketServer.start();
-        mcpTreeProvider.refresh();
-        if (!claimed) return;
-
-        const tls = await ensureSelfSignedCert(context.globalStorageUri.fsPath);
-        certPathForTrust = tls.certPath;
-        if (tls.generated) {
-          appendSysadmin(`Generated self-signed MCP TLS cert at ${tls.certPath}`);
-          appendSysadmin(`Trust it once with: ${trustCertCommand(tls.certPath)}`);
-          appendSysadmin(`Or run the "GemStone: Install MCP TLS Certificate" command.`);
-        }
-        httpServer = new McpHttpServer({
-          getSession: () => sessionManager.getSelectedSession(),
-          port: httpPort,
-          tls: { cert: tls.cert, key: tls.key },
-        });
-        try {
-          await httpServer.start();
-          httpStarted = true;
-          appendSysadmin(`MCP HTTPS listening at ${httpServer.url}`);
-        } catch (err) {
-          const e = err as NodeJS.ErrnoException;
-          if (e.code === 'EADDRINUSE') {
-            appendSysadmin(
-              `MCP HTTPS port ${httpPort} in use; skipping (another Jasper window may own it). Override jasper.mcp.httpPort per-workspace to run two windows simultaneously.`,
-            );
-          } else {
-            appendSysadmin(`MCP HTTPS server failed to start: ${e.message}`);
-          }
-        }
-        mcpTreeProvider.refresh();
+        await httpServer.start();
+        httpStarted = true;
+        appendSysadmin(`MCP HTTPS listening at ${httpServer.url}`);
       } catch (err) {
-        appendSysadmin(`MCP claim failed: ${(err as Error).message}`);
-      } finally {
-        claimAttemptInFlight = false;
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'EADDRINUSE') {
+          appendSysadmin(
+            `MCP HTTPS port ${httpPort} in use; skipping (another Jasper window may own it). Override jasper.mcp.httpPort per-workspace to run two windows simultaneously.`,
+          );
+        } else {
+          appendSysadmin(`MCP HTTPS server failed to start: ${e.message}`);
+        }
       }
     };
+
+    const stopMcpHttps = async () => {
+      if (!httpServer) return;
+      await httpServer.dispose();
+      httpServer = undefined;
+      httpStarted = false;
+    };
+
+    // Claiming, releasing and handing over live in McpOwnershipController, so
+    // they can be tested; see mcpOwnership.test.ts. Everything VS Code-shaped
+    // is injected here.
+    const mcpController = new McpOwnershipController({
+      socket: mcpSocketServer,
+      startHttps: startMcpHttps,
+      stopHttps: stopMcpHttps,
+      ownership: () => resolveOwnership(mcpDeps),
+      selectedSessionLabel: () => {
+        const session = sessionManager.getSelectedSession();
+        return session ? `session ${session.id} (${loginLabel(session.login)})` : undefined;
+      },
+      pid: process.pid,
+      releaseRequestPath,
+      notifier: {
+        info: (message) => void vscode.window.showInformationMessage(message),
+        warn: (message, ...actions) =>
+          Promise.resolve(vscode.window.showWarningMessage(message, ...actions)),
+        // withProgress answers a Thenable; the controller's contract is a
+        // Promise, so adopt it rather than widening the contract.
+        progress: async (title, task) =>
+          await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title },
+            task,
+          ),
+        log: appendSysadmin,
+      },
+      onChanged: refreshMcpSurfaces,
+      revealOwner: revealMcpOwner,
+      showPanel: async () => {
+        await vscode.commands.executeCommand('jasper.showMcpServer');
+      },
+    });
+
+    mcpClaim = () => mcpController.claim();
+    mcpStop = () => mcpController.stop();
+    mcpRequestRelease = () => mcpController.requestRelease();
 
     // Session changes have two effects when we're the owner: tools see the
     // new session immediately (via getSession), and the sidecar needs an
     // update so passive Jasper windows can show what's currently selected.
     // When we're not owner, the change still triggers a re-render of the
-    // local panel (which displays "(none)") and a re-claim attempt for the
-    // case where a prior owner released ownership while we were idle.
+    // session rows (none of which claim to serve MCP) and a re-claim attempt
+    // for the case where a prior owner released ownership while we were idle.
     context.subscriptions.push(
       sessionManager.onDidChangeSelection(() => {
         mcpSocketServer.refreshSidecar();
-        mcpTreeProvider.refresh();
-        void tryClaimMcpOwnership();
+        refreshMcpSurfaces();
+        void mcpController.tryClaim();
       }),
     );
-    void tryClaimMcpOwnership();
+    void mcpController.tryClaim();
 
     context.subscriptions.push(
-      vscode.commands.registerCommand('jasper.claimMcpServer', async () => {
-        if (mcpSocketServer.isOwner) {
-          vscode.window.showInformationMessage('This window already owns the MCP server.');
-          return;
-        }
-        await tryClaimMcpOwnership();
-        if (!mcpSocketServer.isOwner) {
-          vscode.window.showWarningMessage(
-            'Could not claim the MCP server — another Jasper window still owns it. ' +
-              'Close or disable Jasper in that window, then try again.',
-          );
-        }
-      }),
+      vscode.commands.registerCommand('jasper.claimMcpServer', () => mcpController.claim()),
+      vscode.commands.registerCommand('jasper.stopMcpServer', () => mcpController.stop()),
+      vscode.commands.registerCommand('jasper.requestMcpRelease', () =>
+        mcpController.requestRelease(),
+      ),
       vscode.commands.registerCommand('jasper.copyMcpUrl', async () => {
         if (!httpStarted || !httpServer) {
           vscode.window.showWarningMessage(
@@ -3417,12 +3994,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Databases
   const databaseProvider = new DatabaseTreeProvider(sysadminStorage, processManager);
-  context.subscriptions.push(
-    vscode.window.createTreeView('gemstoneDatabases', {
-      treeDataProvider: databaseProvider,
-      showCollapseAll: true,
-    }),
-  );
+  databases.view = vscode.window.createTreeView('gemstoneDatabases', {
+    treeDataProvider: databaseProvider,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(databases.view);
+  // The section header carries this window's MCP state; the MCP block above ran
+  // before the view existed, so draw it once now that it does.
+  refreshMcpSurfaces();
 
   // Processes have no sidebar section of their own any more — a database's own
   // stone and NetLDI are shown on its row in the Databases & Versions panel. The
@@ -3433,6 +4012,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Rowan: tracked repositories (registry persists in globalState — stones are
   // disposable, the registry isn't) + package-manager operations.
+  // No tree view is contributed for this provider: the Rowan section is gone from
+  // the GemStone sidebar. It is still the source of truth for which projects are
+  // loaded in the image, which is what the Explorer's Rowan section renders, and
+  // its repo commands are still registered — they just have no UI entry point.
   const rowanRegistry = new RowanRepoRegistry(context.globalState);
   const rowanProvider = new RowanTreeProvider(rowanRegistry, {
     getSession: () => sessionManager.getSelectedSession() ?? null,
@@ -3440,8 +4023,8 @@ export function activate(context: vscode.ExtensionContext) {
   // The Rowan project at the open workspace root, shown as a section in the
   // Explorer (contributed only when gemstone.workspaceIsRowanProject). Its
   // packages are read from disk — co-located with the file tree, no stone.
-  // Fed by the Rowan view's own image query, so "loaded" is decided in one place
-  // rather than asked of the stone twice.
+  // Fed by the Rowan provider's own image query, so "loaded" is decided in one
+  // place rather than asked of the stone twice.
   const rowanProjectProvider = new RowanProjectTreeProvider(rowanProvider);
   const rowanProjectView = vscode.window.createTreeView('gemstoneRowanProject', {
     treeDataProvider: rowanProjectProvider,
@@ -3482,10 +4065,12 @@ export function activate(context: vscode.ExtensionContext) {
       'gemstone.workspaceIsRowanProject',
       !!root && isRowanProjectRoot(root),
     );
-    // Gate the "isn't a Rowan project" welcome on having actually looked. Until
-    // the extension activates, workspaceIsRowanProject is undefined — which a
-    // `!` clause reads as "not a project", flashing that welcome over a project
-    // we simply hadn't checked yet. Set last, so it never precedes the answer.
+    // Says the check above has actually run, as distinct from not having run
+    // yet: until the extension activates, workspaceIsRowanProject is undefined,
+    // which a `!` clause reads as "not a project". Nothing consumes this now
+    // that the Rowan sidebar section and its welcomes are gone — it is kept
+    // because any `when` clause negating workspaceIsRowanProject needs it, and
+    // set last so it can never precede the answer it qualifies.
     vscode.commands.executeCommand('setContext', 'gemstone.rowanProjectChecked', true);
   };
   refreshRowanWorkspaceContext();
@@ -3494,10 +4079,10 @@ export function activate(context: vscode.ExtensionContext) {
   activeEditorDecorations.setActiveEditor(vscode.window.activeTextEditor?.document.uri);
   context.subscriptions.push(
     rowanProjectView,
-    vscode.window.createTreeView('gemstoneRowan', {
-      treeDataProvider: rowanProvider,
-    }),
-    // Git-view-style M/A/D badges + label tinting for Rowan rows.
+    // Git-view-style M/A/D badges + label tinting for the rows RowanTreeProvider
+    // builds. Nothing renders those rows now that the Rowan sidebar section is
+    // gone, so this decorates nothing; it stays registered so that restoring the
+    // section is a package.json change and nothing more.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
     // Tints the Methods-pane / Open-Editors row backing the active editor, so the
     // selected method reads as connected to its source even when the tree isn't
@@ -4172,18 +4757,27 @@ export function activate(context: vscode.ExtensionContext) {
     // reads `item.version` from the row it was invoked on, and the Versions rows
     // now live in the Databases & Versions panel — typed into the palette they
     // arrive with no argument and throw. The panel invokes them by name.
+    //
+    // A cancel ends the download and unpack commands normally, with a message
+    // saying what was cleaned up, and the Databases & Versions panel reads what
+    // actually landed on disk to decide what comes next.
     vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionTarget) => {
       const version = item.version;
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Downloading GemStone ${version.version}...`,
-          cancellable: true,
-        },
-        async (progress, token) => {
-          await versionManager.download(version, progress, token);
-        },
-      );
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Downloading GemStone ${version.version}...`,
+            cancellable: true,
+          },
+          (progress, token) => versionManager.download(version, progress, token),
+        );
+      } catch (e) {
+        if (!(e instanceof InstallCancelledError)) throw e;
+        vscode.window.showInformationMessage(e.message);
+        refreshVersions();
+        return;
+      }
       vscode.window.showInformationMessage(`GemStone ${version.version} downloaded.`);
       refreshVersions();
     }),
@@ -4200,15 +4794,21 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.extractVersion', async (item: VersionTarget) => {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: `Extracting GemStone ${item.version.version}...`,
-        },
-        async (progress) => {
-          await versionManager.extract(item.version, progress);
-        },
-      );
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Extracting GemStone ${item.version.version}...`,
+            cancellable: true,
+          },
+          (progress, token) => versionManager.extract(item.version, progress, token),
+        );
+      } catch (e) {
+        if (!(e instanceof InstallCancelledError)) throw e;
+        vscode.window.showInformationMessage(e.message);
+        refreshVersions();
+        return;
+      }
       vscode.window.showInformationMessage(`GemStone ${item.version.version} extracted.`);
       refreshVersions();
     }),
@@ -4270,9 +4870,7 @@ export function activate(context: vscode.ExtensionContext) {
               versionManager.downloadAndExtractWindowsClient(version, progress, token),
           );
         } catch (e) {
-          vscode.window.showErrorMessage(
-            `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-          );
+          showInstallOutcome(e, 'Windows client install failed');
           refreshVersions();
           return;
         }
@@ -4341,6 +4939,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
+    }),
+
+    // The folder everything under Databases & Versions is found in. Registered
+    // as a command because the Settings editor renders a string setting as a
+    // text box and offers no folder picker — the setting's own description
+    // links here, and the panel's buttons come through the same door.
+    vscode.commands.registerCommand('gemstone.chooseRootPath', async () => {
+      if (await chooseRootFolder()) refreshAdminViews();
     }),
 
     // ── Whole-database start/stop ─────────────────────────────────────────

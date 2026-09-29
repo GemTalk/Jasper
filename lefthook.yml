@@ -6,10 +6,17 @@ pre-commit:
   jobs:
     - name: eslint
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx eslint {staged_files}
+      # NODE_OPTIONS matches the `lint` script -- see its `//lint` note.
+      # `--no` keeps npx from installing mid-commit: with stale node_modules it
+      # fails naming the missing package instead of reaching the registry.
+      run: npx --no cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint {staged_files}
     - name: prettier
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx prettier --check {staged_files}
+      # `--` separates npx's own flags from prettier's: without it, npm 11's
+      # arg parser swallows `--check` as an unrecognized npm cli config
+      # instead of forwarding it, so prettier silently runs in its default
+      # "print reformatted source to stdout" mode and the check never happens.
+      run: npx --no -- prettier --check {staged_files}
 
 post-checkout:
   jobs:

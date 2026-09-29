@@ -20,6 +20,8 @@ vi.mock('../../browserQueries', () => ({
       `CATEGORY ${cls}${isMeta ? ' class' : ''} ${cat}`,
   ),
   getDictionaryClassFileOutOrder: vi.fn(() => ['Animal', 'Dog', 'Rock']),
+  fileOutClassTonel: vi.fn((_s: unknown, name: string) => `Class {\n\t#name : '${name}'\n}\n`),
+  tonelCapability: vi.fn(() => ({ available: true, missing: [] })),
 }));
 
 import * as fs from 'fs';
@@ -108,6 +110,10 @@ describe('Explorer file out', () => {
       (_s, cls, isMeta, cat) => `CATEGORY ${cls}${isMeta ? ' class' : ''} ${cat}`,
     );
     vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue(['Animal', 'Dog', 'Rock']);
+    vi.mocked(queries.fileOutClassTonel).mockImplementation(
+      (_s, name) => `Class {\n\t#name : '${name}'\n}\n`,
+    );
+    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
     vi.mocked(vscode.window.showSaveDialog).mockResolvedValue(vscode.Uri.file('/out/File.gs'));
@@ -229,6 +235,53 @@ describe('Explorer file out', () => {
       await ctl.fileOutClass(new HierarchyItem('Object', 'Globals', 'ancestor', 0, false));
 
       expect(queries.fileOutClass).toHaveBeenCalledWith(expect.anything(), 'Object', 'Globals');
+    });
+
+    it('files a class out as TONEL, with the Tonel filters and .class.st name', async () => {
+      // The Explorer handler had no test at all while its chunk sibling above did —
+      // found by inventorying the diff's functions rather than by reading it.
+      const ctl = makeController();
+
+      await ctl.fileOutClassAsTonel(new ClassItem('Dog'));
+      expect(queries.fileOutClassTonel).toHaveBeenCalledWith(expect.anything(), 'Dog', 3);
+      expect(writtenText()).toBe("Class {\n\t#name : 'Dog'\n}\n");
+      // Rowan's own name for a class file, so a Jasper file-out drops into a Rowan
+      // source tree under the name that tree expects.
+      expect(suggestedFileName()).toBe('Dog.class.st');
+    });
+
+    it('files a Tonel hierarchy row out from ITS OWN dictionary', async () => {
+      const ctl = makeController();
+
+      await ctl.fileOutClassAsTonel(new HierarchyItem('Object', 'Globals', 'ancestor', 0, false));
+
+      expect(queries.fileOutClassTonel).toHaveBeenCalledWith(
+        expect.anything(),
+        'Object',
+        'Globals',
+      );
+    });
+
+    it('refuses the Tonel file-out on a stone without the machinery, writing nothing', async () => {
+      // The palette route ignores the menu's `when` clause, so the runtime guard is
+      // the only thing standing between a base-extent session and a broken file.
+      const ctl = makeController();
+      vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['x'] });
+
+      await ctl.fileOutClassAsTonel(new ClassItem('Dog'));
+
+      expect(queries.fileOutClassTonel).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it('reports a Tonel sentinel rather than writing it as source', async () => {
+      const ctl = makeController();
+      vi.mocked(queries.fileOutClassTonel).mockReturnValue('!ERR Class not found: Dog');
+
+      await ctl.fileOutClassAsTonel(new ClassItem('Dog'));
+
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Dog'));
     });
 
     it('reports a class that no longer resolves rather than writing the error as source', async () => {

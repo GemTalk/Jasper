@@ -429,12 +429,74 @@ GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: sour
 	| cat text label |
 	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
-	text isNil ifTrue: [^true].
+	text isNil ifTrue: [
+		self recordHistoryFor: sel from: srcCls to: dstCls source: source category: cat asString.
+		^true].
 	label := isMeta
 		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
 		ifFalse: [dstCls name asString, '>>', sel asString].
 	failures add: (Array with: label with: label with: 'did not recompile: ', text).
 	^false
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> recordHistoryFor: sel from: srcCls to: dstCls source: newSource category: aCategory [
+	"Add the version this copy-forward just compiled to sel's method history, when it really is a
+	 new version.
+
+	 This is the history hook for every refactoring that RE-VERSIONS a class -- rename instance
+	 variable, add/remove instance variable, rename class, split class, extract superclass, the
+	 class-variable engines. Those do not route through GsRefactoringUndo (each calls its own
+	 applyForToken: directly), so the hook there reaches only the method-level refactorings; this
+	 one reaches the rest, because a new class version starts with an empty method dictionary and
+	 EVERY method it keeps comes through here.
+
+	 Which is exactly why the unchanged case has to be excluded. A re-version carries the whole
+	 method dictionary across, and for the methods the refactoring did not touch `source` is just
+	 what srcCls already had. Recording those would stamp a version onto every method of the class
+	 -- turning one instance-variable rename into a hundred spurious history entries -- so a method
+	 whose source is byte-for-byte what it was is skipped here.
+
+	 The old source is read off srcCls and the entry is keyed on dstCls, and the split matters. The
+	 history key carries the DEFINING DICTIONARY, resolved BY IDENTITY, and by the time methods are
+	 carried across the new class version is already the one bound to the name -- so keying on
+	 srcCls resolves to no dictionary at all and files the version under a key no later read will
+	 look at, leaving the method's history frozen at its last hand edit. dstCls is the version that
+	 is bound now and the version a read will resolve, so it is the one that produces the same key
+	 on both sides of the re-version.
+
+	 The recorder is JasperMethodHistory, installed into SessionTemps by the Jasper client at
+	 login; absent on a session that never ran that bootstrap, where this is a no-op. Guarded
+	 throughout: a refactoring must never fail because history could not be written."
+	[ | hist m old |
+	  hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	  hist isNil ifTrue: [^self].
+	  m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
+	  old := m isNil ifTrue: [nil] ifFalse: [m sourceString].
+	  (old notNil and: [self source: old matches: newSource]) ifTrue: [^self].
+	  hist
+	    recordRefactoredIn: dstCls
+	    selector: sel
+	    oldSource: old
+	    newSource: newSource
+	    category: aCategory ]
+		on: Error do: [:e | nil]
+]
+
+{ #category : 'private' }
+GsRefactoringEnvironment >> source: a matches: b [
+	"Whether two method sources are the same text, compared CHARACTER BY CHARACTER (a GemStone
+	 Character is unique per code point, so == is exact).
+
+	 Deliberately not a plain = comparison: the source read back off an installed method and the
+	 source an engine built with the AST rewriter are not guaranteed to be the same String class,
+	 and on 3.6.x comparing a byte String against a Unicode-promoted one RAISES ArgumentError 2718
+	 instead of answering false. Mirrors GsRefactoringUndo>>source:matches: and
+	 JasperMethodHistory>>source:matches:, which exist for the same reason."
+	(a isNil or: [b isNil]) ifTrue: [^a isNil and: [b isNil]].
+	a size = b size ifFalse: [^false].
+	1 to: a size do: [:i | ((a at: i) == (b at: i)) ifFalse: [^false]].
+	^true
 ]
 
 { #category : 'private' }

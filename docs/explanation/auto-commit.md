@@ -130,7 +130,8 @@ the same conflict. Retrying per keystroke would fail every time and bury the mes
 stops — but it does **not** fall back to `off`, which would say the user turned it off. `failed` is a
 third state: armed, and not committing. The indicator goes red, and the prompt offers the three
 things that are actually useful — abort, read the conflict report, or turn it off. A manual commit or
-abort that lands settles the transaction, and auto-commit resumes on its own.
+abort that lands settles the transaction, as does a Begin or a transaction-mode switch (both replace
+the session's view), and auto-commit resumes on its own.
 
 Jadeite draws the same three-state distinction, with the same abort-or-see-the-conflicts choice, and
 for the same reasons; the vocabulary here is deliberately close to it.

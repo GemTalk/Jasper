@@ -1,4 +1,5 @@
 import { GciLibrary } from '../gciLibrary';
+import { createSessionGciLibrary } from '../enhancedInspector/enhancedInspectorPerfTracker';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { createNativeSocketLibrary } from '../sockets/factory';
 import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
@@ -124,7 +125,13 @@ export function useIntegrationTest(
 
     handleIntegrationTestSetupErrorDuring(() => {
       nativeSocketLibrary = createNativeSocketLibrary();
-      gciLibrary = new GciLibrary(process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!, nativeSocketLibrary);
+      // Built exactly as SessionManager builds a session's library, wrapping
+      // and all, so every integration test exercises the object production
+      // hands out rather than a bare one (#646).
+      gciLibrary = createSessionGciLibrary(
+        process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!,
+        nativeSocketLibrary,
+      );
       login();
     });
   });

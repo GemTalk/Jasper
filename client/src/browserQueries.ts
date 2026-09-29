@@ -8,7 +8,10 @@ import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
-import { transactionConflicts as sharedTransactionConflicts } from './queries/transactionConflicts';
+import {
+  TransactionConflicts,
+  tryTransactionConflicts as sharedTryTransactionConflicts,
+} from './queries/transactionConflicts';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -29,9 +32,16 @@ import {
   classExistsInDictionary as sharedClassExistsInDictionary,
 } from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
+import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
+import {
+  tonelCapability as sharedTonelCapability,
+  TonelCapabilityResult,
+} from './queries/tonel/tonelCapability';
+import { fileOutClassTonel as sharedFileOutClassTonel } from './queries/tonel/fileOutClassTonel';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
 import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
@@ -249,6 +259,7 @@ import {
   searchMethodSource as sharedSearchMethodSource,
   sendersOf as sharedSendersOf,
   MethodSearchResult,
+  SourceScanMode,
 } from './queries/methodSearch';
 import { methodsAccessingInstVar as sharedMethodsAccessingInstVar } from './refactoring/queries/methodsAccessingInstVar';
 import { methodsAccessingClassVar as sharedMethodsAccessingClassVar } from './refactoring/queries/methodsAccessingClassVar';
@@ -400,7 +411,12 @@ export async function executeFetchStringNb(
       }
       return fetched.data;
     },
-    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification, onStart },
+    {
+      title: progressTitle ?? `GemStone: ${label}…`,
+      suppressNotification,
+      onStart,
+      disposableProcess: true,
+    },
   );
 
   return data;
@@ -507,20 +523,23 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
 }
 
 /**
- * What the last failed commit conflicted on, ready to print. Only meaningful straight
- * after a failed commit — the stone clears the report on the next commit or abort.
- */
-export function transactionConflicts(session: ActiveSession): string {
-  return sharedTransactionConflicts(defaultQueryExecutorUsing(session));
-}
-
-/**
  * Abort the session's transaction, discarding EVERY uncommitted change in it — not just
  * whatever the caller happens to be undoing. Callers must have told the user that, and
  * should probe {@link sessionNeedsCommit} first when they need to say how much is at stake.
  */
 export function abortSessionTransaction(session: ActiveSession): string {
   return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+}
+
+/**
+ * The conflict set left by a commit this session just had refused, or undefined
+ * when it could not be read (session busy, unreachable, unrecognized reply).
+ *
+ * Call it before anything else touches the transaction — why is the
+ * queries/transactionConflicts.ts header.
+ */
+export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
+  return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
 }
 
 /**
@@ -741,6 +760,14 @@ export function getClassComment(
   return sharedGetClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
+export function getStoredClassComment(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
+}
+
 export function canClassBeWritten(
   session: ActiveSession,
   className: string,
@@ -775,6 +802,25 @@ export function getSiblingClassNames(
   dict?: number | string,
 ): string[] {
   return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** One class as Tonel source, or a sentinel (see `isTonelFileOutError`). */
+export function fileOutClassTonel(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** Which parts of the Tonel machinery this session can reach. */
+export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
+  return sharedTonelCapability(defaultQueryExecutorUsing(session));
+}
+
+/** Which symbol dictionaries hold a class of this name, in symbol-list order. */
+export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
+  return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
 }
 
 export function fileOutClass(
@@ -827,8 +873,9 @@ export function removeAllMethods(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
 }
 
 export function describeClass(
@@ -2143,8 +2190,13 @@ export function getStepPointSelectorRanges(
   );
 }
 
-export function searchMethodSource(session: ActiveSession, term: string, ignoreCase: boolean) {
-  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase);
+export function searchMethodSource(
+  session: ActiveSession,
+  term: string,
+  ignoreCase: boolean,
+  mode: SourceScanMode = 'substring',
+) {
+  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
 }
 
 export function sendersOf(session: ActiveSession, selector: string, environmentId: number = 0) {

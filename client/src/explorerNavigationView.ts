@@ -119,6 +119,13 @@ const BUTTONS: ToolbarButton[] = [
       '<path d="M3 8C3 5.23858 5.23858 3 8 3C9.63527 3 11.0878 3.78495 12.0005 5H10C9.72386 5 9.5 5.22386 9.5 5.5C9.5 5.77614 9.72386 6 10 6H12.8904C12.8973 6.00014 12.9041 6.00014 12.911 6H13C13.2761 6 13.5 5.77614 13.5 5.5V2.5C13.5 2.22386 13.2761 2 13 2C12.7239 2 12.5 2.22386 12.5 2.5V4.03138C11.4009 2.78613 9.79253 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.1301 14 13.6999 11.6035 13.9756 8.54488C14.0003 8.26985 13.7975 8.0268 13.5225 8.00202C13.2474 7.97723 13.0044 8.1801 12.9796 8.45512C12.75 11.003 10.6079 13 8 13C5.23858 13 3 10.7614 3 8Z"/>',
   },
   {
+    // Deliberately ungated, unlike the session row, the Databases panel and the
+    // Command Palette, which all withhold Commit unless `gemstone.canCommit`.
+    // `gated` here only sets the initial `disabled` attribute and nothing in this
+    // toolbar re-enables from a context key, so gating it would disable Commit
+    // permanently. Until the toolbar can follow a context key, this surface lets
+    // the stone answer: a commit outside a transaction raises 2030, which
+    // `explainGciError` renders as the prompt to begin one.
     command: 'gemstone.explorer.commit',
     label: 'Commit',
     glyph:
@@ -146,6 +153,16 @@ const BUTTONS: ToolbarButton[] = [
     // codicon list-tree — rows indented under a parent, i.e. the class restored.
     glyph: '<path d="M2 3h1v10H2zm2 .5h10v1H4zm2 3.5h8v1H6zm0 3.5h8v1H6zm-2 3.5h10v-1H4z"/>',
     mode: 'selectors',
+  },
+  {
+    // File In was the Dictionaries pane's title-bar button, where it was only visible
+    // while that pane was expanded and hovered — the same problem this whole webview
+    // exists to solve. It is not about dictionaries anyway: it reads a file into the
+    // session, like Commit and Abort act on the session rather than on a pane.
+    command: 'gemstone.explorer.fileIn',
+    label: 'File In\u2026',
+    glyph:
+      '<path d="M16 13.5C16 13.565 15.987 13.63 15.961 13.69C15.935 13.751 15.897 13.805 15.85 13.85L13.85 15.85C13.804 15.897 13.75 15.935 13.69 15.961C13.63 15.987 13.565 16 13.5 16C13.435 16 13.371 15.987 13.31 15.961C13.249 15.935 13.195 15.897 13.15 15.85L11.15 13.85C11.103 13.804 11.065 13.75 11.039 13.69C11.013 13.63 11 13.565 11 13.5C11 13.435 11.013 13.37 11.039 13.31C11.065 13.249 11.103 13.195 11.15 13.15C11.196 13.103 11.25 13.065 11.31 13.039C11.37 13.013 11.435 13 11.5 13C11.565 13 11.629 13.013 11.69 13.039C11.751 13.065 11.805 13.103 11.85 13.15L13 14.29V9.5C13 9.367 13.052 9.24 13.146 9.146C13.24 9.053 13.367 9 13.5 9C13.633 9 13.76 9.052 13.854 9.146C13.947 9.24 14 9.367 14 9.5V14.29L15.15 13.15C15.196 13.103 15.25 13.065 15.31 13.039C15.37 13.013 15.435 13 15.5 13C15.565 13 15.629 13.013 15.69 13.039C15.751 13.065 15.805 13.103 15.85 13.15C15.897 13.196 15.935 13.25 15.961 13.31C15.987 13.37 16 13.435 16 13.5ZM11 12H12V11H3C2.448 11 2 10.552 2 10V3C2 2.448 2.448 2 3 2H13C13.552 2 14 2.448 14 3V8H15V3C15 1.895 14.105 1 13 1H3C1.895 1 1 1.895 1 3V10C1 11.105 1.895 12 3 12H5V14H3.5C3.224 14 3 14.224 3 14.5C3 14.776 3.224 15 3.5 15H10V14H6V12H10V13.5C10 13.295 10.041 13.097 10.122 12.91C10.203 12.723 10.319 12.559 10.466 12.421C10.565 12.317 10.725 12.204 10.905 12.125C10.936 12.111 10.968 12.106 11 12.095V12Z"/>',
   },
   {
     command: 'gemstone.openWorkspace',

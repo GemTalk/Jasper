@@ -89,6 +89,54 @@ describe('one method-history tab per method', () => {
   });
 });
 
+/**
+ * The same liveness after a REFACTORING as after a Save.
+ *
+ * A Save fires a compile event naming the one method that changed, so that path narrows by class and
+ * selector. A refactoring cannot be narrowed that way — renaming a method rewrites senders across the
+ * image, renaming an instance variable recompiles a class and its subclasses — and the single notice
+ * every refactoring ends at knows only the session. So every panel on that session re-fetches, which
+ * is bounded by how many are open and is the only answer that cannot miss one.
+ */
+describe('live refresh after a refactoring', () => {
+  it('refreshes every open panel for the session, whatever class each shows', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+    await ctl.openMethodHistory(SESSION, 'Other', 'size', false, 1);
+
+    ctl.refreshAllMethodHistoryPanels(1);
+
+    expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes a panel whose class the compile path would not have matched', async () => {
+    // The point of the broader sweep: a rename rewrites senders in classes the refactoring was
+    // never aimed at, and none of them would be named by a compile event.
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'SomeUnrelatedSender', 'callsIt', false, 1);
+
+    ctl.refreshAllMethodHistoryPanels(1);
+
+    expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves another session’s panels alone', async () => {
+    const ctl = makeController();
+    await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
+
+    ctl.refreshAllMethodHistoryPanels(99);
+
+    expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when no panel is open', () => {
+    const ctl = makeController();
+
+    expect(() => ctl.refreshAllMethodHistoryPanels(1)).not.toThrow();
+    expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
+  });
+});
+
 describe('live refresh of an open method-history panel', () => {
   it('refreshes the matching open panel when its method is recompiled elsewhere', async () => {
     const ctl = makeController();

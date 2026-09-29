@@ -108,14 +108,21 @@ expect.extend({
 });
 
 declare module 'vitest' {
-  interface Assertion {
+  // Matches vitest's own `Assertion<R, T>` type parameters exactly: `R` is
+  // `void` for a direct `expect(...)` call and `Promise<void>` when accessed
+  // through `.rejects`/`.resolves`. Returning `R` (rather than a fixed `void`)
+  // lets each call site's inferred return type track which one applies, so a
+  // sync call isn't flagged as a floating promise and a `.rejects` call isn't
+  // flagged as awaiting a non-promise.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- `T` must match vitest's own `Assertion<R, T>` type parameters exactly for declaration merging, even though this augmentation doesn't use it
+  interface Assertion<R extends void | Promise<void> = void, T = unknown> {
     /**
      * Used to test that a function throws exactly the given error instance,
      * not merely an equal or same-typed one.
      *
      * @param expectedError - The exact `Error` instance the received function must throw.
      */
-    toThrowExactly(expectedError: Error): void;
+    toThrowExactly(expectedError: Error): R;
     /**
      * Used to test that a function throws, or (via `.rejects`) a promise
      * rejects with, an instance of the given class with the given message.
@@ -123,6 +130,6 @@ declare module 'vitest' {
      * @param ExpectedClass - The `Error` subclass that must have been thrown.
      * @param expectedMessage - The exact `message` the thrown error must have.
      */
-    toThrowInstanceOf(ExpectedClass: ErrorClass, expectedMessage: string): void;
+    toThrowInstanceOf(ExpectedClass: ErrorClass, expectedMessage: string): R;
   }
 }

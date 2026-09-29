@@ -24,6 +24,7 @@ import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { getGciLog, logInfo } from '../gciLog';
+import { conflictReport, hasConflictDetail } from '../queries/transactionConflicts';
 import { getAutoCommitStatus, setAutoCommitStatus } from './autoCommitState';
 
 export const TOGGLE_AUTO_COMMIT_COMMAND = 'gemstone.autoCommit.toggle';
@@ -146,14 +147,22 @@ export function setAutoCommitAbortHandler(handler: AutoCommitAbort | undefined):
   abortHandler = handler;
 }
 
-/** Print what the failed commit conflicted on into the GemStone channel, and show it. */
+/**
+ * Print what the failed commit conflicted on into the GemStone channel, and show it — the
+ * same report a refused manual commit writes there, so the two read alike.
+ */
 function showConflicts(session: ActiveSession): void {
   const channel = getGciLog();
+  const conflicts = queries.transactionConflicts(session);
   let report: string;
-  try {
-    report = queries.transactionConflicts(session);
-  } catch (e: unknown) {
-    report = `Could not read the conflict report: ${e instanceof Error ? e.message : String(e)}`;
+  if (!conflicts) {
+    report = 'Could not read the conflict report.';
+  } else if (!hasConflictDetail(conflicts)) {
+    report =
+      'The stone reports no conflicting objects. The commit may have failed for another ' +
+      'reason — see the error above.';
+  } else {
+    report = conflictReport(conflicts);
   }
   channel.appendLine(`[Session ${session.id}] Auto-commit conflict report:`);
   channel.appendLine(report);

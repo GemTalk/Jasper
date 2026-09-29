@@ -56,14 +56,19 @@ Both directions are compile errors: an entry with no binding, and an `optionalFu
 | Hand-write an override the headers already cover                           | Same test — disjointness is asserted, not inferred                                                                                                                 | Same                                              |
 | Vendor a revision the schema can't express                                 | The generator refuses to write, naming the symbol that comes and goes, moves its `#if FLG_UNIX` gate, or is dropped                                                | `npm run generate:gci-optional-functions`, and CI |
 | Typo a name in `isAvailable(...)`                                          | Compile error                                                                                                                                                      | `npm run compile`                                 |
-| Call a post-3.6.2 symbol from production code                              | [`gciVersionGated.test.ts`](../../client/src/__tests__/gciVersionGated.test.ts) names every call site, unless you add it to `ALLOWED_POST_362` — a reviewable diff | `npm test`, stone-free                            |
+| Call any registry symbol from production code                              | `eslint.config.mjs`'s `OPTIONAL_GCI_CALL` block fails, naming the hazard; the remedy is a helper in `client/src/gciLibrary/` — see `.claude/rules/client/gci.md`   | `npm run lint`                                    |
 | Add a registry entry but no absent-world assertion                         | Compile error — [`missingGciFunctions.test.ts`](../../client/src/gciLibrary/__tests__/missingGciFunctions.test.ts)'s invocation map is an exhaustive `Record`      | `npm run compile`                                 |
 | Break the Windows non-blocking-login path                                  | `gciSpecials.integration.test.ts` asserts `supportsNonBlockingLogin() === (process.platform !== 'win32')`                                                          | CI, on all five Windows and five Linux cells      |
 | Vendor a revision declaring a symbol Jasper doesn't bind                   | The generator adds an entry (it scopes over what the _headers_ gate), which is a compile error until it has a binding                                              | `npm run compile`, after regenerating             |
 | Vendor a revision and forget to regenerate                                 | CI fails on the diff. **`npm test` alone does not catch this**                                                                                                     | CI's "GCI optional-functions registry" step       |
 | Add a header revision whose `versions.md` row lies                         | `scripts/lint-gci-header-versions.mjs`                                                                                                                             | CI's "GCI header version map" step                |
 
-**The one gap that costs a developer time:** vendoring headers and running only `npm test` shows green — registry staleness is CI's to catch. So **run `npm run generate:gci-optional-functions` as part of vendoring headers**, not after CI tells you to. Once regenerated, a newly gated symbol fails loudly as a compile error.
+**The two gaps that cost a developer time**, both green under `npm test` alone:
+
+- **Vendoring headers without regenerating.** Registry staleness is CI's to catch, so **run `npm run generate:gci-optional-functions` as part of vendoring headers**, not after CI tells you to. Once regenerated, a newly gated symbol fails loudly as a compile error.
+- **An ungated call site.** The gate is an ESLint rule, so `npm run lint` is what catches it — the pre-commit hook that would have caught it earlier is opt-in, and CI's `lint` job is the real gate.
+
+`npm run lint && npm run compile && npm test` before pushing covers both.
 
 ## The cost of an entry, and why Jasper binds everything
 

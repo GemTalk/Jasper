@@ -13,6 +13,17 @@ TODO.md
 # be bundled into the .vsix (it is ~1GB and contains example private keys).
 client/tmp/**
 
+# Environment files holding local connection details. `.env.test` is written by
+# `npm run test:server:start` with the local stone's NRS strings, user and
+# password; `.env.local` / `.env.test.local` are personal overrides. All are
+# gitignored — but vsce does not read .gitignore, so packaging on any machine
+# that has run the integration tests bundled one developer's stone credentials
+# into the .vsix. That is how a 519-byte client/.env.test reached the published
+# 1.9.0, and it is the kind of file a registry's secret scanner rejects an
+# upload for.
+**/.env
+**/.env.*
+
 # Optional local download of GemTalk's copyrighted manuals (npm run docs:fetch),
 # a symlink to a ~22 MB cache outside the repo. Gitignored, but vsce does not
 # read .gitignore — without this line, packaging on a machine that ran the fetch
@@ -67,7 +78,7 @@ mcp-server/node_modules/**
 !node_modules/koffi/build/**
 
 client/src/**
-# listFilter.js, methodListView.js, debuggerView.js, and millerColumns.js are read at runtime
+# listFilter.js, methodListView.js, debuggerView.js, millerColumns.js, and evaluatePane.js are read at runtime
 # via fs.readFileSync and injected into webviews as <script> tags. They must ship as standalone files —
 # they cannot be compiled into the bundle. (debuggerView.js is read at module load by debuggerPanel.ts,
 # which extension.ts imports eagerly, so omitting it here makes loading the packaged extension.js throw
@@ -84,6 +95,7 @@ client/src/**
 !node_modules/@vscode/codicons/dist/codicon.css
 !node_modules/@vscode/codicons/dist/codicon.ttf
 !client/src/browserColumnResize.js
+!client/src/webview/evaluatePane.js
 !client/src/webview/millerColumns.js
 !client/src/basicInspector/basicInspectorView.js
 !client/src/refactoring/renameInstVarPanelView.js
@@ -95,6 +107,7 @@ client/src/**
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
 !client/src/omniSearch/omniSearchView.js
+!client/src/mcpView.js
 server/src/**
 mcp-server/src/**
 

@@ -155,6 +155,45 @@ describe('wrapWithEnhancedInspectorPerfProxy', () => {
     proxy.GciTsExecuteFetchBytes({}, null, -1, 0n, 0n, 0n, 1024);
     expect(fake.GciTsExecuteFetchBytes).toHaveBeenCalledOnce();
   });
+
+  // Regression for https://github.com/GemTalk/Jasper/issues/646. The koffi
+  // bindings are GciLibrary's own fields, and koffi hangs the worker-thread
+  // variant off each one as a property (`_GciTsContinueWith.async`). The trap
+  // used to return `val.bind(receiver)` for every function, and a bound
+  // function keeps NONE of the original's own properties -- so `.async` was
+  // undefined through the proxy, which is the object SessionManager hands out.
+  // Every live Transcript write died on it. Own functions must come back as-is.
+  it('hands back an own function-valued property unbound, with its own properties intact', () => {
+    const binding = Object.assign(
+      vi.fn(() => 'called'),
+      { async: vi.fn() },
+    );
+    const gci = { _GciTsSomething: binding } as unknown as GciLibrary;
+
+    const proxied = wrapWithEnhancedInspectorPerfProxy(gci) as unknown as Record<string, unknown>;
+
+    expect(proxied._GciTsSomething).toBe(binding);
+    expect(typeof (proxied._GciTsSomething as { async?: unknown }).async).toBe('function');
+  });
+
+  // The other half of the same trap: prototype methods are still bound to the
+  // proxy, so a method's nested `this.GciTsXxx()` re-enters the trap and is
+  // counted instead of running unwrapped on the target.
+  it('still binds a prototype method to the proxy, so nested round trips are counted', () => {
+    enhancedInspectorPerfTracker.setEnabled(true);
+    class FakeGci {
+      GciTsExecuteFetchBytes = vi.fn(() => ({ bytesReturned: 0, data: '', err: { number: 0 } }));
+      resolveSymbol(this: FakeGci) {
+        return this.GciTsExecuteFetchBytes();
+      }
+    }
+    const proxy = wrapWithEnhancedInspectorPerfProxy(new FakeGci() as unknown as GciLibrary);
+
+    const detached = (proxy as unknown as { resolveSymbol: () => unknown }).resolveSymbol;
+    detached();
+
+    expect(enhancedInspectorPerfTracker.methodCounts.get('GciTsExecuteFetchBytes')).toBe(1);
+  });
 });
 
 // ── buildEnhancedInspectorPerfStatusBarText ───────────────────────────────

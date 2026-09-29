@@ -334,6 +334,7 @@
       evalToggle,
       evalClear,
       evalbar,
+      evalToolbar,
       frameEvalItem,
       main,
       splitter,
@@ -723,22 +724,85 @@
       });
     }
 
-    // Eval-in-frame: Enter evaluates the expression in the selected frame.
-    // Escape clears what you typed, or closes the bar when it's already empty —
-    // the same two-stage Escape the list filters use.
-    if (evalInput) {
-      evalInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          if (evalInput.value) clearEval();
-          else setEvalCollapsed(true);
-          return;
+    // The evaluate pane's keys, its chord, and the expression history Ctrl+Up / Ctrl+Down walk are
+    // shared with the Inspector's evaluate tab — one module, loaded by both webviews, so a gesture
+    // cannot come to mean two things depending on which panel you are in. See
+    // client/src/webview/evaluatePane.js; the modes themselves are in client/src/evaluateMode.ts.
+    //
+    // What stays here is the three things this panel does its own way: where the box is, where a
+    // message that is not a result goes, and how an expression reaches the host.
+    let lastAnswer = null; // {value, isError} — what the result row returns to
+
+    const evalPane = EvaluatePane.create({
+      input: () => evalInput,
+      send: (expr, mode) => post({ command: 'evalInFrame', level: selectedLevel, expr, mode }),
+      syncText: () => showClearWhenTyped(),
+      /**
+       * The result row doubles as the status line, because it is this pane's only surface: one row,
+       * already shared between the expression and its answer. So a message borrows it — and hands it
+       * back, since writing into it permanently meant walking to the end of the history threw away
+       * the answer you were reading, a steep price for a navigation message.
+       */
+      showStatus: (text) => {
+        if (!evalResult) return;
+        evalResult.textContent = text;
+        evalResult.title = '';
+        evalResult.classList.remove('error');
+      },
+      restStatus: () => showAnswer(lastAnswer),
+      setChordArmed: (on) => {
+        if (evalbar) evalbar.classList.toggle('chord-armed', on);
+      },
+      clearPane: () => {
+        // A result outlives the expression it came from otherwise, which reads as the answer to
+        // whatever is typed next.
+        if (evalInput) {
+          evalInput.value = '';
+          evalInput.focus();
         }
-        if (e.key !== 'Enter') return;
-        const expr = evalInput.value.trim();
-        if (expr) post({ command: 'evalInFrame', level: selectedLevel, expr });
-      });
+        showAnswer(null);
+        showClearWhenTyped();
+      },
+      // Escape on an already-empty box closes the pane — the same two-stage Escape the list filters
+      // use. The Inspector's evaluate tab has no closed state to reach, so it asks for nothing here.
+      escapeWhenEmpty: () => setEvalCollapsed(true),
+    });
+
+    /** Put an answer (or the absence of one) in the result row, and remember it as what the row
+     *  goes back to after a status message. */
+    function showAnswer(answer) {
+      if (!evalResult) return;
+      lastAnswer = answer;
+      evalResult.textContent = answer ? answer.value : '';
+      evalResult.title = answer ? answer.value : '';
+      evalResult.classList.toggle('error', !!(answer && answer.isError));
+    }
+
+    // Eval-in-frame. The keys are the shared pane's — Shift+Enter is Display It, Ctrl+K D / E / I is
+    // the editor's own chord, Ctrl+Up / Ctrl+Down walk what has already been run, Escape clears the
+    // box or closes the pane. The contributed chord bindings are `when: editorTextFocus`, which a
+    // focused webview never satisfies, so they do not resolve here and cannot collide.
+    if (evalInput) {
+      evalInput.addEventListener('keydown', evalPane.keydown);
+      // A chord left half-typed when focus leaves is not still waiting for its second key.
+      evalInput.addEventListener('blur', evalPane.disarm);
       // The ✕ shows only when there's something to clear.
       evalInput.addEventListener('input', showClearWhenTyped);
+    }
+
+    // The keys this pane answers to are advertised without costing a pixel of layout: the
+    // placeholder occupies space the empty box was spending on nothing, and the rest rides on
+    // tooltips. The wording comes from the shared pane rather than the markup, so both panes say the
+    // same thing and a Mac reads `Cmd` everywhere rather than in whichever half derived it.
+    EvaluatePane.applyLabels(evalbar);
+
+    // Display It / Execute It / Inspect It.
+    if (evalToolbar) {
+      evalToolbar.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-eval]');
+        if (!btn) return;
+        evalPane.run(btn.dataset.eval);
+      });
     }
 
     /** Show the clear button once the expression box has anything in it. */
@@ -746,25 +810,10 @@
       if (evalbar && evalInput) evalbar.classList.toggle('has-text', evalInput.value.length > 0);
     }
 
-    /** Empty the expression AND its answer — a result outlives the expression it
-     *  came from otherwise, which reads as the answer to whatever you type next. */
-    function clearEval() {
-      if (evalInput) {
-        evalInput.value = '';
-        evalInput.focus();
-      }
-      if (evalResult) {
-        evalResult.textContent = '';
-        evalResult.title = '';
-        evalResult.classList.remove('error');
-      }
-      showClearWhenTyped();
-    }
-
     if (evalClear) {
       evalClear.addEventListener('click', (e) => {
         e.preventDefault();
-        clearEval();
+        evalPane.clear();
       });
     }
 
@@ -774,6 +823,9 @@
     // the two splitter positions.
     function setEvalCollapsed(collapsed, focusInput) {
       document.body.classList.toggle('eval-collapsed', collapsed);
+      // The handle is a tab, so it has to SAY whether it is the selected one — the styling hangs off
+      // aria-selected, and a screen reader has nothing else to go on.
+      if (evalToggle) evalToggle.setAttribute('aria-selected', collapsed ? 'false' : 'true');
       if (!collapsed && focusInput && evalInput) evalInput.focus();
       if (vscode.setState) {
         const state = (vscode.getState ? vscode.getState() : null) || {};
@@ -903,10 +955,10 @@
         }
         // Clear stale variables / eval output; the default-select below re-fetches.
         if (variables) variables.innerHTML = '';
-        if (evalResult) {
-          evalResult.textContent = '';
-          evalResult.classList.remove('error');
-        }
+        // Through showAnswer, so the row also forgets what it would go BACK to: a status message
+        // after a fresh stack was restoring the previous halt's answer over an emptied row.
+        evalPane.settle();
+        showAnswer(null);
         currentStack = msg.stack || [];
         renderStack(list, msg.stack);
         // Default-select the top frame so the debugger opens focused on a frame.
@@ -929,14 +981,11 @@
         if (error) error.textContent = msg.text || '';
         if (dnuBar) dnuBar.innerHTML = '';
       } else if (msg.command === 'evalResult') {
-        if (evalResult) {
-          const value = msg.value != null ? msg.value : '';
-          evalResult.textContent = value;
-          // The answer shares one row with the expression, so a long printString
-          // scrolls sideways — the tooltip is how you read the whole of it.
-          evalResult.title = value;
-          evalResult.classList.toggle('error', !!msg.isError);
-        }
+        // The answer shares one row with the expression, so a long printString scrolls sideways —
+        // the tooltip is how you read the whole of it. It goes through showAnswer so the row knows
+        // what to return to after a status message borrows it.
+        evalPane.settle();
+        showAnswer({ value: msg.value != null ? msg.value : '', isError: !!msg.isError });
       } else if (msg.command === 'savedNotice') {
         // #11: show the dumped file's path beside the buttons with a Copy-path
         // glyph, then auto-dismiss after 5s (forever was annoying once you're
