@@ -1908,7 +1908,9 @@ setUp
 	"a selection that crosses a block's closing bracket"
 	self compile: self crossesBlockSource in: base.
 	"a comment between two statements"
-	self compile: 'commented self yourself. "why" self hash. ^count' in: base
+	self compile: 'commented self yourself. "why" self hash. ^count' in: base.
+	"a body whose temporaries sit on their own indented line"
+	self compile: self declaredTempsSource in: base
 %
 
 category: 'fixture'
@@ -1925,6 +1927,21 @@ crossesBlockSource
 		tab , '1 to: 60 do: [:second |' , lf ,
 		tab , tab , '1 to: 177000000 do: [:k | n := n max: k]].' , lf ,
 		tab , 'self assert: n > 0'
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+declaredTempsSource
+	"Laid out the way an editor shows it, the temporaries on their own indented line, so a
+	 selection dragged from the top of the body takes the declaration in."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'declaredTemps' , lf ,
+		tab , '| a b |' , lf ,
+		tab , 'a := 1.' , lf ,
+		tab , 'b := a + 2.' , lf ,
+		tab , '^b'
 %
 
 category: 'fixture'
@@ -2083,6 +2100,68 @@ testSelectionIncludingLeadingWhitespaceStillResolves
 
 	self assert: cs size equals: 2.
 	self assert: (self addChangeIn: cs) notNil
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionIncludingTheTemporariesDeclarationResolves
+	"Dragging from the top of a method body takes in its `| a b |`. The declaration is not
+	 code the extract would leave behind -- it stays with the method either way -- so it is
+	 slack, like the indentation and the statement periods around it."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #declaredTemps
+			select: '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+				'b := a + 2.'
+			newSelector: 'compute').
+	self assert: add newSource includesSubstring: 'a := 1'.
+	self assert: add newSource includesSubstring: 'b := a + 2'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionFromTheIndentBeforeTheTemporariesResolves
+	"The same drag started at column 0, so the selection opens with the line's indentation
+	 and closes with a newline. Where the drag began must not decide the answer."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #declaredTemps
+			select: self tab , '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+				'b := a + 2.' , self lf
+			newSelector: 'compute').
+	self assert: add newSource includesSubstring: 'a := 1'.
+	self assert: add newSource includesSubstring: 'b := a + 2'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testTemporariesDeclarationIsSlackNotExtracted
+	"Taking the declaration into the selection does not move it: the extract rewrites the
+	 original as a send, and b -- assigned inside and read after -- is still declared there."
+	| cs recompile |
+	cs := (self extractFrom: self baseFixture selector: #declaredTemps
+		select: self tab , '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+			'b := a + 2.'
+		newSelector: 'compute') changeSet.
+	recompile := self recompileFor: #declaredTemps in: cs.
+	self assert: recompile newSource includesSubstring: 'self compute'.
+	self deny: recompile newSource includesSubstring: 'a := 1'
+%
+
+category: 'tests - selection bounds'
+method: GsExtractMethodRefactoringTest
+testSelectionOpeningABlockIsStillDeclined
+	"Only the temporaries declaration is slack, never whatever else lies before the
+	 statements. A selection that opens a block and does not close it is still a cut: the
+	 sequence it resolves against -- the block's body -- declares no temporaries, so there is
+	 nothing to forgive, and `[:second |` is code the extract would leave behind.
+	 (Closing the block too is a different thing entirely: that selects the whole block
+	 literal, which extracts as a single expression.)"
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '[:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'inner')
 %
 
 category: 'tests - staging'

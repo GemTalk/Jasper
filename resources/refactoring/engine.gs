@@ -120,7 +120,7 @@ removeallclassmethods GsClassHistory
 doit
 | cls |
 cls := Object subclass: 'GsExtractMethodRefactoring'
-  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newSelector' 'replaceSimilar' 'changeSet' 'analysisDone' 'selectedNodes' 'isExpression' 'firstStart' 'lastStop' 'argNames' 'returnVar' 'internalTempNames' 'structuralDecline')
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newSelector' 'replaceSimilar' 'changeSet' 'analysisDone' 'selectedNodes' 'isExpression' 'firstStart' 'lastStop' 'argNames' 'returnVar' 'internalTempNames' 'structuralDecline' 'selectedSequence')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -147,7 +147,8 @@ only inside the selection is moved into the new method.
 The selection is DECLINED (an empty change set + a declineReason, surfaced in the
 preview, Apply blocked) when it does not resolve to whole statements / a single
 expression -- including a selection that takes in part of a statement, such as the
-closing ] of a block it started inside -- assigns more than one variable used later, contains a ^ return, sends
+closing ] of a block it started inside, though NOT one that merely takes in the
+enclosing sequence''s | temps | declaration -- assigns more than one variable used later, contains a ^ return, sends
 to super, uses thisContext, or the new selector''s arity does not match the argument
 count. A new selector already implemented in the hierarchy is a SOFT collision
 WARNING (surfaced, Apply still allowed).
@@ -2180,12 +2181,16 @@ computeAnalysis
 	isExpression := false.
 	selectedNodes := #().
 	structuralDecline := nil.
+	selectedSequence := nil.
 	tree := self parseTree.
 	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
 	stmts := self selectedStatementsIn: tree.
 	"Whole statements count only when they account for the whole selection. A
 	 selection that also takes in part of a statement -- e.g. the closing ] of a block
-	 it started inside -- would otherwise extract less than was selected, silently."
+	 it started inside -- would otherwise extract less than was selected, silently.
+	 The enclosing sequence's `| temps |` declaration is the one exception: it is not code
+	 the extract would leave behind, so a selection dragged from the top of a body is not a
+	 cut (see leadingSelectionIsOnly:upTo:)."
 	(stmts notEmpty and: [(self selectionOutside: (stmts first start to: stmts last stop) isOnly: '.') not])
 		ifTrue: [stmts := #()].
 	stmts notEmpty
@@ -2194,6 +2199,10 @@ computeAnalysis
 			firstStart := stmts first start.
 			lastStop := stmts last stop]
 		ifFalse: [
+			"The declaration allowance belongs to the whole-statements path. An expression
+			 stands on its own, and a selection reaching back over a `| temps |` to grab one
+			 has taken in code between the two that the extract would leave behind."
+			selectedSequence := nil.
 			node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
 			(node notNil and: [node isValue and: [node isReturn not
 				and: [(self selectionFits: node)
@@ -2223,7 +2232,10 @@ selectedStatementsIn: tree
 	 (e.g. the inner expression of a ^-return) covers no whole statement here and is
 	 handled as a single-expression extract instead. Picking the outermost qualifying
 	 sequence means selecting a whole control-flow statement extracts that statement,
-	 not the contents of the block nested inside it."
+	 not the contents of the block nested inside it.
+
+	 The winning sequence is kept in selectedSequence: it owns the `| temps |` declaration
+	 the selection may have taken in, which the slack check has to recognise."
 	| best bestStmts |
 	best := nil.
 	bestStmts := nil.
@@ -2233,6 +2245,7 @@ selectedStatementsIn: tree
 			covered := n statements select: [:s | s start >= selStart and: [s stop <= selStop]].
 			covered notEmpty ifTrue: [
 				(best isNil or: [n start < best start]) ifTrue: [best := n. bestStmts := covered]]]].
+	selectedSequence := best.
 	^bestStmts ifNil: [OrderedCollection new]
 %
 
@@ -2258,8 +2271,45 @@ selectionOutside: anInterval isOnly: punctuation
 	 anything else is code the extract would leave behind."
 	| src |
 	src := self sourceString.
-	^(self isSlack: src from: selStart to: anInterval first - 1 allowing: punctuation)
+	^(self leadingSelectionIsOnly: punctuation upTo: anInterval first - 1)
 		and: [self isSlack: src from: anInterval last + 1 to: selStop allowing: punctuation]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+leadingSelectionIsOnly: punctuation upTo: stop
+	"The selected text BEFORE the resolved code -- ordinarily whitespace, comments and
+	 punctuation, as isSlack: decides.
+
+	 One more thing counts as slack here: the enclosing sequence's `| temps |` declaration.
+	 Dragging from the top of a method body takes it in, and it is not code the extract would
+	 leave behind -- the declaration stays with the method it is in either way, whatever the
+	 extract moves. Refusing those selections declined a perfectly ordinary gesture with a
+	 message telling the user to select whole statements, which is what they had done.
+
+	 ONLY the declaration is forgiven, and only where it actually is. The text on either side
+	 of it must still be slack, so a selection that opened a block (`[:x |`) and resolved
+	 against the block's own body is still a cut."
+	| src decl |
+	src := self sourceString.
+	decl := self selectedTemporariesDeclaration.
+	decl isNil ifTrue: [^self isSlack: src from: selStart to: stop allowing: punctuation].
+	^(self isSlack: src from: selStart to: decl first - 1 allowing: punctuation)
+		and: [self isSlack: src from: decl last + 1 to: stop allowing: punctuation]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectedTemporariesDeclaration
+	"The bar-to-bar interval of the enclosing sequence's temporaries declaration, when the
+	 selection reaches into it -- otherwise nil. A sequence that declares nothing has no bars,
+	 and a selection starting past the closing bar never touched the declaration."
+	| seq |
+	seq := selectedSequence.
+	seq isNil ifTrue: [^nil].
+	(seq leftBar isNil or: [seq rightBar isNil]) ifTrue: [^nil].
+	selStart > seq rightBar ifTrue: [^nil].
+	^seq leftBar to: seq rightBar
 %
 
 category: 'private - analysis'
