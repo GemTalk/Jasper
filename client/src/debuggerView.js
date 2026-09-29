@@ -929,6 +929,12 @@
         applyBusy(!!msg.on);
         return;
       }
+      if (msg.command === 'subtitle') {
+        // The session mode changed; not a reply, so it must not end a busy span.
+        const subtitle = document.getElementById('subtitle');
+        if (subtitle) subtitle.textContent = msg.text || '';
+        return;
+      }
       if (msg.command === 'cancellable') {
         // Control signal during an in-flight op (not a reply) — don't end the span.
         setCancellable(!!msg.on);

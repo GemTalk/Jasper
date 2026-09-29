@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { SessionPanelTitle } from './activeSessionDisplay';
+import {
+  multipleSessionMode,
+  onDidChangeSessionMode,
+  SessionPanelTitle,
+  sessionTag,
+} from './activeSessionDisplay';
 import { evaluatePaneHtml } from './debuggerEvalPane';
 import { EvalMode } from './evaluateMode';
 import * as crypto from 'crypto';
@@ -1648,7 +1653,12 @@ export class DebuggerPanel {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
-    this.disposables.push(new SessionPanelTitle(panel, session.id, 'GemStone Debugger'));
+    this.disposables.push(
+      new SessionPanelTitle(panel, session.id, 'GemStone Debugger'),
+      onDidChangeSessionMode(() =>
+        this.panel.webview.postMessage({ command: 'subtitle', text: this.sessionSubtitle() }),
+      ),
+    );
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // A panel that moves column updates the remembered value while it still can
@@ -4587,10 +4597,12 @@ export class DebuggerPanel {
     };
   }
 
-  /** Dimmed "For <user> on <stone> @ <host>" subtitle from the login. */
+  /** Dimmed "For <user> on <stone> @ <host>" subtitle from the login, led by the
+   *  session number in multiple-session mode. */
   private sessionSubtitle(): string {
     const { gs_user, stone, gem_host } = this.session.login;
     const parts: string[] = [];
+    if (multipleSessionMode()) parts.push(`${sessionTag(this.session.id)} ·`);
     if (gs_user) parts.push(`For ${gs_user}`);
     if (stone) parts.push(`on ${stone}`);
     if (gem_host) parts.push(`@ ${gem_host}`);
@@ -5018,7 +5030,7 @@ export class DebuggerPanel {
 <body class="${evalCollapsed ? 'eval-collapsed' : ''}">
   <div class="titlebar">
     <h1>GemStone Debugger</h1>
-    <span class="subtitle">${subtitle}</span>
+    <span class="subtitle" id="subtitle">${subtitle}</span>
     <span class="titlebar-actions">
       <button id="copyBtn" class="copy-btn" title="Copy Stack — copy the full stack (with each frame's variable values) to the clipboard" aria-label="Copy Stack">${TOOLBAR_ICONS.copyStack}</button>
       <button id="dumpBtn" class="copy-btn" title="Dump Stack — write the full stack to a file in ~/.jasper/stacks" aria-label="Dump Stack">${TOOLBAR_ICONS.dumpStack}</button>
