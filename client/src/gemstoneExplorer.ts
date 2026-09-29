@@ -7849,6 +7849,13 @@ export class ExplorerController {
       if (outcome && outcome.moved.length > 0 && !reveal) {
         reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
       }
+      // The move preview panel has resolved and is disposing itself, which surfaces the tab
+      // beside it. Claimed HERE, before the reveal below is awaited, so the claim exists by the
+      // time that activation arrives -- otherwise the follow drags the Explorer onto that tab's
+      // dictionary, and a move into another dictionary lands the user back in the one they
+      // dragged FROM (#396). This path reveals through revealClass rather than
+      // refreshAfterClassReshape, which is why it needs its own claim.
+      if (outcome) this.claimNextEditorActivation();
     }
     if (reveal && targetDictName !== undefined && targetDictIndex !== undefined) {
       await this.revealClass(targetDictName, targetDictIndex, targetClass, {
