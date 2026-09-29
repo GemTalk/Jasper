@@ -162,11 +162,11 @@ export function beginMethodDeletion(
  * The capture is one round trip for every slot, taken before any of them is removed.
  *
  *   const recording = beginMethodDeletions(session, slots, 'Array');
- *   ... remove them in order, stopping at a failure ...
+ *   ... remove them in order, skipping past any that fail ...
  *   recording?.commit(slotsActuallyRemoved);
  *
- * `commit` takes the slots that really went, so a run that stopped part-way offers to restore
- * only those — never a method GemStone refused to remove.
+ * `commit` takes the slots that really went, so a run where some of them failed offers to
+ * restore only those — never a method GemStone refused to remove.
  */
 export function beginMethodDeletions(
   session: ActiveSession,

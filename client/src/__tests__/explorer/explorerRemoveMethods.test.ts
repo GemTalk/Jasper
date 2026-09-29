@@ -347,8 +347,31 @@ describe('removing several methods — the pane', () => {
   });
 });
 
-describe('removing several methods — one of them fails', () => {
-  it('stops at the failure and names what failed, what was removed and what was not', async () => {
+describe('removing several methods — one of them cannot be removed', () => {
+  /**
+   * A removal fails when the method is not there to remove: another session took it, or the
+   * row is stale. That is a fact about THAT row and says nothing about the ones after it, so
+   * the run carries on and the report names whatever did not go. Stopping at the first
+   * failure abandoned removals that would have succeeded.
+   */
+  const errorText = () => String(showErrorMessage.mock.calls[0][0]);
+
+  it('removes the methods listed after the one that is already gone', async () => {
+    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
+      selector === 'b' ? 'Selector not found: Array >> b' : 'Deleted: Array >> x',
+    );
+
+    await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
+
+    expect(deleted()).toEqual(['a', 'b', 'c']);
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(errorText()).toBe(
+      'Remove methods — not removed: #b from Array: Selector not found: Array >> b. ' +
+        'Removed: #a, #c.',
+    );
+  });
+
+  it('carries on past a raised error as well', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('removeSelector: refused');
       return 'Deleted: Array >> x';
@@ -356,27 +379,43 @@ describe('removing several methods — one of them fails', () => {
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
 
-    expect(deleted()).toEqual(['a', 'b']);
+    expect(deleted()).toEqual(['a', 'b', 'c']);
     expect(showErrorMessage).toHaveBeenCalledTimes(1);
-    const error = String(showErrorMessage.mock.calls[0][0]);
-    expect(error).toContain('#b');
-    expect(error).toContain('removeSelector: refused');
-    expect(error).toContain('#a');
-    expect(error).toContain('#c');
+    expect(errorText()).toContain('removeSelector: refused');
   });
 
-  it('treats a non-"Deleted" status as a failure too', async () => {
+  it('names every method that could not be removed, not only the first', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
-      selector === 'a' ? 'Not found' : 'Deleted: Array >> b',
+      selector === 'b' ? 'Deleted: Array >> b' : 'Selector not found',
     );
+
+    await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
+
+    expect(errorText()).toBe(
+      'Remove methods — not removed: #a from Array: Selector not found; ' +
+        '#c from Array: Selector not found. Removed: #b.',
+    );
+  });
+
+  it('says none were removed when every one of them fails', async () => {
+    deleteMethod.mockReturnValue('Selector not found');
 
     await removeMethods(makeController(), [row('a'), row('b')]);
 
-    expect(deleted()).toEqual(['a']);
-    expect(String(showErrorMessage.mock.calls[0][0])).toContain('Not found');
+    expect(errorText()).toContain('Removed: none.');
   });
 
-  it('still redraws the pane, which has lost the methods removed before the failure', async () => {
+  it('names the class side of a method that could not be removed', async () => {
+    deleteMethod.mockImplementation((_s: unknown, _c: string, isMeta: boolean) =>
+      isMeta ? 'Selector not found' : 'Deleted: Array >> a',
+    );
+
+    await removeMethods(makeController(), [row('a'), row('new', true)]);
+
+    expect(errorText()).toContain('#new from Array class:');
+  });
+
+  it('still redraws the pane, which has lost whatever did go', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('refused');
       return 'Deleted: Array >> x';
@@ -462,8 +501,8 @@ describe('removing several methods — undo', () => {
     expect(slotSelectors()).toEqual(['at:', 'size']);
   });
 
-  it('covers only the methods actually removed when one fails part-way', async () => {
-    // Offering to restore #b or #c would restore methods that never went away.
+  it('covers only the methods actually removed when one of them fails', async () => {
+    // Offering to restore #b would restore a method that never went away.
     everySlotHoldsAMethod();
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('refused');
@@ -473,10 +512,10 @@ describe('removing several methods — undo', () => {
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
 
     expect(undoStackDepth(1)).toBe(1);
-    expect(slotSelectors()).toEqual(['a']);
+    expect(slotSelectors()).toEqual(['a', 'c']);
   });
 
-  it('records nothing when the first removal fails', async () => {
+  it('records nothing when none of the removals succeeds', async () => {
     everySlotHoldsAMethod();
     deleteMethod.mockReturnValue('Not found');
 

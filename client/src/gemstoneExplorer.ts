@@ -5127,9 +5127,11 @@ export class ExplorerController {
   // sends any of them they go without a question and ONE notice says so; when anything still
   // sends one, ONE confirmation names every method and every surviving sender across all of
   // them. A send from another method in the same removal is not a survivor. They are removed
-  // in order and the run stops at the first failure, since nothing is committed and the user
-  // can retry the rest; the notice then says what went and what did not. One Undo restores
-  // all that went. A selection of one is the single-row removal, wording and all.
+  // in order, and a row that cannot be removed does not stop the ones after it: a removal
+  // fails because that method is not there to remove (another session took it, or the row is
+  // stale), which is a fact about that row alone. Stopping abandoned removals that would have
+  // succeeded. Whatever failed is named afterwards, in one message with what did go, and one
+  // Undo restores what went. A selection of one is the single-row removal, wording and all.
   async removeMethods(nodes: MethodItem[]): Promise<void> {
     const seen = new Set<string>();
     const rows = nodes.filter((n) => {
@@ -5212,7 +5214,7 @@ export class ExplorerController {
     const recording = beginMethodDeletions(session, slots, className);
 
     const removed: typeof slots = [];
-    let failure: string | undefined;
+    const failures: string[] = [];
     for (const [i, node] of rows.entries()) {
       let result: string;
       try {
@@ -5227,19 +5229,19 @@ export class ExplorerController {
         result = e instanceof Error ? e.message : String(e);
       }
       if (!result.startsWith('Deleted:')) {
-        const rest = rows.slice(i + 1).map((n) => `#${n.info.selector}`);
-        const done = removed.map((sl) => `#${sl.selector}`);
-        failure =
-          `Remove methods stopped at #${node.info.selector} from ${sideOf(node)}: ${result}. ` +
-          `Removed: ${done.length > 0 ? done.join(', ') : 'none'}. ` +
-          `Not removed: ${[`#${node.info.selector}`, ...rest].join(', ')}.`;
-        break;
+        failures.push(`#${node.info.selector} from ${sideOf(node)}: ${result}`);
+        continue;
       }
       removed.push(slots[i]);
     }
     const undoEntry = recording?.commit(removed);
-    if (failure) void vscode.window.showErrorMessage(failure);
-    else if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
+    if (failures.length > 0) {
+      const done = removed.map((sl) => `#${sl.selector}`);
+      void vscode.window.showErrorMessage(
+        `Remove methods — not removed: ${failures.join('; ')}. ` +
+          `Removed: ${done.length > 0 ? done.join(', ') : 'none'}.`,
+      );
+    } else if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
     this.reloadCurrentClassMethods();
   }
 
