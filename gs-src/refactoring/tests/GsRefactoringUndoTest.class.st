@@ -26,7 +26,8 @@ It also pins down the machinery around that:
   - nothing here commits.
 
 Every fixture selector is prefixed `gsu` so no refactoring in this suite can reach a
-same-named method elsewhere in the image, and every scope used is #class.
+same-named method elsewhere in the image. Every scope used is #class, except one whole-system
+rename in the shadowed-name tests, whose second implementor is the point of the test.
 
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
@@ -40,8 +41,10 @@ which used to resolve its class by name:
     engine gets wrong, including `dictObjectFor:`;
   - #historyRevert captures and replays through `GsClassHistory`.
 
-Each test shadows the class name only AFTER the forward refactoring has landed, so the refactoring
-itself is correct and the undo alone is on trial.
+Most of them shadow the class name only AFTER the forward refactoring has landed, so the
+refactoring itself is correct and the undo alone is on trial. That leaves the decoy outside the
+change set, so one test instead binds a second GsUndoAccount from the start and has the refactoring
+touch both: the undo must then record and restore both.
 "
 Class {
 	#name : 'GsRefactoringUndoTest',
@@ -323,6 +326,26 @@ GsRefactoringUndoTest >> testARenameContributesBothItsSelectorsAsSlots [
 	slots := GsRefactoringUndo slotsTouchedIn: cs deselected: #().
 	names := (slots collect: [:s | s at: 4]) asSortedCollection asArray.
 	self assert: names equals: #('gsuSum' 'gsuTotal')
+]
+
+{ #category : 'tests - scope' }
+GsRefactoringUndoTest >> testTheSameSelectorOnSameNamedClassesInTwoDictionariesIsTwoSlots [
+	"A class name does not identify a class, so neither does `Class>>selector`. A change set that
+	 touches #gsuTotal on a GsUndoAccount in each of two dictionaries touches two slots, and the
+	 undo has to snapshot both -- or it restores one and reports success for the pair (#396)."
+	| cs slots |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addMethodRecompileInDictionary: 'UserGlobals' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	cs
+		addMethodRecompileInDictionary: 'GsUndoTwinDict' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	slots := GsRefactoringUndo slotsTouchedIn: cs deselected: #().
+	self assert: slots size equals: 2.
+	self
+		assert: (slots collect: [:s | s at: 1]) asSortedCollection asArray
+		equals: #('GsUndoTwinDict' 'UserGlobals')
 ]
 
 { #category : 'tests - rename method' }
@@ -1624,4 +1647,41 @@ GsRefactoringUndoTest >> testUndoDeclinesWhenTheNameNowBindsADifferentClass [
 	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
 	"the replacement class keeps its variable -- the undo did not reach into it"
 	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuExtra')
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRefactoringUndoTest >> testUndoWholeSystemRenameRestoresBothSameNamedImplementors [
+	"The shadow tests above introduce the decoy AFTER the refactoring, so it is never in the change
+	 set. Here the second GsUndoAccount exists from the start and implements #gsuTotal too, so a
+	 whole-system rename legitimately renames both -- and the undo has to put both back. Keying the
+	 recorded slots by `Class>>selector` alone dropped the second class's slots, so the undo
+	 restored one class, reported success, and left the other renamed (#396)."
+	| twinDict twin beforeReal beforeTwin applyJson undoJson |
+	twinDict := SymbolDictionary new name: #GsUndoTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := Object
+		subclass: 'GsUndoAccount'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'gsuTotal ^ 1 + 1' in: twin category: 'computing'.
+	 beforeReal := self snapshotOf: self fixture.
+	 beforeTwin := self snapshotOf: twin.
+	 applyJson := self applyRecording: (GsRenameMethodRefactoring
+		class: self fixture
+		renameSelector: 'gsuTotal'
+		toParts: #('gsuSum')
+		permutation: #()
+		scope: #wholeSystem).
+	 self assert: applyJson includesSubstring: '"undoRecorded":true'.
+	 "The rename reached both classes, so both are the undo's to restore."
+	 self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+	 self assert: (self sourceOf: #gsuSum in: twin) notNil.
+
+	 undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeReal restoredFor: self fixture.
+	 self assertSnapshot: beforeTwin restoredFor: twin]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]

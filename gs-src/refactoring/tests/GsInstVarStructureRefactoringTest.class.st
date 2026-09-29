@@ -27,7 +27,8 @@ setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
 which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
-half `dictObjectFor:` used to get wrong.
+half `dictObjectFor:` used to get wrong, and what a same-named class in another dictionary keeps
+when it is re-versioned because it sits inside the reshaped subtree.
 "
 Class {
 	#name : 'GsInstVarStructureRefactoringTest',
@@ -933,4 +934,66 @@ GsInstVarStructureRefactoringTest >> testPushUpBindsTheDestinationNewVersionInIt
 	 self assert: ((UserGlobals at: #GsVSBase) instVarNames includes: #mid).
 	 self assert: (decoy at: #GsVSBase) == decoyClass]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testPushUpWithAccessorsKeepsTheMethodsOfASameNamedSiblingInAnotherDictionary [
+	"A push-up re-versions every descendant of the destination, and a same-named class in another
+	 dictionary can be one of them. Here a second GsVSMid, in its own dictionary, also subclasses
+	 GsVSBase and has its own #pushable / #pushable: -- unrelated to the ivar being pushed. The
+	 accessors skipped when a class is carried forward used to be keyed by class NAME, so that
+	 class's methods matched and were silently not copied onto its new version."
+	| mid twinDict twin json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable: aValue pushable := aValue' in: mid.
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSMid'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'pushable ^ #twinGetter' in: twin.
+	 self compile: 'pushable: aValue ^ aValue' in: twin.
+	 json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	 self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	 "The other GsVSMid really was carried forward, so the assertions below are about the copy."
+	 self deny: (twinDict at: #GsVSMid) == twin.
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #pushable).
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #'pushable:')]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testConvertTempKeepsTheMethodOfASameNamedDescendantInAnotherDictionary [
+	"Converting a temporary re-versions the class and every descendant, and skips carrying the
+	 rewritten method's OLD source forward because the staged recompile installs the new one. That
+	 skip used to be keyed by class NAME, so a descendant in another dictionary that happens to share
+	 the name -- and has its own, unrelated #compute -- lost that method on its new version."
+	| twinDict twin json |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'compute ^ #twinCompute' in: twin.
+	 json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: (self ownIvarsOf: 'GsVSBase') includes: 't'.
+	 self deny: (twinDict at: #GsVSBase) == twin.
+	 self assert: ((twinDict at: #GsVSBase) includesSelector: #compute).
+	 self
+		assert: ((twinDict at: #GsVSBase) compiledMethodAt: #compute environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'twinCompute']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]

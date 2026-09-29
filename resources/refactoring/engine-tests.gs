@@ -6847,6 +6847,70 @@ testPushUpBindsTheDestinationNewVersionInItsOwnDictionary
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - shadowed class name'
+method: GsInstVarStructureRefactoringTest
+testPushUpWithAccessorsKeepsTheMethodsOfASameNamedSiblingInAnotherDictionary
+	"A push-up re-versions every descendant of the destination, and a same-named class in another
+	 dictionary can be one of them. Here a second GsVSMid, in its own dictionary, also subclasses
+	 GsVSBase and has its own #pushable / #pushable: -- unrelated to the ivar being pushed. The
+	 accessors skipped when a class is carried forward used to be keyed by class NAME, so that
+	 class's methods matched and were silently not copied onto its new version."
+	| mid twinDict twin json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable: aValue pushable := aValue' in: mid.
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSMid'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'pushable ^ #twinGetter' in: twin.
+	 self compile: 'pushable: aValue ^ aValue' in: twin.
+	 json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	 self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	 "The other GsVSMid really was carried forward, so the assertions below are about the copy."
+	 self deny: (twinDict at: #GsVSMid) == twin.
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #pushable).
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #'pushable:')]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarStructureRefactoringTest
+testConvertTempKeepsTheMethodOfASameNamedDescendantInAnotherDictionary
+	"Converting a temporary re-versions the class and every descendant, and skips carrying the
+	 rewritten method's OLD source forward because the staged recompile installs the new one. That
+	 skip used to be keyed by class NAME, so a descendant in another dictionary that happens to share
+	 the name -- and has its own, unrelated #compute -- lost that method on its new version."
+	| twinDict twin json |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'compute ^ #twinCompute' in: twin.
+	 json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: (self ownIvarsOf: 'GsVSBase') includes: 't'.
+	 self deny: (twinDict at: #GsVSBase) == twin.
+	 self assert: ((twinDict at: #GsVSBase) includesSelector: #compute).
+	 self
+		assert: ((twinDict at: #GsVSBase) compiledMethodAt: #compute environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'twinCompute']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
 category: 'asserting'
 method: GsMoveMethodRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -9380,6 +9444,27 @@ testARenameContributesBothItsSelectorsAsSlots
 	self assert: names equals: #('gsuSum' 'gsuTotal')
 %
 
+category: 'tests - scope'
+method: GsRefactoringUndoTest
+testTheSameSelectorOnSameNamedClassesInTwoDictionariesIsTwoSlots
+	"A class name does not identify a class, so neither does `Class>>selector`. A change set that
+	 touches #gsuTotal on a GsUndoAccount in each of two dictionaries touches two slots, and the
+	 undo has to snapshot both -- or it restores one and reports success for the pair (#396)."
+	| cs slots |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addMethodRecompileInDictionary: 'UserGlobals' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	cs
+		addMethodRecompileInDictionary: 'GsUndoTwinDict' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	slots := GsRefactoringUndo slotsTouchedIn: cs deselected: #().
+	self assert: slots size equals: 2.
+	self
+		assert: (slots collect: [:s | s at: 1]) asSortedCollection asArray
+		equals: #('GsUndoTwinDict' 'UserGlobals')
+%
+
 category: 'tests - rename method'
 method: GsRefactoringUndoTest
 testUndoRenameMethodRestoresTheWholeClass
@@ -10765,6 +10850,44 @@ testUndoDeclinesWhenTheNameNowBindsADifferentClass
 	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
 	"the replacement class keeps its variable -- the undo did not reach into it"
 	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuExtra')
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoWholeSystemRenameRestoresBothSameNamedImplementors
+	"The shadow tests above introduce the decoy AFTER the refactoring, so it is never in the change
+	 set. Here the second GsUndoAccount exists from the start and implements #gsuTotal too, so a
+	 whole-system rename legitimately renames both -- and the undo has to put both back. Keying the
+	 recorded slots by `Class>>selector` alone dropped the second class's slots, so the undo
+	 restored one class, reported success, and left the other renamed (#396)."
+	| twinDict twin beforeReal beforeTwin applyJson undoJson |
+	twinDict := SymbolDictionary new name: #GsUndoTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := Object
+		subclass: 'GsUndoAccount'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'gsuTotal ^ 1 + 1' in: twin category: 'computing'.
+	 beforeReal := self snapshotOf: self fixture.
+	 beforeTwin := self snapshotOf: twin.
+	 applyJson := self applyRecording: (GsRenameMethodRefactoring
+		class: self fixture
+		renameSelector: 'gsuTotal'
+		toParts: #('gsuSum')
+		permutation: #()
+		scope: #wholeSystem).
+	 self assert: applyJson includesSubstring: '"undoRecorded":true'.
+	 "The rename reached both classes, so both are the undo's to restore."
+	 self assert: (self sourceOf: #gsuSum in: self fixture) notNil.
+	 self assert: (self sourceOf: #gsuSum in: twin) notNil.
+
+	 undoJson := self undoAll.
+
+	 self assert: undoJson includesSubstring: '"failed":[]'.
+	 self assertSnapshot: beforeReal restoredFor: self fixture.
+	 self assertSnapshot: beforeTwin restoredFor: twin]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 %
 
 category: 'asserting'
