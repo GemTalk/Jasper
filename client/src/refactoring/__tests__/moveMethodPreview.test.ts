@@ -7,6 +7,8 @@ import {
   moveChangeLabel,
   MoveChange,
 } from '../moveMethodPreview';
+import { analyzeMoveMethod, startMoveMethodPreview } from '../queries/previewMoveMethod';
+import type { AsyncQueryExecutor } from '../queries/previewRenameMethod';
 
 describe('move-method analysis parsing', () => {
   it('reads the target class, movable count, and per-selector verdicts', () => {
@@ -203,5 +205,52 @@ describe('move change labels', () => {
     expect(
       moveChangeLabel(change({ kind: 'methodRemove', className: 'Source', isMeta: true })),
     ).toBe('Source class>>foo (remove from source)');
+  });
+});
+
+describe('move-method query building: the target dictionary', () => {
+  const capture = (): { codes: string[]; exec: AsyncQueryExecutor } => {
+    const codes: string[] = [];
+    const exec: AsyncQueryExecutor = (_label, code) => {
+      codes.push(code);
+      return Promise.resolve('{}');
+    };
+    return { codes, exec };
+  };
+
+  it('sends the target dictionary index to the engine, so a shadowed name cannot resolve elsewhere', async () => {
+    const { codes, exec } = capture();
+    await analyzeMoveMethod(exec, 'Source', ['foo'], false, 'Target', false, 2, 3);
+    expect(codes[0]).toContain("toClassNamed: 'Target'");
+    expect(codes[0]).toContain('inDictionary: 3');
+  });
+
+  it('quotes a dictionary given by name', async () => {
+    const { codes, exec } = capture();
+    await startMoveMethodPreview(
+      exec,
+      'Source',
+      ['foo'],
+      false,
+      'Target',
+      false,
+      'tok',
+      64,
+      2,
+      'DictB',
+    );
+    expect(codes[0]).toContain("inDictionary: 'DictB'");
+  });
+
+  it('passes nil when no target dictionary is known, keeping the old first-match behaviour', async () => {
+    const { codes, exec } = capture();
+    await analyzeMoveMethod(exec, 'Source', ['foo'], false, 'Target', false, 2);
+    expect(codes[0]).toContain('inDictionary: nil');
+  });
+
+  it('escapes a quote in a dictionary name rather than breaking out of the literal', async () => {
+    const { codes, exec } = capture();
+    await analyzeMoveMethod(exec, 'Source', ['foo'], false, 'Target', false, 2, "Di'ct");
+    expect(codes[0]).toContain("inDictionary: 'Di''ct'");
   });
 });

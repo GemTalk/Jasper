@@ -185,11 +185,13 @@ GsInstVarRefactoring >> ensureAnalysis [
 
 { #category : 'private - analysis' }
 GsInstVarRefactoring >> computeAnalysis [
-	"Set decline (nil when viable), newIvarLists (className -> new own-ivar Array for each edited
+	"Set decline (nil when viable), newIvarLists (class -> new own-ivar Array for each edited
 	 class), affected (classes to version, top-down), and willNotRecompile (className -> selectors
 	 of methods that will lose the variable). Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	willNotRecompile := OrderedCollection new.
 	operation == #add ifTrue: [^self analyzeAdd].
 	operation == #remove ifTrue: [^self analyzeRemove].
@@ -221,7 +223,7 @@ GsInstVarRefactoring >> analyzeAdd [
 			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
 			' an instance variable of that name; adding it to ', definingClass name asString,
 			' would duplicate that variable.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
 ]
@@ -232,7 +234,7 @@ GsInstVarRefactoring >> analyzeRemove [
 	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
 	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileLosing: definingClass
 ]
@@ -297,8 +299,10 @@ GsInstVarRefactoring >> actedOnClassName [
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> isEditedClassNamed: aName [
-	^newIvarLists includesKey: aName
+GsInstVarRefactoring >> isEditedClass: aClass [
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 ]
 
 { #category : 'private' }
@@ -342,7 +346,7 @@ GsInstVarRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
 	dn := self dictNameForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
@@ -362,7 +366,7 @@ GsInstVarRefactoring >> previewDefinitionFor: aClass oldDef: defString [
 	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
-		with: (newIvarLists at: aClass name asString ifAbsent: [environment ownInstVarNamesOf: aClass])
+		with: (newIvarLists at: aClass ifAbsent: [environment ownInstVarNamesOf: aClass])
 ]
 
 { #category : 'building' }
@@ -635,7 +639,7 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
 	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
 	 could raise. If it does, this class's new version is already a real staged mutation, so the
@@ -648,8 +652,10 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 { #category : 'applying' }
 GsInstVarRefactoring >> optionsForApply: aClass [
 	"The class-creation option list aClass's new version is built with: the user-edited set for the
-	 acted-on class (when they changed it), otherwise the class's own preserved options."
-	(editedOptions notNil and: [aClass name asString = self actedOnClassName])
+	 acted-on class (when they changed it), otherwise the class's own preserved options. The
+	 acted-on class is matched by identity -- by name, a same-named class in another dictionary
+	 would be rebuilt with options the user chose for a class they never touched (#396)."
+	(editedOptions notNil and: [aClass == definingClass])
 		ifTrue: [^editedOptions].
 	^self optionsOf: aClass
 ]

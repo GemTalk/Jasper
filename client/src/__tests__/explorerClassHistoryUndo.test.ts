@@ -21,7 +21,7 @@ vi.mock('../refactoring/classHistoryPanel', () => ({ showClassHistoryPanel: vi.f
 import * as queries from '../browserQueries';
 import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { showClassHistoryPanel } from '../refactoring/classHistoryPanel';
-import { ExplorerController } from '../gemstoneExplorer';
+import { ExplorerController, HierarchyItem } from '../gemstoneExplorer';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
@@ -135,5 +135,64 @@ describe('ExplorerController.classHistory — restore', () => {
     await restoreVersion(ctl, 2);
 
     expect(undoStackDepth(1)).toBe(0);
+  });
+});
+
+describe('ExplorerController.classHistory — which dictionary the history belongs to', () => {
+  /** Run `classHistory` on a node and answer the dictionary every history call was scoped to. */
+  async function historyDictFor(
+    ctl: ExplorerController,
+    item: Parameters<ExplorerController['classHistory']>[0],
+  ) {
+    await ctl.classHistory(item);
+    return vi.mocked(queries.getClassHistory).mock.calls[0][2];
+  }
+
+  it('scopes to the tree selection for a class row', async () => {
+    const ctl = makeController();
+    expect(await historyDictFor(ctl, { className: 'Account' })).toBe(3);
+  });
+
+  it("scopes to the NODE'S OWN dictionary for a hierarchy node, not the selection", async () => {
+    // An ancestor in the Hierarchy pane usually lives in another dictionary. Scoping to the
+    // selection made Class History on an ancestor fail outright ('not a class: Object'), and
+    // where the selected dictionary shadows the ancestor's name it showed — and Restore
+    // rewrote — the wrong class (#396).
+    const ctl = makeController();
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);
+    expect(await historyDictFor(ctl, node)).toBe('Globals');
+  });
+
+  it("labels the panel with the hierarchy node's dictionary", async () => {
+    const ctl = makeController();
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);
+    await ctl.classHistory(node);
+    expect(vi.mocked(showClassHistoryPanel).mock.calls[0][3]).toMatchObject({
+      dictName: 'Globals',
+    });
+  });
+
+  it('records the restore against the dictionary the panel was opened on', async () => {
+    // The panel stays open, so re-reading the tree state inside `restore` recorded the undo
+    // against whatever the user clicked since — while the revert itself landed on the class the
+    // panel was showing.
+    const ctl = makeController();
+    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+      JSON.stringify({ reverted: true, index: 2, newIndex: 3, name: 'Object' }),
+    );
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);
+    await ctl.classHistory(node);
+    const handlers = vi.mocked(showClassHistoryPanel).mock.calls[0][2] as {
+      restore: (i: number) => Promise<unknown>;
+    };
+    // the selection moves while the panel is open
+    ctl.state.dictIndex = 7;
+    ctl.state.dictName = 'Elsewhere';
+    await handlers.restore(2);
+
+    const entry = peekUndoEntry(1);
+    const dicts = entry?.kind === 'classEdit' ? entry.slots.map((s) => s.dict) : [];
+    expect(dicts.length).toBeGreaterThan(0);
+    expect(dicts.every((d) => d === 'Globals')).toBe(true);
   });
 });

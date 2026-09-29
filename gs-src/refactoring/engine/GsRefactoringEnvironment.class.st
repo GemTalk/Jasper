@@ -108,16 +108,23 @@ GsRefactoringEnvironment >> sendersOf: aSelector [
 ]
 
 { #category : 'selectors' }
+GsRefactoringEnvironment >> referencesToClass: aClass [
+	"Every method whose compiled code references aClass ITSELF, as an Array of GsNMethod.
+	 These are the method bodies whose source names the class as a global -- exactly the
+	 references a rename must rewrite. Identity, not name: when several dictionaries bind
+	 the name, referencesToClassNamed: would answer some other dictionary's class's
+	 referencers and miss this class's own (#396). Uses the same ClassOrganizer reflection
+	 the client's referencesToObject query uses. Read-only."
+	aClass isNil ifTrue: [^Array new].
+	^(ClassOrganizer new referencesToObject: aClass) asArray
+]
+
+{ #category : 'selectors' }
 GsRefactoringEnvironment >> referencesToClassNamed: aName [
-	"Every method whose compiled code references the class currently bound to aName
-	 (across all dictionaries), as an Array of GsNMethod. These are the method bodies
-	 whose source names the class as a global -- exactly the references a rename must
-	 rewrite. Uses the same ClassOrganizer reflection the client's referencesToObject
-	 query uses. Read-only; returns an empty Array if the name is unbound."
-	| obj |
-	obj := self classNamed: aName.
-	obj isNil ifTrue: [^Array new].
-	^(ClassOrganizer new referencesToObject: obj) asArray
+	"referencesToClass: for the class the symbol list binds to aName FIRST. Only for a
+	 caller that has a name and no class; a caller holding the class must use
+	 referencesToClass:, or a shadowed name sends it to the wrong class's referencers."
+	^self referencesToClass: (self classNamed: aName)
 ]
 
 { #category : 'enumerating' }
@@ -260,31 +267,38 @@ GsRefactoringEnvironment >> classForChange: aChange [
 
 { #category : 'accessing' }
 GsRefactoringEnvironment >> classNamed: aName inDictionaryNamed: aDictName [
-	"The class bound to aName in a dictionary called aDictName, or -- when aDictName is nil, names
-	 no dictionary on the symbol list, or names one that does not bind aName -- whatever
-	 #classNamed: answers.
+	"The class bound to aName in aDictName, or nil.
 
-	 Dictionaries are scanned in symbol-list order and the first whose name matches AND which
-	 binds the class name wins, so a dictionary that merely shares the name cannot swallow the
-	 lookup. The nil and not-found cases fall back deliberately: a record made before #396, or by
-	 a caller with no dictionary to give, must still resolve as well as it ever did."
+	 aDictName is a 1-based SymbolList INDEX (unambiguous, and what the client sends), a
+	 dictionary name, or nil.
+
+	 nil falls back to #classNamed:, which is first-match across the symbol list. That one case is
+	 the compatibility path: a record made before #396, or a caller with no dictionary to give.
+
+	 EVERY OTHER MISS ANSWERS NIL. Being told which dictionary and not finding the class there
+	 means the answer is not known -- and for a shadowed name, falling back then picks the OTHER
+	 dictionary''s class, which is the write-to-the-wrong-class defect this engine exists to
+	 remove. This branch was bitten by exactly that once already: an index stringified to ''10'',
+	 matched no dictionary name, and fell silently back to the first match. Callers turn nil into
+	 ''Class not found: ...'', which is a decline the user can act on rather than damage they
+	 cannot see."
 	| sym |
 	aDictName isNil ifTrue: [^self classNamed: aName].
 	sym := aName asSymbol.
-	"An Integer is a 1-based SymbolList index -- unambiguous where a name is not, and what the
-	 client sends. `isKindOf: Integer` rather than `isInteger`, which String does not implement
-	 on the supported releases."
+	"`isKindOf: Integer` rather than `isInteger`, which String does not implement on the
+	 supported releases."
 	(aDictName isKindOf: Integer) ifTrue: [
-		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^self classNamed: aName].
+		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^nil].
 		^((symbolList at: aDictName) at: sym ifAbsent: [nil])
-			ifNil: [self classNamed: aName]
-			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [self classNamed: aName]]].
+			ifNil: [nil]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [nil]]].
 	self dictionariesDo: [:dict | | bound |
 		(dict name notNil and: [dict name asSymbol == aDictName asSymbol])
 			ifTrue: [
 				bound := dict at: sym ifAbsent: [nil].
-				(bound notNil and: [bound isKindOf: Class]) ifTrue: [^bound]]].
-	^self classNamed: aName
+				^(bound notNil and: [bound isKindOf: Class]) ifTrue: [bound] ifFalse: [nil]]].
+	"The named dictionary is not on the symbol list at all."
+	^nil
 ]
 
 { #category : 'accessing' }

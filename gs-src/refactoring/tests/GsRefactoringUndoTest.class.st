@@ -1545,3 +1545,80 @@ GsRefactoringUndoTest >> testADeclinedReversalNamesTheDictionaryItResolved [
 	 self assert: reason includesSubstring: 'no longer declares an instance variable named gsuExtra']
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
+
+{ #category : 'tests - stale dictionary reference' }
+GsRefactoringUndoTest >> testUndoDeclinesWhenTheRecordedDictionaryIndexHasGoneStale [
+	"The client sends a SymbolList INDEX, and an index only means anything while the list keeps
+	 its order. Jasper lets the user insert, remove and reorder dictionaries between a
+	 refactoring and its Undo. Recording the index and re-resolving it at undo time made index 2
+	 mean a DIFFERENT dictionary after an insert at position 1 -- the decoy gained the variable
+	 and the real class kept it, with {applied:1, failed:[]} reported. Recording the dictionary
+	 OBJECT makes the insert irrelevant. See #396."
+	| idx decoy |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	idx := System myUserProfile symbolList indexOf: UserGlobals.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil classDictName: idx
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+
+	"the shift happens AFTER the record -- every index at or past 1 now means something else"
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self assert: GsRefactoringUndo currentEntry reverseUnavailableReason isNil.
+	 self undoAll.
+	 "the real class lost the variable"
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	 "and the decoy, which the stale index would have pointed at, was never touched"
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuExtra')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - stale dictionary reference' }
+GsRefactoringUndoTest >> testUndoDeclinesWhenTheRecordedDictionaryIsRemoved [
+	"A dictionary the user has taken off their symbol list is not somewhere the undo may write.
+	 It must decline by name, not fall back to whatever else binds the name."
+	| extra cls |
+	extra := SymbolDictionary new name: #GsUndoGoneDict; yourself.
+	System myUserProfile insertDictionary: extra at: 1.
+	cls := Object
+		subclass: 'GsUndoGoneClass' instVarNames: #('gsuGone')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: extra.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoGoneClass'
+		from: 'gsuGone' to: 'gsuGone' scopeKind: nil scopeDictName: nil classDictName: 1
+		label: 'Add gsuGone to GsUndoGoneClass' engine: 'GsInstVarRefactoring'.
+	System myUserProfile removeDictionaryAt: 1.
+	"a same-named class left in plain sight is exactly what must NOT be reached"
+	[Object
+		subclass: 'GsUndoGoneClass' instVarNames: #('gsuGone')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	 self assert: ((UserGlobals at: #GsUndoGoneClass) instVarNames collect: [:e | e asString])
+		= #('gsuGone')]
+		ensure: [UserGlobals removeKey: #GsUndoGoneClass ifAbsent: []]
+]
+
+{ #category : 'tests - stale dictionary reference' }
+GsRefactoringUndoTest >> testUndoDeclinesWhenTheNameNowBindsADifferentClass [
+	"The name being bound is not enough. Delete the class and create a fresh one under the same
+	 name in the same dictionary and the reversal would reshape a class that was never part of
+	 the refactoring. The recorded class history tells the two apart."
+	| cls |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil
+		classDictName: (System myUserProfile symbolList indexOf: UserGlobals)
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+
+	UserGlobals removeKey: #GsUndoAccount ifAbsent: [].
+	cls := Object
+		subclass: 'GsUndoAccount' instVarNames: #('gsuExtra')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	"the replacement class keeps its variable -- the undo did not reach into it"
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuExtra')
+]

@@ -5777,6 +5777,111 @@ testAddWithAccessorsCompilesThemOntoTheActedOnClassNewVersion
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - shadowed lineage'
+method: GsInstVarRefactoringTest
+withShadowedLineageDo: aBlock
+	"A lineage shadow: UserGlobals holds GsIVTwin, and a dictionary AHEAD of it in the symbol
+	 list holds a DIFFERENT GsIVTwin that is a subclass of the first. Legal in GemStone, and the
+	 shape that broke the ivar refactorings -- the bookkeeping was keyed by class name, so the
+	 subclass was handed its parent''s ivar list. Evaluates aBlock with the two classes and
+	 cleans the dictionary up."
+	| decoy parent child |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[parent := Object
+		subclass: 'GsIVTwin'
+		instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 child := parent
+		subclass: 'GsIVTwin'
+		instVarNames: #('childOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self compile: 'parentSees ^parentOwn' in: parent.
+	 self compile: 'childSees ^childOwn' in: child.
+	 aBlock value: parent value: child]
+		ensure: [
+			UserGlobals removeKey: #GsIVTwin ifAbsent: [].
+			System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed lineage'
+method: GsInstVarRefactoringTest
+testAddKeepsAShadowedSubclassOwnInstVars
+	"Adding an ivar to the parent must not push the parent''s list onto the same-named child.
+	 It used to: newIvarLists was keyed by class NAME, both classes answer 'GsIVTwin', and the
+	 child was rebuilt with #('parentOwn' 'newOne') -- which duplicates the inherited parentOwn
+	 and raises error 2271, leaving the parent re-versioned and the child stranded on the
+	 parent''s OLD version. See #396."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		"the parent got the new variable"
+		self assert: (newParent instVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		"the child kept its OWN list, and did not inherit a duplicate"
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: (newChild allInstVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		self assert: (newChild allInstVarNames select: [:e | e asString = 'parentOwn']) size = 1.
+		"and it hangs off the parent''s NEW version, not the superseded one"
+		self assert: newChild superclass == newParent.
+		self deny: newChild superclass == parent]
+%
+
+category: 'tests - shadowed lineage'
+method: GsInstVarRefactoringTest
+testAddStagesAnEditForTheParentAndAReparentForTheShadowedChild
+	"The preview must show what will actually happen: the parent''s definition is edited, the
+	 same-named child is only re-parented. Keyed by name, isEditedClassNamed: answered true for
+	 both and the child got a second classDefinitionEdit -- two rows the user cannot tell apart."
+	self withShadowedLineageDo: [:parent :child | | cs edits reparents |
+		cs := (GsInstVarRefactoring class: parent addInstVar: 'newOne') changeSet.
+		edits := cs changes select: [:c | c kind = #classDefinitionEdit].
+		reparents := cs changes select: [:c | c kind = #classReparent].
+		self assert: edits size = 1.
+		self assert: reparents size = 1.
+		self assert: (edits first className asString) = 'GsIVTwin'.
+		self assert: (reparents first className asString) = 'GsIVTwin'.
+		"the two rows are told apart by their dictionary, which is the only thing that differs"
+		self assert: (edits first dictName asString) = 'UserGlobals'.
+		self assert: (reparents first dictName asString) = 'GsIVShadowDict']
+%
+
+category: 'tests - shadowed lineage'
+method: GsInstVarRefactoringTest
+testAddGivesAShadowedChildItsOwnOptionsNotTheEditedOnes
+	"Options the user edits belong to the class they acted on. optionsForApply: matched the
+	 acted-on class by NAME, so a same-named child was rebuilt with options the user chose for a
+	 class they never touched."
+	self withShadowedLineageDo: [:parent :child | | json newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: #('selfCanBeSpecial') migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self deny: ((newChild _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial'.
+		"and the class the user DID act on got them"
+		self assert: (((UserGlobals at: #GsIVTwin) _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial']
+%
+
+category: 'tests - shadowed lineage'
+method: GsInstVarRefactoringTest
+testRemoveKeepsAShadowedSubclassOwnInstVars
+	"The remove path shares the same bookkeeping as add, and broke the same way."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent removeInstVar: 'parentOwn')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self assert: (newParent instVarNames collect: [:e | e asString]) = #().
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: newChild superclass == newParent]
+%
+
 category: 'asserting'
 method: GsInstVarStructureRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -7157,6 +7262,58 @@ testMoveRemovesFromTheRealSourceNotAGlobalFirstMatch
 	 self assert: (self targetFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
 	 self assert: (self sourceFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
 	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed name'
+method: GsMoveMethodRefactoringTest
+testMoveResolvesTheTargetInTheNamedDictionary
+	"toClassNamed: resolved the target through the symbol list, first match wins. With a decoy
+	 GsMMTarget in a dictionary ahead of UserGlobals, the method was moved ONTO THE DECOY and
+	 removed from the source -- the user''s own target never got it, and nothing failed. The
+	 dictionary-qualified constructor is the fix. See #396."
+	| decoy decoyTarget json realTarget |
+	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyTarget := Object
+		subclass: 'GsMMTarget' instVarNames: #('balance')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+
+	 json := (GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: #(#pureCompute)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		inDictionary: 'UserGlobals'
+		toMeta: false) applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 realTarget := UserGlobals at: #GsMMTarget.
+	 self assert: (realTarget includesSelector: #pureCompute).
+	 self deny: (decoyTarget includesSelector: #pureCompute).
+	 self deny: (self sourceFixture includesSelector: #pureCompute)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed name'
+method: GsMoveMethodRefactoringTest
+testMoveDeclinesWhenTheNamedDictionaryDoesNotBindTheTarget
+	"Naming a dictionary that does not bind the target is a miss, not an invitation to look
+	 elsewhere. The decline names the dictionary so the user can see what was asked for."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsMMEmptyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[json := (GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: #(#pureCompute)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		inDictionary: 'GsMMEmptyDict'
+		toMeta: false) analysisJsonString.
+	 self assert: json includesSubstring: 'GsMMEmptyDict'.
+	 self assert: json includesSubstring: 'was not found'.
+	 "and nothing moved"
+	 self assert: (self sourceFixture includesSelector: #pureCompute)]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
@@ -8585,6 +8742,100 @@ category: 'tests'
 method: GsRefactoringEnvironmentTest
 testUnknownClassNameResolvesToNil
 	self assert: (GsRefactoringEnvironment new classNamed: #GsNoSuchClass_ZZZ) isNil
+%
+
+category: 'tests - dictionary-scoped resolution'
+method: GsRefactoringEnvironmentTest
+testScopedLookupAnswersNilWhenTheNamedDictionaryDoesNotBindTheClass
+	"The miss is the whole point. Being told which dictionary and not finding the class there
+	 means the answer is not known -- falling back to first-match picks the OTHER dictionary''s
+	 class, which is the write-to-the-wrong-class defect this engine exists to remove (#396).
+	 Callers turn nil into ''Class not found: ...'', a decline the user can act on."
+	| sl env dictA dictB |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvMissDictA; yourself.
+	dictB := SymbolDictionary new name: #GsEnvMissDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 Object subclass: 'GsEnvMissShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: dictA.
+	 env := GsRefactoringEnvironment new.
+
+	 "bound in A, asked for in B -- nil, NOT A's class"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvMissDictB) isNil.
+	 "and by index, which is the form the client sends"
+	 self assert: (env classNamed: 'GsEnvMissShadow'
+		inDictionaryNamed: (sl indexOf: dictB)) isNil.
+	 "a dictionary that is not on the symbol list at all"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvNoSuchDict_ZZZ) isNil.
+	 "an index past the end -- the stale-index case, after a dictionary is removed"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: sl size + 5) isNil.
+	 "and it still resolves where the class really is"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvMissDictA) notNil]
+		ensure: [
+			dictA removeKey: #GsEnvMissShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: []. sl remove: dictB ifAbsent: []]
+%
+
+category: 'tests - dictionary-scoped resolution'
+method: GsRefactoringEnvironmentTest
+testScopedLookupFallsBackOnlyWhenNoDictionaryWasNamed
+	"The one legitimate fallback: a record made before #396, or a caller with nothing to give."
+	| sl env dictA |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvNilDictA; yourself.
+	[sl add: dictA.
+	 Object subclass: 'GsEnvNilShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: dictA.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvNilShadow' inDictionaryNamed: nil) notNil.
+	 self assert: (env classNamed: 'GsEnvNilShadow' inDictionaryNamed: nil)
+		== (env classNamed: 'GsEnvNilShadow')]
+		ensure: [
+			dictA removeKey: #GsEnvNilShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: []]
+%
+
+category: 'tests - dictionary-scoped resolution'
+method: GsRefactoringEnvironmentTest
+testScopedLookupIgnoresANonClassBindingOfTheSameName
+	"A global that merely shares the name is not the class living there. Answering it would hand
+	 a refactoring something it cannot reshape."
+	| sl env dictA |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvNonClassDict; yourself.
+	[sl add: dictA.
+	 dictA at: #GsEnvNonClassName put: 42.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvNonClassName' inDictionaryNamed: #GsEnvNonClassDict) isNil.
+	 self assert: (env classNamed: 'GsEnvNonClassName'
+		inDictionaryNamed: (sl indexOf: dictA)) isNil]
+		ensure: [sl remove: dictA ifAbsent: []]
+%
+
+category: 'tests - dictionary-scoped resolution'
+method: GsRefactoringEnvironmentTest
+testScopedLookupByNameDoesNotGuessBetweenTwoDictionariesOfThatName
+	"Two dictionaries can share a NAME, which is why an index is canonical. Asked by name, the
+	 lookup takes the first one of that name and answers what IT binds -- it does not search on
+	 for another dictionary that happens to hold the class."
+	| sl env first second |
+	sl := System myUserProfile symbolList.
+	first := SymbolDictionary new name: #GsEnvTwinDict; yourself.
+	second := SymbolDictionary new name: #GsEnvTwinDict; yourself.
+	[sl add: first. sl add: second.
+	 Object subclass: 'GsEnvTwinShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: second.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvTwinShadow' inDictionaryNamed: #GsEnvTwinDict) isNil.
+	 "the index is unambiguous, and finds it"
+	 self assert: (env classNamed: 'GsEnvTwinShadow'
+		inDictionaryNamed: (sl indexOf: second)) notNil]
+		ensure: [
+			second removeKey: #GsEnvTwinShadow ifAbsent: [].
+			sl remove: first ifAbsent: []. sl remove: second ifAbsent: []]
 %
 
 category: 'private'
@@ -10433,6 +10684,86 @@ testADeclinedReversalNamesTheDictionaryItResolved
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - stale dictionary reference'
+method: GsRefactoringUndoTest
+testUndoDeclinesWhenTheRecordedDictionaryIndexHasGoneStale
+	"The client sends a SymbolList INDEX, and an index only means anything while the list keeps
+	 its order. Jasper lets the user insert, remove and reorder dictionaries between a
+	 refactoring and its Undo. Recording the index and re-resolving it at undo time made index 2
+	 mean a DIFFERENT dictionary after an insert at position 1 -- the decoy gained the variable
+	 and the real class kept it, with {applied:1, failed:[]} reported. Recording the dictionary
+	 OBJECT makes the insert irrelevant. See #396."
+	| idx decoy |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	idx := System myUserProfile symbolList indexOf: UserGlobals.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil classDictName: idx
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+
+	"the shift happens AFTER the record -- every index at or past 1 now means something else"
+	decoy := self shadowDecoyFor: 'GsUndoAccount'.
+	[self assert: GsRefactoringUndo currentEntry reverseUnavailableReason isNil.
+	 self undoAll.
+	 "the real class lost the variable"
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	 "and the decoy, which the stale index would have pointed at, was never touched"
+	 self deny: ((decoy instVarNames collect: [:e | e asString]) includes: 'gsuExtra')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - stale dictionary reference'
+method: GsRefactoringUndoTest
+testUndoDeclinesWhenTheRecordedDictionaryIsRemoved
+	"A dictionary the user has taken off their symbol list is not somewhere the undo may write.
+	 It must decline by name, not fall back to whatever else binds the name."
+	| extra cls |
+	extra := SymbolDictionary new name: #GsUndoGoneDict; yourself.
+	System myUserProfile insertDictionary: extra at: 1.
+	cls := Object
+		subclass: 'GsUndoGoneClass' instVarNames: #('gsuGone')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: extra.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoGoneClass'
+		from: 'gsuGone' to: 'gsuGone' scopeKind: nil scopeDictName: nil classDictName: 1
+		label: 'Add gsuGone to GsUndoGoneClass' engine: 'GsInstVarRefactoring'.
+	System myUserProfile removeDictionaryAt: 1.
+	"a same-named class left in plain sight is exactly what must NOT be reached"
+	[Object
+		subclass: 'GsUndoGoneClass' instVarNames: #('gsuGone')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	 self assert: ((UserGlobals at: #GsUndoGoneClass) instVarNames collect: [:e | e asString])
+		= #('gsuGone')]
+		ensure: [UserGlobals removeKey: #GsUndoGoneClass ifAbsent: []]
+%
+
+category: 'tests - stale dictionary reference'
+method: GsRefactoringUndoTest
+testUndoDeclinesWhenTheNameNowBindsADifferentClass
+	"The name being bound is not enough. Delete the class and create a fresh one under the same
+	 name in the same dictionary and the reversal would reshape a class that was never part of
+	 the refactoring. The recorded class history tells the two apart."
+	| cls |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		recordReverseRename: #instVarAdd className: 'GsUndoAccount'
+		from: 'gsuExtra' to: 'gsuExtra' scopeKind: nil scopeDictName: nil
+		classDictName: (System myUserProfile symbolList indexOf: UserGlobals)
+		label: 'Add gsuExtra to GsUndoAccount' engine: 'GsInstVarRefactoring'.
+
+	UserGlobals removeKey: #GsUndoAccount ifAbsent: [].
+	cls := Object
+		subclass: 'GsUndoAccount' instVarNames: #('gsuExtra')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	"the replacement class keeps its variable -- the undo did not reach into it"
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuExtra')
+%
+
 category: 'asserting'
 method: GsRenameClassRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -11004,6 +11335,89 @@ testRenamingOntoANameTakenInTheSameDictionaryStillDeclines
 	 self assert: ref newNameCollision includesSubstring: 'already in use'.
 	 self assert: ref newNameCollision includesSubstring: 'UserGlobals']
 		ensure: [UserGlobals removeKey: #GsRCTaken ifAbsent: []]
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testRenameRewritesItsOwnReferencersAndNotTheDecoysAcrossDictionaries
+	"The references a rename rewrites used to be fetched by NAME, and the name resolves to
+	 whichever dictionary binds it first. With a decoy GsRCBase in a dictionary ahead of
+	 UserGlobals, the rename rewrote the DECOY''s referencers -- pointing them at a class that
+	 does not exist yet -- and never touched the referencers of the class the user renamed. The
+	 apply still reported failed:[]. See #396."
+	| decoy decoyClass decoyUser json |
+	decoy := SymbolDictionary new name: #GsRCRefShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 decoyUser := Object
+		subclass: 'GsRCDecoyUser' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 "GsRCDecoyUser sees the decoy first, so its GsRCBase is the decoy''s"
+	 self compile: 'useDecoy ^GsRCBase new' in: decoyUser.
+
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 "the renamed class''s own referencer, in UserGlobals, IS rewritten"
+	 self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed new') > 0.
+	 "the decoy''s referencer is left pointing at the decoy, which was not renamed"
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCBase new') > 0.
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0.
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testRestoreReparentsUnderItsOwnParentNotASameNamedDecoy
+	"A restore puts the class back under the parent its historical version had, advanced to that
+	 parent''s CURRENT version. That used to be a lookup by name, so a decoy of the parent''s name
+	 earlier in the symbol list took the restored class out of its own hierarchy entirely. See
+	 #396 -- Class History restore is the operation the issue opens with.
+
+	 The fixture gives the child two versions (so there is something to restore) and the parent
+	 two versions (so the restore has to advance past the superseded one). The decoy is inserted
+	 last, so nothing before the restore can resolve through it."
+	| decoy decoyParent parentOne currentParent restored |
+	parentOne := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childOne')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the child -- this is what the restore comes back from"
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the parent -- the restore must land on THIS one, not the superseded one"
+	currentParent := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn' 'parentTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	decoy := SymbolDictionary new name: #GsRCParentShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyParent := Object
+		subclass: 'GsRCParent' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+
+	 GsClassHistory revertClassNamed: 'GsRCChild' toIndex: 1 inDictionary: 'UserGlobals'.
+	 restored := UserGlobals at: #GsRCChild.
+
+	 "the restored definition is the one asked for"
+	 self assert: (restored instVarNames collect: [:e | e asString]) = #('childOne').
+	 "under the real parent''s CURRENT version -- not the decoy, not the superseded version"
+	 self assert: restored superclass == currentParent.
+	 self deny: restored superclass == decoyParent.
+	 self deny: restored superclass == parentOne.
+	 self deny: ((restored allInstVarNames collect: [:e | e asString]) includes: 'decoyOwn').
+	 self assert: ((restored allInstVarNames collect: [:e | e asString]) includes: 'parentTwo')]
+		ensure: [
+			System myUserProfile removeDictionaryAt: 1.
+			#('GsRCChild' 'GsRCParent') do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]]
 %
 
 category: 'asserting'
@@ -11978,6 +12392,139 @@ testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary
 	 self assert: ((UserGlobals at: #GsRIVBase) instVarNames includes: #tally).
 	 self assert: (decoy at: #GsRIVBase) == decoyClass]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+withShadowedLineageDo: aBlock
+	"A lineage shadow: UserGlobals holds GsRIVTwin, and a dictionary AHEAD of it in the symbol
+	 list holds a DIFFERENT GsRIVTwin that is a subclass of the first. Both implement #report
+	 against their own variable, so a rewrite meant for one is visible if it lands on the other.
+	 Evaluates aBlock with the two classes, then cleans up."
+	| decoy parent child |
+	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[parent := Object
+		subclass: 'GsRIVTwin'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 child := parent
+		subclass: 'GsRIVTwin'
+		instVarNames: #('childCount')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self compile: 'report ^count' in: parent.
+	 self compile: 'report ^childCount' in: child.
+	 self compile: 'childOnly ^childCount * 2' in: child.
+	 aBlock value: parent value: child]
+		ensure: [
+			UserGlobals removeKey: #GsRIVTwin ifAbsent: [].
+			System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+shadowedChild
+	^(System myUserProfile symbolList at: 1) at: #GsRIVTwin
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+testRenameLeavesAShadowedChildsOwnMethodAlone
+	"newSourceFor: matched a staged rewrite to a class by NAME, so the parent''s rewritten
+	 #report ('^tally') was compiled into the same-named child -- whose own variable is
+	 childCount, not count. The child''s #report is not part of this rename and must come
+	 through untouched. See #396."
+	self withShadowedLineageDo: [:parent :child | | json newChild |
+		json := (GsRenameInstanceVariableRefactoring class: parent renameInstVar: 'count' to: 'tally')
+			applyDeselected: #().
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := self shadowedChild.
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'childCount') > 0.
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'tally') = 0.
+		"and the parent really was renamed, so the test is not green by doing nothing"
+		self assert: (((UserGlobals at: #GsRIVTwin) compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'tally') > 0]
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+testDeselectingTheParentsMethodDoesNotDropTheShadowedChilds
+	"Deselecting the parent''s #report row built the key 'GsRIVTwin>>report', which also matched
+	 the same-named child -- so the child''s #report was skipped during copy-forward and LOST,
+	 with nothing in failed to say so. Deselection is per class, by identity."
+	self withShadowedLineageDo: [:parent :child | | r ids json newChild |
+		r := GsRenameInstanceVariableRefactoring class: parent renameInstVar: 'count' to: 'tally'.
+		ids := (r changeSet changes
+			select: [:c | c kind = #methodRecompile and: [c selector asString = 'report']])
+			collect: [:c | c id].
+		self assert: ids size = 1.
+		json := r applyDeselected: ids.
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := self shadowedChild.
+		"the child keeps its own #report, untouched"
+		self assert: (newChild includesSelector: #report).
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'childCount') > 0.
+		self assert: (newChild includesSelector: #childOnly).
+		"the parent''s #report is the one that was dropped"
+		self deny: ((UserGlobals at: #GsRIVTwin) includesSelector: #report)]
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+testRenameDoesNotReparentAGrandchildOntoASameNamedDecoy
+	"A three-level hierarchy re-parents each descendant onto the version this apply just made.
+	 That parent used to be looked up BY NAME, so with a decoy of the middle class''s name
+	 earlier in the symbol list the grandchild was re-parented onto the DECOY -- silently
+	 acquiring the decoy''s instance variables and losing its own inheritance. See #396."
+	| decoy decoyMid base mid leaf json newLeaf |
+	decoy := SymbolDictionary new name: #GsRIVDecoyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[base := Object
+		subclass: 'GsRIVDBase' instVarNames: #('x')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 mid := base
+		subclass: 'GsRIVDMid' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 leaf := mid
+		subclass: 'GsRIVDLeaf' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 decoyMid := Object
+		subclass: 'GsRIVDMid' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 self compile: 'readX ^x' in: base.
+
+	 json := (GsRenameInstanceVariableRefactoring class: base renameInstVar: 'x' to: 'y')
+		applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 newLeaf := UserGlobals at: #GsRIVDLeaf.
+	 "the grandchild hangs off the new version of the REAL middle class"
+	 self assert: newLeaf superclass == (UserGlobals at: #GsRIVDMid).
+	 self deny: newLeaf superclass == decoyMid.
+	 "so it inherits the renamed variable, and none of the decoy''s"
+	 self assert: (newLeaf allInstVarNames collect: [:e | e asString]) includesItem: 'y'.
+	 self deny: (newLeaf allInstVarNames collect: [:e | e asString]) includesItem: 'decoyOwn']
+		ensure: [
+			#('GsRIVDLeaf' 'GsRIVDMid' 'GsRIVDBase')
+				do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
+			System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+assert: aCollection includesItem: anObject
+	self assert: (aCollection includes: anObject)
+%
+
+category: 'tests - shadowed lineage'
+method: GsRenameInstanceVariableRefactoringTest
+deny: aCollection includesItem: anObject
+	self deny: (aCollection includes: anObject)
 %
 
 category: 'asserting'

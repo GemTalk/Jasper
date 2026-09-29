@@ -912,3 +912,103 @@ GsInstVarRefactoringTest >> testAddWithAccessorsCompilesThemOntoTheActedOnClassN
 	 self deny: (decoyClass includesSelector: #tally)]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> withShadowedLineageDo: aBlock [
+	"A lineage shadow: UserGlobals holds GsIVTwin, and a dictionary AHEAD of it in the symbol
+	 list holds a DIFFERENT GsIVTwin that is a subclass of the first. Legal in GemStone, and the
+	 shape that broke the ivar refactorings -- the bookkeeping was keyed by class name, so the
+	 subclass was handed its parent''s ivar list. Evaluates aBlock with the two classes and
+	 cleans the dictionary up."
+	| decoy parent child |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[parent := Object
+		subclass: 'GsIVTwin'
+		instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 child := parent
+		subclass: 'GsIVTwin'
+		instVarNames: #('childOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self compile: 'parentSees ^parentOwn' in: parent.
+	 self compile: 'childSees ^childOwn' in: child.
+	 aBlock value: parent value: child]
+		ensure: [
+			UserGlobals removeKey: #GsIVTwin ifAbsent: [].
+			System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddKeepsAShadowedSubclassOwnInstVars [
+	"Adding an ivar to the parent must not push the parent''s list onto the same-named child.
+	 It used to: newIvarLists was keyed by class NAME, both classes answer 'GsIVTwin', and the
+	 child was rebuilt with #('parentOwn' 'newOne') -- which duplicates the inherited parentOwn
+	 and raises error 2271, leaving the parent re-versioned and the child stranded on the
+	 parent''s OLD version. See #396."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		"the parent got the new variable"
+		self assert: (newParent instVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		"the child kept its OWN list, and did not inherit a duplicate"
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: (newChild allInstVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		self assert: (newChild allInstVarNames select: [:e | e asString = 'parentOwn']) size = 1.
+		"and it hangs off the parent''s NEW version, not the superseded one"
+		self assert: newChild superclass == newParent.
+		self deny: newChild superclass == parent]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddStagesAnEditForTheParentAndAReparentForTheShadowedChild [
+	"The preview must show what will actually happen: the parent''s definition is edited, the
+	 same-named child is only re-parented. Keyed by name, isEditedClassNamed: answered true for
+	 both and the child got a second classDefinitionEdit -- two rows the user cannot tell apart."
+	self withShadowedLineageDo: [:parent :child | | cs edits reparents |
+		cs := (GsInstVarRefactoring class: parent addInstVar: 'newOne') changeSet.
+		edits := cs changes select: [:c | c kind = #classDefinitionEdit].
+		reparents := cs changes select: [:c | c kind = #classReparent].
+		self assert: edits size = 1.
+		self assert: reparents size = 1.
+		self assert: (edits first className asString) = 'GsIVTwin'.
+		self assert: (reparents first className asString) = 'GsIVTwin'.
+		"the two rows are told apart by their dictionary, which is the only thing that differs"
+		self assert: (edits first dictName asString) = 'UserGlobals'.
+		self assert: (reparents first dictName asString) = 'GsIVShadowDict']
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddGivesAShadowedChildItsOwnOptionsNotTheEditedOnes [
+	"Options the user edits belong to the class they acted on. optionsForApply: matched the
+	 acted-on class by NAME, so a same-named child was rebuilt with options the user chose for a
+	 class they never touched."
+	self withShadowedLineageDo: [:parent :child | | json newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: #('selfCanBeSpecial') migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self deny: ((newChild _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial'.
+		"and the class the user DID act on got them"
+		self assert: (((UserGlobals at: #GsIVTwin) _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial']
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testRemoveKeepsAShadowedSubclassOwnInstVars [
+	"The remove path shares the same bookkeeping as add, and broke the same way."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent removeInstVar: 'parentOwn')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self assert: (newParent instVarNames collect: [:e | e asString]) = #().
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: newChild superclass == newParent]
+]

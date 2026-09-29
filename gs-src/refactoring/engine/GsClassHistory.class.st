@@ -35,28 +35,10 @@ GsClassHistory class >> classNamed: aName inDictionary: aDictRef [
 	"The class bound to aName, scoped to aDictRef -- a 1-based SymbolList index (canonical, and
 	 what the client sends), a dictionary name, or nil for the old unscoped lookup.
 
-	 Unscoped resolution is `symbolList objectNamed:`, which answers the FIRST binding on the
-	 symbol list. For a class name bound in two dictionaries that is a different class from the
-	 one the user selected, so the history shown described the wrong class and a restore rewrote
-	 it (#396). An index is preferred over a name because two dictionaries can share a name.
-
-	 Answers nil when the scope does not resolve or does not bind the name, which every caller
-	 already turns into an error envelope."
-	| sym sl |
-	sym := aName asSymbol.
-	sl := System myUserProfile symbolList.
-	aDictRef isNil ifTrue: [^sl objectNamed: sym].
-	"`isKindOf: Integer` rather than `isInteger`: String does not implement isInteger on the
-	 supported releases, and aDictRef is commonly a dictionary NAME."
-	(aDictRef isKindOf: Integer) ifTrue: [
-		(aDictRef < 1 or: [aDictRef > sl size]) ifTrue: [^nil].
-		^(sl at: aDictRef) at: sym ifAbsent: [nil]].
-	sl do: [:dict | | bound |
-		(dict name notNil and: [dict name asSymbol == aDictRef asSymbol])
-			ifTrue: [
-				bound := dict at: sym ifAbsent: [nil].
-				bound notNil ifTrue: [^bound]]].
-	^nil
+	 Delegates to GsRefactoringEnvironment, which is the one home for this question. It used to be
+	 a second copy with the same intent, and two resolvers for ''class X in dictionary Y'' is how
+	 they drift apart (#396 review, D3)."
+	^GsRefactoringEnvironment new classNamed: aName inDictionaryNamed: aDictRef
 ]
 
 { #category : 'accessing' }

@@ -79,14 +79,17 @@ describe('a partially applied class rename is still undoable', () => {
 
     await makeController().renameClassNamed('ShadowedAAAAA', 5);
 
-    // Asserted by position rather than a whole-call match: the trailing scope/dictionary
-    // arguments are undefined here (no dictionary is selected in this harness), and
-    // expect.anything() does not match undefined.
+    // Asserted by position rather than a whole-call match: the trailing scope argument is
+    // undefined here, and expect.anything() does not match undefined.
     const call = vi.mocked(queries.recordReverseRename).mock.calls[0];
     expect(call[1]).toBe('classRename');
     expect(call[2]).toBe('Shadowed'); // the class is bound under the NEW name now
     expect(call[4]).toBe('ShadowedAAAAA'); // and the reversal renames it back
     expect(call[6]).toBe('GsRenameClassRefactoring');
+    // The dictionary the rename was RESOLVED through, not the tree selection. Recording the
+    // selection instead sent the reversal looking in the wrong dictionary, where it either
+    // declined or renamed a same-named class (#396).
+    expect(call[8]).toBe(5);
 
     // Recording in the stone is only half of it: the button stays dark until an entry is
     // pushed onto the client's stack, which this path used to return before doing.
@@ -102,5 +105,33 @@ describe('a partially applied class rename is still undoable', () => {
     expect(queries.recordReverseRename).toHaveBeenCalledTimes(1);
     // The success path arms the undo through the toast, as it always has.
     expect(notifyRefactoringApplied).toHaveBeenCalled();
+  });
+});
+
+describe('the recorded dictionary is the class’s, not the tree selection', () => {
+  it('records the resolved dictionary even when a different one is selected', async () => {
+    // A rename started from a Hierarchy ancestor, or of an inherited variable at the cursor,
+    // acts on a class in a dictionary other than the selected one. Recording the selection sent
+    // the reversal to the wrong dictionary (#396).
+    vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
+    const ctl = makeController();
+    ctl.state.dictIndex = 9;
+    ctl.state.dictName = 'SelectedElsewhere';
+
+    await ctl.renameClassNamed('ShadowedAAAAA', 5);
+
+    const call = vi.mocked(queries.recordReverseRename).mock.calls[0];
+    expect(call[8]).toBe(5);
+    expect(call[8]).not.toBe(9);
+  });
+
+  it('records a dictionary given by name, as a hierarchy node supplies it', async () => {
+    vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
+    const ctl = makeController();
+    ctl.state.dictIndex = 9;
+
+    await ctl.renameClassNamed('ShadowedAAAAA', 'Globals');
+
+    expect(vi.mocked(queries.recordReverseRename).mock.calls[0][8]).toBe('Globals');
   });
 });

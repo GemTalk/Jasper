@@ -327,7 +327,7 @@ GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromNa
 	"Filled slot by slot rather than with a six-argument `Array with:...`: 3.6.2's Array class
 	 does not implement past four (MessageNotUnderstood 2010), so the longer forms are a 3.7-only
 	 convenience the matrix cannot use."
-	op := Array new: 7.
+	op := Array new: 8.
 	op at: 1 put: kind.
 	op at: 2 put: cn asString.
 	op at: 3 put: fromName asString.
@@ -338,13 +338,16 @@ GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromNa
 	 Without it the reversal re-resolved `cn` by first-match and re-applied the opposite
 	 operation to a same-named class in another dictionary (#396).
 
-	 An INDEX is kept as an Integer: `asString` on it produced '10', which matches no dictionary
-	 NAME, so the scoped lookup found nothing and fell back to the first-match it was meant to
-	 replace -- silently, since the fallback is a legitimate path for a record made without a
-	 dictionary. The client sends a SymbolList index, so this is the form that actually arrives."
-	op at: 7 put: (cd isNil
-		ifTrue: [nil]
-		ifFalse: [(cd isKindOf: Integer) ifTrue: [cd] ifFalse: [cd asString]]).
+	 It is the SymbolDictionary OBJECT, resolved here, at record time. The client sends a
+	 SymbolList index, and an index is only meaningful while the list keeps its order -- Jasper
+	 lets the user insert, remove and reorder dictionaries (and undo those edits) between a
+	 refactoring and its Undo, after which the index names a different dictionary and the
+	 reversal reshapes a class the user never touched. SessionTemps holds objects, so the
+	 reference can be pinned instead of re-derived. Slot 8 pins the class the same way: its
+	 class history, the one object every version of it shares and no other class does, so undo
+	 can tell 'the same class, re-versioned' from 'a different class of the same name'."
+	op at: 7 put: (self dictionaryObjectFor: cd).
+	op at: 8 put: (self lineageOfClassNamed: cn inDictionary: (op at: 7)).
 	SessionTemps current
 		at: self entryKey
 		put: (self new
@@ -353,6 +356,34 @@ GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromNa
 			sequence: self nextSequence
 			reverseOp: op).
 	^'ok'
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> dictionaryObjectFor: aDictRef [
+	"The SymbolDictionary aDictRef names -- a SymbolList index, a dictionary name, an actual
+	 SymbolDictionary, or nil for 'no dictionary was recorded'. Answers nil when it resolves to
+	 nothing, which scopes exactly as an unrecorded dictionary does."
+	| sl |
+	aDictRef isNil ifTrue: [^nil].
+	(aDictRef isKindOf: SymbolDictionary) ifTrue: [^aDictRef].
+	sl := System myUserProfile symbolList.
+	(aDictRef isKindOf: Integer) ifTrue: [
+		^(aDictRef < 1 or: [aDictRef > sl size]) ifTrue: [nil] ifFalse: [sl at: aDictRef]].
+	sl do: [:d |
+		(d name notNil and: [d name asSymbol == aDictRef asSymbol]) ifTrue: [^d]].
+	^nil
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> lineageOfClassNamed: aName inDictionary: aDictOrNil [
+	"The class history of the class aDictOrNil binds under aName, or nil when there is no such
+	 class (or no dictionary was recorded). Recorded so undo can require that the name still
+	 resolves to THAT class and not to a same-named replacement."
+	| bound |
+	aDictOrNil isNil ifTrue: [^nil].
+	bound := aDictOrNil at: aName asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	^[bound classHistory] on: Error do: [:e | nil]
 ]
 
 { #category : 'constants' }
@@ -829,11 +860,49 @@ GsRefactoringUndo >> describeClass: aClass [
 ]
 
 { #category : 'reverse rename' }
-GsRefactoringUndo >> reverseOpClassDictName [
-	"The home dictionary recorded for the reverse operation's class, or nil. An op recorded
-	 before #396 has six slots and no dictionary; nil scopes exactly as it did then."
+GsRefactoringUndo >> reverseOpClassDict [
+	"The SymbolDictionary recorded as the home of the reverse operation's class, or nil. An op
+	 recorded before #396 has six slots and no dictionary; nil scopes exactly as it did then.
+	 An op recorded by an older build of this fix may hold an index or a name instead, so those
+	 are still resolved rather than rejected."
+	| raw |
 	reverseOp isNil ifTrue: [^nil].
-	^reverseOp size >= 7 ifTrue: [reverseOp at: 7] ifFalse: [nil]
+	raw := reverseOp size >= 7 ifTrue: [reverseOp at: 7] ifFalse: [nil].
+	raw isNil ifTrue: [^nil].
+	(raw isKindOf: SymbolDictionary) ifTrue: [^raw].
+	^GsRefactoringUndo dictionaryObjectFor: raw
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseOpClassLineage [
+	"The class history pinned for the reverse operation's class, or nil when none was recorded."
+	reverseOp isNil ifTrue: [^nil].
+	^reverseOp size >= 8 ifTrue: [reverseOp at: 8] ifFalse: [nil]
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseOpClass [
+	"The class the reversal acts on, resolved through the dictionary pinned at record time.
+
+	 Three things have to still hold, and none of them is checked by resolving a name:
+	 1. the recorded dictionary is still on the symbol list -- the user can remove one;
+	 2. it still binds a class under the recorded name;
+	 3. that class is still the SAME class, by class history -- renaming a class away and
+	    creating a fresh one under the old name leaves the name bound and the lineage changed.
+	 A miss answers nil, and the caller declines with a reason rather than reshaping whatever
+	 the name happens to reach (#396)."
+	| dict bound recorded |
+	reverseOp isNil ifTrue: [^nil].
+	dict := self reverseOpClassDict.
+	dict isNil ifTrue: [^GsRefactoringEnvironment new classNamed: (reverseOp at: 2)].
+	(System myUserProfile symbolList includesIdentical: dict) ifFalse: [^nil].
+	bound := dict at: (reverseOp at: 2) asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	recorded := self reverseOpClassLineage.
+	recorded isNil ifTrue: [^bound].
+	^([bound classHistory] on: Error do: [:e | nil]) == recorded
+		ifTrue: [bound]
+		ifFalse: [nil]
 ]
 
 { #category : 'history revert' }
@@ -959,11 +1028,10 @@ GsRefactoringUndo >> reverseRefactoring [
 	 and the apply must run against the SAME object, or the apply would re-derive a change set
 	 from a stone the preview has already described (and the change ids the client deselected
 	 would not match). Answers nil when the class can no longer be resolved."
-	| env cls kind |
+	| cls kind |
 	reverseRef isNil ifFalse: [^reverseRef].
 	reverseOp isNil ifTrue: [^nil].
-	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2) inDictionaryNamed: self reverseOpClassDictName.
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [^nil].
 	kind := reverseOp at: 1.
 	kind == #classRename ifTrue: [
@@ -1018,7 +1086,7 @@ GsRefactoringUndo >> reverseUnavailableReason [
 		^nil].
 	reverseOp isNil ifTrue: [^nil].
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2) inDictionaryNamed: self reverseOpClassDictName.
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [
 		^'Class ', (reverseOp at: 2), ' no longer exists, so the rename cannot be reversed.'].
 	"An instance-variable rename has no collision check of its own, so make the one that matters

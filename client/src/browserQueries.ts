@@ -1576,10 +1576,20 @@ export function analyzeMoveMethod(
   targetName: string,
   toMeta: boolean,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing move…');
-  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+  return sharedAnalyzeMoveMethod(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    dict,
+    targetDict,
+  );
 }
 
 export function startMoveMethodPreview(
@@ -1592,6 +1602,7 @@ export function startMoveMethodPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Previewing move…');
@@ -1605,6 +1616,7 @@ export function startMoveMethodPreview(
     token,
     maxBytes,
     dict,
+    targetDict,
   );
 }
 

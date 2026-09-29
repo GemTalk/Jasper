@@ -573,3 +573,84 @@ GsRenameClassRefactoringTest >> testRenamingOntoANameTakenInTheSameDictionarySti
 	 self assert: ref newNameCollision includesSubstring: 'UserGlobals']
 		ensure: [UserGlobals removeKey: #GsRCTaken ifAbsent: []]
 ]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameRewritesItsOwnReferencersAndNotTheDecoysAcrossDictionaries [
+	"The references a rename rewrites used to be fetched by NAME, and the name resolves to
+	 whichever dictionary binds it first. With a decoy GsRCBase in a dictionary ahead of
+	 UserGlobals, the rename rewrote the DECOY''s referencers -- pointing them at a class that
+	 does not exist yet -- and never touched the referencers of the class the user renamed. The
+	 apply still reported failed:[]. See #396."
+	| decoy decoyClass decoyUser json |
+	decoy := SymbolDictionary new name: #GsRCRefShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 decoyUser := Object
+		subclass: 'GsRCDecoyUser' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 "GsRCDecoyUser sees the decoy first, so its GsRCBase is the decoy''s"
+	 self compile: 'useDecoy ^GsRCBase new' in: decoyUser.
+
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 "the renamed class''s own referencer, in UserGlobals, IS rewritten"
+	 self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed new') > 0.
+	 "the decoy''s referencer is left pointing at the decoy, which was not renamed"
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCBase new') > 0.
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0.
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRestoreReparentsUnderItsOwnParentNotASameNamedDecoy [
+	"A restore puts the class back under the parent its historical version had, advanced to that
+	 parent''s CURRENT version. That used to be a lookup by name, so a decoy of the parent''s name
+	 earlier in the symbol list took the restored class out of its own hierarchy entirely. See
+	 #396 -- Class History restore is the operation the issue opens with.
+
+	 The fixture gives the child two versions (so there is something to restore) and the parent
+	 two versions (so the restore has to advance past the superseded one). The decoy is inserted
+	 last, so nothing before the restore can resolve through it."
+	| decoy decoyParent parentOne currentParent restored |
+	parentOne := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childOne')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the child -- this is what the restore comes back from"
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the parent -- the restore must land on THIS one, not the superseded one"
+	currentParent := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn' 'parentTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	decoy := SymbolDictionary new name: #GsRCParentShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyParent := Object
+		subclass: 'GsRCParent' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+
+	 GsClassHistory revertClassNamed: 'GsRCChild' toIndex: 1 inDictionary: 'UserGlobals'.
+	 restored := UserGlobals at: #GsRCChild.
+
+	 "the restored definition is the one asked for"
+	 self assert: (restored instVarNames collect: [:e | e asString]) = #('childOne').
+	 "under the real parent''s CURRENT version -- not the decoy, not the superseded version"
+	 self assert: restored superclass == currentParent.
+	 self deny: restored superclass == decoyParent.
+	 self deny: restored superclass == parentOne.
+	 self deny: ((restored allInstVarNames collect: [:e | e asString]) includes: 'decoyOwn').
+	 self assert: ((restored allInstVarNames collect: [:e | e asString]) includes: 'parentTwo')]
+		ensure: [
+			System myUserProfile removeDictionaryAt: 1.
+			#('GsRCChild' 'GsRCParent') do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]]
+]

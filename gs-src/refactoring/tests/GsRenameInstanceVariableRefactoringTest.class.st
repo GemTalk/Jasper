@@ -378,3 +378,129 @@ GsRenameInstanceVariableRefactoringTest >> testRenameBindsTheNewVersionInTheActe
 	 self assert: (decoy at: #GsRIVBase) == decoyClass]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> withShadowedLineageDo: aBlock [
+	"A lineage shadow: UserGlobals holds GsRIVTwin, and a dictionary AHEAD of it in the symbol
+	 list holds a DIFFERENT GsRIVTwin that is a subclass of the first. Both implement #report
+	 against their own variable, so a rewrite meant for one is visible if it lands on the other.
+	 Evaluates aBlock with the two classes, then cleans up."
+	| decoy parent child |
+	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[parent := Object
+		subclass: 'GsRIVTwin'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 child := parent
+		subclass: 'GsRIVTwin'
+		instVarNames: #('childCount')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self compile: 'report ^count' in: parent.
+	 self compile: 'report ^childCount' in: child.
+	 self compile: 'childOnly ^childCount * 2' in: child.
+	 aBlock value: parent value: child]
+		ensure: [
+			UserGlobals removeKey: #GsRIVTwin ifAbsent: [].
+			System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> shadowedChild [
+	^(System myUserProfile symbolList at: 1) at: #GsRIVTwin
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> testRenameLeavesAShadowedChildsOwnMethodAlone [
+	"newSourceFor: matched a staged rewrite to a class by NAME, so the parent''s rewritten
+	 #report ('^tally') was compiled into the same-named child -- whose own variable is
+	 childCount, not count. The child''s #report is not part of this rename and must come
+	 through untouched. See #396."
+	self withShadowedLineageDo: [:parent :child | | json newChild |
+		json := (GsRenameInstanceVariableRefactoring class: parent renameInstVar: 'count' to: 'tally')
+			applyDeselected: #().
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := self shadowedChild.
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'childCount') > 0.
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'tally') = 0.
+		"and the parent really was renamed, so the test is not green by doing nothing"
+		self assert: (((UserGlobals at: #GsRIVTwin) compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'tally') > 0]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> testDeselectingTheParentsMethodDoesNotDropTheShadowedChilds [
+	"Deselecting the parent''s #report row built the key 'GsRIVTwin>>report', which also matched
+	 the same-named child -- so the child''s #report was skipped during copy-forward and LOST,
+	 with nothing in failed to say so. Deselection is per class, by identity."
+	self withShadowedLineageDo: [:parent :child | | r ids json newChild |
+		r := GsRenameInstanceVariableRefactoring class: parent renameInstVar: 'count' to: 'tally'.
+		ids := (r changeSet changes
+			select: [:c | c kind = #methodRecompile and: [c selector asString = 'report']])
+			collect: [:c | c id].
+		self assert: ids size = 1.
+		json := r applyDeselected: ids.
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := self shadowedChild.
+		"the child keeps its own #report, untouched"
+		self assert: (newChild includesSelector: #report).
+		self assert: ((newChild compiledMethodAt: #report) sourceString
+			indexOfSubCollection: 'childCount') > 0.
+		self assert: (newChild includesSelector: #childOnly).
+		"the parent''s #report is the one that was dropped"
+		self deny: ((UserGlobals at: #GsRIVTwin) includesSelector: #report)]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> testRenameDoesNotReparentAGrandchildOntoASameNamedDecoy [
+	"A three-level hierarchy re-parents each descendant onto the version this apply just made.
+	 That parent used to be looked up BY NAME, so with a decoy of the middle class''s name
+	 earlier in the symbol list the grandchild was re-parented onto the DECOY -- silently
+	 acquiring the decoy''s instance variables and losing its own inheritance. See #396."
+	| decoy decoyMid base mid leaf json newLeaf |
+	decoy := SymbolDictionary new name: #GsRIVDecoyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[base := Object
+		subclass: 'GsRIVDBase' instVarNames: #('x')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 mid := base
+		subclass: 'GsRIVDMid' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 leaf := mid
+		subclass: 'GsRIVDLeaf' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	 decoyMid := Object
+		subclass: 'GsRIVDMid' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 self compile: 'readX ^x' in: base.
+
+	 json := (GsRenameInstanceVariableRefactoring class: base renameInstVar: 'x' to: 'y')
+		applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 newLeaf := UserGlobals at: #GsRIVDLeaf.
+	 "the grandchild hangs off the new version of the REAL middle class"
+	 self assert: newLeaf superclass == (UserGlobals at: #GsRIVDMid).
+	 self deny: newLeaf superclass == decoyMid.
+	 "so it inherits the renamed variable, and none of the decoy''s"
+	 self assert: (newLeaf allInstVarNames collect: [:e | e asString]) includesItem: 'y'.
+	 self deny: (newLeaf allInstVarNames collect: [:e | e asString]) includesItem: 'decoyOwn']
+		ensure: [
+			#('GsRIVDLeaf' 'GsRIVDMid' 'GsRIVDBase')
+				do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
+			System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> assert: aCollection includesItem: anObject [
+	self assert: (aCollection includes: anObject)
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsRenameInstanceVariableRefactoringTest >> deny: aCollection includesItem: anObject [
+	self deny: (aCollection includes: anObject)
+]

@@ -300,10 +300,12 @@ GsInstVarStructureRefactoring >> ensureAnalysis [
 
 { #category : 'private - analysis' }
 GsInstVarStructureRefactoring >> computeAnalysis [
-	"Set decline (nil when viable), topClass, newIvarLists (class name -> new own-ivar
+	"Set decline (nil when viable), topClass, newIvarLists (class -> new own-ivar
 	 Array), and, for V5, methodRewrite. Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	accessorRemovals := OrderedCollection new.
 	accessorAdds := OrderedCollection new.
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
@@ -345,7 +347,7 @@ GsInstVarStructureRefactoring >> analyzeConvertTemp [
 		newDecl,
 		(src copyFrom: tree body rightBar + 1 to: src size).
 	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
 ]
 
 { #category : 'private - analysis' }
@@ -364,8 +366,8 @@ GsInstVarStructureRefactoring >> analyzePushUp [
 	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 ]
 
@@ -394,9 +396,9 @@ GsInstVarStructureRefactoring >> analyzePushDown [
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
+		newIvarLists at: sub put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 ]
 
@@ -470,9 +472,9 @@ GsInstVarStructureRefactoring >> analyzeMove [
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
 				(self selectorListString: users), '.']].
-	newIvarLists at: def name asString put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
+	newIvarLists at: def put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
 	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
+		newIvarLists at: t put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 ]
 
@@ -649,8 +651,10 @@ GsInstVarStructureRefactoring >> spaceList: aCollection [
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> isEditedClassNamed: aName [
-	^newIvarLists includesKey: aName
+GsInstVarStructureRefactoring >> isEditedClass: aClass [
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 ]
 
 { #category : 'private' }
@@ -715,12 +719,12 @@ GsInstVarStructureRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
 	dn := self dictNameForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
 			oldSource: oldDef
-			newSource: (self definitionWithIvars: (newIvarLists at: aClass name asString) in: oldDef)]
+			newSource: (self definitionWithIvars: (newIvarLists at: aClass) in: oldDef)]
 		ifFalse: [cs
 			addClassReparentInDictionary: dn
 			className: aClass name asString
@@ -956,7 +960,7 @@ GsInstVarStructureRefactoring >> applyClassChange: aChange [
 	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new

@@ -118,15 +118,19 @@ GsRenameClassRefactoring >> superclassForShapeSource: src of: old [
 	 refactoring then left the class under a parent that was about to be unbound (#434).
 
 	 The historical version's superclass may itself be a superseded version of that parent, so it
-	 is resolved BY NAME to whatever version is current -- re-parenting onto a stale version would
-	 strand the class off the live hierarchy. If the name no longer resolves (the parent class is
-	 gone), the current superclass is kept: better a class in the wrong place than one that cannot
-	 be created at all."
-	| histSuper |
+	 is advanced to whatever version of THAT SAME parent is current -- re-parenting onto a stale
+	 version would strand the class off the live hierarchy. It is advanced through the parent's own
+	 classHistory, never by name: a name lookup lands on whichever dictionary comes first in the
+	 symbol list, so a shadowed parent name would re-parent the restored class under a different
+	 dictionary's class (#396). If the parent's history is gone, the current superclass is kept:
+	 better a class in the wrong place than one that cannot be created at all."
+	| histSuper hist |
 	src == old ifTrue: [^old superclass].
 	histSuper := src superclass.
 	histSuper isNil ifTrue: [^old superclass].
-	^(environment classNamed: histSuper name asString) ifNil: [old superclass]
+	hist := [histSuper classHistory] on: Error do: [:e | nil].
+	(hist isNil or: [hist isEmpty]) ifTrue: [^histSuper].
+	^hist last ifNil: [old superclass]
 ]
 
 { #category : 'private' }
@@ -299,7 +303,10 @@ GsRenameClassRefactoring >> stageReferenceRecompilesInto: aChangeSet [
 	"A same-name restore changes no name, so no external reference needs rewriting."
 	oldNameSym == newName asSymbol ifTrue: [^self].
 	subtree := self subtreeClassSet.
-	(environment referencesToClassNamed: oldName) do: [:m |
+	"By identity. Asking for the references of the NAME answers whichever dictionary binds it
+	 first -- another dictionary's class's referencers get rewritten and this class's own are
+	 missed, with nothing in failed to say so (#396)."
+	(environment referencesToClass: definingClass) do: [:m |
 		[| base |
 		 base := self baseClassOf: m.
 		 (subtree includes: base)

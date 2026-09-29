@@ -8,8 +8,17 @@ import { recordedApplyExpr } from './undoRecording';
 // TARGET class name + the target side (toMeta). Per selector it stages a `methodAdd`
 // on the target (compile the same source there) plus a `methodRemove` on the source;
 // a selector that cannot move is dropped and reported. It stashes the change set under
-// `token` and returns totals + the first page. `dict` scopes the source-class lookup
-// (1-based SymbolList index, canonical for Jasper, or a name).
+// `token` and returns totals + the first page. `dict` scopes the source-class lookup and
+// `targetDict` the TARGET-class lookup (1-based SymbolList index, canonical for Jasper, or a
+// name). Without `targetDict` the engine takes the first class of that name in the symbol list,
+// which for a shadowed name is not the class the user dropped onto (#396).
+
+/** The engine's `inDictionary:` argument: a 1-based SymbolList index unquoted, a name quoted,
+ *  or `nil` to fall back to the first class of that name. */
+function dictArgExpr(dict: number | string | undefined): string {
+  if (dict === undefined) return 'nil';
+  return typeof dict === 'number' ? String(dict) : `'${escapeString(dict)}'`;
+}
 
 /** A Smalltalk brace-array of Symbol literals, e.g. `{#'foo'. #'bar:'}` (or `#()`). */
 function selectorArrayExpr(selectors: string[]): string {
@@ -28,6 +37,7 @@ export function analyzeMoveMethod(
   targetName: string,
   toMeta: boolean,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(sourceClass, dict)}.
@@ -39,6 +49,7 @@ GsMoveMethodRefactoring
   selectors: ${selectorArrayExpr(selectors)}
   meta: ${isMeta ? 'true' : 'false'}
   toClassNamed: '${escapeString(targetName)}'
+  inDictionary: ${dictArgExpr(targetDict)}
   toMeta: ${toMeta ? 'true' : 'false'}`;
   const side = isMeta ? ' class' : '';
   const toSide = toMeta ? ' class' : '';
@@ -59,6 +70,7 @@ export function startMoveMethodPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const code = `| cls ref |
 cls := ${classLookupExpr(sourceClass, dict)}.
@@ -68,6 +80,7 @@ ref := GsMoveMethodRefactoring
   selectors: ${selectorArrayExpr(selectors)}
   meta: ${isMeta ? 'true' : 'false'}
   toClassNamed: '${escapeString(targetName)}'
+  inDictionary: ${dictArgExpr(targetDict)}
   toMeta: ${toMeta ? 'true' : 'false'}.
 ^ref startPreviewToken: '${escapeString(token)}' maxBytes: ${maxBytes}`;
   const side = isMeta ? ' class' : '';

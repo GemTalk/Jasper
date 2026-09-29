@@ -32,6 +32,7 @@ Class {
 		'selectors',
 		'isMeta',
 		'targetName',
+		'targetDictName',
 		'toMeta',
 		'targetClass',
 		'changeSet',
@@ -45,24 +46,54 @@ Class {
 { #category : 'instance creation' }
 GsMoveMethodRefactoring class >> sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool [
 	"Move aCollection of selectors from aClass (the aBool side) to the metaBool side of
-	 the class named aName."
+	 the class named aName, resolved wherever the symbol list finds it first. Prefer the
+	 inDictionary: form: a name that several dictionaries bind resolves to whichever comes
+	 first, which for a shadowed name is not the class the user picked (#396)."
+	^self
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+]
+
+{ #category : 'instance creation' }
+GsMoveMethodRefactoring class >> sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool [
+	"Move aCollection of selectors from aClass (the aBool side) to the metaBool side of
+	 the class named aName in aDictOrNil -- a SymbolDictionary name, its index in the
+	 symbol list, or nil for the first match."
 	^self
 		environment: GsRefactoringEnvironment new
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool
 ]
 
 { #category : 'instance creation' }
 GsMoveMethodRefactoring class >> environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool [
+	^self
+		environment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+]
+
+{ #category : 'instance creation' }
+GsMoveMethodRefactoring class >> environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool [
 	^self new
 		setEnvironment: anEnvironment
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool
 ]
 
@@ -70,11 +101,25 @@ GsMoveMethodRefactoring class >> environment: anEnvironment sourceClass: aClass 
 GsMoveMethodRefactoring class >> analyzeForClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool [
 	"A pre-flight the client runs before opening the preview: the target class, a
 	 per-selector decline reason (nil when movable), and the count that will move."
+	^self
+		analyzeForClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+]
+
+{ #category : 'preconditions' }
+GsMoveMethodRefactoring class >> analyzeForClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool [
+	"A pre-flight the client runs before opening the preview: the target class, a
+	 per-selector decline reason (nil when movable), and the count that will move."
 	^(self
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool) analysisJsonString
 ]
 
@@ -105,11 +150,24 @@ GsMoveMethodRefactoring class >> clearToken: token [
 
 { #category : 'private' }
 GsMoveMethodRefactoring >> setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool [
+	^self
+		setEnvironment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+]
+
+{ #category : 'private' }
+GsMoveMethodRefactoring >> setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool [
 	environment := anEnvironment.
 	sourceClass := aClass.
 	selectors := aCollection collect: [:s | s asSymbol].
 	isMeta := aBool.
 	targetName := aName asString.
+	targetDictName := aDictOrNil.
 	toMeta := metaBool.
 	analysisDone := false
 ]
@@ -152,9 +210,11 @@ GsMoveMethodRefactoring >> computeAnalysis [
 	 (nil when movable)."
 	globalDecline := nil.
 	declines := Dictionary new.
-	targetClass := environment classNamed: targetName.
+	targetClass := environment classNamed: targetName inDictionaryNamed: targetDictName.
 	targetClass isNil ifTrue: [
-		^globalDecline := 'Target class ', targetName, ' was not found.'].
+		^globalDecline := 'Target class ', targetName,
+			(targetDictName isNil ifTrue: [''] ifFalse: [' in ', targetDictName asString]),
+			' was not found.'].
 	(targetClass == sourceClass and: [toMeta == isMeta]) ifTrue: [
 		^globalDecline := 'The source and target are the same class and side; nothing to move.'].
 	selectors do: [:sel | declines at: sel put: (self computeDeclineFor: sel)]

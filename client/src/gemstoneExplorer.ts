@@ -3309,6 +3309,7 @@ export class ExplorerController {
       className,
       oldName,
       newName,
+      dict,
     );
     safeClear();
     return applied;
@@ -3323,6 +3324,13 @@ export class ExplorerController {
    *
    * `from` is the name in force now and `to` the one to go back to; `className` is the class
    * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
+   *
+   * `classDict` is the class's OWN dictionary, which each flow already knows. It is not the
+   * tree selection: a rename started from a Hierarchy ancestor, and a rename of an INHERITED
+   * instance variable at the cursor, both act on a class in a different dictionary from the one
+   * selected. Recorded wrongly, the reversal looks in the wrong place and either declines or
+   * reverses a same-named class, and the label names a dictionary the class does not live in --
+   * which is the one thing the labels were added to prevent (#396).
    */
   private recordReverseRename(
     session: ActiveSession,
@@ -3332,6 +3340,7 @@ export class ExplorerController {
     to: string,
     label: string,
     engine: string,
+    classDict: number | string | undefined,
     scope?: { kind: string; dictName?: string },
   ): void {
     try {
@@ -3344,9 +3353,7 @@ export class ExplorerController {
         label,
         engine,
         scope,
-        // The Explorer's selected dictionary is the class's home. Without it the reversal
-        // re-resolves the class by name and acts on a same-named one elsewhere (#396).
-        this.state.dictIndex ?? this.state.dictName,
+        classDict,
       );
       // Logged on the way THROUGH, not only on failure: "no Undo was offered" is a silent
       // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
@@ -3393,6 +3400,9 @@ export class ExplorerController {
     className: string,
     oldName: string,
     newName: string,
+    // The DEFINING class's dictionary, which for an inherited variable renamed at the cursor is
+    // not the selected one.
+    classDict: number | string | undefined,
   ): Promise<boolean> {
     let result: RenameApplyResult;
     try {
@@ -3419,7 +3429,7 @@ export class ExplorerController {
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
     this.loadClassRowMetadata();
-    await this.refreshAfterClassReshape(className);
+    await this.refreshAfterClassReshape(className, dictionaryNameFor(session, classDict));
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
     this.views?.klass
@@ -3439,8 +3449,9 @@ export class ExplorerController {
       className,
       newName,
       oldName,
-      `Rename instance variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
+      `Rename instance variable ${oldName} to ${newName} in ${qualifiedClassName(className, dictionaryNameFor(session, classDict))}`,
       'GsRenameInstanceVariableRefactoring',
+      classDict,
     );
     if (result.failed.length > 0) {
       // Arm the Undo button too. Recording the reversal in the stone is only half of it --
@@ -3779,9 +3790,33 @@ export class ExplorerController {
   // and Hierarchy panes show the new name / version tag. When the class is in the
   // current dictionary, revealClass does the full reload+reveal; otherwise reload
   // what we can from the current view.
-  private async refreshAfterClassReshape(className: string): Promise<void> {
+  private async refreshAfterClassReshape(
+    className: string,
+    // The dictionary the reshaped class lives in, when the caller knows it to be something
+    // other than the tree selection — a Class History opened from a Hierarchy ancestor, whose
+    // dictionary is usually not the selected one. Given a name, the Dictionaries pane is
+    // searched for it; without it the selection is used, as before.
+    inDictName?: string,
+  ): Promise<void> {
     const session = this.session();
-    const { dictName, dictIndex } = this.state;
+    let { dictName, dictIndex } = this.state;
+    if (inDictName !== undefined && inDictName !== dictName) {
+      let found = -1;
+      try {
+        found = session ? queries.getDictionaryNames(session).indexOf(inDictName) : -1;
+      } catch {
+        /* the symbol list could not be read; fall through to the no-row path */
+      }
+      if (found < 0) {
+        // Not a dictionary this tree can place, so there is no row to reveal. Refresh the panes
+        // and leave the selection where the user put it.
+        this.classProvider.refresh();
+        this.hierarchyProvider.refresh();
+        return;
+      }
+      dictName = inDictName;
+      dictIndex = found + 1;
+    }
     if (!session || dictName === undefined || dictIndex === undefined) {
       this.classProvider.refresh();
       this.hierarchyProvider.refresh();
@@ -3821,17 +3856,18 @@ export class ExplorerController {
   // change set is previewed, any optional reference unchecked, and applied.
   // Invokable from a class row OR a hierarchy-pane class node.
   async renameClass(item: ClassItem | HierarchyItem): Promise<void> {
-    // A hierarchy node may name a class outside the current dictionary, so resolve
-    // it across the whole symbol list; a class-row uses the current dictionary.
-    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
+    // carries its own. Resolving it across the whole symbol list instead would rename whichever
+    // class of that name comes first, and record the undo against it (#396).
+    const dictArg = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
     await this.renameClassNamed(item.className, dictArg);
   }
 
   /** Rename the class `oldName` across the image, resolving it through `dictArg`
-   *  (a 1-based SymbolList index, or undefined to resolve across the whole symbol
-   *  list). Shared by the Explorer class-row / hierarchy pencil and the method
+   *  (a 1-based SymbolList index, a dictionary name, or undefined to resolve across the whole
+   *  symbol list). Shared by the Explorer class-row / hierarchy pencil and the method
    *  editor's Rename… when the cursor is on a class reference. */
-  async renameClassNamed(oldName: string, dictArg: number | undefined): Promise<void> {
+  async renameClassNamed(oldName: string, dictArg: number | string | undefined): Promise<void> {
     const session = this.session();
     if (!session) return;
     if (!(await this.ensureRbSupport('Renaming a class'))) return;
@@ -3947,7 +3983,7 @@ export class ExplorerController {
 
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
-    await this.refreshAfterClassReshape(newName);
+    await this.refreshAfterClassReshape(newName, dictionaryNameFor(session, dictArg));
 
     // The class is bound under `newName` now, so that is what the reversal looks up; it renames
     // it back to `oldName`, reusing the scope the forward rename ran in.
@@ -3962,8 +3998,9 @@ export class ExplorerController {
       newName,
       newName,
       oldName,
-      `Rename class ${qualifiedClassName(oldName, this.state.dictName)} to ${newName}`,
+      `Rename class ${qualifiedClassName(oldName, dictionaryNameFor(session, dictArg))} to ${newName}`,
       'GsRenameClassRefactoring',
+      dictArg,
       { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
     );
 
@@ -4141,7 +4178,7 @@ export class ExplorerController {
 
     // The class variable and any referencing methods changed (the class name and
     // its [n] version tag do NOT — a class-variable change makes no new version).
-    await this.refreshAfterClassReshape(className);
+    await this.refreshAfterClassReshape(className, dictionaryNameFor(session, dict));
     // Keep the (now-renamed) class variable selected: refreshAfterClassReshape
     // re-reveals the CLASS, which would otherwise steal the selection, so re-reveal
     // the renamed class-variable row last. Best-effort — the row must be in the
@@ -4171,8 +4208,9 @@ export class ExplorerController {
       className,
       newName,
       oldName,
-      `Rename class variable ${oldName} to ${newName} in ${qualifiedClassName(className, this.state.dictName)}`,
+      `Rename class variable ${oldName} to ${newName} in ${qualifiedClassName(className, dictionaryNameFor(session, dict))}`,
       'GsRenameClassVariableRefactoring',
+      dict,
     );
     if (result.failed.length > 0) {
       // Arm the Undo button too. Recording the reversal in the stone is only half of it --
@@ -4204,11 +4242,16 @@ export class ExplorerController {
     const className = item.className;
     if (!(await this.ensureRbSupport('Viewing class history'))) return;
 
-    // The dictionary the user selected, threaded through every history call. Without it the
+    // The dictionary THIS class lives in, threaded through every history call. Without it the
     // engine resolves the class name against the whole symbol list and answers the first
     // binding -- a different class when the name is shadowed, whose history is then shown and,
     // on Restore, rewritten (#396).
-    const historyDict = this.state.dictIndex ?? this.state.dictName;
+    //
+    // A Hierarchy node carries its own dictionary and is usually NOT the selected one: an
+    // ancestor generally lives elsewhere, which is why Class History on `Object` from the
+    // Hierarchy pane failed outright with `not a class: Object` once the lookup became scoped.
+    const historyDict =
+      item instanceof HierarchyItem ? item.dictName : (this.state.dictIndex ?? this.state.dictName);
     let versions;
     try {
       versions = parseClassHistory(queries.getClassHistory(session, className, historyDict));
@@ -4240,7 +4283,11 @@ export class ExplorerController {
           // (#434). Restoring across a rename also renames the class, which unbinds one name
           // and binds another, so BOTH names are recorded: the reversal rebinds the first and
           // unbinds the second. The target version's own name is what history reports for it.
-          const dictRef = this.state.dictIndex ?? this.state.dictName;
+          // `historyDict`, captured when the panel opened -- not the live selection. The panel
+          // stays open, so re-reading the tree state here records the undo against whatever the
+          // user has clicked since, while the revert itself lands on the class the panel is
+          // actually showing (#396).
+          const dictRef = historyDict;
           const restoredName = versions.find((v) => v.index === index)?.name;
           const names = [
             currentName,
@@ -4264,7 +4311,7 @@ export class ExplorerController {
             : versions;
           // The class was reshaped/renamed (a new version) — re-cascade so the
           // Explorer's Classes + Hierarchy panes show the restored name and version.
-          if (result.reverted) await this.refreshAfterClassReshape(currentName);
+          if (result.reverted) await this.refreshAfterClassReshape(currentName, dictName);
           if (result.reverted) {
             notifyUndoable(
               `Restored ${previousName} to version ${index}`,
@@ -4281,7 +4328,7 @@ export class ExplorerController {
             ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
             : versions;
           // The version count / tag changed — refresh the tree's version tags.
-          if (result.removed) await this.refreshAfterClassReshape(currentName);
+          if (result.removed) await this.refreshAfterClassReshape(currentName, dictName);
           return { result, versions: refreshed };
         },
       },
@@ -4301,8 +4348,12 @@ export class ExplorerController {
     session: ActiveSession,
     dictRef: number | string | undefined,
   ): string | undefined {
-    // The tree's own name for the selected dictionary, when it has one — no round trip, and it
-    // is the name the user is looking at in the Dictionaries pane.
+    // A name given directly (a Hierarchy node's own dictionary) is already the answer. Only an
+    // INDEX needs resolving, and only then is the tree's selected name a safe shortcut — it
+    // names the dictionary that index came from. Preferring `state.dictName` unconditionally
+    // labelled a Hierarchy ancestor's history with the selected dictionary instead of its own.
+    if (typeof dictRef === 'string') return dictRef;
+    if (dictRef === undefined) return this.state.dictName;
     return this.state.dictName ?? dictionaryNameFor(session, dictRef);
   }
 
@@ -7684,6 +7735,11 @@ export class ExplorerController {
         targetName: flipSide ? group[0].className : targetClass,
         toMeta: flipSide ? !isMeta : isMeta,
         dict: group[0].dictIndex,
+        // A side flip stays in the source's own dictionary; a drop lands in the dictionary
+        // whose row the user dropped onto. Either way the target is named, never guessed
+        // from the symbol list -- a shadowed class name would send the method to a
+        // stranger's class and delete it from the source (#396).
+        targetDict: flipSide ? group[0].dictIndex : targetDictIndex,
       });
       if (outcome && outcome.moved.length > 0 && !reveal) {
         reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
