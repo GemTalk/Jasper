@@ -77,11 +77,12 @@ export interface ApplyResult extends BaseApplyResult {
   committed?: boolean;
   /** Instances that failed to migrate (only meaningful when migrate was on). */
   migratedFailures?: number;
-  /** True when the #classRename or a #classReparent failed, so the class is NOT bound under
-   *  the new name. Nothing may arm an Undo that renames the new name back: that name reaches
-   *  whatever else binds it, and the reversal would rename a class the user never touched
-   *  (#396). */
-  structuralFailed?: boolean;
+  /** True when the #classRename itself failed, so the class is NOT bound under the new name.
+   *  Nothing may arm an Undo that renames the new name back: that name reaches whatever else
+   *  binds it, and the reversal would rename a class the user never touched (#396). A failed
+   *  #classReparent after it stops the apply too, but the rename has landed and this stays
+   *  false -- that partial apply is what an Undo is for. */
+  renameFailed?: boolean;
 }
 
 function parseChange(raw: unknown, i: number): ClassRenameChange {
@@ -187,7 +188,7 @@ export function parseApplyResult(json: string): ApplyResult {
   return parseApplyResultWith(json, (env) => ({
     committed: env.committed === true,
     migratedFailures: asCount(env.migratedFailures),
-    structuralFailed: env.structuralFailed === true,
+    renameFailed: env.renameFailed === true,
   }));
 }
 

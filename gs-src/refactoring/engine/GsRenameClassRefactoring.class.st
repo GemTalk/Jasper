@@ -129,7 +129,7 @@ GsRenameClassRefactoring >> superclassForShapeSource: src of: old [
 	histSuper := src superclass.
 	histSuper isNil ifTrue: [^old superclass].
 	hist := [histSuper classHistory] on: Error do: [:e | nil].
-	(hist isNil or: [hist isEmpty]) ifTrue: [^histSuper].
+	(hist isNil or: [hist isEmpty]) ifTrue: [^old superclass].
 	^hist last ifNil: [old superclass]
 ]
 
@@ -616,29 +616,32 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 	 cleanly, so a partly-failed rename is left uncommitted for the user to inspect and
 	 abort rather than persisted half-done. With neither option (the safe path) nothing
 	 is committed, matching the other refactorings. Answers
-	 {applied, failed:[..], committed, migratedFailures}."
-	| ids applied failures migrated committed structuralFailed |
+	 {applied, failed:[..], committed, migratedFailures, renameFailed}."
+	| ids applied failures migrated committed halted renameFailed |
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	oldToNew := IdentityDictionary new.
 	applied := 0.
-	structuralFailed := false.
+	halted := false.
+	renameFailed := false.
 	failures := OrderedCollection new.
 	"The copy-forward loop runs deep inside a per-class change and must not raise (one
 	 method that will not recompile would abort the whole change), so it reports through
 	 this alias instead -- entries land in the same `failed` list as everything else."
 	copyFailures := failures.
 	self changeSet changes do: [:change |
-		"Once a STRUCTURAL change has failed, stop. The rename did not happen, so every
-		 #methodRecompile after it compiles the new name against whatever else binds it --
-		 for a shadowed name, another dictionary's class -- and reports success. Carrying on
-		 turned one failure into a body of code silently pointing at the wrong class (#396)."
-		structuralFailed ifFalse: [
+		"Once a STRUCTURAL change has failed, stop. After a failed #classRename the rename did not
+		 happen, so every #methodRecompile after it compiles the new name against whatever else
+		 binds it -- for a shadowed name, another dictionary's class -- and reports success. After a
+		 failed #classReparent the hierarchy is half-moved. Carrying on turned one failure into a
+		 body of code silently pointing at the wrong class (#396)."
+		halted ifFalse: [
 			(change kind == #methodRecompile and: [ids includes: change id asSymbol])
 				ifFalse: [
 					[self applyChange: change. applied := applied + 1]
 					on: Error do: [:e |
 						(change kind == #classRename or: [change kind == #classReparent])
-							ifTrue: [structuralFailed := true].
+							ifTrue: [halted := true].
+						change kind == #classRename ifTrue: [renameFailed := true].
 						failures add: (Array with: change id with: change failureLabel with: e messageText)]]]].
 	migrated := 0.
 	committed := false.
@@ -655,13 +658,15 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: newName with: e messageText)]]].
-	"structuralFailed tells the CLIENT whether the class is bound under the new name. It arms an
+	"renameFailed tells the CLIENT whether the class is bound under the new name. It arms an
 	 Undo that renames `newName` back, and after a failed #classRename that name reaches some
-	 other dictionary's class -- which the reversal would then rename (#396)."
+	 other dictionary's class -- which the reversal would then rename (#396). A failed
+	 #classReparent halts the apply too, but the rename before it HAS landed, so it does not
+	 count: that is exactly the partial apply an Undo exists for."
 	^'{"applied":', applied printString,
 	  ',"committed":', committed printString,
 	  ',"migratedFailures":', migrated printString,
-	  ',"structuralFailed":', structuralFailed printString,
+	  ',"renameFailed":', renameFailed printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),

@@ -411,7 +411,10 @@ GsRefactoringUndo class >> captureClassHistoryOf: aRootClassName inDictionary: a
 	 from another dictionary (#396).
 
 	 Each entry records the dictionary of ITS OWN class, not the root's: a subtree can span
-	 dictionaries, and the reversal has to put every class back where it actually lives."
+	 dictionaries, and the reversal has to put every class back where it actually lives. Slot 4
+	 is its name, for display; slot 5 is the dictionary OBJECT, which is what the reversal
+	 resolves through. Two dictionaries can share a name, and an index recorded now would name a
+	 different dictionary once the user inserts, removes or reorders one (#396)."
 	| env cls ordered plan |
 	env := GsRefactoringEnvironment new.
 	cls := env classNamed: aRootClassName inDictionaryNamed: aDictName.
@@ -419,15 +422,17 @@ GsRefactoringUndo class >> captureClassHistoryOf: aRootClassName inDictionary: a
 	ordered := OrderedCollection new.
 	ordered add: cls.
 	ordered addAll: (env descendantsOf: cls).
-	plan := ordered collect: [:c | | triple |
-		triple := Array new: 4.
-		triple at: 1 put: c name asString.
-		triple at: 2 put: (c classHistory indexOf: c).
-		triple at: 3 put: c definition.
-		triple at: 4 put: ((env dictionaryDefiningClass: c)
-			ifNil: [nil]
-			ifNotNil: [:d | d name ifNil: [nil] ifNotNil: [:nm | nm asString]]).
-		triple].
+	plan := ordered collect: [:c | | entry home |
+		home := env dictionaryDefiningClass: c.
+		entry := Array new: 5.
+		entry at: 1 put: c name asString.
+		entry at: 2 put: (c classHistory indexOf: c).
+		entry at: 3 put: c definition.
+		entry at: 4 put: (home isNil
+			ifTrue: [nil]
+			ifFalse: [home name ifNil: [nil] ifNotNil: [:nm | nm asString]]).
+		entry at: 5 put: home.
+		entry].
 	SessionTemps current at: self pendingCaptureKey put: plan asArray.
 	^'ok'
 ]
@@ -804,6 +809,39 @@ GsRefactoringUndo >> commaList: aCollection [
 ]
 
 { #category : 'history revert' }
+GsRefactoringUndo >> dictRefForEntry: anEntry [
+	"How to address a revert-plan entry's dictionary in a lookup: its CURRENT SymbolList index,
+	 found from the dictionary object the capture pinned -- 0 when that dictionary is no longer on
+	 the list, which resolves to no class and is reported rather than redirected. A plan recorded
+	 before the object was pinned has only the name (slot 4), or nothing, and scopes as it did."
+	| home sl |
+	home := anEntry size >= 5 ifTrue: [anEntry at: 5] ifFalse: [nil].
+	home isNil ifTrue: [^anEntry size >= 4 ifTrue: [anEntry at: 4] ifFalse: [nil]].
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == home ifTrue: [^i]].
+	^0
+]
+
+{ #category : 'history revert' }
+GsRefactoringUndo >> createdClassesDictionary [
+	"The dictionary the refactoring filed the classes it CREATED in -- its anchor's, the revert
+	 plan's root -- as the SymbolDictionary the capture pinned, or nil when none was recorded.
+	 Every caller today files a created class next to its anchor (none passes a dictionary of its
+	 own), so the root's dictionary is the created classes' dictionary."
+	| root |
+	(revertPlan isNil or: [revertPlan isEmpty]) ifTrue: [^nil].
+	root := revertPlan first.
+	^root size >= 5 ifTrue: [root at: 5] ifFalse: [nil]
+]
+
+{ #category : 'history revert' }
+GsRefactoringUndo >> createdClassesDictionaryName [
+	"The created classes' dictionary by name, for a plan recorded before the object was pinned."
+	(revertPlan isNil or: [revertPlan isEmpty or: [revertPlan first size < 4]]) ifTrue: [^nil].
+	^revertPlan first at: 4
+]
+
+{ #category : 'history revert' }
 GsRefactoringUndo >> revertChangeSet [
 	"A synthetic change set describing the reversal, so it previews through the same panel as
 	 everything else: one #classDefinitionEdit per class to revert -- a real definition diff, what
@@ -814,8 +852,7 @@ GsRefactoringUndo >> revertChangeSet [
 	env := GsRefactoringEnvironment new.
 	cs := GsRefactoringChangeSet new.
 	revertPlan do: [:entry | | cls hist target discarded change entryDict |
-		"A plan recorded before #396 has three elements and no dictionary; nil scopes as before."
-		entryDict := entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil].
+		entryDict := self dictRefForEntry: entry.
 		cls := env classNamed: (entry at: 1) inDictionaryNamed: entryDict.
 		cls isNil ifFalse: [
 			hist := cls classHistory.
@@ -823,7 +860,7 @@ GsRefactoringUndo >> revertChangeSet [
 				ifTrue: [hist at: (entry at: 2)]
 				ifFalse: [nil].
 			change := cs
-				addClassDefinitionEditInDictionary: entryDict
+				addClassDefinitionEditInDictionary: (entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil])
 				className: (entry at: 1)
 				oldSource: cls definition
 				newSource: (target isNil ifTrue: [entry at: 3] ifFalse: [target definition]).
@@ -836,13 +873,16 @@ GsRefactoringUndo >> revertChangeSet [
 	"A created class is unbound from the dictionary the refactoring filed it in, which is the
 	 dictionary its anchor lives in -- the revert plan's root. Scoping by that rather than by
 	 first-match keeps the unbind off a same-named class elsewhere on the symbol list (#396)."
-	self removePlan do: [:name | | cls rootDict |
-		rootDict := (revertPlan notNil and: [revertPlan notEmpty and: [revertPlan first size >= 4]])
-			ifTrue: [revertPlan first at: 4]
-			ifFalse: [nil].
-		cls := env classNamed: name inDictionaryNamed: rootDict.
-		cls isNil ifFalse: [
-			cs addClassRemoveInDictionary: rootDict className: name oldSource: cls definition]].
+	self removePlan do: [:name | | cls home |
+		home := self createdClassesDictionary.
+		cls := home isNil
+			ifTrue: [env classNamed: name inDictionaryNamed: self createdClassesDictionaryName]
+			ifFalse: [home at: name asSymbol ifAbsent: [nil]].
+		(cls isKindOf: Class) ifTrue: [
+			cs
+				addClassRemoveInDictionary: self createdClassesDictionaryName
+				className: name
+				oldSource: cls definition]].
 	^cs
 ]
 
@@ -921,7 +961,7 @@ GsRefactoringUndo >> totalDiscardedCount [
 		n := n + (self
 			discardedMethodsFor: (entry at: 1)
 			atIndex: (entry at: 2)
-			inDictionary: (entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil])) size].
+			inDictionary: (self dictRefForEntry: entry)) size].
 	^n
 ]
 
@@ -937,13 +977,13 @@ GsRefactoringUndo >> applyHistoryRevert [
 	failures := OrderedCollection new.
 	revertPlan do: [:entry |
 		[| answer |
-		 "Scoped to the dictionary the capture recorded for THIS class. Reverting by name alone
-		  rewrote whichever same-named class the symbol list reached first (#396); a plan
-		  recorded before that fix has three elements and scopes as it did then."
+		 "Scoped to the dictionary the capture pinned for THIS class. Reverting by name alone
+		  rewrote whichever same-named class the symbol list reached first, and a dictionary
+		  NAME reaches the first of two same-named dictionaries (#396)."
 		 answer := GsClassHistory
 			revertClassNamed: (entry at: 1)
 			toIndex: (entry at: 2)
-			inDictionary: (entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil]).
+			inDictionary: (self dictRefForEntry: entry).
 		 (answer indexOfSubCollection: '"reverted":true') > 0
 			ifTrue: [applied := applied + 1]
 			ifFalse: [
@@ -955,17 +995,19 @@ GsRefactoringUndo >> applyHistoryRevert [
 	env := GsRefactoringEnvironment new.
 	"Unbind the created class from the ONE dictionary the refactoring filed it in -- the
 	 dictionary its anchor lives in, which is the revert plan's root. Sweeping every dictionary
-	 that binds the name, as this did, unbinds unrelated same-named classes too (#396)."
-	self removePlan do: [:name | | rootDict |
-		rootDict := (revertPlan notNil and: [revertPlan notEmpty and: [revertPlan first size >= 4]])
-			ifTrue: [revertPlan first at: 4]
-			ifFalse: [nil].
+	 that binds the name unbinds unrelated same-named classes too, and so does every dictionary
+	 that merely shares the recorded dictionary's NAME (#396)."
+	self removePlan do: [:name | | home homeName |
+		home := self createdClassesDictionary.
+		homeName := self createdClassesDictionaryName.
 		[| removed target |
 		 removed := false.
-		 target := rootDict isNil
-			ifTrue: [env dictionariesDefiningClassNamed: name]
-			ifFalse: [(env symbolList select: [:d |
-				d name notNil and: [d name asSymbol == rootDict asSymbol]])].
+		 target := home notNil
+			ifTrue: [Array with: home]
+			ifFalse: [homeName isNil
+				ifTrue: [env dictionariesDefiningClassNamed: name]
+				ifFalse: [(env symbolList select: [:d |
+					d name notNil and: [d name asSymbol == homeName asSymbol]])]].
 		 target do: [:d |
 			(d removeKey: name asSymbol ifAbsent: [nil]) isNil ifFalse: [removed := true]].
 		 removed ifTrue: [applied := applied + 1]]

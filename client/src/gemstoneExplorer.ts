@@ -4092,7 +4092,7 @@ export class ExplorerController {
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(newName, dictArg);
 
-    // The class is bound under `newName` now -- the structuralFailed check below is what makes
+    // The class is bound under `newName` now -- the renameFailed check below is what makes
     // that true -- so that is what the reversal looks up; it renames it back to `oldName`,
     // reusing the scope the forward rename ran in.
     //
@@ -4105,7 +4105,7 @@ export class ExplorerController {
     // reversal that renames `newName` back would reach whatever else binds that name -- in the
     // case that matters, another dictionary's class, which it would rename to `oldName` without
     // declining, because this dictionary binds no `oldName` any more (#396).
-    if (result.structuralFailed) {
+    if (result.renameFailed) {
       logInfo(
         `[undoRefactoring] the rename of ${oldName} did not land; not recording a reversal for ${newName}`,
       );

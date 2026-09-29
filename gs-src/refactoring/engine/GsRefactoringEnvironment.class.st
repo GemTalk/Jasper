@@ -286,9 +286,11 @@ GsRefactoringEnvironment >> classForChange: aChange [
 	 behaviour and is kept deliberately: an undo entry or change set recorded before this fix,
 	 or staged by a caller that has no dictionary to give, still applies as well as it ever did.
 
-	 Dictionaries are scanned in symbol-list order and the first one whose name matches AND
-	 which binds the class name wins, so a dictionary that merely shares the name but does not
-	 define the class cannot swallow the lookup."
+	 A dictionary NAME resolves to the first dictionary on the symbol list with that name, and the
+	 class is looked for there only: a second dictionary of the same name is never consulted, so a
+	 change recorded against it resolves to nil (or to the first dictionary's class of that name)
+	 rather than to its own. Only a SymbolList index says which of two same-named dictionaries is
+	 meant."
 	aChange isNil ifTrue: [^nil].
 	^self classNamed: aChange className inDictionaryNamed: aChange dictName
 ]

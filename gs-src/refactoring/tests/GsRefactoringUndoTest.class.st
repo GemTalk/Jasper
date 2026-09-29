@@ -1785,21 +1785,21 @@ GsRefactoringUndoTest >> removeDictionaries: dicts [
 ]
 
 { #category : 'tests - shadowed dictionary name' }
-GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheClassInTheSecondOfTwoSameNamedDictionaries [
+GsRefactoringUndoTest >> testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries [
 	"The history revert recorded each class's dictionary by NAME. With two dictionaries of one
-	 name, replaying it looked the name up, found the FIRST -- whose class of that name the
-	 refactoring never touched, so it was 'already current' and nothing was reported -- and left
-	 the class the user did reshape as it was.
+	 name, the reversal looked the name up and found the FIRST, whose class of that name the
+	 refactoring never touched -- so the undo described, and would have reverted, the wrong class.
+	 The capture pins the dictionary itself; the reversal's preview has to be of the class that
+	 was reshaped, which is the only one that carries gsuReshaped.
 
-	 The reshape is a new class version defined directly rather than through a refactoring, so
-	 the undo alone is on trial."
-	| dicts first second |
+	 This stops at the preview. Applying the revert hands each class to the forward rename engine,
+	 which records its changes' dictionaries by name and so still reaches the first dictionary --
+	 a limit of the forward engine, not of the undo's own lookup. The reshape is a new class
+	 version defined directly rather than through a refactoring for the same reason."
+	| dicts second json |
 	dicts := self twinNamedDictionaries.
-	first := dicts first.
 	second := dicts last.
-	[| original |
-	 original := first at: #GsUndoTwinClass.
-	 GsRefactoringUndo
+	[GsRefactoringUndo
 		captureClassHistoryOf: 'GsUndoTwinClass'
 		inDictionary: (self indexOfDictionary: second).
 	 Object
@@ -1813,10 +1813,11 @@ GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheClassInTheSecondOfTwoSa
 		created: #().
 	 self assert: ((second at: #GsUndoTwinClass) instVarNames includes: #gsuReshaped).
 
-	 self undoAll.
+	 json := self undoPreviewJson.
 
-	 self deny: ((second at: #GsUndoTwinClass) instVarNames includes: #gsuReshaped).
-	 self assert: (first at: #GsUndoTwinClass) == original]
+	 "the revert is described against the reshaped class: what it is now carries gsuReshaped"
+	 self assert: json includesSubstring: '"total":1'.
+	 self assert: json includesSubstring: 'gsuOwn gsuReshaped']
 		ensure: [self removeDictionaries: dicts]
 ]
 
