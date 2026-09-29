@@ -158,6 +158,44 @@ describe('removing several methods nothing sends', () => {
     expect(deleted()).toEqual(['at:', 'size']);
   });
 
+  /**
+   * An override skips the sender scan: a superclass still implements the selector, so every
+   * send resolves there instead. Nothing was searched, so the notice must not claim nothing
+   * referenced them -- and least of all claim it in the same breath as saying where the
+   * senders now resolve to.
+   */
+  it('does not claim nothing referenced them when every method is an override', async () => {
+    hierarchyImplementorsOf.mockImplementation(
+      (_s: unknown, _d: number, _c: string, selector: string) => [
+        sender({ className: 'Object', selector }),
+      ],
+    );
+
+    await removeMethods(makeController(), [row('printOn:'), row('displayString')]);
+
+    const notice = String(showInformationMessage.mock.calls[0][0]);
+    expect(notice).not.toContain('nothing referenced them');
+    expect(notice).toContain('senders of #printOn: now resolve to Object >> #printOn:');
+    expect(notice).toContain('senders of #displayString now resolve to Object >> #displayString');
+  });
+
+  it('still says nothing referenced them when a scan did run and found none', async () => {
+    await removeMethods(makeController(), [row('at:'), row('size')]);
+
+    expect(String(showInformationMessage.mock.calls[0][0])).toContain('nothing referenced them');
+  });
+
+  it('says it for the scanned methods when only some of them are overrides', async () => {
+    hierarchyImplementorsOf.mockImplementation(
+      (_s: unknown, _d: number, _c: string, selector: string) =>
+        selector === 'printOn:' ? [sender({ className: 'Object', selector: 'printOn:' })] : [],
+    );
+
+    await removeMethods(makeController(), [row('printOn:'), row('size')]);
+
+    expect(String(showInformationMessage.mock.calls[0][0])).toContain('nothing referenced them');
+  });
+
   it("carries an override's note: senders resolve to the inherited method", async () => {
     hierarchyImplementorsOf.mockImplementation(
       (_s: unknown, _d: number, _c: string, selector: string) =>

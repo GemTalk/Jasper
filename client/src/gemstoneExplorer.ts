@@ -5163,6 +5163,11 @@ export class ExplorerController {
     const notes: string[] = [];
     const silentNotes: string[] = [];
     let truncated = false;
+    // An override skips the sender scan (see methodRemovalCheck), so a selection of nothing
+    // but overrides searched for senders exactly nowhere. "Nothing referenced them" is a
+    // claim about a search, and it goes on the notice only when one of them actually ran --
+    // otherwise the notice both denied there were senders and said where they now resolve.
+    let anyScanRan = false;
     for (const node of rows) {
       const selector = node.info.selector;
       const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(
@@ -5176,6 +5181,7 @@ export class ExplorerController {
       }
       if (scan.scanFailed) scanFailures.push(`#${selector}: ${scan.scanFailed}`);
       truncated ||= scan.truncated;
+      anyScanRan ||= inheritedFrom === undefined;
       if (inheritedFrom) {
         const resolve = `senders of #${selector} now resolve to ${inheritedFrom} >> #${selector}`;
         notes.push(`${resolve[0].toUpperCase()}${resolve.slice(1)}.`);
@@ -5197,7 +5203,9 @@ export class ExplorerController {
       scanFailed: scanFailures.length > 0 ? scanFailures.join('; ') : undefined,
       truncated,
       note: notes.length > 0 ? notes.join('\n\n') : undefined,
-      silentNote: ['nothing referenced them', ...silentNotes].join('; '),
+      silentNote:
+        [...(anyScanRan ? ['nothing referenced them'] : []), ...silentNotes].join('; ') ||
+        undefined,
     };
     const decision = await decideSafeDelete(session.id, target);
     if (decision === 'cancelled') return;
