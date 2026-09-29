@@ -10,7 +10,7 @@ import { exec } from 'child_process';
 import { runQuickSetup, QuickSetupDeps } from '../quickSetup';
 import { GemStoneVersion } from '../sysadminTypes';
 import { SysadminStorage } from '../sysadminStorage';
-import { VersionManager } from '../manager/versionManager';
+import { InstallCancelledError, VersionManager } from '../manager/versionManager';
 import { DatabaseManager } from '../manager/databaseManager';
 import { ProcessManager } from '../manager/processManager';
 import { LoginStorage } from '../loginStorage';
@@ -313,6 +313,67 @@ describe('runQuickSetup', () => {
       expect.stringContaining('disk full'),
     );
     expect(deps.databaseManager.createDatabaseDirect).not.toHaveBeenCalled();
+  });
+
+  it('stops with a message, not an error, when the download is cancelled', async () => {
+    const version = makeVersion();
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const deps = makeDeps({
+      versionManager: {
+        fetchAvailableVersions: vi.fn(async () => [version]),
+        download: vi.fn(async () => {
+          throw new InstallCancelledError(
+            'Download cancelled. The partly downloaded file was removed.',
+          );
+        }),
+        extract: vi.fn(),
+      } as unknown as VersionManager,
+    });
+
+    await runQuickSetup(deps);
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      'Download cancelled. The partly downloaded file was removed.',
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.versionManager.extract).not.toHaveBeenCalled();
+  });
+
+  it('stops with a message, not an error, when the unpack is cancelled', async () => {
+    const version = makeVersion({ downloaded: true });
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const deps = makeDeps({
+      versionManager: {
+        fetchAvailableVersions: vi.fn(async () => [version]),
+        download: vi.fn(),
+        extract: vi.fn(async () => {
+          throw new InstallCancelledError('Unpacking GemStone 3.7.4 cancelled.');
+        }),
+      } as unknown as VersionManager,
+    });
+    await runQuickSetup(deps);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      'Unpacking GemStone 3.7.4 cancelled.',
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.databaseManager.createDatabaseDirect).not.toHaveBeenCalled();
+  });
+
+  it('offers Cancel on the unpack, as it does on the download', async () => {
+    const version = makeVersion({ downloaded: true });
+    mockShowQuickPick.mockResolvedValue({ label: '3.7.4', version });
+    const deps = makeDeps({
+      versionManager: {
+        fetchAvailableVersions: vi.fn(async () => [version]),
+        download: vi.fn(),
+        extract: vi.fn(async () => {}),
+      } as unknown as VersionManager,
+    });
+    await runQuickSetup(deps);
+    expect(vscode.window.withProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringContaining('Extracting'), cancellable: true }),
+      expect.any(Function),
+    );
   });
 
   // ── Database, stone, netldi ───────────────────────────────

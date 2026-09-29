@@ -40,6 +40,24 @@ TARGET_DIR="${1:-$REPO/resources/enhancedInspector}"
 SENTINEL="! Jasper Enhanced Inspector vendored source"
 DASHES="! ----------------------------------------------------------------------------"
 
+# In-place edit WITHOUT `sed -i`, whose argument GNU and BSD sed disagree about:
+# BSD reads the next argument as a backup suffix, so `sed -i -E …` silently drops
+# extended-regex mode and leaves a stray `<file>-E` (#429). Piping to a temp file
+# and writing it back behaves the same on both.
+#
+# Written back with `cat >`, NOT `mv`: mktemp creates 0600 files, so moving one
+# into place would leave the payload readable only by its owner, and a gem
+# running as another OS user would then fail the installer's "cannot read the
+# payload" check. Redirecting into the existing file keeps its mode.
+edit_in_place() {
+    local path="$1" tmp
+    shift
+    tmp="$(mktemp)"
+    "$@" "$path" > "$tmp" || { rm -f "$tmp"; return 1; }
+    cat "$tmp" > "$path"
+    rm -f "$tmp"
+}
+
 # Emit the attribution header for one file on stdout.
 #   $1 origin repo URL   $2 upstream source path within it
 #   $3 upstream project (or "-" when it is the origin repo itself)
@@ -97,7 +115,7 @@ apply_one() {
     # 1. Class placement -> the dedicated GsEnhancedInspector dictionary.
     #    Accepts upstream's `Globals` or this project's earlier `Published`
     #    placement; idempotent once already retargeted.
-    sed -i -E 's/inDictionary: (Globals|Published)/inDictionary: GsEnhancedInspector/g' "$path"
+    edit_in_place "$path" sed -E 's/inDictionary: (Globals|Published)/inDictionary: GsEnhancedInspector/g'
 
     # 2. (Re-)write the attribution header. Any header this script wrote before
     #    is stripped first -- the block runs from the sentinel on line 1 through
@@ -138,8 +156,9 @@ apply_one() {
         printf '%s\n' "$header"
         cat "$body"
     } > "$tmp"
-    mv "$tmp" "$path"
-    rm -f "$body"
+    # `cat >` rather than `mv`, to keep the file's mode -- see edit_in_place.
+    cat "$tmp" > "$path"
+    rm -f "$tmp" "$body"
     echo "  transformed: $file"
 }
 

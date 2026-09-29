@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareGemStoneVersions } from '../gemStoneVersion';
+import { compareGemStoneVersions, isComparableGemStoneVersion } from '../gemStoneVersion';
 
 /** Sign of a comparison, so a test says "before"/"after" rather than pinning a
  *  magnitude the contract does not promise. */
@@ -47,8 +47,9 @@ describe('compareGemStoneVersions', () => {
   });
 
   it('still rejects a version string that is genuinely malformed', () => {
-    // The guard was loosened, not removed: a directory named something else
-    // should still be a loud failure rather than a silently mis-sorted row.
+    // The guard was loosened, not removed: a string it cannot order is still a
+    // throw rather than a silently mis-sorted row. Callers that must survive one
+    // — the Versions list — ask isComparableGemStoneVersion first.
     expect(() => compareGemStoneVersions('garbage', '3.6.2')).toThrow('Invalid version: garbage');
     expect(() => compareGemStoneVersions('4.0', '3.6.2')).toThrow('Invalid version: 4.0');
     expect(() => compareGemStoneVersions('', '3.6.2')).toThrow('Invalid version:');
@@ -56,5 +57,19 @@ describe('compareGemStoneVersions', () => {
     // A tag has to start with a letter, which is what keeps a fourth numeric
     // part from being read as one.
     expect(() => compareGemStoneVersions('4.0.0-2a', '3.6.2')).toThrow('Invalid version');
+  });
+});
+
+describe('isComparableGemStoneVersion', () => {
+  // The Versions list is built from directory names, so it meets strings the
+  // comparison cannot read. It asks this rather than catching the throw, which
+  // is what lets one unreadable row cost its own place and nothing else.
+  it('answers for exactly the strings the comparison accepts', () => {
+    for (const good of ['3.6.2', '3.7.4.3', '4.0.0.a2', '4.0.0-a3']) {
+      expect(isComparableGemStoneVersion(good)).toBe(true);
+    }
+    for (const bad of ['3.7', 'garbage', '', '4.0.0-alpha.1', '4.0.0-2a']) {
+      expect(isComparableGemStoneVersion(bad)).toBe(false);
+    }
   });
 });

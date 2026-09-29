@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
+import * as vscode from 'vscode';
+
 import { GemStoneSessionItem, sessionMcpState } from '../loginTreeProvider';
 import { DEFAULT_LOGIN } from '../loginTypes';
 import type { McpOwnership } from '../mcpServerTreeProvider';
@@ -61,28 +63,34 @@ describe('sessionMcpState', () => {
 });
 
 describe('the session row', () => {
+  // The row's tooltip is a MarkdownString (it also explains the transaction
+  // mode), so read its text rather than stringifying the object.
+  const tooltipText = (row: GemStoneSessionItem) => (row.tooltip as vscode.MarkdownString).value;
+
   it('marks the served session in its description', () => {
     const row = new GemStoneSessionItem(makeSession(7), true, 'serving');
     expect(row.description).toContain('· MCP');
-    expect(String(row.tooltip)).toContain('run their GemStone tools against this session');
+    expect(tooltipText(row)).toContain('run their GemStone tools against this session');
   });
 
   it('says nothing about MCP on any other row', () => {
     for (const state of ['off', 'idle'] as const) {
       const row = new GemStoneSessionItem(makeSession(8), false, state);
       expect(row.description).not.toContain('MCP');
-      expect(String(row.tooltip)).not.toContain('MCP');
+      expect(tooltipText(row)).not.toContain('MCP');
     }
   });
 
-  it('keeps one contextValue whatever MCP is doing, so the row keeps its actions', () => {
-    // File In, Commit, Abort, Session Configuration, Logout and the backup pair
-    // are all contributed for `viewItem == gemstoneSession`. Marking the served
-    // row with a contextValue of its own took every one of them off that row.
-    for (const state of ['off', 'idle', 'serving'] as const) {
-      expect(new GemStoneSessionItem(makeSession(7), true, state).contextValue).toBe(
-        'gemstoneSession',
-      );
-    }
+  it('keeps MCP out of the contextValue, so the row keeps its actions', () => {
+    // File In, Abort, Session Configuration, Logout and the backup pair are
+    // contributed for `viewItem =~ /^gemstoneSession/`, and Begin and Commit for
+    // a suffix naming what that session can do. Being the served session changes
+    // none of that, so it must leave the contextValue alone — marking the served
+    // row with a value of its own once took every action off it.
+    const values = (['off', 'idle', 'serving'] as const).map(
+      (state) => new GemStoneSessionItem(makeSession(7), true, state).contextValue,
+    );
+    expect(new Set(values).size).toBe(1);
+    expect(values[0]).toMatch(/^gemstoneSession/);
   });
 });

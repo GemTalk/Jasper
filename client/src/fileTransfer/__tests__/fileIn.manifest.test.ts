@@ -89,8 +89,11 @@ describe('where File In is offered', () => {
   });
 
   it('puts it on a connected session row, where it is easiest to find', () => {
+    // The session clauses match with `=~` rather than `==`: each row carries its
+    // own answer about which transaction actions it can offer, so `viewItem` is
+    // `gemstoneSession` plus whatever that session can do.
     const onSession = entriesIn('view/item/context', PICK).filter((e) =>
-      (e.when ?? '').includes('viewItem == gemstoneSession'),
+      (e.when ?? '').includes('viewItem =~ /^gemstoneSession'),
     );
 
     // One inline (the row button) and one in the row's right-click menu.

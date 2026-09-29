@@ -35,6 +35,10 @@ import type { GemStoneLoginItem } from '../loginTreeProvider';
 import * as queries from '../browserQueries';
 import { InFlightGuard } from '../inFlightGuard';
 import { DEFAULT_LOGIN } from '../loginTypes';
+import { _resetGciLogForTests, getGciLog } from '../gciLog';
+
+/** Let the toast's `.then` run: it is a microtask, and announceSessionAction returns void. */
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Replace the mocked `tabGroups.all`, keeping the cast in one place. */
 function setTabs(groups: { tabs: vscode.Tab[] }[]): void {
@@ -401,6 +405,109 @@ describe('announceSessionAction', () => {
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     },
   );
+
+  // GemStone REFUSES a commit that conflicts; it does not fail it. The two read
+  // very differently to someone deciding whether their stone is broken or their
+  // colleague got there first.
+  it('says refused, not failed, when the stone turned the commit down', () => {
+    extension.announceSessionAction('Commit', DESCRIPTION, {
+      success: false,
+      verb: 'refused',
+      reason: 'Write-Write on 2 objects. Abort for a fresh view, then try again.',
+    });
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${DESCRIPTION}: Commit refused — Write-Write on 2 objects. ` +
+        `Abort for a fresh view, then try again.`,
+    );
+  });
+
+  it('offers no button when there is nothing more to show', () => {
+    extension.announceSessionAction('Commit', DESCRIPTION, {
+      success: false,
+      reason: 'Session not found',
+    });
+
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0]).toHaveLength(1);
+  });
+
+  describe('with a conflict set to show', () => {
+    const DETAILS = 'commitResult: failure\n\nWrite-Write — 1 object\n  12200193  Account';
+    let channel: { appendLine: ReturnType<typeof vi.fn>; show: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      _resetGciLogForTests();
+      channel = getGciLog() as unknown as typeof channel;
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+    });
+
+    const announce = () =>
+      extension.announceSessionAction('Commit', DESCRIPTION, {
+        success: false,
+        verb: 'refused',
+        reason: 'Write-Write on 1 object. Abort for a fresh view, then try again.',
+        details: DETAILS,
+      });
+
+    it('puts the button on the toast', () => {
+      announce();
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Commit refused'),
+        extension.SHOW_CONFLICTS,
+      );
+    });
+
+    it('writes the conflict set to the GemStone GCI channel and reveals it when pressed', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(
+        extension.SHOW_CONFLICTS as unknown as vscode.MessageItem,
+      );
+
+      announce();
+      await flushMicrotasks();
+
+      const written = channel.appendLine.mock.calls.map((c) => c[0]).join('\n');
+      expect(written).toContain('12200193  Account');
+      expect(written).toContain(DESCRIPTION);
+      expect(channel.show).toHaveBeenCalled();
+    });
+
+    // The channel is full of routine GCI traffic, so the report has to land at
+    // the bottom of a view that is already open. An append is what scrolls the
+    // Output view, and there is no command to scroll it afterwards — so the show
+    // must come first, or the user opens the channel wherever they last left it.
+    it('opens the channel before writing, so the report is what you land on', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(
+        extension.SHOW_CONFLICTS as unknown as vscode.MessageItem,
+      );
+
+      announce();
+      await flushMicrotasks();
+
+      expect(channel.show.mock.invocationCallOrder[0]).toBeLessThan(
+        channel.appendLine.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('writes nothing when the toast is dismissed', async () => {
+      announce();
+      await flushMicrotasks();
+
+      expect(channel.show).not.toHaveBeenCalled();
+    });
+
+    // The toast's result is a Thenable in VS Code and plain undefined from a stub
+    // that was never given one; neither may throw past the caller.
+    it('survives a toast that answers nothing at all', async () => {
+      vi.mocked(vscode.window.showErrorMessage).mockReturnValue(
+        undefined as unknown as Thenable<vscode.MessageItem | undefined>,
+      );
+
+      expect(() => announce()).not.toThrow();
+      await flushMicrotasks();
+      expect(channel.show).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('confirmLogoutWithUncommittedChanges', () => {
@@ -466,6 +573,38 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     );
   });
 
+  // A commit the stone REFUSED used to read as a bare TransactionError here — at
+  // exactly the moment the user is deciding whether to log out over work that is
+  // still sitting there uncommitted.
+  it('says the commit was refused, not that it failed with a TransactionError', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Commit & Logout' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn(() => ({
+      success: false,
+      err: {
+        number: 2738,
+        message:
+          'a TransactionError occurred (error 2738), reason:commitConflicts, commit conflicts',
+        reason: 'commitConflicts',
+      },
+    }));
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+    );
+
+    expect(decision).toBe('cancel');
+    const message = vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0];
+    expect(message).toContain('Commit refused');
+    expect(message).toContain('another session committed a change this transaction also made');
+    expect(message).toContain('Not logging out.');
+    expect(message).not.toContain('TransactionError');
+  });
+
   it('proceeds without committing when the user chooses to log out anyway', async () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Logout Anyway' as unknown as vscode.MessageItem,
@@ -513,6 +652,130 @@ describe('confirmLogoutWithUncommittedChanges', () => {
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
     expect(decision).toBe('proceed');
+  });
+
+  // Outside a transaction a session can still HOLD uncommitted work: GemStone
+  // allows the write and `System needsCommit` reports it — it is
+  // `commitTransaction` that raises 2030. So the warning still has to fire, or
+  // logging out of a manualBegin session discards that work without a word. What
+  // goes away is "Commit & Logout", the one button that could only fail there.
+  it('still warns a session that is not in a transaction, minus the commit button', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+      false,
+    );
+
+    expect(decision).toBe('proceed');
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    const [title, options, ...buttons] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+    expect(title).toContain('has uncommitted changes');
+    expect(buttons).toEqual(['Logout Anyway']);
+    expect(options.detail).toContain('cannot be committed');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('offers Commit & Logout to a session that is in a transaction', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Commit & Logout' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+      true,
+    );
+
+    expect(decision).toBe('proceed');
+    expect(commit).toHaveBeenCalledWith(3);
+    const buttons = vi.mocked(vscode.window.showWarningMessage).mock.calls[0].slice(2);
+    expect(buttons).toEqual(['Commit & Logout', 'Logout Anyway']);
+  });
+
+  it('logs out without committing when the user picks Logout Anyway', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+    const commit = vi.fn();
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      commit,
+      true,
+    );
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(decision).toBe('proceed');
+    // The whole point of the other button: this one must not commit.
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('keeps the commit button when the transaction state could not be read', async () => {
+    // canCommit's rule: an unread state keeps the button.
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Logout Anyway' as unknown as vscode.MessageItem,
+    );
+
+    const decision = await extension.confirmLogoutWithUncommittedChanges(
+      3,
+      'DataCurator on gs64stone (localhost)',
+      true,
+      vi.fn(),
+      undefined,
+    );
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0].slice(2)).toEqual([
+      'Commit & Logout',
+      'Logout Anyway',
+    ]);
+    expect(decision).toBe('proceed');
+  });
+});
+
+describe('transactionModeSwitchDetail', () => {
+  // Switching modes aborts, every time — GemStone does it as part of switching
+  // and there is no asking it not to — so the dialog always says so, and then
+  // says what the abort would actually cost.
+  it('always names the abort, whatever the session is holding', () => {
+    for (const needsCommit of [true, false, undefined]) {
+      expect(extension.transactionModeSwitchDetail(needsCommit)).toContain(
+        'aborts the current transaction',
+      );
+    }
+  });
+
+  it('names the uncommitted changes it would discard', () => {
+    expect(extension.transactionModeSwitchDetail(true)).toContain(
+      'discards this session’s uncommitted changes',
+    );
+  });
+
+  it('warns about unsaved exported edits, which the post-switch refresh overwrites', () => {
+    expect(extension.transactionModeSwitchDetail(false, true)).toContain(
+      extension.UNSAVED_EXPORT_EDITS_WARNING,
+    );
+  });
+
+  it('says plainly when nothing is at stake, rather than warning about nothing', () => {
+    expect(extension.transactionModeSwitchDetail(false)).toContain('nothing is lost');
+  });
+
+  it('warns anyway when the commit state could not be checked', () => {
+    // A failed probe is not evidence that there is nothing to lose.
+    expect(extension.transactionModeSwitchDetail(undefined)).toContain('could not be checked');
   });
 });
 

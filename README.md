@@ -70,7 +70,7 @@ The **OS Configuration** view surfaces every host-level setting GemStone needs, 
 
 Versions live in the **Databases & Versions** panel, opened with **Manage Databases & Versions** in the **Databases** section title bar. Releases on this machine are listed with their status, size and release date, and each row offers:
 
-- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux). **Remove** takes away everything it put there.
+- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux, or python3 where unzip is missing). Both halves show their progress and can be cancelled. **Remove** takes away everything it put there.
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
@@ -153,16 +153,34 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
-- **Commit** / **Abort** — transaction control. Also in the Command Palette as **GemStone: Commit** and **GemStone: Abort**, which act in the current session and name it before they act
+- **Begin Transaction** / **Commit** / **Abort** — transaction control. Begin and Commit appear only when this session can use them: Commit needs the session to be in a transaction, and Begin only applies in **manual** mode when it is not. Abort is always offered. All three are in the Command Palette as **GemStone: Begin Transaction**, **GemStone: Commit** and **GemStone: Abort**; from there they act in the current session, and Commit and Abort name it before they act
 - **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed, with Undo/Redo for a change you want back
 - **Logout** — disconnect
-- **Export** and **Make Active Session** (context menu)
+- **Set Transaction Mode**, **Export** and **Make Active Session** (context menu)
+
+Each session row also says which **transaction mode** it is in, beside its session number — `Session 3 (3.7.5) · Manual · not in transaction`. Hovering explains what the mode means.
 
 The session Claude Code and Claude Desktop run their GemStone tools against is marked `· MCP` in its description — see [MCP Server](#mcp-server), which is set up from the **Databases** header rather than from a session row, since it belongs to the window.
 
 **Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
-The active session (used for code execution) is highlighted, and the status bar shows which session is active.
+The active session (used for code execution) is highlighted, and the status bar shows which session is active; click it to change the active session. A notebook names it too, in its kernel label, and in multiple-session mode so does a workspace, on a line above its first line — both redraw when the active session changes.
+
+#### Transaction modes
+
+GemStone gives a session one of three transaction modes, and the mode decides what Commit, Abort and Begin do:
+
+- **Auto-Begin** — a new transaction starts automatically after every commit or abort, so the session is always inside one. This is GemStone's default. It is convenient, but an idle session holds a commit record open and holds back the repository's reclaim.
+- **Manual** — commit and abort leave the session *outside* a transaction; **Begin Transaction** puts it back in. Nothing can be committed while it is outside one.
+- **Transactionless** — the session is not in a transaction, so it cannot commit; switch it to Manual or Auto-Begin to write. The cheapest mode for the repository, but its view is refreshed automatically at any moment, so what it shows can change under you. GemStone intends it for idle sessions.
+
+The **status bar** carries the selected session's mode on the left: a filled circle when the session is inside a transaction, a hollow one when it is outside, an eye for transactionless, and a question mark when the state could not be read. Hovering it says what the mode means and what the session can do; **clicking it changes the mode**. It is also **GemStone: Set Transaction Mode** in the Command Palette, on a session row's context menu in Logins & Sessions, and a button on the session row in Databases & Versions.
+
+Changing the mode **aborts the current transaction** — GemStone does that as part of switching — so Jasper asks first and tells you how much is at stake. Any session in Manual mode also has the gem service the stone's SigAbort on its behalf — whether you switched it there or the stone handed it out that way at login — so a session left sitting outside a transaction is not forcibly aborted.
+
+Outside a transaction you can still *change* things; GemStone refuses only the commit. So Jasper still warns you at logout about uncommitted work in a session that is between transactions — it just does not offer to commit it, since that could only fail. When the stone does refuse a save with "not inside of a transaction", Jasper names **Begin Transaction** as the way on. More detail: [Transaction modes](docs/reference/transaction-modes.md).
+
+**When a commit does not land, Jasper says which of the two things happened.** A commit the stone *refused* — another session committed over an object you changed — is not a malfunction, and retrying it cannot work, so it is reported as `Commit refused — Write-Write on 2 objects. Abort for a fresh view, then try again.` **Show Conflicts** on that message lists every object that collided in the **GemStone GCI** output channel — oop, class, and enough of its printString to recognize it (`12086785  SymbolDictionary  aSymbolDictionary( name: #'UserGlobals' )`), over an `Object _objectForOop:` you can paste into a workspace to open the object itself. A commit that *failed* with an error still reports the stone's own words. Claude's `commit` tool answers the same way.
 
 #### Single vs. multiple sessions
 
@@ -177,7 +195,7 @@ If you need concurrent connections, enable the **beta** multiple-session mode:
 
 The only difference is cardinality: a login may now have several session children, and its **Login** action stays available while connected so you can start more.
 
-> **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
+> **Note:** In multiple-session mode, an open method editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. A workspace, and a notebook on the default kernel, are not bound: they run in whichever session is active, and say which. A notebook can be pinned to one session by picking that session's kernel. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
 > **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep *every* logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
 
@@ -475,7 +493,9 @@ The extension integrates with VS Code's native Test Explorer:
 
 ### Jupyter Notebooks (Smalltalk and Grail Python)
 
-Jasper registers two kernels with Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter). Open any `.ipynb` notebook and pick one from the kernel picker; cells execute in the active GemStone session, so notebook code sees — and can modify — the same objects as the GemStone Explorer and Display It. Compile and runtime errors appear as cell error outputs.
+Jasper registers notebook kernels for `.ipynb` files, in two languages: GemStone Smalltalk and Grail Python. VS Code's built-in notebook support is enough; Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter) is not required. Open any `.ipynb` notebook and pick one from the kernel picker — a notebook whose code cells are all Smalltalk gets **GemStone Smalltalk** as its suggested kernel, and the tutorial and **Open Notebook** select it for you. That is only the default: pick another kernel and the empty cells switch to its language, while cells you have written keep theirs. The kernel label names the session cells run in, and in multiple-session mode **Switch Session** in the notebook's toolbar changes the active session — the same picker as a workspace's session line. In multiple-session mode the picker also lists each logged-in session as its own kernel — **GemStone Smalltalk · Session 3 · …** — which keeps that notebook on Session 3 whatever the active session is, while the default kernel (marked *active*) follows the active session. Either way cells run in a live GemStone session, so notebook code sees — and can modify — the same objects as the GemStone Explorer and Display It. Compile and runtime errors appear as cell error outputs.
+
+**Open Notebook**, next to **Open Workspace** in the **Logins & Sessions** title bar, opens a blank untitled Smalltalk notebook. A notebook running a GemStone kernel, other than the tutorial itself, has **Learn Smalltalk** in its toolbar, which opens the Smalltalk syntax tutorial (also **GemStone: Learn Smalltalk** in the Command Palette).
 
 **GemStone Smalltalk** runs each cell as an independent doit — multi-statement bodies are fine, and the value of the last statement is printed as the cell output. There is no notebook-local variable scope (Smalltalk has no REPL globals concept); state persists the way it does everywhere else in the session, e.g. `UserGlobals at: #x put: ...`, class definitions, and commits.
 

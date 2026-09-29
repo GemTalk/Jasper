@@ -63,4 +63,15 @@ function compareGemStoneVersions(versionString, anotherVersionString) {
   return va.tag.localeCompare(vb.tag, 'en', { numeric: true, sensitivity: 'base' });
 }
 
-module.exports = { compareGemStoneVersions };
+/**
+ * Whether compareGemStoneVersions can read this string. A product directory
+ * carries whatever name someone gave it, so a caller that must not fail over
+ * one row asks first rather than catching the throw.
+ * @param {string} versionString
+ * @returns {boolean}
+ */
+function isComparableGemStoneVersion(versionString) {
+  return VERSION_PATTERN.test(versionString);
+}
+
+module.exports = { compareGemStoneVersions, isComparableGemStoneVersion };
