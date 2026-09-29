@@ -10,7 +10,6 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import { logWarning } from '../gciLog';
-import { followActiveSessionLabel } from '../activeSessionDisplay';
 import {
   defaultQueryExecutorUsing,
   sendersOf,
@@ -379,13 +378,7 @@ export function registerOmniSearch(
 ): OmniSearchRegistration {
   // The bottom-panel view provider is registered up-front (before any session) and resolves its
   // session lazily; the command reveals it when `ui: "panel"` is selected.
-  const viewProvider = new OmniSearchViewProvider(
-    buildViewContextResolver(sessionManager),
-    (view) =>
-      followActiveSessionLabel(sessionManager, (label) => {
-        view.description = label;
-      }),
-  );
+  const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
 
   // Discoverability clue #1 (persistent): a status-bar button that opens GemStone Search and, via its
   // tooltip, teaches the shortcut that works from anywhere in a session. Shown only while a session

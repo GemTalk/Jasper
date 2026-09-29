@@ -48,28 +48,6 @@ export function onDidChangeSessionMode(listener: () => void): vscode.Disposable 
 }
 
 /**
- * Calls `apply` now, and again whenever the active session or the session mode
- * changes, with the active session's {@link describeSession} — or undefined in
- * single-session mode, where there is nothing to tell apart, or with none active.
- * The mode, not the session count, decides: labels that appeared the moment a
- * second login landed would move every tab and view header at once.
- */
-export function followActiveSessionLabel(
-  sessionManager: SessionManager,
-  apply: (label: string | undefined) => void,
-): vscode.Disposable {
-  const update = () => {
-    const session = multipleSessionMode() ? sessionManager.getSelectedSession() : undefined;
-    apply(session ? describeSession(session) : undefined);
-  };
-  update();
-  return vscode.Disposable.from(
-    onDidChangeActiveSession(sessionManager, update),
-    onDidChangeSessionMode(update),
-  );
-}
-
-/**
  * The title of a panel bound to one session (a debugger, an inspector, the
  * Spotter): its own title, plus {@link sessionTag} in multiple-session mode.
  * The panel's title must be set through {@link setTitle}, or the tag is lost.

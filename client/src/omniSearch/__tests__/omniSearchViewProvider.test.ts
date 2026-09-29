@@ -42,11 +42,7 @@ function fakeContext(sessionId = 1): OmniViewContext {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function fakeView(visible: boolean) {
-  const on = {
-    message: (_m: unknown) => Promise.resolve(),
-    visibility: () => {},
-    dispose: () => {},
-  };
+  const on = { message: (_m: unknown) => Promise.resolve(), visibility: () => {} };
   const view = {
     visible,
     webview: {
@@ -62,33 +58,9 @@ function fakeView(visible: boolean) {
       on.visibility = cb;
       return { dispose() {} };
     },
-    onDidDispose: (cb: () => void) => {
-      on.dispose = cb;
-      return { dispose() {} };
-    },
   };
   return { view, on };
 }
-
-describe('GemStone Search docked panel — naming its session', () => {
-  it('labels each resolved view, and stops once that view is disposed', () => {
-    const label = { dispose: vi.fn() };
-    const labelView = vi.fn(() => label);
-    const provider = new OmniSearchViewProvider(
-      vi.fn(async () => fakeContext()),
-      labelView,
-    );
-    const { view, on } = fakeView(true);
-
-    provider.resolveWebviewView(view as never);
-    expect(labelView).toHaveBeenCalledWith(view);
-    expect(label.dispose).not.toHaveBeenCalled();
-
-    // Collapsing the panel disposes the view; a reopen resolves a new one.
-    on.dispose();
-    expect(label.dispose).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe('GemStone Search docked panel — reacting to settings changes', () => {
   beforeEach(() => vi.clearAllMocks());

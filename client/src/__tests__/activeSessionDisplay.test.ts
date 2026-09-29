@@ -5,7 +5,6 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { EventEmitter, workspace, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import {
   chooseActiveSession,
-  followActiveSessionLabel,
   SessionPanelTitle,
   WorkspaceSessionLensProvider,
   WORKSPACE_SESSION_SELECTORS,
@@ -167,54 +166,6 @@ describe('chooseActiveSession', () => {
     ];
     await chooseActiveSession({ resolveSession, getSessions } as unknown as SessionManager);
     expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
-  });
-});
-
-describe('followActiveSessionLabel', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    __resetConfig();
-    __setConfig('gemstone', 'sessionMode', 'multiple');
-  });
-
-  it('names the active session at once, and again when it changes', () => {
-    const { manager, select } = makeSessionManager([3, 4], 3);
-    const labels: (string | undefined)[] = [];
-    followActiveSessionLabel(manager, (label) => labels.push(label));
-
-    select(4);
-
-    expect(labels).toEqual([
-      'Session 3 · DataCurator on gs64stone (localhost)',
-      'Session 4 · DataCurator on gs64stone (localhost)',
-    ]);
-  });
-
-  it('gives no label in single-session mode, and follows the mode setting', () => {
-    __setConfig('gemstone', 'sessionMode', 'single');
-    const { manager } = makeSessionManager([3], 3);
-    const labels: (string | undefined)[] = [];
-    followActiveSessionLabel(manager, (label) => labels.push(label));
-
-    changeSessionMode('multiple');
-    changeSessionMode('single');
-
-    expect(labels).toEqual([
-      undefined,
-      'Session 3 · DataCurator on gs64stone (localhost)',
-      undefined,
-    ]);
-  });
-
-  it('clears the label when the last session logs out', () => {
-    const { manager, logout } = makeSessionManager([3], 3);
-    const labels: (string | undefined)[] = [];
-    followActiveSessionLabel(manager, (label) => labels.push(label));
-
-    // The fake manager, like the real one, stops answering a session once it is gone.
-    logout(3);
-
-    expect(labels.at(-1)).toBeUndefined();
   });
 });
 

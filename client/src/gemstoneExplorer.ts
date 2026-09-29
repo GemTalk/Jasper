@@ -166,7 +166,6 @@ import { moveMethod } from './refactoring/moveMethodCommand';
 import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 import { explorerRowUri } from './activeEditorDecoration';
-import { followActiveSessionLabel } from './activeSessionDisplay';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -8346,11 +8345,6 @@ export function registerGemStoneExplorer(
     classView,
     hierarchyView,
     methodView,
-    // Names the session the whole Explorer is browsing, on the pane where browsing
-    // starts. A tree view, unlike the webview above it, exists before it is shown.
-    followActiveSessionLabel(sessionManager, (label) => {
-      dictView.description = label;
-    }),
     sessionManager.onDidChangeSelection((id) => {
       syncActiveContext();
       ctl.reset();
