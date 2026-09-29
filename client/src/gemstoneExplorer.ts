@@ -3472,7 +3472,7 @@ export class ExplorerController {
     // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
     // activation arrives (#396).
     this.claimNextEditorActivation();
-    await this.refreshAfterClassReshape(className, dictionaryNameFor(session, classDict));
+    await this.refreshAfterClassReshape(className, classDict);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
     this.views?.klass
@@ -3853,28 +3853,40 @@ export class ExplorerController {
     className: string,
     // The dictionary the reshaped class lives in, when the caller knows it to be something
     // other than the tree selection — a Class History opened from a Hierarchy ancestor, whose
-    // dictionary is usually not the selected one. Given a name, the Dictionaries pane is
-    // searched for it; without it the selection is used, as before.
-    inDictName?: string,
+    // dictionary is usually not the selected one. Without it the selection is used, as before.
+    //
+    // Pass the 1-based SymbolList index whenever the caller has one. A dictionary NAME does not
+    // identify a dictionary — two can share one — so turning an index into a name and back lands
+    // on the first of them, and the Explorer shows the other dictionary's class of the same name
+    // (#396). A name is accepted for the callers that only have one (a Hierarchy node), and is
+    // placed on the selection when the selection carries it, else on its first match.
+    inDict?: number | string,
   ): Promise<void> {
     const session = this.session();
     let { dictName, dictIndex } = this.state;
-    if (inDictName !== undefined && inDictName !== dictName) {
-      let found = -1;
+    const isSelection = typeof inDict === 'number' ? inDict === dictIndex : inDict === dictName;
+    if (inDict !== undefined && !isSelection) {
+      let names: string[] = [];
       try {
-        found = session ? queries.getDictionaryNames(session).indexOf(inDictName) : -1;
+        names = session ? queries.getDictionaryNames(session) : [];
       } catch {
         /* the symbol list could not be read; fall through to the no-row path */
       }
-      if (found < 0) {
+      const found =
+        typeof inDict === 'number'
+          ? inDict >= 1 && inDict <= names.length
+            ? inDict
+            : 0
+          : names.indexOf(inDict) + 1;
+      if (found === 0) {
         // Not a dictionary this tree can place, so there is no row to reveal. Refresh the panes
         // and leave the selection where the user put it.
         this.classProvider.refresh();
         this.hierarchyProvider.refresh();
         return;
       }
-      dictName = inDictName;
-      dictIndex = found + 1;
+      dictName = names[found - 1];
+      dictIndex = found;
     }
     if (!session || dictName === undefined || dictIndex === undefined) {
       this.classProvider.refresh();
@@ -4042,7 +4054,7 @@ export class ExplorerController {
     // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
     // activation arrives (#396).
     this.claimNextEditorActivation();
-    await this.refreshAfterClassReshape(newName, dictionaryNameFor(session, dictArg));
+    await this.refreshAfterClassReshape(newName, dictArg);
 
     // The class is bound under `newName` now -- the structuralFailed check below is what makes
     // that true -- so that is what the reversal looks up; it renames it back to `oldName`,
@@ -4276,7 +4288,7 @@ export class ExplorerController {
     // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
     // activation arrives (#396).
     this.claimNextEditorActivation();
-    await this.refreshAfterClassReshape(className, dictionaryNameFor(session, dict));
+    await this.refreshAfterClassReshape(className, dict);
     // Keep the (now-renamed) class variable selected: refreshAfterClassReshape
     // re-reveals the CLASS, which would otherwise steal the selection, so re-reveal
     // the renamed class-variable row last. Best-effort — the row must be in the
@@ -4411,7 +4423,7 @@ export class ExplorerController {
             : versions;
           // The class was reshaped/renamed (a new version) — re-cascade so the
           // Explorer's Classes + Hierarchy panes show the restored name and version.
-          if (result.reverted) await this.refreshAfterClassReshape(currentName, dictName);
+          if (result.reverted) await this.refreshAfterClassReshape(currentName, historyDict);
           if (result.reverted) {
             notifyUndoable(
               `Restored ${previousName} to version ${index}`,
@@ -4428,7 +4440,7 @@ export class ExplorerController {
             ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
             : versions;
           // The version count / tag changed — refresh the tree's version tags.
-          if (result.removed) await this.refreshAfterClassReshape(currentName, dictName);
+          if (result.removed) await this.refreshAfterClassReshape(currentName, historyDict);
           return { result, versions: refreshed };
         },
       },

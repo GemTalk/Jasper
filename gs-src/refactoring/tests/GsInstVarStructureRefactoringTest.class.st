@@ -997,3 +997,53 @@ GsInstVarStructureRefactoringTest >> testConvertTempKeepsTheMethodOfASameNamedDe
 		includesSubstring: 'twinCompute']
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testMoveDownDeclinesATargetNameTwoDescendantsShare [
+	"A move names its destinations, and each name is resolved within the source's lineage. When a
+	 second GsVSLeaf, in another dictionary, also descends from GsVSMid, the name means two classes
+	 there -- and the first one the descendant walk reached used to be taken, which may be the one
+	 the user did not pick. The engine cannot tell which was meant, so it has to say so rather than
+	 move the variable into either."
+	| twinDict ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[(self classNamed: 'GsVSMid')
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testMoveUpDeclinesATargetNameTwoAncestorsShare [
+	"The #up half. A class whose superclass has the same name as one of ITS ancestors -- a second
+	 GsVSBase, in another dictionary, subclassing the real one -- gives the name two meanings in the
+	 source's ancestry."
+	| twinDict twin leafUnderTwin ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 leafUnderTwin := twin
+		subclass: 'GsVSTwinLeaf'
+		instVarNames: #('twinOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: leafUnderTwin moveInstVar: 'twinOwn' toClasses: #('GsVSBase') direction: #up.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]

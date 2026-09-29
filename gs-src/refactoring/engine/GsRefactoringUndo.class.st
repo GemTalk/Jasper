@@ -505,12 +505,18 @@ GsRefactoringUndo class >> slotsTouchedIn: aChangeSet deselected: deselectedIds 
 
 { #category : 'recording' }
 GsRefactoringUndo class >> add: aSelector forChange: aChange to: slots seen: seen [
-	"Add the (class, side, selector) slot aChange addresses under aSelector, unless an
-	 identical slot is already in the list."
+	"Add the (dictionary, class, side, selector) slot aChange addresses under aSelector, unless an
+	 identical slot is already in the list.
+
+	 The dictionary is part of the key because a class name does not identify a class: a
+	 whole-system change set can touch the same selector on a same-named class in each of two
+	 dictionaries, and keyed by `Class>>selector` alone the second slot was dropped -- the undo
+	 then restored one class and reported success for both (#396)."
 	| meta key |
 	aSelector isNil ifTrue: [^self].
 	meta := aChange isMeta == true.
-	key := aChange className asString, (meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
+	key := aChange dictName printString, ' ', aChange className asString,
+		(meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
 	(seen includes: key) ifTrue: [^self].
 	seen add: key.
 	slots add: (Array

@@ -419,7 +419,7 @@ removeallclassmethods GsInstVarRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'ambiguousTarget' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -6497,6 +6497,15 @@ setMoveTargets: anArrayOfClasses direction: aSymbol
 	^self
 %
 
+category: 'private'
+method: GsInstVarStructureRefactoring
+setAmbiguousTarget: aCollectionOrNil
+	"The same-named classes one requested destination name matched in the lineage, or nil when
+	 every name meant exactly one class. Answers self."
+	ambiguousTarget := aCollectionOrNil.
+	^self
+%
+
 category: 'accessing'
 method: GsInstVarStructureRefactoring
 effectiveDirection
@@ -6694,6 +6703,17 @@ analyzeMove
 		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
 	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
 		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	ambiguousTarget isNil ifFalse: [
+		^decline := 'Cannot move ', varName, ' to ', ambiguousTarget first name asString, ': ',
+			ambiguousTarget size printString, ' ',
+			(dir == #up ifTrue: ['ancestors'] ifFalse: ['descendants']), ' of ', def name asString,
+			' have that name, in ',
+			((ambiguousTarget collect: [:c |
+				(environment dictionaryDefiningClass: c)
+					ifNil: ['an unknown dictionary']
+					ifNotNil: [:d | d name ifNil: ['an unnamed dictionary'] ifNotNil: [:nm | nm asString]]])
+				inject: '' into: [:acc :e | acc isEmpty ifTrue: [e] ifFalse: [acc, ', ', e]]),
+			'. The destination is chosen by name, so which of them was meant cannot be told.'].
 	(targetClasses includes: def) ifTrue: [
 		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
 	dir == #up
@@ -7299,10 +7319,14 @@ copyMethodsFrom: old to: new
 	    accessor is instead added to the target class as its own #methodAdd;
 	  - methods this refactoring stages a #methodRecompile for: their rewritten source is what
 	    belongs on the new version, and it is installed by that change (see
-	    #rewriteSelectorsFor:)."
+	    #rewriteSelectorsFor:).
+
+	 Both are matched to old by the class, never by its name: a same-named class in another
+	 dictionary can sit inside the reshaped subtree too, and it is re-versioned alongside. Keyed by
+	 name, its own methods of those selectors matched and were silently not carried forward (#396)."
 	| skip |
-	skip := self accessorRemovalSelectorsFor: old name asString.
-	skip addAll: (self rewriteSelectorsFor: old name asString).
+	skip := self accessorRemovalSelectorsFor: old.
+	skip addAll: (self rewriteSelectorsFor: old).
 	old selectors do: [:sel |
 		(skip includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
 	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
@@ -7310,9 +7334,9 @@ copyMethodsFrom: old to: new
 
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-rewriteSelectorsFor: aClassName
-	"The instance-side selectors this refactoring stages a #methodRecompile for on the named
-	 class, so #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
+rewriteSelectorsFor: aClass
+	"The instance-side selectors this refactoring stages a #methodRecompile for on aClass, so
+	 #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
 
 	 Carrying it forward is not merely redundant, it FAILS: converting a method temporary into
 	 an instance variable leaves the old source declaring a temporary the new version now
@@ -7320,24 +7344,32 @@ rewriteSelectorsFor: aClassName
 	 already been declared'). Skipping is safe because the recompile always runs -- this
 	 refactoring is all-or-nothing, so deselection is ignored -- and a rewrite that genuinely
 	 fails is reported by the apply loop like any other change."
-	| set |
+	| set mine |
 	set := IdentitySet new.
+	mine := environment lineageOf: aClass.
 	self changeSet changes do: [:c |
 		(c kind == #methodRecompile
-			and: [c isMeta ~~ true and: [c className asString = aClassName]])
+			and: [c isMeta ~~ true
+			and: [c className asString = aClass name asString
+			and: [| cls |
+				cls := environment classForChange: c.
+				mine isNil
+					ifTrue: [cls == aClass]
+					ifFalse: [(environment lineageOf: cls) == mine]]]])
 				ifTrue: [set add: c selector asSymbol]].
 	^set
 %
 
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-accessorRemovalSelectorsFor: aClassName
-	"The set of (instance-side) selectors being moved OUT of the named class, so
-	 #copyMethodsFrom:to: can skip carrying them onto the new version."
+accessorRemovalSelectorsFor: aClass
+	"The set of (instance-side) selectors being moved OUT of aClass, so #copyMethodsFrom:to: can
+	 skip carrying them onto the new version. Slot 5 of each removal is the class it was staged
+	 against, and aClass is still that same object here: it has not been re-versioned yet."
 	| set |
 	set := IdentitySet new.
 	accessorRemovals do: [:r |
-		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
+		(r at: 5) == aClass ifTrue: [set add: (r at: 1)]].
 	^set
 %
 
@@ -7437,8 +7469,12 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
 	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
 	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
-	 name yields nil and declines as a destination that could not be found."
-	| ref env dir lineage targets |
+	 name yields nil and declines as a destination that could not be found.
+
+	 A name that TWO classes in the lineage answer to -- same-named classes in different
+	 dictionaries -- is recorded and declined in analysis. Taking the first the walk reached moved
+	 the variable into whichever that was, which need not be the one the user picked (#396)."
+	| ref env dir lineage targets ambiguous |
 	env := GsRefactoringEnvironment new.
 	dir := aSymbol asSymbol.
 	ref := self new
@@ -7451,10 +7487,13 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	lineage := dir == #up
 		ifTrue: [ref ancestorsOf: aClass]
 		ifFalse: [env descendantsOf: aClass].
-	targets := classNames collect: [:n |
-		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
-			ifNil: [env classNamed: n asString]].
-	^ref setMoveTargets: targets direction: dir
+	targets := classNames collect: [:n | | matches |
+		matches := lineage select: [:c | c name asString = n asString].
+		(matches size > 1 and: [ambiguous isNil]) ifTrue: [ambiguous := matches].
+		matches isEmpty
+			ifTrue: [env classNamed: n asString]
+			ifFalse: [matches first]].
+	^(ref setMoveTargets: targets direction: dir) setAmbiguousTarget: ambiguous
 %
 
 category: 'instance creation'
@@ -9833,6 +9872,20 @@ classNamed: aName
 
 category: 'accessing'
 method: GsRefactoringEnvironment
+lineageOf: aClass
+	"aClass's class history -- the one object every version of it shares, and no other class
+	 does. nil for a class with no history; the caller then falls back to plain identity rather
+	 than letting two history-less classes match on a shared nil.
+
+	 This is how a staged change is matched to a class during copy-forward: by then the change's
+	 dictionary binds the NEW version while the class being carried forward is still the old one,
+	 so identity misses, and a name matches a same-named class in another dictionary too (#396)."
+	aClass isNil ifTrue: [^nil].
+	^[aClass classHistory] on: Error do: [:e | nil]
+%
+
+category: 'accessing'
+method: GsRefactoringEnvironment
 dictionaryDefiningClass: aClass
 	"The SymbolDictionary that binds aClass ITSELF under its own name, compared by IDENTITY,
 	 or nil when no dictionary does.
@@ -11361,12 +11414,18 @@ slotsTouchedIn: aChangeSet deselected: deselectedIds
 category: 'recording'
 classmethod: GsRefactoringUndo
 add: aSelector forChange: aChange to: slots seen: seen
-	"Add the (class, side, selector) slot aChange addresses under aSelector, unless an
-	 identical slot is already in the list."
+	"Add the (dictionary, class, side, selector) slot aChange addresses under aSelector, unless an
+	 identical slot is already in the list.
+
+	 The dictionary is part of the key because a class name does not identify a class: a
+	 whole-system change set can touch the same selector on a same-named class in each of two
+	 dictionaries, and keyed by `Class>>selector` alone the second slot was dropped -- the undo
+	 then restored one class and reported success for both (#396)."
 	| meta key |
 	aSelector isNil ifTrue: [^self].
 	meta := aChange isMeta == true.
-	key := aChange className asString, (meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
+	key := aChange dictName printString, ' ', aChange className asString,
+		(meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
 	(seen includes: key) ifTrue: [^self].
 	seen add: key.
 	slots add: (Array
@@ -13212,7 +13271,7 @@ newSourceFor: aClass selector: aSelector
 	 still the old one. A class history is shared by every version of one class and by no
 	 other class, which is exactly the distinction wanted."
 	| mine |
-	mine := self lineageOf: aClass.
+	mine := environment lineageOf: aClass.
 	^(self changeSet changes
 		detect: [:c | | cls |
 			c kind = #methodRecompile
@@ -13220,20 +13279,10 @@ newSourceFor: aClass selector: aSelector
 					and: [cls := environment classForChange: c.
 						  mine isNil
 							ifTrue: [cls == aClass]
-							ifFalse: [(self lineageOf: cls) == mine]]]]
+							ifFalse: [(environment lineageOf: cls) == mine]]]]
 		ifNone: [nil])
 			ifNil: [nil]
 			ifNotNil: [:change | change newSource]
-%
-
-category: 'private - applying'
-method: GsRenameInstanceVariableRefactoring
-lineageOf: aClass
-	"aClass's class history -- the one object every version of it shares, and no other class
-	 does. nil for a class with no history; the caller then falls back to plain identity rather
-	 than letting two history-less classes match on a shared nil."
-	aClass isNil ifTrue: [^nil].
-	^[aClass classHistory] on: Error do: [:e | nil]
 %
 
 category: 'private - applying'

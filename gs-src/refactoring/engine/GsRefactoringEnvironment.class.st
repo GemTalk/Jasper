@@ -238,6 +238,19 @@ GsRefactoringEnvironment >> classNamed: aName [
 ]
 
 { #category : 'accessing' }
+GsRefactoringEnvironment >> lineageOf: aClass [
+	"aClass's class history -- the one object every version of it shares, and no other class
+	 does. nil for a class with no history; the caller then falls back to plain identity rather
+	 than letting two history-less classes match on a shared nil.
+
+	 This is how a staged change is matched to a class during copy-forward: by then the change's
+	 dictionary binds the NEW version while the class being carried forward is still the old one,
+	 so identity misses, and a name matches a same-named class in another dictionary too (#396)."
+	aClass isNil ifTrue: [^nil].
+	^[aClass classHistory] on: Error do: [:e | nil]
+]
+
+{ #category : 'accessing' }
 GsRefactoringEnvironment >> dictionaryDefiningClass: aClass [
 	"The SymbolDictionary that binds aClass ITSELF under its own name, compared by IDENTITY,
 	 or nil when no dictionary does.

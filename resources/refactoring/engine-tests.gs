@@ -419,7 +419,8 @@ setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
 which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
-half `dictObjectFor:` used to get wrong.
+half `dictObjectFor:` used to get wrong, and what a same-named class in another dictionary keeps
+when it is re-versioned because it sits inside the reshaped subtree.
 '.
 true.
 %
@@ -723,7 +724,8 @@ It also pins down the machinery around that:
   - nothing here commits.
 
 Every fixture selector is prefixed `gsu` so no refactoring in this suite can reach a
-same-named method elsewhere in the image, and every scope used is #class.
+same-named method elsewhere in the image. Every scope used is #class, except one whole-system
+rename in the shadowed-name tests, whose second implementor is the point of the test.
 
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
@@ -737,8 +739,10 @@ which used to resolve its class by name:
     engine gets wrong, including `dictObjectFor:`;
   - #historyRevert captures and replays through `GsClassHistory`.
 
-Each test shadows the class name only AFTER the forward refactoring has landed, so the refactoring
-itself is correct and the undo alone is on trial.
+Most of them shadow the class name only AFTER the forward refactoring has landed, so the
+refactoring itself is correct and the undo alone is on trial. That leaves the decoy outside the
+change set, so one test instead binds a second GsUndoAccount from the start and has the refactoring
+touch both: the undo must then record and restore both.
 '.
 true.
 %
@@ -6911,6 +6915,58 @@ testConvertTempKeepsTheMethodOfASameNamedDescendantInAnotherDictionary
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 %
 
+category: 'tests - shadowed class name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownDeclinesATargetNameTwoDescendantsShare
+	"A move names its destinations, and each name is resolved within the source's lineage. When a
+	 second GsVSLeaf, in another dictionary, also descends from GsVSMid, the name means two classes
+	 there -- and the first one the descendant walk reached used to be taken, which may be the one
+	 the user did not pick. The engine cannot tell which was meant, so it has to say so rather than
+	 move the variable into either."
+	| twinDict ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[(self classNamed: 'GsVSMid')
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsInstVarStructureRefactoringTest
+testMoveUpDeclinesATargetNameTwoAncestorsShare
+	"The #up half. A class whose superclass has the same name as one of ITS ancestors -- a second
+	 GsVSBase, in another dictionary, subclassing the real one -- gives the name two meanings in the
+	 source's ancestry."
+	| twinDict twin leafUnderTwin ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 leafUnderTwin := twin
+		subclass: 'GsVSTwinLeaf'
+		instVarNames: #('twinOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: leafUnderTwin moveInstVar: 'twinOwn' toClasses: #('GsVSBase') direction: #up.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
 category: 'asserting'
 method: GsMoveMethodRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -9465,6 +9521,30 @@ testTheSameSelectorOnSameNamedClassesInTwoDictionariesIsTwoSlots
 		equals: #('GsUndoTwinDict' 'UserGlobals')
 %
 
+category: 'tests - scope'
+method: GsRefactoringUndoTest
+testMethodHistorySlotsKeepSameNamedClassesInTwoDictionariesApart
+	"The slots method HISTORY records come from the same de-duplication, minus the refusal of a
+	 class reshape. A reshape that recompiles #gsuTotal on a GsUndoAccount in each of two
+	 dictionaries owes both methods their version entries."
+	| cs slots |
+	cs := GsRefactoringChangeSet new.
+	cs
+		addClassDefinitionEditInDictionary: 'UserGlobals' className: 'GsUndoAccount'
+		oldSource: 'old' newSource: 'new'.
+	cs
+		addMethodRecompileInDictionary: 'UserGlobals' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	cs
+		addMethodRecompileInDictionary: 'GsUndoTwinDict' className: 'GsUndoAccount' isMeta: false
+		selector: 'gsuTotal' category: 'computing' oldSource: 'gsuTotal ^1' newSource: 'gsuTotal ^2'.
+	slots := GsRefactoringUndo methodSlotsIn: cs deselected: #().
+	self assert: slots size equals: 2.
+	self
+		assert: (slots collect: [:s | s at: 1]) asSortedCollection asArray
+		equals: #('GsUndoTwinDict' 'UserGlobals')
+%
+
 category: 'tests - rename method'
 method: GsRefactoringUndoTest
 testUndoRenameMethodRestoresTheWholeClass
@@ -10887,6 +10967,49 @@ testUndoWholeSystemRenameRestoresBothSameNamedImplementors
 	 self assert: undoJson includesSubstring: '"failed":[]'.
 	 self assertSnapshot: beforeReal restoredFor: self fixture.
 	 self assertSnapshot: beforeTwin restoredFor: twin]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - shadowed class name'
+method: GsRefactoringUndoTest
+testUndoHistoryRevertRestoresASameNamedSubclassInAnotherDictionary
+	"Adding an instance variable to GsUndoAccount re-versions every subclass, and here that includes
+	 a second GsUndoSavings, in another dictionary, that subclasses it too. The history revert
+	 records and replays each class by name AND dictionary, so both GsUndoSavings have to go back to
+	 their own pre-reshape versions, each in its own dictionary, with its own methods."
+	| twinDict twin |
+	twinDict := SymbolDictionary new name: #GsUndoTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := self fixture
+		subclass: 'GsUndoSavings'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'gsuTwinOwn ^ 3' in: twin category: 'fixture'.
+	 GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount' inDictionary: 'UserGlobals'.
+	 (GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	 "The reshape reached the other GsUndoSavings, so it is the undo's to put back."
+	 self deny: (twinDict at: #GsUndoSavings) == twin.
+
+	 self undoAll.
+
+	 self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuReshaped').
+	 #(#UserGlobals #GsUndoTwinDict) do: [:dn | | d savings |
+		d := dn == #UserGlobals ifTrue: [UserGlobals] ifFalse: [twinDict].
+		savings := d at: #GsUndoSavings.
+		self deny: (savings allInstVarNames includes: #gsuReshaped).
+		self assert: savings superclass == (UserGlobals at: #GsUndoAccount)].
+	 "A revert binds a fresh version of each subclass, so identity is not the test; staying in its
+	 own class history is -- neither GsUndoSavings may have been reverted into the other's."
+	 self assert: (twinDict at: #GsUndoSavings) classHistory == twin classHistory.
+	 self deny: (UserGlobals at: #GsUndoSavings) classHistory == twin classHistory.
+	 self assert: (self sourceOf: #gsuTwinOwn in: (twinDict at: #GsUndoSavings)) notNil.
+	 self assert: (self sourceOf: #gsuSavingsOwn in: (UserGlobals at: #GsUndoSavings)) notNil]
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 %
 

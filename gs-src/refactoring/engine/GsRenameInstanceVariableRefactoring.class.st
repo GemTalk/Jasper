@@ -354,7 +354,7 @@ GsRenameInstanceVariableRefactoring >> newSourceFor: aClass selector: aSelector 
 	 still the old one. A class history is shared by every version of one class and by no
 	 other class, which is exactly the distinction wanted."
 	| mine |
-	mine := self lineageOf: aClass.
+	mine := environment lineageOf: aClass.
 	^(self changeSet changes
 		detect: [:c | | cls |
 			c kind = #methodRecompile
@@ -362,19 +362,10 @@ GsRenameInstanceVariableRefactoring >> newSourceFor: aClass selector: aSelector 
 					and: [cls := environment classForChange: c.
 						  mine isNil
 							ifTrue: [cls == aClass]
-							ifFalse: [(self lineageOf: cls) == mine]]]]
+							ifFalse: [(environment lineageOf: cls) == mine]]]]
 		ifNone: [nil])
 			ifNil: [nil]
 			ifNotNil: [:change | change newSource]
-]
-
-{ #category : 'private - applying' }
-GsRenameInstanceVariableRefactoring >> lineageOf: aClass [
-	"aClass's class history -- the one object every version of it shares, and no other class
-	 does. nil for a class with no history; the caller then falls back to plain identity rather
-	 than letting two history-less classes match on a shared nil."
-	aClass isNil ifTrue: [^nil].
-	^[aClass classHistory] on: Error do: [:e | nil]
 ]
 
 { #category : 'private - applying' }
