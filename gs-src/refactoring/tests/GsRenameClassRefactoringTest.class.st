@@ -111,7 +111,7 @@ GsRenameClassRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameClassRefactoringTest >> tearDown [
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone' 'GsRCShapeStub')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 ]
@@ -703,7 +703,7 @@ GsRenameClassRefactoringTest >> testAFailedClassRenameStopsTheApplyAndSaysSo [
 	ref changeSet.
 	UserGlobals removeKey: #GsRCBase ifAbsent: [].
 	json := ref applyDeselected: #().
-	self assert: json includesSubstring: '"structuralFailed":true'.
+	self assert: json includesSubstring: '"renameFailed":true'.
 	"and the reference rewrites that come after it did NOT run: the external referencer still
 	 names the old class, rather than having been repointed at a name this rename never bound"
 	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
@@ -711,9 +711,54 @@ GsRenameClassRefactoringTest >> testAFailedClassRenameStopsTheApplyAndSaysSo [
 ]
 
 { #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testAFailedReparentAfterTheRenameLandedSaysTheRenameLanded [
+	"The change set renames first, then re-parents each descendant. A reparent that raises still
+	 stops the apply -- carrying on would compile rewrites against a half-moved hierarchy -- but
+	 the rename before it HAS landed: the class is bound under the new name. Reporting that as a
+	 failed rename told the client there was nothing to undo, and left the user with the class
+	 renamed, a subclass on the old version, and no Undo.
+
+	 The reparent is made to fail by unbinding the subclass after the change set is staged."
+	| ref json |
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	ref changeSet.
+	UserGlobals removeKey: #GsRCSub ifAbsent: [].
+	json := ref applyDeselected: #().
+	"the rename landed..."
+	self assert: (UserGlobals includesKey: #GsRCRenamed).
+	self assert: json includesSubstring: '"renameFailed":false'.
+	"...the reparent is reported as the failure it was..."
+	self deny: json includesSubstring: '"failed":[]'.
+	"...and the apply still stopped there: the external referencer was not rewritten"
+	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0
+]
+
+{ #category : 'tests - restore' }
+GsRenameClassRefactoringTest >> testARestoreWhoseHistoricalParentHasNoHistoryKeepsTheCurrentSuperclass [
+	"Restoring a historical version re-parents the class under that version's parent, advanced to
+	 the parent's current version through the parent's own class history. When that history
+	 cannot be read, the current superclass is kept -- better a class in the wrong place than one
+	 that cannot be created. Answering the historical parent instead re-parented onto a version
+	 nothing could vouch for.
+
+	 A real class history is never empty, so the historical version here is a stand-in whose
+	 `superclass` answers an object with no class history at all."
+	| stub ref |
+	stub := Object
+		subclass: 'GsRCShapeStub'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'superclass ^ #notAClass' in: stub.
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	self assert: (ref superclassForShapeSource: stub new of: self baseFixture) == self baseFixture superclass
+]
+
+{ #category : 'tests - shadowed name' }
 GsRenameClassRefactoringTest >> testACleanApplySaysTheStructuralChangeLanded [
 	| json |
 	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
-	self assert: json includesSubstring: '"structuralFailed":false'.
+	self assert: json includesSubstring: '"renameFailed":false'.
 	self assert: json includesSubstring: '"failed":[]'
 ]

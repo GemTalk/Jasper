@@ -1750,3 +1750,104 @@ GsRefactoringUndoTest >> testUndoHistoryRevertRestoresASameNamedSubclassInAnothe
 	 self assert: (self sourceOf: #gsuSavingsOwn in: (UserGlobals at: #GsUndoSavings)) notNil]
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> twinNamedDictionaries [
+	"Two dictionaries with the SAME name, appended to the symbol list in order, each binding its own
+	 GsUndoTwinClass. Callers remove them with #removeDictionaries: in an ensure:."
+	| first second |
+	first := SymbolDictionary new name: #GsUndoTwinName; yourself.
+	second := SymbolDictionary new name: #GsUndoTwinName; yourself.
+	System myUserProfile symbolList add: first; add: second.
+	#(1 2) do: [:i |
+		Object
+			subclass: 'GsUndoTwinClass'
+			instVarNames: #('gsuOwn')
+			classVars: #() classInstVars: #() poolDictionaries: #()
+			inDictionary: (i = 1 ifTrue: [first] ifFalse: [second])].
+	^Array with: first with: second
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> indexOfDictionary: aDict [
+	| sl |
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == aDict ifTrue: [^i]].
+	^0
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> removeDictionaries: dicts [
+	"By identity: two empty dictionaries of one name can compare equal."
+	dicts do: [:d | | i |
+		i := self indexOfDictionary: d.
+		i > 0 ifTrue: [System myUserProfile removeDictionaryAt: i]]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"The history revert recorded each class's dictionary by NAME. With two dictionaries of one
+	 name, replaying it looked the name up, found the FIRST -- whose class of that name the
+	 refactoring never touched, so it was 'already current' and nothing was reported -- and left
+	 the class the user did reshape as it was.
+
+	 The reshape is a new class version defined directly rather than through a refactoring, so
+	 the undo alone is on trial."
+	| dicts first second |
+	dicts := self twinNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[| original |
+	 original := first at: #GsUndoTwinClass.
+	 GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	 self assert: ((second at: #GsUndoTwinClass) instVarNames includes: #gsuReshaped).
+
+	 self undoAll.
+
+	 self deny: ((second at: #GsUndoTwinClass) instVarNames includes: #gsuReshaped).
+	 self assert: (first at: #GsUndoTwinClass) == original]
+		ensure: [self removeDictionaries: dicts]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testUndoHistoryRevertUnbindsACreatedClassOnlyFromItsOwnDictionary [
+	"A class the refactoring created is unbound from the dictionary it was filed in. That dictionary
+	 was found by NAME, so every dictionary of that name lost its binding -- including an unrelated
+	 class the other one holds."
+	| dicts first second |
+	dicts := self twinNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[| unrelated |
+	 unrelated := Object
+		subclass: 'GsUndoCreated' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: first.
+	 GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 "what the refactoring created, next to its anchor"
+	 Object
+		subclass: 'GsUndoCreated' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Extract GsUndoCreated'
+		engine: 'GsExtractSuperclassRefactoring'
+		created: #('GsUndoCreated').
+
+	 self undoAll.
+
+	 self deny: (second includesKey: #GsUndoCreated).
+	 self assert: (first at: #GsUndoCreated ifAbsent: [nil]) == unrelated]
+		ensure: [self removeDictionaries: dicts]
+]

@@ -151,7 +151,7 @@ describe('a rename whose own #classRename failed arms nothing', () => {
         failed: [{ id: '1', label: 'ShadowedAAAAA', error: 'Class not found: ShadowedAAAAA' }],
         migratedFailures: 0,
         committed: false,
-        structuralFailed: true,
+        renameFailed: true,
       }) as never,
     );
 
@@ -171,7 +171,7 @@ describe('a rename whose own #classRename failed arms nothing', () => {
         failed: [{ id: '9', label: 'Sub>>#m', error: 'nope' }],
         migratedFailures: 0,
         committed: false,
-        structuralFailed: false,
+        renameFailed: false,
       }) as never,
     );
 
