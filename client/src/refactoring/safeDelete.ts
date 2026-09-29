@@ -103,7 +103,13 @@ function listing(items: string[]): string {
 }
 
 /** How a non-default method environment is named in the dialog. Environment 0 is left
- *  unadorned so the ordinary single-environment stone reads exactly as it always did. */
+ *  unadorned so the ordinary single-environment stone reads exactly as it always did.
+ *
+ *  This goes on the RECEIVER, which is why it is bracketed and sits mid-name rather than
+ *  taking `describeMethodResult`'s trailing ` · env N`: a grouped line carries several
+ *  selectors (`Account [env 1] >> #balance, #deposit:`), and a suffix at the end of that
+ *  line would read as applying only to the last of them. The two spellings name the same
+ *  thing in two different positions, not two different things. */
 export function environmentSuffix(environmentId: number): string {
   return environmentId === 0 ? '' : ` [env ${environmentId}]`;
 }
