@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from '../activeSessionDisplay';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugQueries';
@@ -113,6 +114,8 @@ export class EnhancedInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  // Titles go through this, never `panel.title`, so they keep the session tag.
+  private readonly title: SessionPanelTitle;
   private currentOop: bigint;
   private currentLabel: string;
   /** Monotonic id handed to each miller column; the root column is 0. */
@@ -159,6 +162,8 @@ export class EnhancedInspector {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    this.title = new SessionPanelTitle(panel, session.id, 'Inspector');
+    this.disposables.push(this.title);
     this.currentOop = oop;
     this.currentLabel = label;
     this.panel.webview.html = this.getHtml();
@@ -185,7 +190,7 @@ export class EnhancedInspector {
     switch (msg.command) {
       case 'ready': {
         const payload = this.buildColumnPayload(this.currentOop);
-        this.panel.title = payload.title;
+        this.title.setTitle(payload.title);
         this.panel.webview.postMessage({
           command: 'enhancedInspectorViewSpecs',
           columnId: this.rootColumnId,
@@ -399,7 +404,7 @@ export class EnhancedInspector {
       }
 
       case 'setTitle': {
-        this.panel.title = msg.title;
+        this.title.setTitle(msg.title);
         break;
       }
 

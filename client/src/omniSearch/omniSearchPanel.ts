@@ -13,6 +13,7 @@
  * is built by `omniSearchCommand.ts` and injected, so this file needs no stone session directly.
  */
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from '../activeSessionDisplay';
 import { OmniConfig, OmniResult } from './omniTypes';
 import { createOmniEngine, OmniEngineDeps, OmniViewData } from './omniEngine';
 import { revealTestForResult } from './omniActions';
@@ -69,6 +70,7 @@ export class OmniSearchPanel {
   // the docked provider's `ensureEngine` check.
   private engine: ReturnType<typeof createOmniEngine> | undefined;
   private disposables: vscode.Disposable[] = [];
+  private readonly title: SessionPanelTitle;
   // Dialog vs. pinned. Unpinned (default) makes the Spotter behave like the Phase-1 QuickPick: it
   // closes on focus-out and on picking a result. Pinned keeps it open and switches activation to
   // open-beside. "Pinned" IS VS Code's own tab-pin (right-click tab → Pin, or our 📌 button, which
@@ -160,6 +162,8 @@ export class OmniSearchPanel {
     private deps: OmniPanelDeps,
   ) {
     this.panel = panel;
+    this.title = new SessionPanelTitle(panel, deps.sessionId, 'GemStone Search');
+    this.disposables.push(this.title);
     this.engine = createOmniEngine(deps);
     this.panel.webview.html = this.getHtml();
 
@@ -214,6 +218,7 @@ export class OmniSearchPanel {
    *  wiring — is session-independent and stays, so the user keeps the tab they opened. */
   private rebindTo(deps: OmniPanelDeps): void {
     this.deps = deps;
+    this.title.setSession(deps.sessionId);
     this.engine = createOmniEngine(deps);
     this.reset();
     this.panel.webview.postMessage(configMessage(deps.config, this.pinned));

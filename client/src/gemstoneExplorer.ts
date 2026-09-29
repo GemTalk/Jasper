@@ -165,6 +165,8 @@ import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
 import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
+import { explorerRowUri } from './activeEditorDecoration';
+import { followActiveSessionLabel } from './activeSessionDisplay';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -520,6 +522,7 @@ export class MethodItem extends vscode.TreeItem {
     // The method's gemstone:// source URI, when known. Only used to carry a
     // FileDecoration (the "shown in the active editor" tint) — the label and icon
     // are still set explicitly below, so it doesn't affect how the row renders.
+    // Stored as an explorerRowUri, so the editor tab's session badge stays off the row.
     resourceUri?: vscode.Uri,
     // Under an active reads:/writes:/accesses: ivar filter, the row's role for the
     // filtered ivar: 'r' (reads), 'w' (writes), or 'rw' (both). Shown as a glyph.
@@ -527,7 +530,7 @@ export class MethodItem extends vscode.TreeItem {
   ) {
     super(info.selector, vscode.TreeItemCollapsibleState.None);
     this.id = `msel:${isMeta}:${displayCategory ?? ''}:${info.selector}`;
-    this.resourceUri = resourceUri;
+    this.resourceUri = resourceUri && explorerRowUri(resourceUri);
     // The context value carries the indicator state so the right-click menu can
     // offer superclass/subclass-implementation browsing only where an override
     // arrow is actually present (▲ overrides super, ▼ overridden below). Base
@@ -8343,6 +8346,11 @@ export function registerGemStoneExplorer(
     classView,
     hierarchyView,
     methodView,
+    // Names the session the whole Explorer is browsing, on the pane where browsing
+    // starts. A tree view, unlike the webview above it, exists before it is shown.
+    followActiveSessionLabel(sessionManager, (label) => {
+      dictView.description = label;
+    }),
     sessionManager.onDidChangeSelection((id) => {
       syncActiveContext();
       ctl.reset();

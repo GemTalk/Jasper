@@ -82,7 +82,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // `resolveWebviewView` and never cleared) and so cannot tell a landed reveal from a lost one.
   private readonly onDidResolveView = new vscode.EventEmitter<void>();
 
-  constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
+  constructor(
+    private readonly resolveContext: () => Promise<OmniViewContext | null>,
+    // Keeps a resolved view's header naming the session it searches, until the view is disposed.
+    private readonly labelView: (view: vscode.WebviewView) => vscode.Disposable = () =>
+      new vscode.Disposable(() => {}),
+  ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -95,6 +100,8 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => {
       if (view.visible) void this.onShown();
     });
+    const label = this.labelView(view);
+    view.onDidDispose(() => label.dispose());
     this.onDidResolveView.fire(); // the definitive "the view exists now" signal — see focus()
   }
 

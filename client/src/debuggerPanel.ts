@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from './activeSessionDisplay';
 import { evaluatePaneHtml } from './debuggerEvalPane';
 import { EvalMode } from './evaluateMode';
 import * as crypto from 'crypto';
@@ -1647,6 +1648,7 @@ export class DebuggerPanel {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    this.disposables.push(new SessionPanelTitle(panel, session.id, 'GemStone Debugger'));
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // A panel that moves column updates the remembered value while it still can

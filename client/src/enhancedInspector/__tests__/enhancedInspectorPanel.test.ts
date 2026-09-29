@@ -5,6 +5,10 @@ vi.mock('vscode', () => ({
     createWebviewPanel: vi.fn(),
     showWarningMessage: vi.fn(),
   },
+  workspace: {
+    getConfiguration: () => ({ get: (_key: string, fallback?: unknown) => fallback }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
+  },
   ViewColumn: { Beside: 2 },
 }));
 

@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
 /** Settings the panel reads, so a test can stand in for the user's own. */
-const settings = vi.hoisted(() => ({ loadAllPageLimit: undefined as number | undefined }));
+const settings = vi.hoisted(() => ({
+  loadAllPageLimit: undefined as number | undefined,
+  sessionMode: undefined as string | undefined,
+}));
 
 vi.mock('vscode', () => ({
   window: {
@@ -15,8 +18,11 @@ vi.mock('vscode', () => ({
       get: (key: string, fallback: unknown) =>
         key === 'inspector.loadAllPageLimit' && settings.loadAllPageLimit !== undefined
           ? settings.loadAllPageLimit
-          : fallback,
+          : key === 'sessionMode' && settings.sessionMode !== undefined
+            ? settings.sessionMode
+            : fallback,
     }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
   },
   commands: { executeCommand: vi.fn() },
   env: { clipboard: { writeText: vi.fn(() => Promise.resolve()) } },
@@ -135,6 +141,7 @@ const HEADER = {
 beforeEach(() => {
   vi.clearAllMocks();
   settings.loadAllPageLimit = undefined;
+  settings.sessionMode = undefined;
   callInProgress = 0;
   session = makeSession();
   panel = makeMockPanel();
@@ -782,6 +789,16 @@ describe('the panel title and lifetime', () => {
     send({ command: 'setTitle', title: 'Account › balance' });
 
     expect(panel.title).toBe('Inspector: Account › balance');
+  });
+
+  it('keeps the session in the title, in multiple-session mode, as the column changes', () => {
+    settings.sessionMode = 'multiple';
+    open();
+    expect(panel.title).toBe(`Inspector · Session ${session.id}`);
+
+    send({ command: 'setTitle', title: 'Account › balance' });
+
+    expect(panel.title).toBe(`Inspector: Account › balance · Session ${session.id}`);
   });
 
   it('falls back to a plain name when there is nothing to name it after', () => {

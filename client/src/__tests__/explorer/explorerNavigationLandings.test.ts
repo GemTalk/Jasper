@@ -35,7 +35,7 @@ vi.mock('../../gciLog', () => ({
 }));
 
 import * as vscode from 'vscode';
-import { __resetConfig } from '../../__mocks__/vscode';
+import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
 import { ExplorerController, MethodItem, registerGemStoneExplorer } from '../../gemstoneExplorer';
 import {
   getClassesWithCategory,
@@ -374,6 +374,11 @@ describe('the navigation commands are actually registered, not just contributed'
     removal: ((id: number) => void)[];
   };
 
+  const SESSION = {
+    id: 1,
+    login: { gs_user: 'DataCurator', stone: 'gs64stone', gem_host: 'localhost' },
+  } as ActiveSession;
+
   function register() {
     sessionListeners = { selection: [], removal: [] };
     // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
@@ -394,8 +399,8 @@ describe('the navigation commands are actually registered, not just contributed'
       extensionPath: '/x',
     } as unknown as vscode.ExtensionContext;
     const sessionManager = {
-      getSelectedSession: () => ({ id: 1 }) as ActiveSession,
-      resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
+      getSelectedSession: () => SESSION,
+      resolveSession: () => Promise.resolve(SESSION),
       onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
         sessionListeners.selection.push(listener);
         return { dispose: vi.fn() };
@@ -404,6 +409,7 @@ describe('the navigation commands are actually registered, not just contributed'
         sessionListeners.removal.push(listener);
         return { dispose: vi.fn() };
       }),
+      onDidAddSession: vi.fn(() => ({ dispose: vi.fn() })),
     } as unknown as SessionManager;
     const handle = registerGemStoneExplorer(context, sessionManager);
     const handlers = new Map<string, (...a: unknown[]) => unknown>();
@@ -427,10 +433,26 @@ describe('the navigation commands are actually registered, not just contributed'
     }
   });
 
+  it('names the session it browses on the Dictionaries pane, in multiple-session mode', () => {
+    const dictsPane = () => {
+      const calls = vi.mocked(vscode.window.createTreeView).mock.calls;
+      const index = calls.map((c) => c[0]).lastIndexOf('gemstoneExplorerDicts');
+      return vi.mocked(vscode.window.createTreeView).mock.results[index].value;
+    };
+    __setConfig('gemstone', 'sessionMode', 'multiple');
+    register();
+    expect(dictsPane().description).toBe('Session 1 · DataCurator on gs64stone (localhost)');
+
+    __setConfig('gemstone', 'sessionMode', 'single');
+    register();
+    expect(dictsPane().description).toBeUndefined();
+  });
+
   it('subscribes the chain to the session being switched and to a session logging out', () => {
     register();
-    expect(sessionListeners.selection).toHaveLength(1);
-    expect(sessionListeners.removal).toHaveLength(1);
+    // The second of each is the Dictionaries pane's session label.
+    expect(sessionListeners.selection).toHaveLength(2);
+    expect(sessionListeners.removal).toHaveLength(2);
   });
 });
 
