@@ -16,7 +16,22 @@ import { readWebviewScript } from '../webviewAssets';
 
 const panelJs = readWebviewScript('undoPlanPanelView.js', 'undo');
 
+/**
+ * The plan panel currently open, if any.
+ *
+ * One at a time. The panel is not modal, so a second Undo while one is open used to raise a
+ * second panel for the SAME entry; applying both reversed it twice and spent an unrelated entry
+ * (#396 review). A second Undo now reveals the open panel instead.
+ */
+let openPanel: vscode.WebviewPanel | undefined;
+
 export function showUndoPlanPanel(plan: UndoPlan): Promise<boolean> {
+  if (openPanel) {
+    openPanel.reveal();
+    // Not a decline and not an apply: the question is already on screen, and answering it is
+    // what spends the entry.
+    return Promise.resolve(false);
+  }
   const panel = vscode.window.createWebviewPanel(
     'gemstoneUndoPlan',
     `${plan.verb} ${plan.label}`,
@@ -24,6 +39,7 @@ export function showUndoPlanPanel(plan: UndoPlan): Promise<boolean> {
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
   );
 
+  openPanel = panel;
   const nonce = crypto.randomBytes(16).toString('hex');
   panel.webview.html = renderUndoPlanHtml({ plan, nonce, script: panelJs });
 
@@ -32,6 +48,7 @@ export function showUndoPlanPanel(plan: UndoPlan): Promise<boolean> {
     const finish = (accepted: boolean): void => {
       if (settled) return;
       settled = true;
+      openPanel = undefined;
       resolve(accepted);
       panel.dispose();
     };
@@ -42,6 +59,7 @@ export function showUndoPlanPanel(plan: UndoPlan): Promise<boolean> {
     });
     // Closing the panel is a decline, not a hang: the undo stack is untouched either way.
     panel.onDidDispose(() => {
+      openPanel = undefined;
       if (!settled) {
         settled = true;
         resolve(false);

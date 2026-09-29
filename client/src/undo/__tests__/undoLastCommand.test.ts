@@ -397,3 +397,35 @@ describe('undoLastCommand', () => {
     expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain('session');
   });
 });
+
+// The plan panel is a WEBVIEW, not a modal: the user can keep working while it is open, and a
+// save pushes a NEWER entry. Reversing the peeked entry and then popping "the top" spent somebody
+// else's entry -- losing its reversal, and leaving this one to be applied again over whatever was
+// written since. That is silent source loss (#396 review).
+describe('the stack can move while the non-modal panel is open', () => {
+  it('reverses nothing when a newer entry arrived, and says so', async () => {
+    pushUndoEntry(methodEdit('Save Account>>#older'));
+    // the panel is open; the user saves something else, which pushes a newer entry
+    vi.mocked(showUndoPlanPanel).mockImplementation(async () => {
+      pushUndoEntry(methodEdit('Save Account>>#newer'));
+      return true;
+    });
+
+    await undoLastCommand(sessions);
+
+    expect(reverseMethodEdit).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(2);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain('stack changed');
+  });
+
+  it('spends the entry it reversed by id, not whatever is on top', async () => {
+    // Belt and braces for the same defect: even if the guard were lifted, the entry that was
+    // reversed is the one removed.
+    pushUndoEntry(methodEdit('Save Account>>#only'));
+    vi.mocked(reverseMethodEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+});

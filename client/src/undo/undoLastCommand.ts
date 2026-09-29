@@ -36,7 +36,7 @@
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from '../sessionManager';
 import { logInfo } from '../gciLog';
-import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
+import { dropUndoEntry, peekUndoEntry } from './undoStack';
 import { refreshUndoUi } from './undoUi';
 import { planUndo } from './undoPlan';
 import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
@@ -92,41 +92,56 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
       return;
     }
 
+    // The plan panel is a WEBVIEW, not a modal: the user can keep working while it is open, and
+    // a save pushes a NEWER entry. Reversing the entry we peeked and then popping "the top" would
+    // then spend somebody else's entry -- losing its reversal, and leaving this one on the stack
+    // to be applied a second time over whatever was written since. That is silent source loss,
+    // and it is why every branch below spends the entry BY ID rather than popping (#396 review).
+    if (peekUndoEntry(session.id)?.id !== entry.id) {
+      logInfo(`[undo] #${entry.id} is no longer on top; the stack moved while the panel was open`);
+      void vscode.window.showWarningMessage(
+        'The stack changed while the panel was open, so nothing was undone. Try Undo again to ' +
+          'reverse the most recent change.',
+      );
+      return;
+    }
+    const spend = (): void => dropUndoEntry(session.id, entry.id);
+
     // Popping is enough: the stack's change listener updates the button and the context key.
     // Leaving the entry in place when it was not spent is what keeps a cancelled or
     // unreadable undo on offer.
     if (entry.kind === 'methodEdit') {
-      if (await reverseMethodEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseMethodEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classEdit') {
-      if (await reverseClassEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classComment') {
-      if (await reverseClassComment(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassComment(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classVarEdit') {
-      if (await reverseClassVarEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassVarEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'methodCategoryEdit') {
-      if (await reverseMethodCategoryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseMethodCategoryEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'dictionaryEdit') {
-      if (await reverseDictionaryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseDictionaryEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classCategoryEdit') {
-      if (await reverseClassCategoryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassCategoryEdit(session, entry)) spend();
       return;
     }
 
@@ -143,7 +158,9 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     // The panel can be cancelled, and a partial undo leaves the record in place, so ask
     // the stone what actually happened rather than assume the entry is spent.
     const after = checkRefactoringUndoAvailable(session);
-    if (!after.available || after.sequence !== entry.sequence) popUndoEntry(session.id);
+    // By id, for the same reason as above: the refactoring panel is not modal either, so the
+    // top of the stack may have moved on while it was open.
+    if (!after.available || after.sequence !== entry.sequence) dropUndoEntry(session.id, entry.id);
     return;
   }
 }
