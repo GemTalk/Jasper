@@ -33,9 +33,12 @@ export function formatRenameFailureLog(
 export function formatRenameFailureToast(action: string, result: RenameApplyResult): string {
   const first = result.failed[0];
   const more = result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : '';
+  // Not "abort if this is not what you wanted". Abort discards every uncommitted change in the
+  // session, not this one refactoring, and a partial apply is now undoable on its own -- which is
+  // the whole point of recording the reversal before reporting the failure (#396).
   return (
     `${action}: applied ${result.applied} change(s), but ${result.failed.length} method(s) ` +
     `did not recompile onto the new class version: ${first.label}: ${first.error}${more}. ` +
-    'Compiled but NOT committed — abort if this is not what you wanted.'
+    'Compiled but NOT committed — Undo reverses this rename.'
   );
 }

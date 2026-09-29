@@ -75,14 +75,17 @@ describe.each(cases)('ExplorerController.$title', ({ title, command }) => {
     );
   });
 
-  it('passes no dictionary for a hierarchy-tree node', async () => {
+  it("passes a hierarchy node's OWN dictionary, not the selection", async () => {
+    // A hierarchy node names a class that usually lives outside the selected dictionary, and it
+    // carries its own. Passing nothing let the engine take whichever class of that name the
+    // symbol list reached first -- the same defect as #396, one pane over.
     const { ctl } = makeController({} as ActiveSession);
     command.mockResolvedValue({ newClass: 'EsRenderable', applied: 3 });
 
     await run(ctl, hierarchyNode() as never);
 
     expect(command).toHaveBeenCalledWith(
-      expect.objectContaining({ className: 'EsCircle', dict: undefined }),
+      expect.objectContaining({ className: 'EsCircle', dict: 'EsShapeDemo' }),
     );
   });
 

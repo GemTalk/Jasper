@@ -88,6 +88,3 @@ export function refreshUndoUi(session: ActiveSession | undefined): void {
   // hands back something that is not a promise at all (see `afterUndo`).
   void Promise.resolve(vscode.commands.executeCommand(undoStateChangedCommand)).catch(() => {});
 }
-
-/** What reversing this entry is honestly called. A class edit binds an earlier version
- *  rather than rolling anything back, so it is a revert; everything else is an undo. */

@@ -1,6 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
-import { classLookupExpr, escapeString } from '../../queries/util';
+import { classLookupExpr, dictionaryArgExpr, escapeString } from '../../queries/util';
 import { recordedApplyExpr } from './undoRecording';
 
 // Move-method (M6) query builders. The engine (GsMoveMethodRefactoring) is addressed
@@ -12,13 +12,6 @@ import { recordedApplyExpr } from './undoRecording';
 // `targetDict` the TARGET-class lookup (1-based SymbolList index, canonical for Jasper, or a
 // name). Without `targetDict` the engine takes the first class of that name in the symbol list,
 // which for a shadowed name is not the class the user dropped onto (#396).
-
-/** The engine's `inDictionary:` argument: a 1-based SymbolList index unquoted, a name quoted,
- *  or `nil` to fall back to the first class of that name. */
-function dictArgExpr(dict: number | string | undefined): string {
-  if (dict === undefined) return 'nil';
-  return typeof dict === 'number' ? String(dict) : `'${escapeString(dict)}'`;
-}
 
 /** A Smalltalk brace-array of Symbol literals, e.g. `{#'foo'. #'bar:'}` (or `#()`). */
 function selectorArrayExpr(selectors: string[]): string {
@@ -49,7 +42,7 @@ GsMoveMethodRefactoring
   selectors: ${selectorArrayExpr(selectors)}
   meta: ${isMeta ? 'true' : 'false'}
   toClassNamed: '${escapeString(targetName)}'
-  inDictionary: ${dictArgExpr(targetDict)}
+  inDictionary: ${dictionaryArgExpr(targetDict)}
   toMeta: ${toMeta ? 'true' : 'false'}`;
   const side = isMeta ? ' class' : '';
   const toSide = toMeta ? ' class' : '';
@@ -80,7 +73,7 @@ ref := GsMoveMethodRefactoring
   selectors: ${selectorArrayExpr(selectors)}
   meta: ${isMeta ? 'true' : 'false'}
   toClassNamed: '${escapeString(targetName)}'
-  inDictionary: ${dictArgExpr(targetDict)}
+  inDictionary: ${dictionaryArgExpr(targetDict)}
   toMeta: ${toMeta ? 'true' : 'false'}.
 ^ref startPreviewToken: '${escapeString(token)}' maxBytes: ${maxBytes}`;
   const side = isMeta ? ' class' : '';

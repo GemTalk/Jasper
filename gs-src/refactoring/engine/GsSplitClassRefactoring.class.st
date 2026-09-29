@@ -267,8 +267,10 @@ GsSplitClassRefactoring >> computeAnalysis [
 	"classNamed: only matches a Class binding; a name bound to a NON-class global would
 	 otherwise slip past and be silently clobbered by applyClassAdd:'s
 	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
-	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
-	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 symbol list -- the same question GsExtractSuperclassRefactoring>>computeAnalysis asks,
+	 and stricter than GsRenameClassRefactoring>>newNameCollision, which is destination-only
+	 and lets a rename shadow after a warning. Creating a class is not moving one: there is
+	 nothing to weigh against a free name (#396). The split client validates only the
 	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
 	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
 	 source's own dictionary."
@@ -530,14 +532,10 @@ GsSplitClassRefactoring >> newClassDictName [
 
 { #category : 'private' }
 GsSplitClassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). 'UserGlobals' stays the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: ['UserGlobals']
-		ifNotNil: [:dict | dict name ifNil: ['UserGlobals'] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 ]
 
 { #category : 'serializing' }

@@ -29,6 +29,7 @@ import {
   MethodSlot,
   undoVerb,
 } from './undoTypes';
+import { qualifiedClassName as qualify } from '../refactoring/qualifiedClassName';
 
 /** One thing the reversal will do. */
 export interface UndoPlanRow {
@@ -66,11 +67,6 @@ export type DictNameLookup = (dict: number | string | undefined) => string | und
 function methodTarget(slot: MethodSlot, dictNameFor?: DictNameLookup): string {
   const cls = qualify(slot.className, dictNameFor?.(slot.dict));
   return `${cls}${slot.isMeta ? ' class' : ''} >> #${slot.selector}`;
-}
-
-/** `Shadowed (DictionaryA)`, or plain `Shadowed` when the dictionary is unknown. */
-function qualify(className: string, dictName: string | undefined): string {
-  return dictName ? `${className} (${dictName})` : className;
 }
 
 function planMethodEdit(e: MethodEditUndoEntry, d?: DictNameLookup): UndoPlan {

@@ -386,14 +386,10 @@ GsRenameClassRefactoring >> hierarchyScopeClasses [
 
 { #category : 'private' }
 GsRenameClassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 ]
 
 { #category : 'source rewriting' }
@@ -478,6 +474,31 @@ GsRenameClassRefactoring >> node: aNode declaresName: aSymbol [
 ]
 
 { #category : 'preconditions' }
+GsRenameClassRefactoring >> newNameShadowedFrom [
+	"The name of a dictionary EARLIER in the symbol list than the destination that already binds
+	 newName, or nil.
+
+	 This is the difference between a shadow that is harmless and one that is not. After the
+	 rename, every unqualified reference to newName -- the renamed class's own methods, and every
+	 referencer this refactoring rewrites -- resolves to the FIRST binding. A binding later in the
+	 list loses to the renamed class and changes nothing. An earlier one wins, and the rename
+	 quietly repoints the renamed class's own code at a class in another dictionary (#396).
+
+	 Answers only the first such dictionary: one concrete name is what a warning needs."
+	| sl dest sym |
+	dest := self dictObjectFor: definingClass.
+	dest isNil ifTrue: [^nil].
+	sym := newName asSymbol.
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | | d |
+		d := sl at: i.
+		d == dest ifTrue: [^nil].
+		((d at: sym ifAbsent: [nil]) notNil) ifTrue: [
+			^d name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [d name asString]]].
+	^nil
+]
+
+{ #category : 'preconditions' }
 GsRenameClassRefactoring >> newNameCollision [
 	"nil if the new name is free in the dictionary the renamed class will be bound into,
 	 otherwise a short reason string. Building the change set does not enforce this (the preview
@@ -516,7 +537,10 @@ GsRenameClassRefactoring >> outOfScopeJsonString [
 	  ',"descendants":', (environment descendantsOf: definingClass) size printString,
 	  ',"collision":', (self newNameCollision
 		ifNil: ['null']
-		ifNotNil: [:reason | self jsonQuote: reason]), '}'
+		ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"shadowedFrom":', (self newNameShadowedFrom
+		ifNil: ['null']
+		ifNotNil: [:dn | self jsonQuote: dn]), '}'
 ]
 
 { #category : 'private' }
@@ -593,21 +617,29 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 	 abort rather than persisted half-done. With neither option (the safe path) nothing
 	 is committed, matching the other refactorings. Answers
 	 {applied, failed:[..], committed, migratedFailures}."
-	| ids applied failures migrated committed |
+	| ids applied failures migrated committed structuralFailed |
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	oldToNew := IdentityDictionary new.
 	applied := 0.
+	structuralFailed := false.
 	failures := OrderedCollection new.
 	"The copy-forward loop runs deep inside a per-class change and must not raise (one
 	 method that will not recompile would abort the whole change), so it reports through
 	 this alias instead -- entries land in the same `failed` list as everything else."
 	copyFailures := failures.
 	self changeSet changes do: [:change |
-		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
-			ifFalse: [
-				[self applyChange: change. applied := applied + 1]
-				on: Error do: [:e |
-					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
+		"Once a STRUCTURAL change has failed, stop. The rename did not happen, so every
+		 #methodRecompile after it compiles the new name against whatever else binds it --
+		 for a shadowed name, another dictionary's class -- and reports success. Carrying on
+		 turned one failure into a body of code silently pointing at the wrong class (#396)."
+		structuralFailed ifFalse: [
+			(change kind == #methodRecompile and: [ids includes: change id asSymbol])
+				ifFalse: [
+					[self applyChange: change. applied := applied + 1]
+					on: Error do: [:e |
+						(change kind == #classRename or: [change kind == #classReparent])
+							ifTrue: [structuralFailed := true].
+						failures add: (Array with: change id with: change failureLabel with: e messageText)]]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -623,9 +655,13 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: newName with: e messageText)]]].
+	"structuralFailed tells the CLIENT whether the class is bound under the new name. It arms an
+	 Undo that renames `newName` back, and after a failed #classRename that name reaches some
+	 other dictionary's class -- which the reversal would then rename (#396)."
 	^'{"applied":', applied printString,
 	  ',"committed":', committed printString,
 	  ',"migratedFailures":', migrated printString,
+	  ',"structuralFailed":', structuralFailed printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),

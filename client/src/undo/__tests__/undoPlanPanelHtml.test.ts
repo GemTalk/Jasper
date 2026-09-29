@@ -158,10 +158,19 @@ describe('renderUndoPlanHtml', () => {
   // The same Enter-to-Enter flow as the refactoring panels: whatever opened this panel, Enter
   // runs it, so a keyboard user is not stranded at the last step.
   describe('Enter applies', () => {
-    const press = (target: Element | Document): void => {
+    // A real, deliberate Enter: the key goes down and comes back up. Only a release arms the
+    // panel -- a held Enter carried over from the step that opened it never releases.
+    const release = (): void => {
+      document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    };
+    const down = (target: Element | Document): void => {
       target.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
+    };
+    const press = (target: Element | Document): void => {
+      release();
+      down(target);
     };
 
     it('focuses Apply when the panel opens, making it the default button', () => {
@@ -176,6 +185,24 @@ describe('renderUndoPlanHtml', () => {
       press(document.body);
 
       expect(posted).toEqual([{ command: 'apply' }]);
+    });
+
+    it('ignores an Enter the page has not seen released, so a held key cannot undo', () => {
+      // Undo reverses a refactoring. Applying one because a key was held down through the step
+      // before is exactly the kind of thing the preview panel exists to prevent (#396).
+      const { posted } = mount();
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        repeat: true,
+      });
+      document.getElementById('apply')!.dispatchEvent(e);
+      down(document.body);
+
+      expect(e.defaultPrevented).toBe(true);
+      expect(posted).toEqual([]);
     });
 
     it('leaves Enter alone on a button, so Cancel with focus stays Cancel', () => {
@@ -193,5 +220,45 @@ describe('renderUndoPlanHtml', () => {
 
       expect(posted).toEqual([]);
     });
+  });
+});
+
+describe('every field a class or dictionary name reaches is escaped', () => {
+  /**
+   * A row's `target` is built from a class name, a selector and a dictionary name; its `detail`
+   * from a source value; the note from whatever the planner had to say. GemStone allows a `<` in
+   * a class name, and the panel renders into a webview. Only the label was proven escaped, so
+   * dropping `escapeHtml` from the others stayed green.
+   */
+  const nasty = '<img src=x onerror=alert(1)>';
+
+  it('escapes the action, the target and the detail', () => {
+    const out = html({
+      verb: 'Undo',
+      label: 'x',
+      rows: [{ id: 'r', action: nasty, target: nasty, detail: nasty }],
+    });
+    expect(out).not.toContain('<img');
+    expect(out).toContain('&lt;img');
+  });
+
+  it('escapes the note', () => {
+    const out = html({ verb: 'Undo', label: 'x', note: nasty, rows: [] });
+    expect(out).not.toContain('<img');
+  });
+
+  it('escapes the row id, which becomes an attribute value', () => {
+    const out = html({
+      verb: 'Undo',
+      label: 'x',
+      rows: [{ id: '" onmouseover="alert(1)', action: 'remove', target: 'T' }],
+    });
+    // The quote is what would close `data-id="`; escaped, the rest is inert text.
+    expect(out).toContain('data-id="&quot; onmouseover=&quot;alert(1)"');
+  });
+
+  it('escapes the verb, which reaches both the heading and the button', () => {
+    const out = html({ verb: nasty as 'Undo', label: 'x', rows: [] });
+    expect(out).not.toContain('<img');
   });
 });

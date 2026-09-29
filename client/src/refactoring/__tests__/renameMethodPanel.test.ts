@@ -193,10 +193,19 @@ describe('paginated rename-method panel', () => {
   // The editor's Enter opens the preview; the preview's Enter applies it. Without this the flow
   // stopped dead at the panel, which offers no other keyboard route to its primary action.
   describe('Enter applies, so a refactoring can be driven Enter-to-Enter', () => {
-    const press = (target: Element | Document): void => {
+    // A real, deliberate Enter: the key goes down and comes back up. `release` alone is what
+    // arms the panel -- a held Enter carried over from an earlier step never releases.
+    const release = (): void => {
+      document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    };
+    const down = (target: Element | Document): void => {
       target.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
+    };
+    const press = (target: Element | Document): void => {
+      release();
+      down(target);
     };
 
     it('focuses Apply when the panel opens, making it the default button', () => {
@@ -222,6 +231,49 @@ describe('paginated rename-method panel', () => {
       const { vscode } = mount([change('1', 'A')], 1, true);
 
       press(document.querySelector('input[type="checkbox"]')!);
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('ignores an Enter the page has not seen released, so a held key cannot apply', () => {
+      // Apply is focused on open, so Enter activates it NATIVELY -- the document handler never
+      // sees it, because it returns early for a BUTTON. A held Enter therefore auto-repeated
+      // straight through the rename editor, the shadowing modal's default button, and into
+      // Apply, applying a preview nobody had looked at (#396).
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        repeat: true,
+      });
+      document.getElementById('apply')!.dispatchEvent(e);
+
+      expect(e.defaultPrevented).toBe(true);
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('ignores an unreleased Enter from the page too, not only from Apply', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      down(document.body);
+
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('applies once the key has been released and pressed again', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      down(document.body); // the tail of the held key: ignored
+      release();
+      down(document.body); // a new, deliberate press
 
       expect(vscode.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'apply' }),

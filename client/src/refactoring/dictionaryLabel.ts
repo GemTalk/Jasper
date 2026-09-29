@@ -32,12 +32,4 @@ export function dictionaryNameFor(
   }
 }
 
-/**
- * `Shadowed (DictionaryB)` when the dictionary is known, plain `Shadowed` when it is not.
- *
- * Used for undo labels and panel headings, so the two halves of a refactoring -- doing it and
- * undoing it -- name the same class the same way.
- */
-export function qualifiedClassName(className: string, dictName: string | undefined): string {
-  return dictName ? `${className} (${dictName})` : className;
-}
+export { qualifiedClassName, ambiguousClassNames, classNameForRow } from './qualifiedClassName';

@@ -256,3 +256,61 @@ describe('planUndo', () => {
     });
   });
 });
+
+describe('the branches a reader would check the plan against', () => {
+  /**
+   * Each of these stayed green when its branch was inverted, which is the same as having no
+   * test: a plan that describes the wrong reversal is worse than no panel at all, because the
+   * user reads it and says yes.
+   */
+  it('names the dictionary on a class-category row', () => {
+    const plan = planUndo(
+      {
+        ...base,
+        kind: 'classCategoryEdit',
+        label: 'Rename class category',
+        dict: 7,
+        changes: [{ className: 'Shadowed', before: 'Old', after: 'New' }],
+      },
+      (d) => (d === 7 ? 'DictionaryB' : undefined),
+    )!;
+
+    expect(plan.rows[0].target).toBe('Shadowed (DictionaryB)');
+  });
+
+  it('says a dictionary is renamed back, and does not offer a position for it', () => {
+    // A rename leaves the dictionary where it is, so "at position N, where it was" would be
+    // describing a move that is not going to happen.
+    const plan = planUndo({
+      ...base,
+      kind: 'dictionaryEdit',
+      label: 'Rename dictionary DictionaryA to DictionaryB',
+      before: { present: true, name: 'DictionaryA', index: 4 },
+      after: { present: true, name: 'DictionaryB', index: 4 },
+      stashKey: null,
+    })!;
+
+    expect(plan.rows[0].action).toBe('rename back to DictionaryA');
+    expect(plan.rows[0].target).toBe('DictionaryB');
+    expect(plan.rows[0].detail).toBeUndefined();
+  });
+
+  it('warns about what a class revert leaves behind only when both versions are bound', () => {
+    // The note is about a class that EXISTED before and still exists now: binding the earlier
+    // version leaves what was written on the newer one behind. With either side unbound there
+    // is no newer version to lose, and the warning would be noise.
+    const entry = (before: boolean, after: boolean): UndoEntry => ({
+      ...base,
+      kind: 'classEdit',
+      label: 'Restore Shadowed',
+      slots: [{ dict: 7, className: 'Shadowed' }],
+      stashKeys: [],
+      before: [{ bound: before, oop: before ? '100' : null, selectors: [] }],
+      after: [{ bound: after, oop: after ? '200' : null, selectors: [] }],
+    });
+
+    expect(planUndo(entry(true, true))!.note).toContain('left behind');
+    expect(planUndo(entry(true, false))!.note ?? '').not.toContain('left behind');
+    expect(planUndo(entry(false, true))!.note ?? '').not.toContain('left behind');
+  });
+});

@@ -832,8 +832,8 @@ GsInstVarRefactoringTest >> testAddIsCorrectWhenTheShadowingDictionaryComesAfter
 GsInstVarRefactoringTest >> testAddBindsAReversionedSubclassInItsOwnDictionary [
 	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
 	 base re-versions every subclass as well, and each of those new versions is bound through the
-	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not, so
-	 the base reshapes correctly while GsIVSub's new version is bound into the decoy."
+	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not:
+	 the base used to reshape correctly while GsIVSub's new version went into the decoy. See #396."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.

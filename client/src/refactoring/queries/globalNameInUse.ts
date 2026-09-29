@@ -5,9 +5,13 @@ import { dictLookupExpr, escapeString } from '../../queries/util';
 // symbol list (any dictionary).
 //
 // Anywhere is the WRONG question for a rename: a class name bound in another dictionary is a
-// shadow, which GemStone allows, and refusing on it stops a rename that would have worked. Use
-// `globalNameInUseInDictionary` for that and keep this one for telling the user they are ABOUT
-// to create a shadow (#396).
+// shadow, which GemStone allows, and refusing on it stops a rename that would have worked -- a
+// rename asks `globalNameInUseInDictionary` instead (#396).
+//
+// Its one caller is Extract Superclass, which refuses a name bound anywhere on purpose: it
+// creates a class rather than moving one, so there is nothing to weigh against a free name.
+// The shadow WARNING a rename raises is built from `dictionariesContainingClass`, which names
+// the dictionaries rather than answering yes or no.
 export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
   return (
     execute(

@@ -192,7 +192,13 @@ async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<bo
   // in: a slot records a SymbolList index as often as a name, and an index means nothing to a
   // reader -- least of all when the point is telling two same-named classes apart (#396).
   const plan = planUndo(entry, (d) => dictionaryNameFor(session, d));
-  if (plan === undefined) return true;
+  // planUndo answers undefined only for a refactoring, and the caller has already sent those
+  // down their own path -- their reversal is paged from the stone, not derived here. So this is
+  // not a "no plan, go ahead": it is a kind that should never have reached this function.
+  if (plan === undefined) {
+    logInfo(`[undo] #${entry.id} (${entry.kind}) has no plan; not reversing it unasked`);
+    return false;
+  }
   // The plan's own note -- what THIS reversal costs -- is the panel's banner. The standing
   // caveat about which change is on top of the stack lives in the panel as a disclosure, so it
   // stays available without sitting above the rows on every single undo.

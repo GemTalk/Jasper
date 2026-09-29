@@ -14,8 +14,11 @@
  *  - DISCARD: the revert would leave methods behind. Modal, naming them.
  *  - DRIFT: someone has rebound the class since. Modal, as for a method edit.
  *
- * Both are warnings, never refusals. No preview panel, same as a method edit: the user just
- * did the thing, and a modal that names the cost is the honest amount of ceremony.
+ * Both are warnings, never refusals, and both come AFTER the plan panel every undo now opens:
+ * the panel says which classes will be rebound, and these name what it costs -- the methods
+ * that would be left behind, or the fact that someone else has moved the class since. They
+ * stay separate because the panel is built purely from the recorded entry, while these read
+ * the stone as it is now.
  */
 import * as vscode from 'vscode';
 import { dictionaryNameFor } from '../refactoring/dictionaryLabel';

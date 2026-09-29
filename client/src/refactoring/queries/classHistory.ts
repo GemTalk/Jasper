@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
+import { dictionaryArgExpr, escapeString } from '../../queries/util';
 
 /**
  * The `inDictionary:` argument for the three GsClassHistory entry points, from the caller's
@@ -12,8 +12,7 @@ import { escapeString } from '../../queries/util';
  * dictionary must pass it.
  */
 function dictArg(dict?: number | string): string {
-  if (dict === undefined) return 'nil';
-  return typeof dict === 'number' ? String(dict) : `'${escapeString(dict)}'`;
+  return dictionaryArgExpr(dict);
 }
 
 // The class-definition history for a class, as the raw JSON the GsClassHistory

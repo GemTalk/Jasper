@@ -728,8 +728,8 @@ same-named method elsewhere in the image, and every scope used is #class.
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
 
-The `tests - shadowed class name` category covers #396 across all THREE undo mechanisms, because
-each resolves its class by name:
+The `tests - shadowed class name` category covers #396 across all THREE undo mechanisms, each of
+which used to resolve its class by name:
 
   - #changeSet replay resolves every recorded change through the environment, the same lookup the
     forward apply uses -- so the safety net had the hole it is meant to catch;
@@ -5694,8 +5694,8 @@ method: GsInstVarRefactoringTest
 testAddBindsAReversionedSubclassInItsOwnDictionary
 	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
 	 base re-versions every subclass as well, and each of those new versions is bound through the
-	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not, so
-	 the base reshapes correctly while GsIVSub's new version is bound into the decoy."
+	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not:
+	 the base used to reshape correctly while GsIVSub's new version went into the decoy. See #396."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
@@ -10519,7 +10519,7 @@ category: 'tests - shadowed class name'
 method: GsRefactoringUndoTest
 testUndoClassSideRenameRestoresTheActedOnClassNotAGlobalFirstMatch
 	"The meta side is reached as `cls class` after the same `classNamed:` lookup, so a shadowed
-	 name misdirects a class-side undo exactly as it does an instance-side one."
+	 name used to misdirect a class-side undo exactly as it did an instance-side one. See #396."
 	| decoy before undoJson |
 	before := self snapshotOf: self fixture.
 	self applyRecording: (self renameInFixture: 'gsuMake' to: 'gsuBuild').
@@ -10539,8 +10539,8 @@ method: GsRefactoringUndoTest
 testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch
 	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
 	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
-	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal reshapes the wrong
-	 class and the variable stays on the real one. See #396."
+	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
+	 wrong class, leaving the variable on the real one. See #396."
 	| decoy |
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
@@ -10579,7 +10579,7 @@ method: GsRefactoringUndoTest
 testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch
 	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
 	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
-	 UserGlobals, the rename-back files the class in the decoy. See #396."
+	 UserGlobals, the rename-back used to file the class in the decoy. See #396."
 	| decoy |
 	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
 		applyDeselected: #().
@@ -10591,7 +10591,10 @@ testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch
 
 	 "the class is back under its original name, in the dictionary that held it"
 	 self deny: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
-	 self assert: (decoy class) == (decoy class)]
+	 "and the decoy is untouched: it still binds its own class, and gained no GsUndoLedger"
+	 self assert: ((System myUserProfile symbolList at: 1) at: #GsUndoOldLedger ifAbsent: [nil])
+		== decoy.
+	 self assert: ((System myUserProfile symbolList at: 1) at: #GsUndoLedger ifAbsent: [nil]) isNil]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
@@ -10599,7 +10602,7 @@ category: 'tests - shadowed class name'
 method: GsRefactoringUndoTest
 testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalFirstMatch
 	"The third undo mechanism. A class reshape records no change set; it is reversed by putting each
-	 reshaped class back to its pre-apply classHistory version. Both halves resolve by NAME:
+	 reshaped class back to its pre-apply classHistory version. Both halves used to resolve by NAME:
 	 `captureClassHistoryOf:` through `env classNamed:`, and the replay through
 	 `GsClassHistory revertClassNamed:toIndex:`. Reshape the fixture, then introduce a decoy binding
 	 its name ahead of UserGlobals before undoing: the revert used to be aimed at the decoy, leaving
@@ -11263,7 +11266,7 @@ category: 'tests - shadowed class name'
 method: GsRenameClassRefactoringTest
 testRenameBindsTheRenamedClassInItsOwnDictionary
 	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
-	 resolves by the OLD class's name and takes the first match. With a decoy binding GsRCBase ahead
+	 used to resolve by the OLD class's name and take the first match. With a decoy binding GsRCBase ahead
 	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
 	 lost the class outright. This is the same helper the Class History restore goes through. See #396."
 	| decoy decoyClass json |
@@ -11418,6 +11421,73 @@ testRestoreReparentsUnderItsOwnParentNotASameNamedDecoy
 		ensure: [
 			System myUserProfile removeDictionaryAt: 1.
 			#('GsRCChild' 'GsRCParent') do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]]
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testRenameReportsWhichDictionaryWillWinTheNewName
+	"Renaming onto a name another dictionary already binds is legal, and the engine allows it.
+	 What it must not do is stay quiet about WHERE the name will then resolve: a binding earlier
+	 in the symbol list wins, so the renamed class''s own methods stop meaning the renamed class.
+	 A binding LATER loses and changes nothing, so it is not reported. See #396."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsRCAheadDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 "not a collision -- the destination dictionary is free, so the rename may proceed"
+	 self assert: json includesSubstring: '"collision":null'.
+	 self assert: json includesSubstring: '"shadowedFrom":"GsRCAheadDict"']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testRenameDoesNotReportADictionaryBehindTheDestination
+	"A binding after the destination on the symbol list loses to the renamed class, so warning
+	 about it would be noise."
+	| behind json |
+	behind := SymbolDictionary new name: #GsRCBehindDict; yourself.
+	System myUserProfile symbolList add: behind.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: behind.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 self assert: json includesSubstring: '"shadowedFrom":null']
+		ensure: [System myUserProfile symbolList remove: behind ifAbsent: []]
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testAFailedClassRenameStopsTheApplyAndSaysSo
+	"When the #classRename raises, the class is NOT bound under the new name. Carrying on meant
+	 every #methodRecompile after it compiled the new name against whatever else binds it -- for
+	 a shadowed name, another dictionary''s class -- and the apply still reported the rewrites as
+	 applied. The client then armed an Undo that would rename THAT class back (#396).
+
+	 The rename is made to fail by removing the destination dictionary from the symbol list after
+	 the change set is staged, so binding the new name has nowhere to go."
+	| ref json |
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	ref changeSet.
+	UserGlobals removeKey: #GsRCBase ifAbsent: [].
+	json := ref applyDeselected: #().
+	self assert: json includesSubstring: '"structuralFailed":true'.
+	"and the reference rewrites that come after it did NOT run: the external referencer still
+	 names the old class, rather than having been repointed at a name this rename never bound"
+	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0
+%
+
+category: 'tests - shadowed name'
+method: GsRenameClassRefactoringTest
+testACleanApplySaysTheStructuralChangeLanded
+	| json |
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	self assert: json includesSubstring: '"structuralFailed":false'.
+	self assert: json includesSubstring: '"failed":[]'
 %
 
 category: 'asserting'

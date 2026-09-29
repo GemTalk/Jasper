@@ -44,9 +44,9 @@ import type { ActiveSession, SessionManager } from '../../sessionManager';
  *
  * What is pinned here is the split that the whole design rests on: a METHOD EDIT reverses
  * straight away, a REFACTORING opens the preview it already has, and the dispatcher is the
- * only place that knows the difference. Plus the confirmation that now precedes every
- * reversal but the refactoring's — it names the change, because the top of the stack is not
- * always the last thing the user did. Plus the two bookkeeping rules that keep the stack
+ * only place that knows the difference. Plus the plan panel that now precedes every reversal
+ * but the refactoring's — it lists what the reversal will do, because the top of the stack is
+ * not always the last thing the user did (#396). Plus the two bookkeeping rules that keep the stack
  * honest — an entry is popped only when it was actually spent, and a refactoring entry the
  * stone no longer holds is dropped and skipped rather than previewed over nothing.
  */
@@ -132,20 +132,20 @@ const dictionaryEdit = (label: string): NewUndoEntry => ({
 });
 
 /**
- * Answer the confirmation with its own action button.
+ * Accept the plan panel.
  *
  * Every undo shows a panel of what it will do before it reverses anything, so a test about the
  * DISPATCH would otherwise stop there. Accepting it unconditionally lets each test get to the
  * reverser it is actually about.
  */
-function confirmTheModal(): void {
+function acceptThePlan(): void {
   vi.mocked(showUndoPlanPanel).mockResolvedValue(true);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
-  confirmTheModal();
+  acceptThePlan();
 });
 
 describe('undoLastCommand', () => {
@@ -156,7 +156,7 @@ describe('undoLastCommand', () => {
     );
   });
 
-  it('reverses a method edit once confirmed — no preview panel', async () => {
+  it('reverses a method edit once the plan is accepted', async () => {
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     vi.mocked(reverseMethodEdit).mockResolvedValue(true);
 
@@ -167,7 +167,7 @@ describe('undoLastCommand', () => {
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('hands a class edit to the class reverser, which also skips the preview', async () => {
+  it('hands a class edit to the class reverser, after the same plan panel', async () => {
     pushUndoEntry(classEdit('Redefine class Account'));
     vi.mocked(reverseClassEdit).mockResolvedValue(true);
 

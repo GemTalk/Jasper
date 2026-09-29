@@ -167,14 +167,10 @@ GsRenameMethodRefactoring >> definingClass [
 
 { #category : 'private' }
 GsRenameMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 ]
 
 { #category : 'accessing' }
@@ -334,7 +330,8 @@ GsRenameMethodRefactoring >> startPreviewToken: token maxBytes: maxBytes [
 GsRenameMethodRefactoring >> applyChange: aChange [
 	"Apply one staged change in the stone WITHOUT committing: compile the new
 	 source, and for a genuine rename (selector actually changed) remove the old
-	 method. The class is resolved across all dictionaries."
+	 method. The class is resolved through the dictionary the change recorded, so a
+	 shadowed class name cannot send the recompile to another dictionary's class (#396)."
 	| cls target |
 	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].

@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
+import { dictionaryArgExpr, escapeString } from '../../queries/util';
 import type { AsyncQueryExecutor } from './previewRenameMethod';
 
 /**
@@ -136,12 +136,7 @@ export function recordReverseRename(
 ): string {
   const scopeKind = scope ? `#${scope.kind}` : 'nil';
   const scopeDict = scope?.dictName ? `'${escapeString(scope.dictName)}'` : 'nil';
-  const classDictArg =
-    classDict === undefined
-      ? 'nil'
-      : typeof classDict === 'number'
-        ? String(classDict)
-        : `'${escapeString(classDict)}'`;
+  const classDictArg = dictionaryArgExpr(classDict);
   return execute(
     `| c |
 c := ${UNDO_CLASS}.
@@ -175,12 +170,7 @@ export function captureClassHistory(
   // reaches first (#396).
   dict?: number | string,
 ): string {
-  const dictArg =
-    dict === undefined
-      ? 'nil'
-      : typeof dict === 'number'
-        ? String(dict)
-        : `'${escapeString(dict)}'`;
+  const dictArg = dictionaryArgExpr(dict);
   return execute(
     `| c |
 c := ${UNDO_CLASS}.

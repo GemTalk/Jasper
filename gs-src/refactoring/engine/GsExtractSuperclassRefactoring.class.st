@@ -193,7 +193,10 @@ GsExtractSuperclassRefactoring >> computeAnalysis [
 	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
 	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
 	 rather than clobbered, but shadowing an existing global with a new class is its own
-	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 trap. STRICTER than GsRenameClassRefactoring>>newNameCollision, which asks only about
+	 the destination dictionary and lets a rename shadow after a warning: a rename moves a
+	 class the user already has, while this creates one that does not exist yet, so there
+	 is nothing to weigh against picking a free name (#396).
 	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
 	 class, where grabbing a same-named class from another dictionary would be wrong.)
 	 The decline names the symbol list so it cannot be read as a collision in the
@@ -569,14 +572,10 @@ GsExtractSuperclassRefactoring >> newClassDictName [
 
 { #category : 'private' }
 GsExtractSuperclassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). 'UserGlobals' stays the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: ['UserGlobals']
-		ifNotNil: [:dict | dict name ifNil: ['UserGlobals'] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 ]
 
 { #category : 'serializing' }

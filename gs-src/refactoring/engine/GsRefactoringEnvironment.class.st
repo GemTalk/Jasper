@@ -107,6 +107,21 @@ GsRefactoringEnvironment >> sendersOf: aSelector [
 	^(ClassOrganizer new sendersOf: aSelector asSymbol) at: 1
 ]
 
+{ #category : 'dictionaries' }
+GsRefactoringEnvironment >> dictionaryNameDefiningClass: aClass [
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity: taking the first dictionary that binds the NAME records a
+	 different class's dictionary whenever the name is shadowed, and the apply then writes the
+	 change there (#396). nil when no dictionary binds the class under its own name, which the
+	 apply falls back on as before.
+
+	 Every refactoring records a change this way, so it lives here rather than in each of them:
+	 seventeen copies of one method is seventeen places for the identity rule to be lost."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+]
+
 { #category : 'selectors' }
 GsRefactoringEnvironment >> referencesToClass: aClass [
 	"Every method whose compiled code references aClass ITSELF, as an Array of GsNMethod.

@@ -44,10 +44,6 @@ export type PlainNoticeStyle = 'statusBar' | 'toast';
 const UNDO_ACTION = 'Undo';
 
 /**
- * Announce a completed refactoring and, when the stone recorded an undo for it, put it on
- * the undo stack and offer to undo it right there. Returns immediately.
- */
-/**
  * Put the stone's recorded reversal on the client's undo stack, and answer what it found.
  *
  * Separate from the toast because a refactoring that only PARTLY applied still needs the Undo
@@ -72,6 +68,10 @@ export function armRefactoringUndo(session: ActiveSession | undefined): UndoStat
   return status;
 }
 
+/**
+ * Announce a completed refactoring and, when the stone recorded an undo for it, put it on the
+ * undo stack and offer to undo it right there. Returns immediately.
+ */
 export function notifyRefactoringApplied(
   session: ActiveSession | undefined,
   message: string,

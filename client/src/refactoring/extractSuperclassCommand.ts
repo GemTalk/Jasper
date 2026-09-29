@@ -81,9 +81,13 @@ async function flushDirtyMethodBuffers(): Promise<boolean> {
  *  `subclass: newName … inDictionary:` then rebinds that key to the new class, silently
  *  destroying the existing global.
  *
- *  Mirrors ExplorerController's rename guard (`validateRenameTarget`), which layers the same
- *  `globalNameInUse` probe on top of its format check. Runs as the input box's live validator,
- *  so the collision surfaces inline while the user is still typing. */
+ *  STRICTER than ExplorerController's rename guard, which asks `globalNameInUseInDictionary`
+ *  and lets a rename shadow another dictionary's name after a warning. The two differ on
+ *  purpose: a rename moves an existing class, so a shadow is a choice the user can weigh, while
+ *  this creates a class that does not exist yet -- there is nothing to weigh, and a free name is
+ *  always available. Relaxing it would be safe (`subclass: … inDictionary:` only rebinds in the
+ *  destination), so this is a UX decision rather than a constraint. Runs as the input box's live
+ *  validator, so the collision surfaces inline while the user is still typing. */
 function validateNewSuperclassName(session: ActiveSession, name: string): string | undefined {
   const fmt = validateClassName(name);
   if (fmt) return fmt;

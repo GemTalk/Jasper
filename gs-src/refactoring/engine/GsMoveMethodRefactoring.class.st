@@ -260,14 +260,10 @@ GsMoveMethodRefactoring >> commaList: aCollection [
 
 { #category : 'private' }
 GsMoveMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 ]
 
 { #category : 'private' }

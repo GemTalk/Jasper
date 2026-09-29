@@ -7,6 +7,7 @@ vi.mock('../../browserQueries', () => ({
 
 import * as queries from '../../browserQueries';
 import { dictionaryNameFor, qualifiedClassName } from '../dictionaryLabel';
+import { ambiguousClassNames, classNameForRow } from '../qualifiedClassName';
 import type { ActiveSession } from '../../sessionManager';
 
 const session = {} as ActiveSession;
@@ -60,5 +61,50 @@ describe('qualifiedClassName', () => {
   it('leaves the class name alone when the dictionary is unknown', () => {
     // Less specific beats wrong: a label naming the wrong dictionary is worse than none.
     expect(qualifiedClassName('Shadowed', undefined)).toBe('Shadowed');
+  });
+});
+
+describe('telling apart preview rows that name the same class', () => {
+  const change = (className: string, dictName: string | null) => ({ className, dictName });
+
+  it('marks a name two dictionaries claim', () => {
+    const ambiguous = ambiguousClassNames([
+      change('Shadowed', 'DictionaryA'),
+      change('Shadowed', 'DictionaryB'),
+      change('Account', 'DictionaryA'),
+    ]);
+    expect([...ambiguous]).toEqual(['Shadowed']);
+  });
+
+  it('leaves a name alone when every row means the same class', () => {
+    const ambiguous = ambiguousClassNames([
+      change('Shadowed', 'DictionaryA'),
+      change('Shadowed', 'DictionaryA'),
+    ]);
+    expect(ambiguous.size).toBe(0);
+  });
+
+  it('treats a row with no dictionary as its own claim', () => {
+    // "somewhere unstated" is not the same place as a named dictionary, and a row that cannot
+    // say where it lands is exactly one worth marking.
+    const ambiguous = ambiguousClassNames([
+      change('Shadowed', 'DictionaryA'),
+      change('Shadowed', null),
+    ]);
+    expect(ambiguous.has('Shadowed')).toBe(true);
+  });
+
+  it('qualifies only the ambiguous rows', () => {
+    const ambiguous = new Set(['Shadowed']);
+    expect(classNameForRow('Shadowed', 'DictionaryB', ambiguous)).toBe('Shadowed (DictionaryB)');
+    expect(classNameForRow('Account', 'DictionaryA', ambiguous)).toBe('Account');
+  });
+
+  it('leaves an ambiguous row with no dictionary unqualified rather than inventing one', () => {
+    expect(classNameForRow('Shadowed', null, new Set(['Shadowed']))).toBe('Shadowed');
+  });
+
+  it('qualifies nothing when no set is given', () => {
+    expect(classNameForRow('Shadowed', 'DictionaryB', undefined)).toBe('Shadowed');
   });
 });

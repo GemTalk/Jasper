@@ -31,8 +31,8 @@ same-named method elsewhere in the image, and every scope used is #class.
 setUp builds throwaway classes in UserGlobals and clears any recorded undo; tearDown
 removes them and clears again, so no test leaks an entry into the next.
 
-The `tests - shadowed class name` category covers #396 across all THREE undo mechanisms, because
-each resolves its class by name:
+The `tests - shadowed class name` category covers #396 across all THREE undo mechanisms, each of
+which used to resolve its class by name:
 
   - #changeSet replay resolves every recorded change through the environment, the same lookup the
     forward apply uses -- so the safety net had the hole it is meant to catch;
@@ -1387,7 +1387,7 @@ GsRefactoringUndoTest >> testUndoRenameTemporaryRestoresTheActedOnClassNotAGloba
 { #category : 'tests - shadowed class name' }
 GsRefactoringUndoTest >> testUndoClassSideRenameRestoresTheActedOnClassNotAGlobalFirstMatch [
 	"The meta side is reached as `cls class` after the same `classNamed:` lookup, so a shadowed
-	 name misdirects a class-side undo exactly as it does an instance-side one."
+	 name used to misdirect a class-side undo exactly as it did an instance-side one. See #396."
 	| decoy before undoJson |
 	before := self snapshotOf: self fixture.
 	self applyRecording: (self renameInFixture: 'gsuMake' to: 'gsuBuild').
@@ -1406,8 +1406,8 @@ GsRefactoringUndoTest >> testUndoClassSideRenameRestoresTheActedOnClassNotAGloba
 GsRefactoringUndoTest >> testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch [
 	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
 	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
-	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal reshapes the wrong
-	 class and the variable stays on the real one. See #396."
+	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
+	 wrong class, leaving the variable on the real one. See #396."
 	| decoy |
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
@@ -1444,7 +1444,7 @@ GsRefactoringUndoTest >> testUndoInstVarRemovePutsItBackOnTheActedOnClassNotAGlo
 GsRefactoringUndoTest >> testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch [
 	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
 	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
-	 UserGlobals, the rename-back files the class in the decoy. See #396."
+	 UserGlobals, the rename-back used to file the class in the decoy. See #396."
 	| decoy |
 	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
 		applyDeselected: #().
@@ -1456,14 +1456,17 @@ GsRefactoringUndoTest >> testUndoClassRenameRenamesBackTheActedOnClassNotAGlobal
 
 	 "the class is back under its original name, in the dictionary that held it"
 	 self deny: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
-	 self assert: (decoy class) == (decoy class)]
+	 "and the decoy is untouched: it still binds its own class, and gained no GsUndoLedger"
+	 self assert: ((System myUserProfile symbolList at: 1) at: #GsUndoOldLedger ifAbsent: [nil])
+		== decoy.
+	 self assert: ((System myUserProfile symbolList at: 1) at: #GsUndoLedger ifAbsent: [nil]) isNil]
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
 
 { #category : 'tests - shadowed class name' }
 GsRefactoringUndoTest >> testUndoHistoryRevertRestoresTheActedOnClassNotAGlobalFirstMatch [
 	"The third undo mechanism. A class reshape records no change set; it is reversed by putting each
-	 reshaped class back to its pre-apply classHistory version. Both halves resolve by NAME:
+	 reshaped class back to its pre-apply classHistory version. Both halves used to resolve by NAME:
 	 `captureClassHistoryOf:` through `env classNamed:`, and the replay through
 	 `GsClassHistory revertClassNamed:toIndex:`. Reshape the fixture, then introduce a decoy binding
 	 its name ahead of UserGlobals before undoing: the revert used to be aimed at the decoy, leaving

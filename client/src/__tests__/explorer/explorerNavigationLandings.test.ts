@@ -727,18 +727,24 @@ describe('a deliberate reveal survives a panel closing', () => {
     (ctl as { refreshAfterClassReshape(n: string): Promise<void> }).refreshAfterClassReshape(
       className,
     );
+  // What the panel-driven flows do, before they await the reveal.
+  const claim = (ctl: unknown): void =>
+    (ctl as { claimNextEditorActivation(): void }).claimNextEditorActivation();
 
   it('ignores the activation that follows a post-refactoring reveal', async () => {
     const { ctl, clickDict, clickClass } = makeController();
     clickDict();
     clickClass();
-    classesInDict.mockReturnValue([{ className: CLASS, category: 'c' }]);
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
 
+    claim(ctl);
     await reshape(ctl, CLASS);
-    // the tab that was next to the panel surfaces
-    await ctl.syncToEditor(
-      vscode.Uri.parse(`gemstone://1/GsRefactoring/GsClassHistory/definition?dict=5`),
-    );
+    // the tab that was next to the panel surfaces -- a real, navigable GemStone URI, so the
+    // assertion fails if the claim is missing rather than passing for want of anywhere to go
+    await ctl.syncToEditor(vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`));
 
     expect(ctl.state.dictName).toBe(DICT);
     expect(ctl.state.className).toBe(CLASS);
@@ -754,11 +760,49 @@ describe('a deliberate reveal survives a panel closing', () => {
     ]);
     const other = vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`);
 
+    claim(ctl);
     await reshape(ctl, CLASS);
     await ctl.syncToEditor(other); // swallowed: the panel closing
     expect(ctl.state.className).toBe(CLASS);
 
     await ctl.syncToEditor(other); // a real click -- must be followed
+
+    expect(ctl.state.className).toBe('Other');
+  });
+
+  it('does not claim on its own: a refresh with no panel behind it swallows nothing', async () => {
+    // Adding or removing a class variable, and Class History Restore, close no panel. A claim
+    // made there has no stray activation to absorb, so the only thing it can swallow is the
+    // user's next real click.
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+
+    await reshape(ctl, CLASS);
+    await ctl.syncToEditor(vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`));
+
+    expect(ctl.state.className).toBe('Other');
+  });
+
+  it('lets an explicit Reveal through a standing claim', async () => {
+    // Reveal in GemStone Explorer (and GemStone Search) exist to move the tree, and they mark
+    // the open as theirs. A claim swallowing one meant the command appeared to do nothing.
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+    const other = vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`);
+
+    claim(ctl);
+    ctl.markAttributedOpen(other);
+    await ctl.syncToEditor(other);
 
     expect(ctl.state.className).toBe('Other');
   });

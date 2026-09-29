@@ -179,6 +179,7 @@ const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS]
 
 // Button on a rename-failure notification; reveals the channel holding the full list.
 const SHOW_RENAME_DETAILS = 'Show Details';
+const UNDO_RENAME = 'Undo';
 
 // Highlights the filtered instance variable(s) in an opened method source while a
 // reads:/writes:/accesses: filter is active — theme-aware, styled like a search
@@ -1045,9 +1046,19 @@ export class ExplorerController {
   /**
    * Claim the next editor activation, so a deliberate reveal survives a panel closing.
    *
-   * Called by the Explorer's own post-refactoring reveal. The window is one activation OR a
-   * short moment, whichever comes first: long enough to cover the activation a disposing panel
-   * causes, short enough that a claim nobody spends cannot affect a later click.
+   * Called by the flows that drive a PREVIEW PANEL, and called BEFORE they await anything. The
+   * panel resolves and then disposes itself, so the activation its disposal causes can arrive
+   * while the reveal is still awaiting -- which is to say before a claim made afterwards exists.
+   * A claim made too late is worse than none: it is still standing when the user's next real
+   * click arrives, and swallows that instead.
+   *
+   * Not called by the paths where no panel closes -- adding or removing a class variable, and
+   * Class History Restore, whose panel stays open -- since there is no stray activation there to
+   * absorb, only the user's own next click.
+   *
+   * The window is one activation OR a short moment, whichever comes first: long enough to cover
+   * the activation a disposing panel causes, short enough that a claim nobody spends cannot
+   * affect a later click.
    */
   private claimNextEditorActivation(): void {
     if (this.revealClaim) clearTimeout(this.revealClaim);
@@ -2713,6 +2724,10 @@ export class ExplorerController {
       accessorSpecs: wantAccessors ? accessorSpecsFor(name, 'ivar').accessors : undefined,
     });
     if (outcome) {
+      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+      // activation arrives (#396).
+      this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(className);
       // Select the newly-added instance variable: refreshAfterClassReshape re-reveals
       // the CLASS, which would otherwise steal the selection, so re-reveal the new
@@ -3018,6 +3033,10 @@ export class ExplorerController {
       autoApply: decision === 'silent',
     });
     if (!outcome) return;
+    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+    // activation arrives (#396).
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Only when the panel really was skipped: the engine can send an autoApply request to
     // the panel after all, and that removal was not unasked.
@@ -3128,6 +3147,10 @@ export class ExplorerController {
       this.state.dictIndex,
     );
     if (!applied) return;
+    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+    // activation arrives (#396).
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Select the moved variable on its first destination. Best-effort: reveal rejects if the
     // row isn't in the rebuilt tree, which we ignore.
@@ -3325,6 +3348,11 @@ export class ExplorerController {
    * `from` is the name in force now and `to` the one to go back to; `className` is the class
    * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
    *
+   * Answers whether the stone recorded it. A caller must not arm the Undo button on a `false`:
+   * `armRefactoringUndo` pushes whatever the stone's CURRENT entry is, and `pushUndoEntry` drops
+   * every other refactoring entry first -- so arming after a failed record lifts the PREVIOUS
+   * refactoring's entry above the user's newer method edits, and Undo then reverses that one.
+   *
    * `classDict` is the class's OWN dictionary, which each flow already knows. It is not the
    * tree selection: a rename started from a Hierarchy ancestor, and a rename of an INHERITED
    * instance variable at the cursor, both act on a class in a different dictionary from the one
@@ -3342,7 +3370,7 @@ export class ExplorerController {
     engine: string,
     classDict: number | string | undefined,
     scope?: { kind: string; dictName?: string },
-  ): void {
+  ): boolean {
     try {
       const answer = queries.recordReverseRename(
         session,
@@ -3359,12 +3387,14 @@ export class ExplorerController {
       // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
       // told apart from a status probe that came back empty.
       logInfo(`[undoRefactoring] recorded ${kind} reversal for ${className}: ${answer.trim()}`);
+      return answer.trim() === 'ok';
     } catch (e: unknown) {
       logInfo(
         `[undoRefactoring] could not record the reverse rename: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
+      return false;
     }
   }
 
@@ -3376,14 +3406,23 @@ export class ExplorerController {
   // rather than an instruction to go find it ('Show Details', the idiom logJasperError
   // uses in extension.ts). `action` must name WHAT was renamed: the channel is durable
   // and shared, so two renames in a session otherwise leave two indistinguishable blocks.
-  private reportRenameFailures(action: string, result: RenameApplyResult): void {
+  private reportRenameFailures(
+    action: string,
+    result: RenameApplyResult,
+    // Whether an Undo was armed for this rename. The toast says Undo reverses it, so it offers
+    // the button -- a toast that names a recourse and does not offer it makes the user go
+    // looking for the pane (#396). Omitted where nothing was armed.
+    undoable = false,
+  ): void {
     if (result.failed.length === 0) return; // nothing to report; the toast names failed[0]
     const block = formatRenameFailureLog(action, result.failed);
     if (block) logWarning(block);
+    const actions = undoable ? [UNDO_RENAME, SHOW_RENAME_DETAILS] : [SHOW_RENAME_DETAILS];
     void vscode.window
-      .showErrorMessage(formatRenameFailureToast(action, result), SHOW_RENAME_DETAILS)
+      .showErrorMessage(formatRenameFailureToast(action, result), ...actions)
       .then((choice) => {
         if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
+        if (choice === UNDO_RENAME) void vscode.commands.executeCommand('gemstone.undoLast');
       });
   }
 
@@ -3429,6 +3468,10 @@ export class ExplorerController {
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
     this.loadClassRowMetadata();
+    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+    // activation arrives (#396).
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(className, dictionaryNameFor(session, classDict));
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
@@ -3443,7 +3486,7 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
       return false;
     }
-    this.recordReverseRename(
+    const recorded = this.recordReverseRename(
       session,
       'instVarRename',
       className,
@@ -3454,13 +3497,14 @@ export class ExplorerController {
       classDict,
     );
     if (result.failed.length > 0) {
-      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
-      // nothing reaches the user until an entry is pushed onto the client's stack, which is
-      // normally notifyRefactoringApplied's job and which this path returns before reaching.
-      armRefactoringUndo(session);
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
       this.reportRenameFailures(
         `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
         result,
+        recorded,
       );
       return true;
     }
@@ -3755,7 +3799,13 @@ export class ExplorerController {
    *
    * Renaming onto a name another dictionary already binds is allowed, but it is worth saying out
    * loud: from then on an unqualified reference to that name resolves to whichever dictionary
-   * comes first on the symbol list, which may not be this one.
+   * comes first on the symbol list.
+   *
+   * Whether that is this one is not a matter of doubt, and saying "may not be" understated it.
+   * The symbol list has an order, so the warning names which class wins. When a binding sits
+   * EARLIER than the destination, every unqualified reference -- the renamed class's own
+   * methods, and every referencer this rename rewrites -- lands on that other class, and the
+   * user should hear it in those words (#396).
    */
   private async confirmShadowingRename(
     session: ActiveSession,
@@ -3763,24 +3813,33 @@ export class ExplorerController {
     dictName: string | undefined,
   ): Promise<boolean> {
     let elsewhere: string[];
+    let order: string[];
     try {
       elsewhere = queries
         .dictionariesContainingClass(session, newName)
         .filter((d) => d !== dictName);
+      order = queries.getDictionaryNames(session);
     } catch {
       return true; // a failed probe must not block a rename
     }
     if (elsewhere.length === 0) return true;
+    // Which of them the symbol list reaches before the destination. Unknown positions (-1) sort
+    // first, which is the cautious reading: warn rather than reassure.
+    const destAt = dictName === undefined ? -1 : order.indexOf(dictName);
+    const ahead = elsewhere.filter((d) => destAt < 0 || order.indexOf(d) < destAt);
+    const detail =
+      ahead.length > 0
+        ? `Renaming to it leaves two classes called ${newName}, and ${ahead[0]} comes first on ` +
+          `the symbol list. An unqualified ${newName} will then mean ${ahead[0]}'s class — ` +
+          'including in the methods of the class being renamed, and in every reference this ' +
+          'rename rewrites.'
+        : `Renaming to it leaves two classes called ${newName}. This dictionary comes first on ` +
+          `the symbol list, so an unqualified ${newName} still means this class; code that ` +
+          'reaches the other one by name will now find this one instead.';
     const PROCEED = 'Rename anyway';
     const choice = await vscode.window.showWarningMessage(
       `${newName} is already defined in ${elsewhere.join(', ')}.`,
-      {
-        modal: true,
-        detail:
-          `Renaming to it leaves two classes called ${newName}. That is allowed, but an ` +
-          'unqualified reference to the name then resolves to whichever dictionary comes first ' +
-          'on the symbol list, which may not be this one.',
-      },
+      { modal: true, detail },
       PROCEED,
     );
     return choice === PROCEED;
@@ -3832,12 +3891,8 @@ export class ExplorerController {
     }
     if (entries.some((e) => e.className === className)) {
       await this.revealClass(dictName, dictIndex, className);
-      // The panel that drove this is about to close, which surfaces the tab beside it; without
-      // the claim the follow would move the tree onto THAT class a moment from now (#396).
-      this.claimNextEditorActivation();
       return;
     }
-    this.claimNextEditorActivation();
     this.classCategoryEntries = entries;
     this.loadClassRowMetadata();
     this.loadHierarchy();
@@ -3983,16 +4038,33 @@ export class ExplorerController {
 
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
+    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+    // activation arrives (#396).
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(newName, dictionaryNameFor(session, dictArg));
 
-    // The class is bound under `newName` now, so that is what the reversal looks up; it renames
-    // it back to `oldName`, reusing the scope the forward rename ran in.
+    // The class is bound under `newName` now -- the structuralFailed check below is what makes
+    // that true -- so that is what the reversal looks up; it renames it back to `oldName`,
+    // reusing the scope the forward rename ran in.
     //
     // Recorded BEFORE the failure report. A partial apply has still renamed the class -- some
     // method merely failed to recompile onto the new version -- and that is exactly when a way
     // back is worth most. Returning first left the only recourse an abort, which discards every
     // uncommitted change in the session rather than this one (#396).
-    this.recordReverseRename(
+    //
+    // Unless the rename ITSELF failed. Then the class is not bound under `newName`, and a
+    // reversal that renames `newName` back would reach whatever else binds that name -- in the
+    // case that matters, another dictionary's class, which it would rename to `oldName` without
+    // declining, because this dictionary binds no `oldName` any more (#396).
+    if (result.structuralFailed) {
+      logInfo(
+        `[undoRefactoring] the rename of ${oldName} did not land; not recording a reversal for ${newName}`,
+      );
+      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
+      return;
+    }
+    const recorded = this.recordReverseRename(
       session,
       'classRename',
       newName,
@@ -4005,11 +4077,11 @@ export class ExplorerController {
     );
 
     if (result.failed.length > 0) {
-      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
-      // nothing reaches the user until an entry is pushed onto the client's stack, which is
-      // normally notifyRefactoringApplied's job and which this path returns before reaching.
-      armRefactoringUndo(session);
-      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
+      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result, recorded);
       return;
     }
     const migrateNote =
@@ -4032,10 +4104,18 @@ export class ExplorerController {
   async insertSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) return;
-    // A hierarchy node may name a class outside the current dictionary; a class row uses it.
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
+    // carries its own. Passing nothing let the engine take whichever class of that name the
+    // symbol list reached first -- the same defect as #396, one pane over.
+    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
     const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+      // activation arrives (#396).
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // V7 Extract Superclass: insert a new common superclass above this class and chosen sibling
@@ -4044,9 +4124,16 @@ export class ExplorerController {
   async extractSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // The node's own dictionary, not the selection (see insertSuperclass).
+    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
     const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+      // activation arrives (#396).
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // V8 Split Class: extract a chosen set of this class's own instance variables (and the methods
@@ -4055,9 +4142,16 @@ export class ExplorerController {
   async splitClass(item: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // The node's own dictionary, not the selection (see insertSuperclass).
+    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
     const outcome = await splitClassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+      // activation arrives (#396).
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // Rename this class variable across its defining class and every subclass — both
@@ -4178,6 +4272,10 @@ export class ExplorerController {
 
     // The class variable and any referencing methods changed (the class name and
     // its [n] version tag do NOT — a class-variable change makes no new version).
+    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
+    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
+    // activation arrives (#396).
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(className, dictionaryNameFor(session, dict));
     // Keep the (now-renamed) class variable selected: refreshAfterClassReshape
     // re-reveals the CLASS, which would otherwise steal the selection, so re-reveal
@@ -4202,7 +4300,7 @@ export class ExplorerController {
       }
     }
 
-    this.recordReverseRename(
+    const recorded = this.recordReverseRename(
       session,
       'classVarRename',
       className,
@@ -4213,13 +4311,14 @@ export class ExplorerController {
       dict,
     );
     if (result.failed.length > 0) {
-      // Arm the Undo button too. Recording the reversal in the stone is only half of it --
-      // nothing reaches the user until an entry is pushed onto the client's stack, which is
-      // normally notifyRefactoringApplied's job and which this path returns before reaching.
-      armRefactoringUndo(session);
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
       this.reportRenameFailures(
         `Rename class variable '${oldName}' → '${newName}' in ${className}`,
         result,
+        recorded,
       );
       return true;
     }
@@ -4242,7 +4341,8 @@ export class ExplorerController {
     const className = item.className;
     if (!(await this.ensureRbSupport('Viewing class history'))) return;
 
-    // The dictionary THIS class lives in, threaded through every history call. Without it the
+    // The dictionary THIS class lives in. Threaded through every history call, the panel's
+    // label, Restore, Remove, and the tree refresh each of those drives. Without it the
     // engine resolves the class name against the whole symbol list and answers the first
     // binding -- a different class when the name is shadowed, whose history is then shown and,
     // on Restore, rewritten (#396).
@@ -5940,16 +6040,21 @@ export class ExplorerController {
     }
     // Nobody claimed this open and it lands on a test item's document: it is a
     // click on a row in the Testing view, whose navigation is its own.
-    if (!this.attributedOpens.delete(uri.toString()) && this.sunit?.isTestItemUri(uri)) {
+    const attributed = this.attributedOpens.delete(uri.toString());
+    if (!attributed && this.sunit?.isTestItemUri(uri)) {
       return;
     }
     // A deliberate reveal has just placed the tree and a panel then closed, surfacing whatever
     // tab was beside it. That is not a navigation, so it must not move the Explorer off the
     // class the user just refactored. One shot: spent here whether or not it was this URI.
+    //
+    // Spent, but not obeyed, for an open somebody CLAIMED -- Reveal in GemStone Explorer, or
+    // GemStone Search. Those exist to move the tree, and a stray claim swallowing one meant the
+    // command did nothing at all.
     if (this.revealClaim) {
       clearTimeout(this.revealClaim);
       this.revealClaim = undefined;
-      return;
+      if (!attributed) return;
     }
     const session = this.session();
     if (!session || String(session.id) !== uri.authority) return;

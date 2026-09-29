@@ -158,9 +158,39 @@
     // listener is on the DOCUMENT so Enter works from anywhere on the page, and a document
     // outlives a re-render: a stale handler would fire first, act on a detached button, and
     // its preventDefault would stop the live one.
+    // Enter is ARMED only once this page has seen the key released.
+    //
+    // Apply is focused on open, which makes Enter activate it NATIVELY -- the document handler
+    // below never sees that, because it returns early for a BUTTON target. So a held Enter
+    // auto-repeats straight through: the rename editor takes one, the shadowing-rename modal's
+    // default button takes the next, and Apply takes the third, applying a preview nobody has
+    // looked at. Every one of those comes from a single unreleased keypress, so a keyup is
+    // exactly the signal that a NEW, deliberate Enter is on its way (#396).
+    //
+    // The keydown capture on Apply is what stops the native activation; preventDefault on a
+    // bubbling document listener would be too late.
+    doc.__gsEnterArmed = false;
+    if (doc.__gsArmEnter) doc.removeEventListener('keyup', doc.__gsArmEnter);
+    doc.__gsArmEnter = function () {
+      doc.__gsEnterArmed = true;
+    };
+    doc.addEventListener('keyup', doc.__gsArmEnter);
+    if (applyEl && applyEl.addEventListener) {
+      if (applyEl.__gsEnterGuard)
+        applyEl.removeEventListener('keydown', applyEl.__gsEnterGuard, true);
+      applyEl.__gsEnterGuard = function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (doc.__gsEnterArmed) return;
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      applyEl.addEventListener('keydown', applyEl.__gsEnterGuard, true);
+    }
+
     if (doc.__gsApplyOnEnter) doc.removeEventListener('keydown', doc.__gsApplyOnEnter);
     doc.__gsApplyOnEnter = function (e) {
       if (e.key !== 'Enter' || e.defaultPrevented) return;
+      if (!doc.__gsEnterArmed) return; // a held Enter from an earlier step, not a new one
       const t = e.target;
       const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
       if (tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'SUMMARY') return;

@@ -502,7 +502,7 @@ GsRenameClassRefactoringTest >> testDictionaryScopeExcludesSameNamedClassReferen
 { #category : 'tests - shadowed class name' }
 GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary [
 	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
-	 resolves by the OLD class's name and takes the first match. With a decoy binding GsRCBase ahead
+	 used to resolve by the OLD class's name and take the first match. With a decoy binding GsRCBase ahead
 	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
 	 lost the class outright. This is the same helper the Class History restore goes through. See #396."
 	| decoy decoyClass json |
@@ -653,4 +653,67 @@ GsRenameClassRefactoringTest >> testRestoreReparentsUnderItsOwnParentNotASameNam
 		ensure: [
 			System myUserProfile removeDictionaryAt: 1.
 			#('GsRCChild' 'GsRCParent') do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameReportsWhichDictionaryWillWinTheNewName [
+	"Renaming onto a name another dictionary already binds is legal, and the engine allows it.
+	 What it must not do is stay quiet about WHERE the name will then resolve: a binding earlier
+	 in the symbol list wins, so the renamed class''s own methods stop meaning the renamed class.
+	 A binding LATER loses and changes nothing, so it is not reported. See #396."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsRCAheadDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 "not a collision -- the destination dictionary is free, so the rename may proceed"
+	 self assert: json includesSubstring: '"collision":null'.
+	 self assert: json includesSubstring: '"shadowedFrom":"GsRCAheadDict"']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameDoesNotReportADictionaryBehindTheDestination [
+	"A binding after the destination on the symbol list loses to the renamed class, so warning
+	 about it would be noise."
+	| behind json |
+	behind := SymbolDictionary new name: #GsRCBehindDict; yourself.
+	System myUserProfile symbolList add: behind.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: behind.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 self assert: json includesSubstring: '"shadowedFrom":null']
+		ensure: [System myUserProfile symbolList remove: behind ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testAFailedClassRenameStopsTheApplyAndSaysSo [
+	"When the #classRename raises, the class is NOT bound under the new name. Carrying on meant
+	 every #methodRecompile after it compiled the new name against whatever else binds it -- for
+	 a shadowed name, another dictionary''s class -- and the apply still reported the rewrites as
+	 applied. The client then armed an Undo that would rename THAT class back (#396).
+
+	 The rename is made to fail by removing the destination dictionary from the symbol list after
+	 the change set is staged, so binding the new name has nowhere to go."
+	| ref json |
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	ref changeSet.
+	UserGlobals removeKey: #GsRCBase ifAbsent: [].
+	json := ref applyDeselected: #().
+	self assert: json includesSubstring: '"structuralFailed":true'.
+	"and the reference rewrites that come after it did NOT run: the external referencer still
+	 names the old class, rather than having been repointed at a name this rename never bound"
+	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testACleanApplySaysTheStructuralChangeLanded [
+	| json |
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	self assert: json includesSubstring: '"structuralFailed":false'.
+	self assert: json includesSubstring: '"failed":[]'
 ]

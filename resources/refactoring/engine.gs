@@ -1314,14 +1314,10 @@ keyForClass: aClass isMeta: aBool
 category: 'private'
 method: GsChangeSignatureRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -2586,14 +2582,10 @@ methodCategory
 category: 'private'
 method: GsExtractMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -3063,7 +3055,10 @@ computeAnalysis
 	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
 	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
 	 rather than clobbered, but shadowing an existing global with a new class is its own
-	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 trap. STRICTER than GsRenameClassRefactoring>>newNameCollision, which asks only about
+	 the destination dictionary and lets a rename shadow after a warning: a rename moves a
+	 class the user already has, while this creates one that does not exist yet, so there
+	 is nothing to weigh against picking a free name (#396).
 	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
 	 class, where grabbing a same-named class from another dictionary would be wrong.)
 	 The decline names the symbol list so it cannot be read as a collision in the
@@ -3466,14 +3461,10 @@ newClassDictName
 category: 'private'
 method: GsExtractSuperclassRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). 'UserGlobals' stays the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: ['UserGlobals']
-		ifNotNil: [:dict | dict name ifNil: ['UserGlobals'] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'serializing'
@@ -4258,14 +4249,10 @@ methodCategory
 category: 'private'
 method: GsExtractTemporaryRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'serializing'
@@ -4894,14 +4881,10 @@ categoryOfClass: aBehavior selector: aSelector
 category: 'private'
 method: GsInlineMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -5558,14 +5541,10 @@ methodCategory
 category: 'private'
 method: GsInlineTemporaryRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'serializing'
@@ -5951,14 +5930,10 @@ isEditedClass: aClass
 category: 'private'
 method: GsInstVarRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -6970,14 +6945,10 @@ isEditedClass: aClass
 category: 'private'
 method: GsInstVarStructureRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -7679,14 +7650,10 @@ commaList: aCollection
 category: 'private'
 method: GsMoveMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'private'
@@ -8164,14 +8131,10 @@ tree: aTree referencesName: aName
 category: 'private'
 method: GsPushDownMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'private'
@@ -8739,14 +8702,10 @@ commaList: aCollection
 category: 'private'
 method: GsPushUpMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the class under its own
-	 name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'private'
@@ -9731,6 +9690,22 @@ sendersOf: aSelector
 	 GsNMethod. Uses the same ClassOrganizer reflection the client's sendersOf
 	 query uses. Read-only; compiles and commits nothing."
 	^(ClassOrganizer new sendersOf: aSelector asSymbol) at: 1
+%
+
+category: 'dictionaries'
+method: GsRefactoringEnvironment
+dictionaryNameDefiningClass: aClass
+	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
+	 change. Resolved by identity: taking the first dictionary that binds the NAME records a
+	 different class's dictionary whenever the name is shadowed, and the apply then writes the
+	 change there (#396). nil when no dictionary binds the class under its own name, which the
+	 apply falls back on as before.
+
+	 Every refactoring records a change this way, so it lives here rather than in each of them:
+	 seventeen copies of one method is seventeen places for the identity rule to be lost."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [nil]
+		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
 %
 
 category: 'selectors'
@@ -11866,14 +11841,10 @@ hierarchyScopeClasses
 category: 'private'
 method: GsRenameClassRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'source rewriting'
@@ -11964,6 +11935,32 @@ node: aNode declaresName: aSymbol
 
 category: 'preconditions'
 method: GsRenameClassRefactoring
+newNameShadowedFrom
+	"The name of a dictionary EARLIER in the symbol list than the destination that already binds
+	 newName, or nil.
+
+	 This is the difference between a shadow that is harmless and one that is not. After the
+	 rename, every unqualified reference to newName -- the renamed class's own methods, and every
+	 referencer this refactoring rewrites -- resolves to the FIRST binding. A binding later in the
+	 list loses to the renamed class and changes nothing. An earlier one wins, and the rename
+	 quietly repoints the renamed class's own code at a class in another dictionary (#396).
+
+	 Answers only the first such dictionary: one concrete name is what a warning needs."
+	| sl dest sym |
+	dest := self dictObjectFor: definingClass.
+	dest isNil ifTrue: [^nil].
+	sym := newName asSymbol.
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | | d |
+		d := sl at: i.
+		d == dest ifTrue: [^nil].
+		((d at: sym ifAbsent: [nil]) notNil) ifTrue: [
+			^d name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [d name asString]]].
+	^nil
+%
+
+category: 'preconditions'
+method: GsRenameClassRefactoring
 newNameCollision
 	"nil if the new name is free in the dictionary the renamed class will be bound into,
 	 otherwise a short reason string. Building the change set does not enforce this (the preview
@@ -12004,7 +12001,10 @@ outOfScopeJsonString
 	  ',"descendants":', (environment descendantsOf: definingClass) size printString,
 	  ',"collision":', (self newNameCollision
 		ifNil: ['null']
-		ifNotNil: [:reason | self jsonQuote: reason]), '}'
+		ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"shadowedFrom":', (self newNameShadowedFrom
+		ifNil: ['null']
+		ifNotNil: [:dn | self jsonQuote: dn]), '}'
 %
 
 category: 'private'
@@ -12087,21 +12087,29 @@ applyDeselected: deselectedIds
 	 abort rather than persisted half-done. With neither option (the safe path) nothing
 	 is committed, matching the other refactorings. Answers
 	 {applied, failed:[..], committed, migratedFailures}."
-	| ids applied failures migrated committed |
+	| ids applied failures migrated committed structuralFailed |
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	oldToNew := IdentityDictionary new.
 	applied := 0.
+	structuralFailed := false.
 	failures := OrderedCollection new.
 	"The copy-forward loop runs deep inside a per-class change and must not raise (one
 	 method that will not recompile would abort the whole change), so it reports through
 	 this alias instead -- entries land in the same `failed` list as everything else."
 	copyFailures := failures.
 	self changeSet changes do: [:change |
-		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
-			ifFalse: [
-				[self applyChange: change. applied := applied + 1]
-				on: Error do: [:e |
-					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
+		"Once a STRUCTURAL change has failed, stop. The rename did not happen, so every
+		 #methodRecompile after it compiles the new name against whatever else binds it --
+		 for a shadowed name, another dictionary's class -- and reports success. Carrying on
+		 turned one failure into a body of code silently pointing at the wrong class (#396)."
+		structuralFailed ifFalse: [
+			(change kind == #methodRecompile and: [ids includes: change id asSymbol])
+				ifFalse: [
+					[self applyChange: change. applied := applied + 1]
+					on: Error do: [:e |
+						(change kind == #classRename or: [change kind == #classReparent])
+							ifTrue: [structuralFailed := true].
+						failures add: (Array with: change id with: change failureLabel with: e messageText)]]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -12117,9 +12125,13 @@ applyDeselected: deselectedIds
 			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: newName with: e messageText)]]].
+	"structuralFailed tells the CLIENT whether the class is bound under the new name. It arms an
+	 Undo that renames `newName` back, and after a failed #classRename that name reaches some
+	 other dictionary's class -- which the reversal would then rename (#396)."
 	^'{"applied":', applied printString,
 	  ',"committed":', committed printString,
 	  ',"migratedFailures":', migrated printString,
+	  ',"structuralFailed":', structuralFailed printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -12546,14 +12558,10 @@ baseClassOf: aMethod
 category: 'private'
 method: GsRenameClassVariableRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'private'
@@ -12926,14 +12934,10 @@ definingClass
 category: 'private'
 method: GsRenameInstanceVariableRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'accessing'
@@ -13478,14 +13482,10 @@ definingClass
 category: 'private'
 method: GsRenameMethodRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'accessing'
@@ -13662,7 +13662,8 @@ method: GsRenameMethodRefactoring
 applyChange: aChange
 	"Apply one staged change in the stone WITHOUT committing: compile the new
 	 source, and for a genuine rename (selector actually changed) remove the old
-	 method. The class is resolved across all dictionaries."
+	 method. The class is resolved through the dictionary the change recorded, so a
+	 shadowed class name cannot send the recompile to another dictionary's class (#396)."
 	| cls target |
 	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
@@ -14130,14 +14131,10 @@ methodCategory
 category: 'private'
 method: GsRenameTemporaryRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). nil when no dictionary binds the
-	 class under its own name, which the apply falls back on as before."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'preconditions'
@@ -14590,8 +14587,10 @@ computeAnalysis
 	"classNamed: only matches a Class binding; a name bound to a NON-class global would
 	 otherwise slip past and be silently clobbered by applyClassAdd:'s
 	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
-	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
-	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 symbol list -- the same question GsExtractSuperclassRefactoring>>computeAnalysis asks,
+	 and stricter than GsRenameClassRefactoring>>newNameCollision, which is destination-only
+	 and lets a rename shadow after a warning. Creating a class is not moving one: there is
+	 nothing to weigh against a free name (#396). The split client validates only the
 	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
 	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
 	 source's own dictionary."
@@ -14867,14 +14866,10 @@ newClassDictName
 category: 'private'
 method: GsSplitClassRefactoring
 dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity through the environment: taking the first dictionary that binds
-	 the NAME records a different class's dictionary whenever the name is shadowed, and the apply
-	 then writes the change there (#396). 'UserGlobals' stays the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: ['UserGlobals']
-		ifNotNil: [:dict | dict name ifNil: ['UserGlobals'] ifNotNil: [:n | n asString]]
+	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
+	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryNameDefiningClass: aClass
 %
 
 category: 'serializing'
