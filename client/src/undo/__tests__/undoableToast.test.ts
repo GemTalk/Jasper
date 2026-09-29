@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { notifyUndoable } from '../undoableToast';
+import { notifyUndoable, notifyUndoableFailure } from '../undoableToast';
 import { UNDO_COMMAND } from '../undoUi';
 import { UndoEntry } from '../undoTypes';
 
@@ -30,6 +30,34 @@ const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+  vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
+});
+
+describe('notifyUndoableFailure', () => {
+  it('offers Undo on an error notice, for the part that did go through', async () => {
+    notifyUndoableFailure('Remove methods — not removed: #b. Removed: #a.', entry);
+    await settle();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Remove methods — not removed: #b. Removed: #a.',
+      'Undo',
+    );
+  });
+
+  it('runs the undo command when that button is pressed', async () => {
+    vi.mocked(vscode.window.showErrorMessage).mockResolvedValue('Undo' as never);
+    notifyUndoableFailure('Remove methods — not removed: #b. Removed: #a.', entry);
+    await settle();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(UNDO_COMMAND);
+  });
+
+  it('shows the error plain when nothing was recorded', async () => {
+    notifyUndoableFailure('Remove methods — not removed: #a. Removed: none.', undefined);
+    await settle();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Remove methods — not removed: #a. Removed: none.',
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
 });
 
 describe('notifyUndoable', () => {

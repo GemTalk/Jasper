@@ -453,6 +453,29 @@ describe('removing several methods — one of them cannot be removed', () => {
     expect(errorText()).toContain('#new from Array class:');
   });
 
+  it('offers Undo on the error, for what did go', async () => {
+    // The silent notice is the user's only hint the removal can be undone, and a failure
+    // replaces it. Without the button they are told what broke and left with no way back.
+    everySlotHoldsAMethod();
+    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
+      selector === 'b' ? 'Selector not found' : 'Deleted: Array >> x',
+    );
+
+    await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
+
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('#b'), 'Undo');
+  });
+
+  it('shows the error plain when nothing was removed to undo', async () => {
+    everySlotHoldsAMethod();
+    deleteMethod.mockReturnValue('Selector not found');
+
+    await removeMethods(makeController(), [row('a'), row('b')]);
+
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(showErrorMessage.mock.calls[0]).toHaveLength(1);
+  });
+
   it('still redraws the pane, which has lost whatever did go', async () => {
     deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
       if (selector === 'b') throw new Error('refused');
@@ -464,6 +487,26 @@ describe('removing several methods — one of them cannot be removed', () => {
     await removeMethods(ctl, [row('a'), row('b')]);
 
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('removing several methods — the pane moving under the run', () => {
+  it('judges every row against the class the removal started on', async () => {
+    // The checks read the pane's own state, and the run is several whole-image scans long.
+    // Whatever the pane holds by the end, the rows are the ones the user selected.
+    hierarchyImplementorsOf.mockImplementation((_s: unknown, dict: number) => {
+      ctl.state.className = 'Bag';
+      ctl.state.dictIndex = 9;
+      return dict === 1 ? [] : [sender({ className: 'Wrong' })];
+    });
+    const ctl = makeController();
+
+    await removeMethods(ctl, [row('at:'), row('size')]);
+
+    expect(hierarchyImplementorsOf).toHaveBeenCalledTimes(2);
+    for (const call of hierarchyImplementorsOf.mock.calls) expect(call[1]).toBe(1);
+    expect(deleteMethod).toHaveBeenCalledWith(SESSION, 'Array', false, 'at:', 1);
+    expect(deleteMethod).toHaveBeenCalledWith(SESSION, 'Array', false, 'size', 1);
   });
 });
 

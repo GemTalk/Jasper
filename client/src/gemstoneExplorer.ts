@@ -7,7 +7,7 @@ import {
   readMethodSlotState,
 } from './undo/recordMethodEdit';
 import { slotLabel } from './undo/undoTypes';
-import { notifyUndoable } from './undo/undoableToast';
+import { notifyUndoable, notifyUndoableFailure } from './undo/undoableToast';
 import {
   CLASS_CATEGORIES_CHANGED_COMMAND,
   OverlayRenameOutcome,
@@ -764,6 +764,16 @@ interface MethodHistoryPanelEntry {
   dict: number | string | undefined;
   panel: vscode.WebviewPanel;
   refresh: () => void;
+}
+
+/** What a method removal judges its rows against: the class it started on, the dictionary
+ *  that resolves it, and the method list the rows came from. Captured once, up front, so a
+ *  run that is several whole-image scans long cannot judge its later rows against a pane
+ *  the user has since moved. */
+interface RemovalTarget {
+  className: string;
+  dictIndex: number | undefined;
+  envLines: queries.EnvCategoryLine[];
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -4695,10 +4705,17 @@ export class ExplorerController {
   // the selector is gone from the class, when an implementation is still there.
   //
   // Read off envLines, which the method list is already built from, so this costs no query.
-  private otherEnvironmentsImplementing(isMeta: boolean, selector: string): number[] {
+  // The caller passes the lines it is judging against rather than letting this read the live
+  // ones: a removal captures its class and its method list up front and must judge every row
+  // against that same list, not against whatever the pane holds by the time it gets there.
+  private otherEnvironmentsImplementing(
+    envLines: queries.EnvCategoryLine[],
+    isMeta: boolean,
+    selector: string,
+  ): number[] {
     return [
       ...new Set(
-        this.envLines
+        envLines
           .filter(
             (l) =>
               l.isMeta === isMeta &&
@@ -4895,6 +4912,7 @@ export class ExplorerController {
   // under-report costs here: a question, never a wrong silent delete.
   private superclassImplementorOf(
     session: ActiveSession,
+    dictIndex: number | undefined,
     className: string,
     selector: string,
     isMeta: boolean,
@@ -4902,7 +4920,7 @@ export class ExplorerController {
     try {
       const above = queries.hierarchyImplementorsOf(
         session,
-        this.state.dictIndex ?? 1,
+        dictIndex ?? 1,
         className,
         selector,
         isMeta,
@@ -4990,7 +5008,11 @@ export class ExplorerController {
       return;
     }
 
-    const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(session, className, node);
+    const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(
+      session,
+      { className, dictIndex: this.state.dictIndex, envLines: this.envLines },
+      node,
+    );
     const target: SafeDeleteTarget = {
       kind: 'method',
       label: `#${selector} from ${side}`,
@@ -5068,7 +5090,7 @@ export class ExplorerController {
   // and the multi-row one so both judge a method the same way.
   private async methodRemovalCheck(
     session: ActiveSession,
-    className: string,
+    where: RemovalTarget,
     node: MethodItem,
   ): Promise<{
     inheritedFrom: string | undefined;
@@ -5087,7 +5109,13 @@ export class ExplorerController {
     // scan, but failing to find one only means we fall through and ask, so a hierarchy
     // probe that under-reports (it reads environment 0) costs a question, never a wrong
     // silent delete.
-    const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
+    const inheritedFrom = this.superclassImplementorOf(
+      session,
+      where.dictIndex,
+      where.className,
+      selector,
+      node.isMeta,
+    );
 
     const scan = inheritedFrom
       ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
@@ -5112,14 +5140,14 @@ export class ExplorerController {
         references: scan.references.filter(
           (r) =>
             !(
-              r.className === className &&
+              r.className === where.className &&
               r.isMeta === node.isMeta &&
               r.selector === selector &&
               r.environmentId === EXPLORER_METHOD_ENVIRONMENT
             ),
         ),
       },
-      alsoIn: this.otherEnvironmentsImplementing(node.isMeta, selector),
+      alsoIn: this.otherEnvironmentsImplementing(where.envLines, node.isMeta, selector),
     };
   }
 
@@ -5147,6 +5175,10 @@ export class ExplorerController {
     if (!session || this.state.className === undefined) return;
     const className = this.state.className;
     const dictIndex = this.state.dictIndex;
+    // Captured once, before the first scan, and every row is judged against these. The checks
+    // reach into the pane's own state, which a click could in principle move underneath a run
+    // that is several whole-image scans long.
+    const where: RemovalTarget = { className, dictIndex, envLines: this.envLines };
     if (!queries.canClassBeWritten(session, className, dictIndex)) {
       void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
       return;
@@ -5170,11 +5202,7 @@ export class ExplorerController {
     let anyScanRan = false;
     for (const node of rows) {
       const selector = node.info.selector;
-      const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(
-        session,
-        className,
-        node,
-      );
+      const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(session, where, node);
       for (const r of scan.references) {
         if (goingToo(r)) continue;
         references.set(`${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`, r);
@@ -5245,9 +5273,10 @@ export class ExplorerController {
     const undoEntry = recording?.commit(removed);
     if (failures.length > 0) {
       const done = removed.map((sl) => `#${sl.selector}`);
-      void vscode.window.showErrorMessage(
+      notifyUndoableFailure(
         `Remove methods — not removed: ${failures.join('; ')}. ` +
           `Removed: ${done.length > 0 ? done.join(', ') : 'none'}.`,
+        undoEntry,
       );
     } else if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
     this.reloadCurrentClassMethods();

@@ -56,8 +56,8 @@ beforeEach(() => {
   vi.mocked(vscode.commands.executeCommand).mockReset();
 });
 
-describe('revealMethodRow', () => {
-  it('reveals an editor-driven row with focus:false and never touches the editor focus', async () => {
+describe('revealing a method row in the Explorer', () => {
+  it('scrolls the row into view and leaves the cursor in the editor', async () => {
     const { method, reveal } = makeController();
 
     await reveal();
@@ -69,7 +69,7 @@ describe('revealMethodRow', () => {
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(FOCUS_EDITOR);
   });
 
-  it('keepTreeFocus reveals with focus:true and leaves the focus in the tree', async () => {
+  it('puts the focus in the tree for an explicit Reveal in GemStone Explorer', async () => {
     const { method, reveal } = makeController();
 
     await reveal({ keepTreeFocus: true });
@@ -81,7 +81,7 @@ describe('revealMethodRow', () => {
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(FOCUS_EDITOR);
   });
 
-  it('keepTreeFocus:false is the editor-driven reveal', async () => {
+  it('leaves the cursor in the editor when a caller asks not to take the tree', async () => {
     const { method, reveal } = makeController();
 
     await reveal({ keepTreeFocus: false });
@@ -93,7 +93,7 @@ describe('revealMethodRow', () => {
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(FOCUS_EDITOR);
   });
 
-  it('logs to the GCI channel when the reveal rejects, and hands nothing back', async () => {
+  it('logs to the GCI channel when the pane cannot show the row, and moves nothing', async () => {
     const { reveal } = makeController(() => Promise.reject(new Error('pane gone')));
 
     await reveal();
@@ -107,7 +107,7 @@ describe('revealMethodRow', () => {
 });
 
 describe('selecting a method just created with New Method', () => {
-  it('reveals it with focus:false, leaving the cursor in its editor', async () => {
+  it('scrolls its row into view and leaves the cursor in its editor', async () => {
     const { ctl, method } = makeController();
     ctl.state.dictIndex = 1;
     ctl.state.className = 'Account';
