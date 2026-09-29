@@ -32,4 +32,27 @@ export function dictionaryNameFor(
   }
 }
 
+/**
+ * `dictionaryNameFor` for many references at once: the symbol list is read on the first index
+ * asked about and reused after that. For labelling a list of rows, where one round trip per row
+ * costs a GCI call per class before anything is shown.
+ */
+export function dictionaryNameLookup(
+  session: ActiveSession,
+): (dict: number | string | undefined) => string | undefined {
+  let names: string[] | undefined;
+  return (dict) => {
+    if (typeof dict === 'string') return dict.length > 0 ? dict : undefined;
+    if (dict === undefined) return undefined;
+    if (names === undefined) {
+      try {
+        names = queries.getDictionaryNames(session);
+      } catch {
+        names = [];
+      }
+    }
+    return names[dict - 1];
+  };
+}
+
 export { qualifiedClassName, ambiguousClassNames, classNameForRow } from './qualifiedClassName';

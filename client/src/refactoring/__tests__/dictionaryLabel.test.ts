@@ -6,7 +6,7 @@ vi.mock('../../browserQueries', () => ({
 }));
 
 import * as queries from '../../browserQueries';
-import { dictionaryNameFor, qualifiedClassName } from '../dictionaryLabel';
+import { dictionaryNameFor, dictionaryNameLookup, qualifiedClassName } from '../dictionaryLabel';
 import { ambiguousClassNames, classNameForRow } from '../qualifiedClassName';
 import type { ActiveSession } from '../../sessionManager';
 
@@ -16,6 +16,40 @@ const session = {} as ActiveSession;
 // and a refactoring acts on exactly one. These name the dictionary in the text the user reads
 // afterwards, which is the last place a refactoring that went somewhere unintended is catchable
 // (#396).
+describe('dictionaryNameLookup', () => {
+  it('reads the symbol list once, however many indexes it names', () => {
+    vi.mocked(queries.getDictionaryNames).mockClear();
+    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals']);
+    const nameOf = dictionaryNameLookup(session);
+
+    expect([1, 2, 1, 2].map(nameOf)).toEqual(['UserGlobals', 'Globals', 'UserGlobals', 'Globals']);
+    expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
+  });
+
+  it('never reads the symbol list for a name or for no dictionary', () => {
+    vi.mocked(queries.getDictionaryNames).mockClear();
+    const nameOf = dictionaryNameLookup(session);
+
+    expect(nameOf('Globals')).toBe('Globals');
+    expect(nameOf(undefined)).toBeUndefined();
+    expect(nameOf('')).toBeUndefined();
+    expect(queries.getDictionaryNames).not.toHaveBeenCalled();
+  });
+
+  it('answers no name, and keeps answering it, when the symbol list cannot be read', () => {
+    vi.mocked(queries.getDictionaryNames).mockClear();
+    vi.mocked(queries.getDictionaryNames).mockImplementation(() => {
+      throw new Error('no session');
+    });
+    const nameOf = dictionaryNameLookup(session);
+
+    expect(nameOf(1)).toBeUndefined();
+    expect(nameOf(2)).toBeUndefined();
+    expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
+    vi.mocked(queries.getDictionaryNames).mockReset();
+  });
+});
+
 describe('dictionaryNameFor', () => {
   it('resolves a 1-based SymbolList index to its dictionary name', () => {
     vi.mocked(queries.getDictionaryNames).mockReturnValue([

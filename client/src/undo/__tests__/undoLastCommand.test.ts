@@ -22,6 +22,11 @@ vi.mock('../../refactoring/undoRefactoringCommand', () => ({
   undoLastRefactoringCommand: vi.fn(),
 }));
 vi.mock('../undoPlanPanel', () => ({ showUndoPlanPanel: vi.fn() }));
+// Only the dictionary-name read is stood in for; it is what the plan's row labels cost.
+vi.mock('../../browserQueries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../browserQueries')>()),
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+}));
 
 import * as vscode from 'vscode';
 import { reverseMethodEdit } from '../reverseMethodEdit';
@@ -34,6 +39,7 @@ import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
 import { showUndoPlanPanel } from '../undoPlanPanel';
+import { getDictionaryNames } from '../../browserQueries';
 import { undoLastCommand } from '../undoLastCommand';
 import { peekUndoEntry, pushUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { NewUndoEntry } from '../undoTypes';
@@ -350,6 +356,27 @@ describe('undoLastCommand', () => {
       );
       expect(reverseMethodEdit).not.toHaveBeenCalled();
       expect(undoStackDepth(session.id)).toBe(1);
+    });
+
+    it('reads the dictionary names once for the whole plan, not once per row', async () => {
+      // Every row names its class with its dictionary, and a slot records the dictionary as a
+      // SymbolList index. Turning each index into a name with its own round trip made a
+      // thirty-class category undo cost thirty GCI calls before the panel even opened.
+      const slots = Array.from({ length: 30 }, (_, i) => ({ dict: 1, className: `C${i}` }));
+      pushUndoEntry({
+        ...classEdit('Move 30 classes to Kernel'),
+        slots,
+        before: slots.map(() => ({ bound: true, oop: '1', selectors: [] })),
+        after: slots.map(() => ({ bound: true, oop: '2', selectors: [] })),
+      } as NewUndoEntry);
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
+
+      await undoLastCommand(sessions);
+
+      expect(getDictionaryNames).toHaveBeenCalledTimes(1);
+      const rows = vi.mocked(showUndoPlanPanel).mock.calls[0][0].rows;
+      expect(rows).toHaveLength(30);
+      expect(rows.every((r) => r.target.endsWith('(UserGlobals)'))).toBe(true);
     });
 
     it('leaves the plan’s note for what the reversal costs, not the standing caveat', async () => {
