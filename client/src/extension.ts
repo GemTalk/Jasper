@@ -122,6 +122,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  parseUri,
   isMethodEditorUri,
   isClassCommentUri,
 } from './gemstoneFileSystemProvider';
@@ -1217,8 +1218,15 @@ export function activate(context: vscode.ExtensionContext) {
       if (parts.length >= 3) {
         // parts: ['', dictName, className, 'definition'] — pass the dictName so the
         // explorer can jump to the dictionary the class was actually created in
-        // (which may differ from the selected one for a new-class inDictionary:).
-        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
+        // (which may differ from the selected one for a new-class inDictionary:), and the
+        // `?dict=` position when the URI carries one: two dictionaries can share a name.
+        const compiled = parseUri(e.uri);
+        explorer.onClassCompiled(
+          parseInt(e.uri.authority, 10),
+          parts[2],
+          parts[1],
+          compiled.kind === 'definition' ? compiled.dictIndex : undefined,
+        );
         // Keep an open GemStone Search current: fold the freshly compiled class into its cache.
         omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }

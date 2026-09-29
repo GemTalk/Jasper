@@ -136,6 +136,7 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
         a.dictName,
         a.category,
         a.sessionId,
+        a.dictIndex,
       );
     },
   };

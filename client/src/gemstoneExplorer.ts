@@ -155,6 +155,7 @@ import {
 import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { dictionaryNameFor, qualifiedClassName } from './refactoring/dictionaryLabel';
+import { resolveDictionaryIndex } from './dictionaryIndex';
 import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
 import {
   showMethodHistoryPanel,
@@ -649,6 +650,10 @@ export class HierarchyItem extends vscode.TreeItem {
     // (same rule as the Classes pane). Rendered as a `[vcurrent/total]` tag on the
     // label and spelled out in the tooltip; never affects the id.
     version?: queries.ClassVersionInfo,
+    // The 1-based SymbolList position of the dictionary that binds this class, when the hierarchy
+    // query could place it. Two dictionaries can share a name, so `dictName` alone lands on the
+    // first of them (#396).
+    public readonly dictIndex?: number,
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -656,7 +661,10 @@ export class HierarchyItem extends vscode.TreeItem {
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
     this.tooltip = versionTooltipOf(className, version);
-    this.id = `h:${role}:${chainIndex}:${className}`;
+    // The dictionary position is part of the id: every subclass has chainIndex -1, so two
+    // same-named subclasses from different dictionaries would otherwise share one, which a tree
+    // view refuses outright.
+    this.id = `h:${role}:${chainIndex}:${dictIndex ?? ''}:${className}`;
     this.contextValue = 'explorerHierClass';
     // The current class is shown by keeping it *selected* in this pane (synced
     // with the Classes pane), so no extra "current" label is needed; up/down
@@ -668,6 +676,11 @@ export class HierarchyItem extends vscode.TreeItem {
           ? 'arrow-small-up'
           : 'arrow-small-down',
     );
+  }
+
+  /** How to address this class's dictionary in a query: its position when known, else its name. */
+  get dictRef(): number | string {
+    return this.dictIndex ?? this.dictName;
   }
 }
 
@@ -1737,20 +1750,23 @@ export class ExplorerController {
       return;
     }
 
-    // Re-resolve the selected dictionary by NAME. A commit elsewhere can remove it
-    // or shift every dictionary's index — e.g. uninstalling the server plugin drops
+    // Re-resolve the selected dictionary. A commit elsewhere can remove it or shift
+    // every dictionary's index — e.g. uninstalling the server plugin drops
     // GsRefactoring / GsEnhancedInspector. If the selected dictionary is gone, don't
     // reload by its stale index (that would show a different dictionary's classes, or
     // leave the removed one's classes orphaned in the panes); reset to a default
     // dictionary so the class/category/hierarchy/method panes reflect the stone.
+    // The retained index is kept while the dictionary there still has the name: two
+    // dictionaries can share one, and a plain name lookup moved a selection on the
+    // second of them to the first (#396).
     let currentDictIndex = dictIndex;
     try {
-      const pos = queries.getDictionaryNames(session).indexOf(dictName);
-      if (pos < 0) {
+      const pos = resolveDictionaryIndex(queries.getDictionaryNames(session), dictName, dictIndex);
+      if (pos === 0) {
         this.reset();
         return;
       }
-      currentDictIndex = pos + 1;
+      currentDictIndex = pos;
       this.state.dictIndex = currentDictIndex;
     } catch {
       /* keep the retained index if the dictionary list can't be read */
@@ -2151,15 +2167,22 @@ export class ExplorerController {
   }
 
   // Resolve a class's dictionary (name + 1-based index). Prefers the given dict
-  // name; falls back to a full class-name lookup when it's blank/unresolvable.
+  // name -- at `dictIndex` when the caller knows its position, since two dictionaries
+  // can share a name -- and falls back to a full class-name lookup when it's
+  // blank/unresolvable.
   private resolveClassDict(
     className: string,
     dictName?: string,
+    dictIndex?: number,
   ): { dictName: string; dictIndex: number } | undefined {
     const session = this.session();
     if (!session) return undefined;
     if (dictName) {
-      const index = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+      const index = resolveDictionaryIndex(
+        queries.getDictionaryNames(session),
+        dictName,
+        dictIndex,
+      );
       if (index > 0) return { dictName, dictIndex: index };
     }
     const match = queries.getAllClassNames(session).find((e) => e.className === className);
@@ -2207,7 +2230,7 @@ export class ExplorerController {
   // dictionary (it may live elsewhere than the currently-shown one), mirroring
   // openHierarchyDefinition.
   async openHierarchyComment(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2247,7 +2270,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className) {
@@ -2299,7 +2322,7 @@ export class ExplorerController {
   // in a different dictionary than the one currently browsed). Opens to the side
   // like the Classes-pane button, without changing the navigator selection.
   async openHierarchyDefinition(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2398,6 +2421,7 @@ export class ExplorerController {
         i,
         hasChildren,
         this.classVersion(e.className),
+        e.dictIndex,
       );
       // Each row carries its own dictionary — an ancestor often lives in another
       // one — so the affordance and the outcome are for the right class.
@@ -2416,6 +2440,7 @@ export class ExplorerController {
         -1,
         false,
         this.classVersion(s.className),
+        s.dictIndex,
       );
       this.decorateTestRow(item, s.dictName, s.className);
       return item;
@@ -2436,6 +2461,8 @@ export class ExplorerController {
       'self',
       lastIdx,
       this.hierSubs.length > 0,
+      undefined,
+      e.dictIndex,
     );
     await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
   }
@@ -2445,22 +2472,30 @@ export class ExplorerController {
       const selfIdx = this.hierChain.length - 1;
       if (selfIdx < 0) return undefined;
       const e = this.hierChain[selfIdx];
-      return new HierarchyItem(e.className, e.dictName, 'self', selfIdx, true);
+      return new HierarchyItem(
+        e.className,
+        e.dictName,
+        'self',
+        selfIdx,
+        true,
+        undefined,
+        e.dictIndex,
+      );
     }
     if (element.chainIndex <= 0) return undefined;
     const i = element.chainIndex - 1;
     const e = this.hierChain[i];
-    return new HierarchyItem(e.className, e.dictName, 'ancestor', i, true);
+    return new HierarchyItem(e.className, e.dictName, 'ancestor', i, true, undefined, e.dictIndex);
   }
 
   // Clicking a hierarchy node navigates to that class (which reloads the
   // hierarchy centered on it, plus the methods and the other panes).
   selectHierarchyNode(item: HierarchyItem): void {
     if (item.role === 'self') return; // already the current class
-    // The hierarchy query supplies a dict name, but it can be blank (a class
-    // reachable only in another symbol-list scope); the resolver falls back to a
+    // The hierarchy query supplies a dict name and position, but they can be blank (a
+    // class reachable only in another symbol-list scope); the resolver falls back to a
     // full class-name lookup so nodes like Object always navigate.
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -3858,8 +3893,9 @@ export class ExplorerController {
     // Pass the 1-based SymbolList index whenever the caller has one. A dictionary NAME does not
     // identify a dictionary — two can share one — so turning an index into a name and back lands
     // on the first of them, and the Explorer shows the other dictionary's class of the same name
-    // (#396). A name is accepted for the callers that only have one (a Hierarchy node), and is
-    // placed on the selection when the selection carries it, else on its first match.
+    // (#396). A name is accepted for the callers that only have one (a Hierarchy node the query
+    // could not place), and is placed on the selection when the selection carries it, else on
+    // its first match.
     inDict?: number | string,
   ): Promise<void> {
     const session = this.session();
@@ -3926,7 +3962,7 @@ export class ExplorerController {
     // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
     // carries its own. Resolving it across the whole symbol list instead would rename whichever
     // class of that name comes first, and record the undo against it (#396).
-    const dictArg = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
+    const dictArg = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     await this.renameClassNamed(item.className, dictArg);
   }
 
@@ -4119,7 +4155,7 @@ export class ExplorerController {
     // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
     // carries its own. Passing nothing let the engine take whichever class of that name the
     // symbol list reached first -- the same defect as #396, one pane over.
-    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
     if (outcome) {
       // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
@@ -4137,7 +4173,7 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return;
     // The node's own dictionary, not the selection (see insertSuperclass).
-    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
     if (outcome) {
       // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
@@ -4155,7 +4191,7 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return;
     // The node's own dictionary, not the selection (see insertSuperclass).
-    const dict = item instanceof HierarchyItem ? item.dictName : this.state.dictIndex;
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await splitClassCommand({ session, className: item.className, dict });
     if (outcome) {
       // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
@@ -4363,7 +4399,7 @@ export class ExplorerController {
     // ancestor generally lives elsewhere, which is why Class History on `Object` from the
     // Hierarchy pane failed outright with `not a class: Object` once the lookup became scoped.
     const historyDict =
-      item instanceof HierarchyItem ? item.dictName : (this.state.dictIndex ?? this.state.dictName);
+      item instanceof HierarchyItem ? item.dictRef : (this.state.dictIndex ?? this.state.dictName);
     let versions;
     try {
       versions = parseClassHistory(queries.getClassHistory(session, className, historyDict));
@@ -5601,11 +5637,14 @@ export class ExplorerController {
     dictName: string,
     categoryPath: string,
     sessionId?: number,
+    // The dictionary's SymbolList position when the caller has it (a GemStone Search result
+    // does): two dictionaries can share a name, and the name alone finds the first (#396).
+    dictIndex?: number,
   ): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
     const names = queries.getDictionaryNames(session);
-    const idx = names.indexOf(dictName);
+    const idx = resolveDictionaryIndex(names, dictName, dictIndex) - 1;
     if (idx < 0) {
       void vscode.window.showWarningMessage(`No dictionary matching "${dictName}".`);
       return;
@@ -5799,13 +5838,13 @@ export class ExplorerController {
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
-    // dictIndex is not part of the coordinate — Back re-resolves it from the name —
-    // but until the panes have one there is no dictionary landed on to record.
+    // Until the panes have a dictionary index there is no dictionary landed on to record.
     if (!session || dictName === undefined || dictIndex === undefined) return;
     this.history.record(
       {
         sessionId: session.id,
         dictName,
+        dictIndex,
         classCategory,
         className,
         selector: method?.selector,
@@ -5817,9 +5856,10 @@ export class ExplorerController {
 
   /**
    * Put the panes back on a recorded landing, recomputing it against the live
-   * stone rather than trusting the coordinate: the dictionary is re-resolved by
-   * name (a commit elsewhere can shift every index) and the class and selector
-   * have to still be there.
+   * stone rather than trusting the coordinate: the recorded dictionary index is kept
+   * only while the dictionary there still has the recorded name, and is otherwise
+   * re-resolved from the name (a commit elsewhere can shift every index); the class
+   * and selector have to still be there.
    *
    * Answers false when the landing no longer resolves, which drops it from the
    * chain so a second press tries the one before it. A landing whose class is
@@ -5839,7 +5879,11 @@ export class ExplorerController {
     }
     let dictIndex: number;
     try {
-      dictIndex = queries.getDictionaryNames(session).indexOf(landing.dictName) + 1;
+      dictIndex = resolveDictionaryIndex(
+        queries.getDictionaryNames(session),
+        landing.dictName,
+        landing.dictIndex,
+      );
     } catch {
       return false;
     }
@@ -6085,8 +6129,14 @@ export class ExplorerController {
     const revealMethod =
       parsed.kind === 'method' ? { selector: parsed.selector, isMeta: parsed.isMeta } : undefined;
 
-    // Already showing this class: just (re)reveal the method row / refresh title.
-    if (this.state.className === className && this.state.dictName === dictName) {
+    // Already showing this class: just (re)reveal the method row / refresh title. A tab that
+    // carries its dictionary's position is compared by position too: two dictionaries can share
+    // a name, and each can bind a class of this one (#396).
+    if (
+      this.state.className === className &&
+      this.state.dictName === dictName &&
+      (parsed.dictIndex === undefined || parsed.dictIndex === this.state.dictIndex)
+    ) {
       if (revealMethod) {
         // If the Methods pane already has this selector selected — which is exactly
         // the case when the user just clicked it in the tree (that click is what
@@ -6120,7 +6170,11 @@ export class ExplorerController {
       return;
     }
 
-    const dictIndex = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+    const dictIndex = resolveDictionaryIndex(
+      queries.getDictionaryNames(session),
+      dictName,
+      parsed.dictIndex,
+    );
     if (dictIndex <= 0) return;
     await this.revealClass(dictName, dictIndex, className, {
       revealMethod,
@@ -6430,7 +6484,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -6655,7 +6709,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -7313,7 +7367,7 @@ export class ExplorerController {
   async fileOutClass(node: ClassItem | HierarchyItem): Promise<void> {
     const session = this.fileOutSession();
     if (!session) return;
-    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    const dict = node instanceof HierarchyItem ? node.dictRef : this.state.dictIndex;
     await this.runFileOut({
       title: `File Out ${node.className}`,
       defaultFileName: fileOutFileName(node.className),
@@ -7340,7 +7394,7 @@ export class ExplorerController {
     const session = this.fileOutSession();
     if (!session) return;
     if (!requireTonelAvailable(session)) return;
-    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    const dict = node instanceof HierarchyItem ? node.dictRef : this.state.dictIndex;
     await this.runFileOut({
       title: `File Out ${node.className} (.st)`,
       defaultFileName: `${sanitizeFileNameStem(node.className)}.class.st`,
@@ -8111,7 +8165,13 @@ export class ExplorerController {
     this.classProvider.refresh();
   }
 
-  onExternalClassCompiled(sessionId: number, className: string, dictName?: string): void {
+  onExternalClassCompiled(
+    sessionId: number,
+    className: string,
+    dictName?: string,
+    // The compiled definition's SymbolList position, when its editor tab carried one.
+    dictIndex?: number,
+  ): void {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
     this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
@@ -8119,8 +8179,11 @@ export class ExplorerController {
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     // If the compiled class lives in the current dictionary, select it so the
-    // freshly-created class is highlighted and its methods load.
+    // freshly-created class is highlighted and its methods load. A class of the same NAME in
+    // the current dictionary is not enough when the definition says it was compiled in
+    // another one: two dictionaries can each bind a class of that name (#396).
     if (
+      (dictIndex === undefined || dictIndex === this.state.dictIndex) &&
       this.classCategoryEntries.some((e) => e.className === className) &&
       this.state.dictName !== undefined
     ) {
@@ -8131,7 +8194,7 @@ export class ExplorerController {
     // — e.g. a new class whose `inDictionary:` names a different dictionary. Jump
     // the explorer to where the class actually lives so it's revealed there,
     // rather than leaving the panes on a dictionary that doesn't contain it.
-    const resolved = this.resolveClassDict(className, dictName);
+    const resolved = this.resolveClassDict(className, dictName, dictIndex);
     if (resolved) {
       void this.revealClass(resolved.dictName, resolved.dictIndex, className);
     } else {
@@ -8492,7 +8555,12 @@ export function commitFilterOnRowSelection(
 // for a live panel refresh.
 export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string, selector?: string): void;
-  onClassCompiled(sessionId: number, className: string, dictName?: string): void;
+  onClassCompiled(
+    sessionId: number,
+    className: string,
+    dictName?: string,
+    dictIndex?: number,
+  ): void;
   /** A class comment was saved: put the 📖 button on that class's row, or take it
    *  off, without refetching the dictionary's class list. */
   onClassCommentSaved(
@@ -8888,12 +8956,13 @@ export function registerGemStoneExplorer(
     // sessionId as above.
     vscode.commands.registerCommand(
       'gemstone.explorer.revealCategory',
-      (dictName?: string, categoryPath?: string, sessionId?: number) =>
+      (dictName?: string, categoryPath?: string, sessionId?: number, dictIndex?: number) =>
         typeof dictName === 'string' && typeof categoryPath === 'string'
           ? ctl.revealCategoryByPath(
               dictName,
               categoryPath,
               typeof sessionId === 'number' ? sessionId : undefined,
+              typeof dictIndex === 'number' ? dictIndex : undefined,
             )
           : undefined,
     ),
@@ -9413,8 +9482,8 @@ export function registerGemStoneExplorer(
   return {
     onMethodCompiled: (sessionId, className, selector) =>
       ctl.onExternalMethodCompiled(sessionId, className, selector),
-    onClassCompiled: (sessionId, className, dictName) =>
-      ctl.onExternalClassCompiled(sessionId, className, dictName),
+    onClassCompiled: (sessionId, className, dictName, dictIndex) =>
+      ctl.onExternalClassCompiled(sessionId, className, dictName, dictIndex),
     onClassCommentSaved: (sessionId, dictName, className, hasComment) =>
       ctl.onClassCommentSaved(sessionId, dictName, className, hasComment),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),

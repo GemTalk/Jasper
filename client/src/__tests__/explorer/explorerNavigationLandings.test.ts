@@ -211,7 +211,7 @@ describe('Go Back puts the panes back on a landing, recomputed against the stone
 
     await ctl.history.back();
 
-    // Resolved to 2 from the name, which is the only thing the landing carries.
+    // Resolved to 2 from the name: the recorded index (1) now holds a different dictionary.
     expect(classEnvs).toHaveBeenCalledWith(expect.anything(), 2, CLASS, expect.anything());
     expect(ctl.history.currentIndex()).toBe(0);
   });

@@ -67,7 +67,7 @@ describe('buildOmniHandlers', () => {
     expect(call[2]).toEqual({ preserveFocus: true, preview: false });
   });
 
-  it('reveals a class category via dict + path, threading the result session', () => {
+  it('reveals a class category via dict + path, threading the result session and position', () => {
     void buildOmniHandlers().revealCategory({
       kind: 'revealCategory',
       sessionId: 7,
@@ -81,6 +81,8 @@ describe('buildOmniHandlers', () => {
       'Globals',
       'Kernel-Objects',
       7,
+      // the result's SymbolList position: two dictionaries can share a name
+      1,
     );
   });
 });
