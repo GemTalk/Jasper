@@ -148,7 +148,9 @@ GsExtractMethodRefactoringTest >> setUp [
 	"a comment between two statements"
 	self compile: 'commented self yourself. "why" self hash. ^count' in: base.
 	"a body whose temporaries sit on their own indented line"
-	self compile: self declaredTempsSource in: base
+	self compile: self declaredTempsSource in: base.
+	"a BLOCK that declares temporaries of its own"
+	self compile: self blockTempsSource in: base
 ]
 
 { #category : 'fixture' }
@@ -178,6 +180,23 @@ GsExtractMethodRefactoringTest >> declaredTempsSource [
 		tab , 'a := 1.' , lf ,
 		tab , 'b := a + 2.' , lf ,
 		tab , '^b'
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> blockTempsSource [
+	"A block with a temporaries declaration of its own, indented on its own line, so a
+	 selection can take in that declaration from inside the block or reach it from outside."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'blockTemps' , lf ,
+		tab , '| out |' , lf ,
+		tab , 'out := OrderedCollection new.' , lf ,
+		tab , '1 to: 3 do: [:i |' , lf ,
+		tab , tab , '| step |' , lf ,
+		tab , tab , 'step := i * 2.' , lf ,
+		tab , tab , 'out add: step].' , lf ,
+		tab , '^out'
 ]
 
 { #category : 'fixture' }
@@ -366,6 +385,34 @@ GsExtractMethodRefactoringTest >> testTemporariesDeclarationIsSlackNotExtracted 
 	recompile := self recompileFor: #declaredTemps in: cs.
 	self assert: recompile newSource includesSubstring: 'self compute'.
 	self deny: recompile newSource includesSubstring: 'a := 1'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionInsideABlockIncludingItsTemporariesResolves [
+	"The allowance is about the sequence the statements resolve against, whichever one that
+	 is -- a block's body declares temporaries exactly as a method body does, and a drag from
+	 the top of the block takes them in the same way."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #blockTemps
+			select: self tab , self tab , '| step |' , self lf , self tab , self tab ,
+				'step := i * 2.' , self lf , self tab , self tab , 'out add: step'
+			newSelector: 'step:into:').
+	self assert: add newSource includesSubstring: 'step := i * 2'.
+	self assert: add newSource includesSubstring: 'out add: step'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionReachingIntoABlockPastItsOpeningIsDeclined [
+	"The one that matters: the selection takes in BOTH the block's opening and the block's
+	 own temporaries declaration. Forgiving the declaration must not carry `[:i |` along with
+	 it -- that is code the extract would leave behind, and the block would lose its argument."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #blockTemps
+			select: '[:i |' , self lf , self tab , self tab , '| step |' , self lf ,
+				self tab , self tab , 'step := i * 2.' , self lf , self tab , self tab ,
+				'out add: step'
+			newSelector: 'step:into:')
 ]
 
 { #category : 'tests - selection bounds' }
