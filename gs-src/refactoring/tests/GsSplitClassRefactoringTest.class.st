@@ -540,7 +540,7 @@ GsSplitClassRefactoringTest >> testClearTokenRemovesThePreviewSession [
 { #category : 'tests - shadowed class name' }
 GsSplitClassRefactoringTest >> testSplitBindsTheReversionedSourceInItsOwnDictionary [
 	"Splitting a class re-versions the source (it loses the extracted instance variables) and binds
-	 that new version through `dictObjectFor:` -- by class NAME, first match. A decoy binding
+	 that new version through `dictionaryForNewVersionOf:` -- by class NAME, first match. A decoy binding
 	 GsSCSource ahead of UserGlobals used to take it (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowDict; yourself.
@@ -560,7 +560,7 @@ GsSplitClassRefactoringTest >> testSplitBindsTheReversionedSourceInItsOwnDiction
 
 { #category : 'tests - shadowed class name' }
 GsSplitClassRefactoringTest >> testSplitPlacesTheNewComponentInTheSourceOwnDictionary [
-	"`dictObjectForNewClass` falls through to `dictObjectFor: sourceClass` when the caller names no
+	"`dictObjectForNewClass` falls through to `dictionaryForNewVersionOf: sourceClass` when the caller names no
 	 dictionary, so a shadowed SOURCE name used to misfile the brand-new component class as well (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowNewDict; yourself.

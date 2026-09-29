@@ -3657,7 +3657,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -3702,26 +3702,13 @@ applyMethodRemove: aChange
 
 category: 'applying'
 method: GsExtractSuperclassRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
-%
-
-category: 'applying'
-method: GsExtractSuperclassRefactoring
 dictObjectForNewClass
 	"The SymbolDictionary the new class is filed in: the caller's choice by name, else the
 	 anchor's own dictionary."
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: anchorClass]].
-	^self dictObjectFor: anchorClass
+			ifNil: [environment dictionaryForNewVersionOf: anchorClass]].
+	^environment dictionaryForNewVersionOf: anchorClass
 %
 
 category: 'serializing'
@@ -6313,7 +6300,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars options: opts
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: (opts collect: [:e | e asSymbol])
@@ -6370,19 +6357,6 @@ compileAccessors: accessorPairs onFailures: failures
 					with: 'accessor:', sel
 					with: target name asString
 					with: 'accessor ', sel, ' could not be compiled onto the new class version: ', text)]]]
-%
-
-category: 'applying'
-method: GsInstVarRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 %
 
 category: 'serializing'
@@ -7301,7 +7275,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -7386,19 +7360,6 @@ applyMethodRecompile: aChange
 		compile: aChange newSource
 		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
-%
-
-category: 'applying'
-method: GsInstVarStructureRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 %
 
 category: 'serializing'
@@ -9733,6 +9694,22 @@ sendersOf: aSelector
 
 category: 'dictionaries'
 method: GsRefactoringEnvironment
+dictionaryForNewVersionOf: aClass
+	"The SymbolDictionary a new version of aClass is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name.
+
+	 Every refactoring that re-versions a class binds the new version this way, so the rule lives
+	 here rather than in a copy per refactoring."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [self symbolList objectNamed: #UserGlobals]
+%
+
+category: 'dictionaries'
+method: GsRefactoringEnvironment
 dictionaryNameDefiningClass: aClass
 	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
 	 change. Resolved by identity: taking the first dictionary that binds the NAME records a
@@ -12053,7 +12030,7 @@ newNameShadowedFrom
 
 	 Answers only the first such dictionary: one concrete name is what a warning needs."
 	| sl dest sym |
-	dest := self dictObjectFor: definingClass.
+	dest := environment dictionaryForNewVersionOf: definingClass.
 	dest isNil ifTrue: [^nil].
 	sym := newName asSymbol.
 	sl := System myUserProfile symbolList.
@@ -12082,7 +12059,7 @@ newNameCollision
 	 Any binding counts, not just a class: `at:ifAbsent:` catches a non-class global of that name
 	 in the destination, which is what the old `objectNamed:` was reaching for."
 	| dict existing |
-	dict := self dictObjectFor: definingClass.
+	dict := environment dictionaryForNewVersionOf: definingClass.
 	existing := dict isNil ifTrue: [nil] ifFalse: [dict at: newName asSymbol ifAbsent: [nil]].
 	existing isNil ifTrue: [^nil].
 	existing == definingClass ifTrue: [^nil].
@@ -12369,7 +12346,7 @@ makeNewVersionOf: old shapedLike: shape named: aName superclass: sup
 		classVars: (shape classVarNames collect: [:e | e asString])
 		classInstVars: (shape class instVarNames collect: [:e | e asString])
 		poolDictionaries: shape sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([shape commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -12404,19 +12381,6 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta
 		source: (newSrc ifNil: [src])
 		meta: isMeta
 		into: copyFailures
-%
-
-category: 'applying'
-method: GsRenameClassRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 %
 
 category: 'applying'
@@ -13375,7 +13339,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -13417,19 +13381,6 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
 		source: src
 		meta: isMeta
 		into: failures
-%
-
-category: 'private - applying'
-method: GsRenameInstanceVariableRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 %
 
 category: 'serializing'
@@ -15137,7 +15088,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -15169,24 +15120,11 @@ applyMethodAdd: aChange
 
 category: 'applying'
 method: GsSplitClassRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
-%
-
-category: 'applying'
-method: GsSplitClassRefactoring
 dictObjectForNewClass
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: sourceClass]].
-	^self dictObjectFor: sourceClass
+			ifNil: [environment dictionaryForNewVersionOf: sourceClass]].
+	^environment dictionaryForNewVersionOf: sourceClass
 %
 
 category: 'serializing'

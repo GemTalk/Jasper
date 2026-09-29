@@ -2759,9 +2759,6 @@ export class ExplorerController {
       accessorSpecs: wantAccessors ? accessorSpecsFor(name, 'ivar').accessors : undefined,
     });
     if (outcome) {
-      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-      // activation arrives (#396).
       this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(className);
       // Select the newly-added instance variable: refreshAfterClassReshape re-reveals
@@ -3068,9 +3065,6 @@ export class ExplorerController {
       autoApply: decision === 'silent',
     });
     if (!outcome) return;
-    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-    // activation arrives (#396).
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Only when the panel really was skipped: the engine can send an autoApply request to
@@ -3182,9 +3176,6 @@ export class ExplorerController {
       this.state.dictIndex,
     );
     if (!applied) return;
-    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-    // activation arrives (#396).
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Select the moved variable on its first destination. Best-effort: reveal rejects if the
@@ -3503,9 +3494,6 @@ export class ExplorerController {
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
     this.loadClassRowMetadata();
-    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-    // activation arrives (#396).
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(className, classDict);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
@@ -4086,9 +4074,6 @@ export class ExplorerController {
 
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
-    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-    // activation arrives (#396).
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(newName, dictArg);
 
@@ -4158,9 +4143,6 @@ export class ExplorerController {
     const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
     if (outcome) {
-      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-      // activation arrives (#396).
       this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(outcome.newClass);
     }
@@ -4176,9 +4158,6 @@ export class ExplorerController {
     const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
     if (outcome) {
-      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-      // activation arrives (#396).
       this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(outcome.newClass);
     }
@@ -4194,9 +4173,6 @@ export class ExplorerController {
     const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await splitClassCommand({ session, className: item.className, dict });
     if (outcome) {
-      // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-      // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-      // activation arrives (#396).
       this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(outcome.newClass);
     }
@@ -4320,9 +4296,6 @@ export class ExplorerController {
 
     // The class variable and any referencing methods changed (the class name and
     // its [n] version tag do NOT — a class-variable change makes no new version).
-    // The preview panel resolved and is disposing itself, which surfaces the tab beside it.
-    // Claimed HERE, before the reveal is awaited, so the claim exists by the time that
-    // activation arrives (#396).
     this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(className, dict);
     // Keep the (now-renamed) class variable selected: refreshAfterClassReshape

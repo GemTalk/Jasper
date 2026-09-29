@@ -386,7 +386,7 @@ GsRenameMethodRefactoringTest >> testUnarySelectorRenames [
 
 { #category : 'tests - shadowed class name' }
 GsRenameMethodRefactoringTest >> testRenameCompilesOntoTheActedOnClassNotAGlobalFirstMatch [
-	"A method rename reshapes nothing, so `dictObjectFor:` is never involved -- but every staged
+	"A method rename reshapes nothing, so `dictionaryForNewVersionOf:` is never involved -- but every staged
 	 change still records its class by NAME, and the apply re-resolves it with
 	 `environment classNamed:`, which is first-match across the symbol list. With a decoy binding
 	 GsRMBase ahead of UserGlobals, the renamed method used to be compiled onto the decoy, leaving

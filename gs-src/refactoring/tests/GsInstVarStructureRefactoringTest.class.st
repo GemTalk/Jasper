@@ -27,7 +27,7 @@ setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
 which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
-half `dictObjectFor:` used to get wrong, and what a same-named class in another dictionary keeps
+half `dictionaryForNewVersionOf:` used to get wrong, and what a same-named class in another dictionary keeps
 when it is re-versioned because it sits inside the reshaped subtree.
 "
 Class {
@@ -917,7 +917,7 @@ GsInstVarStructureRefactoringTest >> testPushUpLeavesAMultiStatementSetterBehind
 GsInstVarStructureRefactoringTest >> testPushUpBindsTheDestinationNewVersionInItsOwnDictionary [
 	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
 	 its destination. This is the apply half. Both classes a push-up reshapes (source and
-	 destination) are re-created through `dictObjectFor:`, which picks their dictionary by NAME, so a
+	 destination) are re-created through `dictionaryForNewVersionOf:`, which picks their dictionary by NAME, so a
 	 decoy binding GsVSBase ahead of UserGlobals used to take the destination's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.

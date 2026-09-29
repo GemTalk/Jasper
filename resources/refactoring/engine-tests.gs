@@ -47,7 +47,7 @@ and tearDown removes them. Fixture selectors are spellings unique to the fixture
 implementor/sender search finds only the fixture.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -138,7 +138,7 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -230,7 +230,7 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -280,7 +280,7 @@ Target selectors that must be the LAST sender in a test use image-unique names
 (gsim...) so no unrelated sender in the image perturbs the count.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -325,7 +325,7 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -419,7 +419,7 @@ setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
 
 The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
 which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
-half `dictObjectFor:` used to get wrong, and what a same-named class in another dictionary keeps
+half `dictionaryForNewVersionOf:` used to get wrong, and what a same-named class in another dictionary keeps
 when it is re-versioned because it sits inside the reshaped subtree.
 '.
 true.
@@ -470,7 +470,7 @@ This suite pins down:
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -521,7 +521,7 @@ This suite pins down:
 setUp builds a throwaway base + two subclasses in UserGlobals; tearDown removes them.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -573,7 +573,7 @@ This suite pins down:
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -736,7 +736,7 @@ which used to resolve its class by name:
   - #changeSet replay resolves every recorded change through the environment, the same lookup the
     forward apply uses -- so the safety net had the hole it is meant to catch;
   - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the
-    engine gets wrong, including `dictObjectFor:`;
+    engine gets wrong, including `dictionaryForNewVersionOf:`;
   - #historyRevert captures and replays through `GsClassHistory`.
 
 Most of them shadow the class name only AFTER the forward refactoring has landed, so the
@@ -833,7 +833,7 @@ fixtures shadow the class variable on purpose, which the compiler warns about;
 the warning is resumed so the fixture still installs.
 
 The `tests - shadowed class name` category covers #396. This refactoring creates no new class
-version, so it never reaches `dictObjectFor:`; it exercises the wider half, where a staged change
+version, so it never reaches `dictionaryForNewVersionOf:`; it exercises the wider half, where a staged change
 records its class by name and the apply resolves that name against a dictionary. Getting it wrong
 left the refactoring HALF-applied -- the new class variable on one class, the methods rewritten on
 another -- which is why the test asserts `'.
@@ -968,7 +968,7 @@ it. The shadowing fixture shadows a temporary with a block parameter on purpose,
 which the compiler warns about; the warning is resumed so the fixture installs.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `'.
 true.
@@ -3207,7 +3207,7 @@ category: 'tests - shadowed class name'
 method: GsExtractSuperclassRefactoringTest
 testExtractBindsTheReversionedAnchorInItsOwnDictionary
 	"Extracting a superclass re-versions the anchor and its siblings, each bound through
-	 `dictObjectFor:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
+	 `dictionaryForNewVersionOf:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
 	 used to take the anchor's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
@@ -3236,7 +3236,7 @@ testExtractBindsTheReversionedAnchorInItsOwnDictionary
 category: 'tests - shadowed class name'
 method: GsExtractSuperclassRefactoringTest
 testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary
-	"`dictObjectForNewClass` falls through to `dictObjectFor: anchorClass` when the caller names no
+	"`dictObjectForNewClass` falls through to `dictionaryForNewVersionOf: anchorClass` when the caller names no
 	 dictionary, so a shadowed ANCHOR name used to misfile the brand-new superclass too, creating it in
 	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
 	 misplaces a class that did not exist before. See #396."
@@ -5645,7 +5645,7 @@ category: 'tests - shadowed class name'
 method: GsInstVarRefactoringTest
 testAddBindsTheNewVersionInTheActedOnClassOwnDictionary
 	"A dictionary EARLIER in the symbol list that binds the same class NAME must not receive the
-	 reshaped class. `dictObjectFor:` used to resolve the target dictionary from the class's NAME and take
+	 reshaped class. `dictionaryForNewVersionOf:` used to resolve the target dictionary from the class's NAME and take
 	 the first match, discarding the class object it was handed, so the new version was bound into
 	 the decoy: the class the user acted on never gained the variable, and the decoy's own
 	 same-named class was replaced by a copy of the acted-on one. It resolves by identity now (#396)."
@@ -5698,7 +5698,7 @@ method: GsInstVarRefactoringTest
 testAddBindsAReversionedSubclassInItsOwnDictionary
 	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
 	 base re-versions every subclass as well, and each of those new versions is bound through the
-	 same `dictObjectFor:`. Here only the SUBCLASS name is shadowed and the acted-on base is not:
+	 same `dictionaryForNewVersionOf:`. Here only the SUBCLASS name is shadowed and the acted-on base is not:
 	 the base used to reshape correctly while GsIVSub's new version went into the decoy. See #396."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
@@ -5723,7 +5723,7 @@ category: 'tests - shadowed class name'
 method: GsInstVarRefactoringTest
 testRemoveBindsTheNewVersionInTheActedOnClassOwnDictionary
 	"The remove half of the same defect -- both operations reshape through makeNewVersionOf:, so
-	 both bind the result through dictObjectFor:."
+	 both bind the result through dictionaryForNewVersionOf:."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsIVShadowRemoveDict; yourself.
 	System myUserProfile insertDictionary: decoy at: 1.
@@ -6832,7 +6832,7 @@ method: GsInstVarStructureRefactoringTest
 testPushUpBindsTheDestinationNewVersionInItsOwnDictionary
 	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
 	 its destination. This is the apply half. Both classes a push-up reshapes (source and
-	 destination) are re-created through `dictObjectFor:`, which picks their dictionary by NAME, so a
+	 destination) are re-created through `dictionaryForNewVersionOf:`, which picks their dictionary by NAME, so a
 	 decoy binding GsVSBase ahead of UserGlobals used to take the destination's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.
@@ -10704,7 +10704,7 @@ method: GsRefactoringUndoTest
 testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch
 	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
 	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
-	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
+	 `dictionaryForNewVersionOf:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
 	 wrong class, leaving the variable on the real one. See #396."
 	| decoy |
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
@@ -10743,7 +10743,7 @@ category: 'tests - shadowed class name'
 method: GsRefactoringUndoTest
 testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch
 	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
-	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
+	 the renamed-back class through `dictionaryForNewVersionOf:`. With a decoy binding the CURRENT name ahead of
 	 UserGlobals, the rename-back used to file the class in the decoy. See #396."
 	| decoy |
 	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
@@ -11618,7 +11618,7 @@ testDictionaryScopeExcludesSameNamedClassReferenceInAnotherDictionary
 category: 'tests - shadowed class name'
 method: GsRenameClassRefactoringTest
 testRenameBindsTheRenamedClassInItsOwnDictionary
-	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
+	"A rename creates a new version under the new name and binds it through `dictionaryForNewVersionOf:`, which
 	 used to resolve by the OLD class's name and take the first match. With a decoy binding GsRCBase ahead
 	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
 	 lost the class outright. This is the same helper the Class History restore goes through. See #396."
@@ -12450,7 +12450,7 @@ category: 'tests - shadowed class name'
 method: GsRenameClassVariableRefactoringTest
 testRenameEditsTheActedOnClassNotAGlobalFirstMatch
 	"A class-variable rename creates NO new class version -- it edits the class reflectively
-	 (addClassVarName: / removeClassVarName:) and never reaches `dictObjectFor:`. It is broken
+	 (addClassVarName: / removeClassVarName:) and never reaches `dictionaryForNewVersionOf:`. It is broken
 	 anyway, by a second and wider root cause: a staged change records its class by NAME, and
 	 `applyClassDefinitionEdit:` re-resolves it with `environment classNamed:`, documented as
 	 'the first class bound to aName across all dictionaries'. With a decoy binding GsRCVBase
@@ -12841,7 +12841,7 @@ category: 'tests - shadowed class name'
 method: GsRenameInstanceVariableRefactoringTest
 testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary
 	"Renaming an instance variable reshapes the declaring class and its subtree through
-	 makeNewVersionOf:, which binds each new version through `dictObjectFor:` -- resolved by class
+	 makeNewVersionOf:, which binds each new version through `dictionaryForNewVersionOf:` -- resolved by class
 	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals used to take the new version (#396)."
 	| decoy decoyClass ref json |
 	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
@@ -13381,7 +13381,7 @@ testUnarySelectorRenames
 category: 'tests - shadowed class name'
 method: GsRenameMethodRefactoringTest
 testRenameCompilesOntoTheActedOnClassNotAGlobalFirstMatch
-	"A method rename reshapes nothing, so `dictObjectFor:` is never involved -- but every staged
+	"A method rename reshapes nothing, so `dictionaryForNewVersionOf:` is never involved -- but every staged
 	 change still records its class by NAME, and the apply re-resolves it with
 	 `environment classNamed:`, which is first-match across the symbol list. With a decoy binding
 	 GsRMBase ahead of UserGlobals, the renamed method used to be compiled onto the decoy, leaving
@@ -14485,7 +14485,7 @@ category: 'tests - shadowed class name'
 method: GsSplitClassRefactoringTest
 testSplitBindsTheReversionedSourceInItsOwnDictionary
 	"Splitting a class re-versions the source (it loses the extracted instance variables) and binds
-	 that new version through `dictObjectFor:` -- by class NAME, first match. A decoy binding
+	 that new version through `dictionaryForNewVersionOf:` -- by class NAME, first match. A decoy binding
 	 GsSCSource ahead of UserGlobals used to take it (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowDict; yourself.
@@ -14506,7 +14506,7 @@ testSplitBindsTheReversionedSourceInItsOwnDictionary
 category: 'tests - shadowed class name'
 method: GsSplitClassRefactoringTest
 testSplitPlacesTheNewComponentInTheSourceOwnDictionary
-	"`dictObjectForNewClass` falls through to `dictObjectFor: sourceClass` when the caller names no
+	"`dictObjectForNewClass` falls through to `dictionaryForNewVersionOf: sourceClass` when the caller names no
 	 dictionary, so a shadowed SOURCE name used to misfile the brand-new component class as well (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsSCShadowNewDict; yourself.

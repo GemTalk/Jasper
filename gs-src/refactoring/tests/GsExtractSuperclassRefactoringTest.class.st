@@ -664,7 +664,7 @@ GsExtractSuperclassRefactoringTest >> testCandidatesJsonCarriesClassifiedMembers
 { #category : 'tests - shadowed class name' }
 GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsOwnDictionary [
 	"Extracting a superclass re-versions the anchor and its siblings, each bound through
-	 `dictObjectFor:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
+	 `dictionaryForNewVersionOf:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
 	 used to take the anchor's new version (#396)."
 	| decoy decoyClass json |
 	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
@@ -692,7 +692,7 @@ GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsO
 
 { #category : 'tests - shadowed class name' }
 GsExtractSuperclassRefactoringTest >> testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary [
-	"`dictObjectForNewClass` falls through to `dictObjectFor: anchorClass` when the caller names no
+	"`dictObjectForNewClass` falls through to `dictionaryForNewVersionOf: anchorClass` when the caller names no
 	 dictionary, so a shadowed ANCHOR name used to misfile the brand-new superclass too, creating it in
 	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
 	 misplaces a class that did not exist before. See #396."

@@ -25,7 +25,7 @@ fixtures shadow the class variable on purpose, which the compiler warns about;
 the warning is resumed so the fixture still installs.
 
 The `tests - shadowed class name` category covers #396. This refactoring creates no new class
-version, so it never reaches `dictObjectFor:`; it exercises the wider half, where a staged change
+version, so it never reaches `dictionaryForNewVersionOf:`; it exercises the wider half, where a staged change
 records its class by name and the apply resolves that name against a dictionary. Getting it wrong
 left the refactoring HALF-applied -- the new class variable on one class, the methods rewritten on
 another -- which is why the test asserts `"failed":[]` as well as the destination.
@@ -553,7 +553,7 @@ GsRenameClassVariableRefactoringTest >> testCollisionSurfacedInPreviewPayload [
 { #category : 'tests - shadowed class name' }
 GsRenameClassVariableRefactoringTest >> testRenameEditsTheActedOnClassNotAGlobalFirstMatch [
 	"A class-variable rename creates NO new class version -- it edits the class reflectively
-	 (addClassVarName: / removeClassVarName:) and never reaches `dictObjectFor:`. It is broken
+	 (addClassVarName: / removeClassVarName:) and never reaches `dictionaryForNewVersionOf:`. It is broken
 	 anyway, by a second and wider root cause: a staged change records its class by NAME, and
 	 `applyClassDefinitionEdit:` re-resolves it with `environment classNamed:`, documented as
 	 'the first class bound to aName across all dictionaries'. With a decoy binding GsRCVBase

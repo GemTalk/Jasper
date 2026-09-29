@@ -108,6 +108,21 @@ GsRefactoringEnvironment >> sendersOf: aSelector [
 ]
 
 { #category : 'dictionaries' }
+GsRefactoringEnvironment >> dictionaryForNewVersionOf: aClass [
+	"The SymbolDictionary a new version of aClass is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name.
+
+	 Every refactoring that re-versions a class binds the new version this way, so the rule lives
+	 here rather than in a copy per refactoring."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [self symbolList objectNamed: #UserGlobals]
+]
+
+{ #category : 'dictionaries' }
 GsRefactoringEnvironment >> dictionaryNameDefiningClass: aClass [
 	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
 	 change. Resolved by identity: taking the first dictionary that binds the NAME records a

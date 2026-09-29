@@ -486,7 +486,7 @@ GsRenameClassRefactoring >> newNameShadowedFrom [
 
 	 Answers only the first such dictionary: one concrete name is what a warning needs."
 	| sl dest sym |
-	dest := self dictObjectFor: definingClass.
+	dest := environment dictionaryForNewVersionOf: definingClass.
 	dest isNil ifTrue: [^nil].
 	sym := newName asSymbol.
 	sl := System myUserProfile symbolList.
@@ -514,7 +514,7 @@ GsRenameClassRefactoring >> newNameCollision [
 	 Any binding counts, not just a class: `at:ifAbsent:` catches a non-class global of that name
 	 in the destination, which is what the old `objectNamed:` was reaching for."
 	| dict existing |
-	dict := self dictObjectFor: definingClass.
+	dict := environment dictionaryForNewVersionOf: definingClass.
 	existing := dict isNil ifTrue: [nil] ifFalse: [dict at: newName asSymbol ifAbsent: [nil]].
 	existing isNil ifTrue: [^nil].
 	existing == definingClass ifTrue: [^nil].
@@ -786,7 +786,7 @@ GsRenameClassRefactoring >> makeNewVersionOf: old shapedLike: shape named: aName
 		classVars: (shape classVarNames collect: [:e | e asString])
 		classInstVars: (shape class instVarNames collect: [:e | e asString])
 		poolDictionaries: shape sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([shape commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -819,18 +819,6 @@ GsRenameClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta
 		source: (newSrc ifNil: [src])
 		meta: isMeta
 		into: copyFailures
-]
-
-{ #category : 'applying' }
-GsRenameClassRefactoring >> dictObjectFor: aClass [
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'applying' }

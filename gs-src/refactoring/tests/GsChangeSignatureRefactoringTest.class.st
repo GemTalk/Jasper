@@ -29,7 +29,7 @@ and tearDown removes them. Fixture selectors are spellings unique to the fixture
 implementor/sender search finds only the fixture.
 
 The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
-is not the `dictObjectFor:` half; it exercises the wider one, where a staged change records its
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
 class by name and the apply resolves that name against a dictionary. Each test also asserts
 `"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
 satisfy it.

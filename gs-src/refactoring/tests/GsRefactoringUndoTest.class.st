@@ -38,7 +38,7 @@ which used to resolve its class by name:
   - #changeSet replay resolves every recorded change through the environment, the same lookup the
     forward apply uses -- so the safety net had the hole it is meant to catch;
   - #mirror re-runs the opposite operation through the engine itself, inheriting whatever the
-    engine gets wrong, including `dictObjectFor:`;
+    engine gets wrong, including `dictionaryForNewVersionOf:`;
   - #historyRevert captures and replays through `GsClassHistory`.
 
 Most of them shadow the class name only AFTER the forward refactoring has landed, so the
@@ -1452,7 +1452,7 @@ GsRefactoringUndoTest >> testUndoClassSideRenameRestoresTheActedOnClassNotAGloba
 GsRefactoringUndoTest >> testUndoInstVarAddRemovesItFromTheActedOnClassNotAGlobalFirstMatch [
 	"A reshape records no change set -- its undo is a #mirror entry that re-runs the opposite
 	 engine operation. That re-run goes back through GsInstVarRefactoring, so it inherits the
-	 `dictObjectFor:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
+	 `dictionaryForNewVersionOf:` defect: with a decoy ahead of UserGlobals the reversal used to reshape the
 	 wrong class, leaving the variable on the real one. See #396."
 	| decoy |
 	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
@@ -1489,7 +1489,7 @@ GsRefactoringUndoTest >> testUndoInstVarRemovePutsItBackOnTheActedOnClassNotAGlo
 { #category : 'tests - shadowed class name' }
 GsRefactoringUndoTest >> testUndoClassRenameRenamesBackTheActedOnClassNotAGlobalFirstMatch [
 	"Reversing a class rename is a #mirror entry that re-runs GsRenameClassRefactoring, which binds
-	 the renamed-back class through `dictObjectFor:`. With a decoy binding the CURRENT name ahead of
+	 the renamed-back class through `dictionaryForNewVersionOf:`. With a decoy binding the CURRENT name ahead of
 	 UserGlobals, the rename-back used to file the class in the decoy. See #396."
 	| decoy |
 	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)

@@ -501,7 +501,7 @@ GsRenameClassRefactoringTest >> testDictionaryScopeExcludesSameNamedClassReferen
 
 { #category : 'tests - shadowed class name' }
 GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary [
-	"A rename creates a new version under the new name and binds it through `dictObjectFor:`, which
+	"A rename creates a new version under the new name and binds it through `dictionaryForNewVersionOf:`, which
 	 used to resolve by the OLD class's name and take the first match. With a decoy binding GsRCBase ahead
 	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
 	 lost the class outright. This is the same helper the Class History restore goes through. See #396."

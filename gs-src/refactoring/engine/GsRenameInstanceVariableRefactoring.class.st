@@ -403,7 +403,7 @@ GsRenameInstanceVariableRefactoring >> makeNewVersionOf: old superclass: sup ins
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -443,18 +443,6 @@ GsRenameInstanceVariableRefactoring >> copyMethod: sel from: srcCls to: dstCls m
 		source: src
 		meta: isMeta
 		into: failures
-]
-
-{ #category : 'private - applying' }
-GsRenameInstanceVariableRefactoring >> dictObjectFor: aClass [
-	"The SymbolDictionary a new class version is bound into, for inDictionary:. Resolved by
-	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
-	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
-	 reached first, replacing an unrelated same-named class with this one and leaving the
-	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
-	 dictionary binds under its own name."
-	^(environment dictionaryDefiningClass: aClass)
-		ifNil: [environment symbolList objectNamed: #UserGlobals]
 ]
 
 { #category : 'serializing' }

@@ -356,7 +356,7 @@ GsRenameInstanceVariableRefactoringTest >> testApplyDropsOnlyTheDeselectedMethod
 { #category : 'tests - shadowed class name' }
 GsRenameInstanceVariableRefactoringTest >> testRenameBindsTheNewVersionInTheActedOnClassOwnDictionary [
 	"Renaming an instance variable reshapes the declaring class and its subtree through
-	 makeNewVersionOf:, which binds each new version through `dictObjectFor:` -- resolved by class
+	 makeNewVersionOf:, which binds each new version through `dictionaryForNewVersionOf:` -- resolved by class
 	 NAME, first match. A decoy binding GsRIVBase ahead of UserGlobals used to take the new version (#396)."
 	| decoy decoyClass ref json |
 	decoy := SymbolDictionary new name: #GsRIVShadowDict; yourself.
