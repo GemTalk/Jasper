@@ -163,6 +163,13 @@ describe('ExplorerController.classHistory — which dictionary the history belon
     expect(await historyDictFor(ctl, node)).toBe('Globals');
   });
 
+  it("scopes to the hierarchy node's dictionary POSITION when the node carries one", async () => {
+    // Two dictionaries can share a name, so the name alone scopes to the first of them.
+    const ctl = makeController();
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false, undefined, 2);
+    expect(await historyDictFor(ctl, node)).toBe(2);
+  });
+
   it("labels the panel with the hierarchy node's dictionary", async () => {
     const ctl = makeController();
     const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);

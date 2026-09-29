@@ -38,7 +38,7 @@ import * as vscode from 'vscode';
 import { showRenameClassEditor } from '../../refactoring/renameClassEditor';
 import { showRenameClassPanel } from '../../refactoring/renameClassPanel';
 import * as queries from '../../browserQueries';
-import { ExplorerController } from '../../gemstoneExplorer';
+import { ExplorerController, HierarchyItem } from '../../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 // Two dictionaries called `Shared`, at positions 1 and 3, and UserGlobals between them.
@@ -116,5 +116,46 @@ describe('a reshaped class is revealed in the dictionary it lives in, not a name
 
     expect(ctl.state.dictIndex).toBe(RENAMED_IN);
     expect(ctl.state.className).toBe('Shadowed');
+  });
+});
+
+describe('the other ways a reshaped class names its dictionary', () => {
+  it('renames from a Hierarchy node through the position the node carries', async () => {
+    const ctl = makeController({ dictName: 'UserGlobals', dictIndex: 2 });
+    const node = new HierarchyItem('ShadowedAAAAA', 'Shared', 'ancestor', 0, true, undefined, 3);
+
+    await ctl.renameClass(node);
+
+    // the reversal is recorded against the node's own dictionary, by position...
+    expect(vi.mocked(queries.recordReverseRename).mock.calls[0][8]).toBe(RENAMED_IN);
+    // ...and the Explorer lands there
+    expect(ctl.state.dictIndex).toBe(RENAMED_IN);
+  });
+
+  it('keeps the selection when the caller has only a name and the selection carries it', async () => {
+    // A name cannot say which Shared is meant; the one already selected is the best reading.
+    const ctl = makeController({ dictName: 'Shared', dictIndex: RENAMED_IN });
+
+    await ctl.renameClassNamed('ShadowedAAAAA', 'Shared');
+
+    expect(ctl.state.dictIndex).toBe(RENAMED_IN);
+  });
+
+  it('leaves the selection alone for a position past the end of the symbol list', async () => {
+    const ctl = makeController({ dictName: 'UserGlobals', dictIndex: 2 });
+
+    await ctl.renameClassNamed('ShadowedAAAAA', 9);
+
+    expect(ctl.state.dictIndex).toBe(2);
+  });
+});
+
+describe('HierarchyItem.dictRef', () => {
+  it('addresses the dictionary by position when the node knows it', () => {
+    expect(new HierarchyItem('C', 'Shared', 'subclass', -1, false, undefined, 3).dictRef).toBe(3);
+  });
+
+  it('falls back to the name when the hierarchy query could not place the class', () => {
+    expect(new HierarchyItem('C', 'Shared', 'subclass', -1, false).dictRef).toBe('Shared');
   });
 });

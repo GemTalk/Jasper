@@ -356,6 +356,51 @@ describe('Recent Locations lists the trail', () => {
   });
 });
 
+/** The session events the registration subscribes to, captured as they arrive. */
+let sessionListeners: {
+  selection: ((id: number | null) => void)[];
+  removal: ((id: number) => void)[];
+};
+
+function register() {
+  sessionListeners = { selection: [], removal: [] };
+  // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
+  // registerGemStoneExplorer subscribes to for the filter-commit-on-click wiring.
+  vi.mocked(vscode.window.createTreeView).mockImplementation(
+    () =>
+      ({
+        onDidChangeVisibility: vi.fn(),
+        onDidChangeCheckboxState: vi.fn(),
+        onDidChangeSelection: vi.fn(),
+        reveal: vi.fn(),
+        dispose: vi.fn(),
+      }) as never,
+  );
+  const context = {
+    subscriptions: [] as { dispose?: () => void }[],
+    globalState: { get: vi.fn(), update: vi.fn(async () => {}), keys: () => [] },
+    extensionPath: '/x',
+  } as unknown as vscode.ExtensionContext;
+  const sessionManager = {
+    getSelectedSession: () => ({ id: 1 }) as ActiveSession,
+    resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
+    onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
+      sessionListeners.selection.push(listener);
+      return { dispose: vi.fn() };
+    }),
+    onDidRemoveSession: vi.fn((listener: (id: number) => void) => {
+      sessionListeners.removal.push(listener);
+      return { dispose: vi.fn() };
+    }),
+  } as unknown as SessionManager;
+  const handle = registerGemStoneExplorer(context, sessionManager);
+  const handlers = new Map<string, (...a: unknown[]) => unknown>();
+  for (const call of vi.mocked(vscode.commands.registerCommand).mock.calls) {
+    handlers.set(call[0], call[1] as (...a: unknown[]) => unknown);
+  }
+  return { handlers, handle };
+}
+
 describe('the navigation commands are actually registered, not just contributed', () => {
   // explorerNavigationView.test.ts asserts the pane's buttons name commands the
   // manifest contributes. That leaves the other half open: a command can be in
@@ -367,51 +412,6 @@ describe('the navigation commands are actually registered, not just contributed'
     'gemstone.explorer.showHistory',
     'gemstone.explorer.clearHistory',
   ];
-
-  /** The session events the registration subscribes to, captured as they arrive. */
-  let sessionListeners: {
-    selection: ((id: number | null) => void)[];
-    removal: ((id: number) => void)[];
-  };
-
-  function register() {
-    sessionListeners = { selection: [], removal: [] };
-    // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
-    // registerGemStoneExplorer subscribes to for the filter-commit-on-click wiring.
-    vi.mocked(vscode.window.createTreeView).mockImplementation(
-      () =>
-        ({
-          onDidChangeVisibility: vi.fn(),
-          onDidChangeCheckboxState: vi.fn(),
-          onDidChangeSelection: vi.fn(),
-          reveal: vi.fn(),
-          dispose: vi.fn(),
-        }) as never,
-    );
-    const context = {
-      subscriptions: [] as { dispose?: () => void }[],
-      globalState: { get: vi.fn(), update: vi.fn(async () => {}), keys: () => [] },
-      extensionPath: '/x',
-    } as unknown as vscode.ExtensionContext;
-    const sessionManager = {
-      getSelectedSession: () => ({ id: 1 }) as ActiveSession,
-      resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
-      onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
-        sessionListeners.selection.push(listener);
-        return { dispose: vi.fn() };
-      }),
-      onDidRemoveSession: vi.fn((listener: (id: number) => void) => {
-        sessionListeners.removal.push(listener);
-        return { dispose: vi.fn() };
-      }),
-    } as unknown as SessionManager;
-    const handle = registerGemStoneExplorer(context, sessionManager);
-    const handlers = new Map<string, (...a: unknown[]) => unknown>();
-    for (const call of vi.mocked(vscode.commands.registerCommand).mock.calls) {
-      handlers.set(call[0], call[1] as (...a: unknown[]) => unknown);
-    }
-    return { handlers, handle };
-  }
 
   it('registers a handler for each one', () => {
     const { handlers } = register();
@@ -805,5 +805,32 @@ describe('a deliberate reveal survives a panel closing', () => {
     await ctl.syncToEditor(other);
 
     expect(ctl.state.className).toBe('Other');
+  });
+});
+
+describe('the registered entry points carry a dictionary position through', () => {
+  // Two dictionaries can share a name, so the position is what says which one is meant (#396).
+  it('forwards a GemStone Search category result position to the category reveal', async () => {
+    const reveal = vi
+      .spyOn(ExplorerController.prototype, 'revealCategoryByPath')
+      .mockResolvedValue(undefined);
+    const { handlers } = register();
+
+    await handlers.get('gemstone.explorer.revealCategory')!('Shared', 'Kernel', 1, 3);
+
+    expect(reveal).toHaveBeenCalledWith('Shared', 'Kernel', 1, 3);
+    reveal.mockRestore();
+  });
+
+  it('forwards a compiled class definition position to the Explorer', () => {
+    const compiled = vi
+      .spyOn(ExplorerController.prototype, 'onExternalClassCompiled')
+      .mockImplementation(() => {});
+    const { handle } = register();
+
+    handle.onClassCompiled(1, 'Shadowed', 'Shared', 3);
+
+    expect(compiled).toHaveBeenCalledWith(1, 'Shadowed', 'Shared', 3);
+    compiled.mockRestore();
   });
 });

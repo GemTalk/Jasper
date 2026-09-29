@@ -8958,6 +8958,75 @@ testScopedLookupByNameDoesNotGuessBetweenTwoDictionariesOfThatName
 			sl remove: first ifAbsent: []. sl remove: second ifAbsent: []]
 %
 
+category: 'tests - class identity'
+method: GsRefactoringEnvironmentTest
+testLineageOfIsSharedByEveryVersionOfAClassAndNoOtherClass
+	"A class history is the one object every version of a class shares and no other class does,
+	 which is what lets a staged change find its class after the class has been re-versioned."
+	| env old new twinDict twin |
+	env := GsRefactoringEnvironment new.
+	old := UserGlobals at: #GsRefEnvFixtureSuper.
+	new := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #('alpha' 'delta')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	twinDict := SymbolDictionary new name: #GsRefEnvTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self deny: new == old.
+	 self assert: (env lineageOf: new) == (env lineageOf: old).
+	 self deny: (env lineageOf: twin) == (env lineageOf: old)]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - class identity'
+method: GsRefactoringEnvironmentTest
+testLineageOfNothingIsNil
+	"nil, not a shared answer two history-less callers could match on."
+	self assert: (GsRefactoringEnvironment new lineageOf: nil) isNil
+%
+
+category: 'tests - class identity'
+method: GsRefactoringEnvironmentTest
+testANewVersionIsBoundInTheDictionaryThatBindsTheClassItself
+	"Not the first dictionary binding the NAME: a same-named class ahead of UserGlobals must not
+	 take the new version (#396)."
+	| decoy decoyClass |
+	decoy := SymbolDictionary new name: #GsRefEnvDecoyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self
+		assert: (GsRefactoringEnvironment new
+			dictionaryForNewVersionOf: (UserGlobals at: #GsRefEnvFixtureSuper))
+		== UserGlobals.
+	 self
+		assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: decoyClass)
+		== decoy]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - class identity'
+method: GsRefactoringEnvironmentTest
+testANewVersionOfAClassNoDictionaryBindsGoesToUserGlobals
+	| loose |
+	loose := Object
+		subclass: 'GsRefEnvLoose'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	UserGlobals removeKey: #GsRefEnvLoose.
+	self assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: loose) == UserGlobals
+%
+
 category: 'private'
 method: GsRefactoringJsonTest
 bslash
@@ -11112,11 +11181,141 @@ testUndoHistoryRevertUnbindsACreatedClassOnlyFromItsOwnDictionary
 		commitHistoryRevert: 'Extract GsUndoCreated'
 		engine: 'GsExtractSuperclassRefactoring'
 		created: #('GsUndoCreated').
+	 "the preview lists the one removal, from the pinned dictionary"
+	 self assert: self undoPreviewJson includesSubstring: '"kind":"classRemove"'.
 
 	 self undoAll.
 
 	 self deny: (second includesKey: #GsUndoCreated).
 	 self assert: (first at: #GsUndoCreated ifAbsent: [nil]) == unrelated]
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+undoWithPlan: aPlan
+	"An undo entry holding aPlan as its revert plan, for the entry-level lookups."
+	^GsRefactoringUndo new
+		setLabel: 'plan' engine: 'test' sequence: 1 revertPlan: aPlan removePlan: #()
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testAnEntryResolvesToThePinnedDictionaryWhereverItNowSits
+	"The capture pins the dictionary object; the lookup answers where it sits on the symbol list
+	 NOW -- so inserting a dictionary ahead of it after the capture does not redirect the undo."
+	| dicts second entry undo before |
+	dicts := self twinNamedDictionaries.
+	second := dicts last.
+	[entry := Array with: 'GsUndoTwinClass' with: 1 with: 'def' with: 'GsUndoTwinName' with: second.
+	 undo := self undoWithPlan: (Array with: entry).
+	 before := self indexOfDictionary: second.
+	 self assert: (undo dictRefForEntry: entry) equals: before.
+	 System myUserProfile insertDictionary: (SymbolDictionary new name: #GsUndoAhead; yourself) at: 1.
+	 [self assert: (undo dictRefForEntry: entry) equals: before + 1]
+		ensure: [System myUserProfile removeDictionaryAt: 1]]
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testAnEntryWhosePinnedDictionaryIsGoneResolvesToNothing
+	"0 is no SymbolList position, so the class resolves to nil and the reversal reports it --
+	 rather than falling back to the first dictionary with the recorded name."
+	| gone entry |
+	gone := SymbolDictionary new name: #UserGlobals; yourself.
+	entry := Array with: 'GsUndoAccount' with: 1 with: 'def' with: 'UserGlobals' with: gone.
+	self assert: ((self undoWithPlan: (Array with: entry)) dictRefForEntry: entry) equals: 0
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testAnEntryRecordedBeforeThePinScopesByItsNameOrNotAtAll
+	"A four-slot entry, from before the dictionary object was pinned, still scopes by the name it
+	 recorded; a three-slot one, from before any dictionary was recorded, is unscoped."
+	| four three undo |
+	four := Array with: 'GsUndoAccount' with: 1 with: 'def' with: 'UserGlobals'.
+	three := Array with: 'GsUndoAccount' with: 1 with: 'def'.
+	undo := self undoWithPlan: (Array with: four).
+	self assert: (undo dictRefForEntry: four) equals: 'UserGlobals'.
+	self assert: (undo dictRefForEntry: three) isNil
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testCreatedClassesGoToTheRootEntrysDictionary
+	"The dictionary created classes were filed in is the revert plan's root's: the pinned object
+	 when there is one, and its name for a plan recorded before the pin."
+	| pinned legacy |
+	pinned := self undoWithPlan: (Array
+		with: (Array with: 'GsUndoAccount' with: 1 with: 'def' with: 'UserGlobals' with: UserGlobals)
+		with: (Array with: 'GsUndoSavings' with: 1 with: 'def' with: 'Globals' with: Globals)).
+	self assert: pinned createdClassesDictionary == UserGlobals.
+	self assert: pinned createdClassesDictionaryName equals: 'UserGlobals'.
+	legacy := self undoWithPlan:
+		(Array with: (Array with: 'GsUndoAccount' with: 1 with: 'def' with: 'UserGlobals')).
+	self assert: legacy createdClassesDictionary isNil.
+	self assert: legacy createdClassesDictionaryName equals: 'UserGlobals'.
+	self assert: (self undoWithPlan: #()) createdClassesDictionary isNil.
+	self assert: (self undoWithPlan: #()) createdClassesDictionaryName isNil
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testUndoHistoryRevertReportsAClassWhoseDictionaryWasRemoved
+	"The dictionary the capture pinned has left the symbol list by the time of the undo. The
+	 reversal has nowhere to put the class back, and says so, instead of reverting a same-named
+	 class somewhere else -- here, another dictionary that carries the same NAME."
+	| dicts second json |
+	dicts := self twinNamedDictionaries.
+	second := dicts last.
+	[GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	 System myUserProfile removeDictionaryAt: (self indexOfDictionary: second).
+
+	 json := self undoAll.
+
+	 self deny: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: 'not a class']
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testUndoHistoryRevertCountsTheMethodsItWouldDiscardOnTheRightClass
+	"The preview's drop count -- the methods reverting would discard -- is computed on the class in
+	 the pinned dictionary. The first dictionary's class of the same name has no such method."
+	| dicts second json |
+	dicts := self twinNamedDictionaries.
+	second := dicts last.
+	[GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 self compile: 'gsuSince ^ 1' in: (second at: #GsUndoTwinClass) category: 'fixture'.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+
+	 json := self undoPreviewJson.
+
+	 self assert: json includesSubstring: '"dropCount":1'.
+	 self assert: json includesSubstring: 'gsuSince']
 		ensure: [self removeDictionaries: dicts]
 %
 

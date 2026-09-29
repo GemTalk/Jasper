@@ -440,3 +440,68 @@ GsRefactoringEnvironmentTest >> testScopedLookupByNameDoesNotGuessBetweenTwoDict
 			second removeKey: #GsEnvTwinShadow ifAbsent: [].
 			sl remove: first ifAbsent: []. sl remove: second ifAbsent: []]
 ]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testLineageOfIsSharedByEveryVersionOfAClassAndNoOtherClass [
+	"A class history is the one object every version of a class shares and no other class does,
+	 which is what lets a staged change find its class after the class has been re-versioned."
+	| env old new twinDict twin |
+	env := GsRefactoringEnvironment new.
+	old := UserGlobals at: #GsRefEnvFixtureSuper.
+	new := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #('alpha' 'delta')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	twinDict := SymbolDictionary new name: #GsRefEnvTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self deny: new == old.
+	 self assert: (env lineageOf: new) == (env lineageOf: old).
+	 self deny: (env lineageOf: twin) == (env lineageOf: old)]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testLineageOfNothingIsNil [
+	"nil, not a shared answer two history-less callers could match on."
+	self assert: (GsRefactoringEnvironment new lineageOf: nil) isNil
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testANewVersionIsBoundInTheDictionaryThatBindsTheClassItself [
+	"Not the first dictionary binding the NAME: a same-named class ahead of UserGlobals must not
+	 take the new version (#396)."
+	| decoy decoyClass |
+	decoy := SymbolDictionary new name: #GsRefEnvDecoyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self
+		assert: (GsRefactoringEnvironment new
+			dictionaryForNewVersionOf: (UserGlobals at: #GsRefEnvFixtureSuper))
+		== UserGlobals.
+	 self
+		assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: decoyClass)
+		== decoy]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testANewVersionOfAClassNoDictionaryBindsGoesToUserGlobals [
+	| loose |
+	loose := Object
+		subclass: 'GsRefEnvLoose'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	UserGlobals removeKey: #GsRefEnvLoose.
+	self assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: loose) == UserGlobals
+]
