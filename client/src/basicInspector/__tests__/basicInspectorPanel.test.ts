@@ -212,6 +212,20 @@ describe('opening the panel', () => {
     expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(4);
   });
 
+  it("builds the header rows' Copy-only menu and hands it to the view", () => {
+    // The view is exercised in jsdom with a hand-built harness, so only the page
+    // can say whether the real webview has the element the view needs.
+    open();
+
+    const html = panel.webview.html;
+    const id = /headerCtxMenu:\s*document\.getElementById\('([^']+)'\)/.exec(html)?.[1];
+    expect(id).toBeDefined();
+    const menu = new RegExp(`<div id="${id}"[^>]*>([\\s\\S]*?)</div>\\s*</div>`).exec(html)?.[1];
+    expect(menu).toBeDefined();
+    const actions = Array.from(menu!.matchAll(/data-action="([^"]+)"/g), (m) => m[1]);
+    expect(actions).toEqual(['copy']);
+  });
+
   it('sends the inspected object once the webview says it is ready', () => {
     open(100n, 'anAccount');
 

@@ -1,8 +1,13 @@
 import * as vscode from 'vscode';
 import { REFACTORING_APPLIED_COMMAND } from './refactoring/refactoringAppliedEvent';
-import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
+import {
+  beginMethodDeletion,
+  beginMethodDeletions,
+  beginMethodEdit,
+  readMethodSlotState,
+} from './undo/recordMethodEdit';
 import { slotLabel } from './undo/undoTypes';
-import { notifyUndoable } from './undo/undoableToast';
+import { notifyUndoable, notifyUndoableFailure } from './undo/undoableToast';
 import {
   CLASS_CATEGORIES_CHANGED_COMMAND,
   OverlayRenameOutcome,
@@ -845,6 +850,16 @@ interface MethodHistoryPanelEntry {
   refresh: () => void;
 }
 
+/** What a method removal judges its rows against: the class it started on, the dictionary
+ *  that resolves it, and the method list the rows came from. Captured once, up front, so a
+ *  run that is several whole-image scans long cannot judge its later rows against a pane
+ *  the user has since moved. */
+interface RemovalTarget {
+  className: string;
+  dictIndex: number | undefined;
+  envLines: queries.EnvCategoryLine[];
+}
+
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
 function methodArg(arg: MethodCommandArg): { selector: string; isMeta: boolean } | undefined {
   if (arg instanceof MethodItem) return { selector: arg.info.selector, isMeta: arg.isMeta };
@@ -1168,19 +1183,18 @@ export class ExplorerController {
    * focusing the Testing view first, going the other way. The plain click is
    * untouched by this and still navigates nothing.
    *
-   * The reveal underneath also KEEPS the tree's focus rather than handing it
-   * straight back to the editor (see revealMethodRow): a row selected while its
+   * The reveal underneath also TAKES the tree's focus, where an editor-driven
+   * reveal leaves it in the editor (see revealMethodRow): a row selected while its
    * tree has no focus is drawn in VS Code's inactive-selection colour, so the
-   * method you asked for arrives looking like nothing was landed on.
+   * method you asked for would arrive looking like nothing was landed on.
    */
   async revealDocument(uri: vscode.Uri): Promise<void> {
     this.markAttributedOpen(uri);
     await this.showExplorerAndWait();
-    // keepTreeFocus: editor-driven sync hands focus back to the editor the moment
-    // it has scrolled the row into view -- you are working in the editor and the
-    // tree must not steal your cursor. This gesture is the opposite: being taken
-    // to the pane is the whole point, so focus stays there and the row is drawn
-    // as the active selection.
+    // keepTreeFocus: an editor-driven sync scrolls the row into view without
+    // taking focus -- you are working in the editor and the tree must not steal
+    // your cursor. This gesture is the opposite: being taken to the pane is the
+    // whole point, so focus goes there and the row is drawn as the active selection.
     await this.syncToEditor(uri, { keepTreeFocus: true });
   }
 
@@ -1207,6 +1221,12 @@ export class ExplorerController {
    * every pane collapsed is a container that never reports a visible view, and a
    * jump must not hang on one. The reveal is then skipped exactly as the
    * collapsed-pane rule intends, and deferred to reapplyPaneHighlight.
+   *
+   * That catch-up scrolls its row into view too, so the wait is not what keeps a
+   * row on screen. What it keeps is the jump itself: without it the rows land
+   * only when the panes happen to appear, and the explicit Reveal in GemStone
+   * Explorer loses the tree focus it asked for, because the catch-up never takes
+   * focus.
    */
   private async showExplorerAndWait(timeoutMs = 1000): Promise<void> {
     await focusGemStoneExplorer();
@@ -5057,7 +5077,7 @@ export class ExplorerController {
   private async revealMethodRow(
     isMeta: boolean,
     info: SelectorInfo,
-    opts: { focusEditorAfter?: boolean; keepTreeFocus?: boolean } = {},
+    opts: { keepTreeFocus?: boolean } = {},
   ): Promise<void> {
     this.setMethodSide(isMeta);
     // Record the selection BEFORE revealing, so a reveal the pane is not visible for
@@ -5073,11 +5093,11 @@ export class ExplorerController {
     }
     this.state.selectedSelector = info.selector;
     const item = this.methodRowNode(isMeta, info);
-    // In this VS Code build focus:false selects the row but never scrolls it into view; only
-    // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
-    // focus straight back to the editor so the tree doesn't keep it. A passive background resync
-    // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
-    const takesFocus = opts.focusEditorAfter === true;
+    // A focus:false reveal selects AND scrolls the row into view, so an editor-driven reveal
+    // never takes the tree's focus and there is nothing to hand back. Only the explicit
+    // Reveal in GemStone Explorer (keepTreeFocus) takes it: being put in the pane is what the
+    // user asked for, and a row in a focused tree is drawn in the active-selection colour.
+    const takesFocus = opts.keepTreeFocus === true;
     const side = isMeta ? 'class' : 'instance';
     this.recordLanding({ selector: info.selector, isMeta });
     // Cascade: the Methods pane is filled from state either way, so a row
@@ -5089,23 +5109,6 @@ export class ExplorerController {
       { select: true, focus: takesFocus, expand: true },
       `Explorer method reveal failed for ${side} method ${info.selector}`,
     );
-    // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
-    // leaving the user's cursor stranded in the tree is the worse outcome. But not when the pane is
-    // closed — the reveal was skipped entirely then, so nothing took focus and there is nothing to
-    // hand back — and not when the caller asked to keep the tree's focus, which is the explicit
-    // Reveal in GemStone Explorer: the user asked to be put in the pane, and handing focus back
-    // would leave the row drawn in VS Code's inactive-selection colour, looking like nothing was
-    // landed on. That arrives as an option rather than off a flag on the controller so a sync that
-    // overlaps the reveal cannot pick it up.
-    if (takesFocus && opts.keepTreeFocus !== true && this.views?.method.visible) {
-      try {
-        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
-      } catch (e) {
-        logWarning(
-          `Explorer could not return focus to the editor after revealing ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    }
   }
 
   // The environments OTHER than 0 in which this class implements `selector` on this side.
@@ -5117,10 +5120,17 @@ export class ExplorerController {
   // the selector is gone from the class, when an implementation is still there.
   //
   // Read off envLines, which the method list is already built from, so this costs no query.
-  private otherEnvironmentsImplementing(isMeta: boolean, selector: string): number[] {
+  // The caller passes the lines it is judging against rather than letting this read the live
+  // ones: a removal captures its class and its method list up front and must judge every row
+  // against that same list, not against whatever the pane holds by the time it gets there.
+  private otherEnvironmentsImplementing(
+    envLines: queries.EnvCategoryLine[],
+    isMeta: boolean,
+    selector: string,
+  ): number[] {
     return [
       ...new Set(
-        this.envLines
+        envLines
           .filter(
             (l) =>
               l.isMeta === isMeta &&
@@ -5317,6 +5327,7 @@ export class ExplorerController {
   // under-report costs here: a question, never a wrong silent delete.
   private superclassImplementorOf(
     session: ActiveSession,
+    dictIndex: number | undefined,
     className: string,
     selector: string,
     isMeta: boolean,
@@ -5324,7 +5335,7 @@ export class ExplorerController {
     try {
       const above = queries.hierarchyImplementorsOf(
         session,
-        this.state.dictIndex ?? 1,
+        dictIndex ?? 1,
         className,
         selector,
         isMeta,
@@ -5390,7 +5401,8 @@ export class ExplorerController {
     );
   }
 
-  // Remove a method from its class (the row's 🗑 button). Guarded by a sender scan: a
+  // Remove one method from its class (the row's 🗑 button, or Remove… on a one-row
+  // selection). Guarded by a sender scan: a
   // selector nothing sends goes without a question and is announced afterwards, while one
   // that still has senders raises a confirmation naming them (see safeDelete.ts). Nothing
   // is committed either way (the user commits explicitly, same as every other Explorer
@@ -5411,46 +5423,15 @@ export class ExplorerController {
       return;
     }
 
-    // An override is the common case, and for it the sender scan is both expensive and
-    // beside the point: if a superclass still implements the selector, every send that
-    // resolved here simply resolves there instead and nothing is left calling into a hole.
-    // Asking the hierarchy first is bounded by its depth, where the sender scan is a
-    // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
-    // of methods that were never going to break.
-    //
-    // The check is deliberately one-directional: finding an implementor above skips the
-    // scan, but failing to find one only means we fall through and ask, so a hierarchy
-    // probe that under-reports (it reads environment 0) costs a question, never a wrong
-    // silent delete.
-    const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
-
-    const scan = inheritedFrom
-      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
-      : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
-          queries.sendersOf(session, selector, env),
-        );
+    const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(
+      session,
+      { className, dictIndex: this.state.dictIndex, envLines: this.envLines },
+      node,
+    );
     const target: SafeDeleteTarget = {
       kind: 'method',
       label: `#${selector} from ${side}`,
-      // The method's own send of its own selector goes away with it, so a recursive method
-      // is not a method with a surviving sender.
-      //
-      // The environment is part of what makes it "its own" send. A class can implement the
-      // same selector on the same side in two environments, and those are two different
-      // methods: only the one being removed disappears. Matching on class/side/selector
-      // alone crossed off the OTHER environment's method as if it were this one's recursion,
-      // hiding a sender that really does survive — the under-report this guard exists to
-      // prevent. The pane removes the environment-0 method (see EXPLORER_METHOD_ENVIRONMENT),
-      // so that is the row, and only that row, which goes away with it.
-      references: scan.references.filter(
-        (r) =>
-          !(
-            r.className === className &&
-            r.isMeta === node.isMeta &&
-            r.selector === selector &&
-            r.environmentId === EXPLORER_METHOD_ENVIRONMENT
-          ),
-      ),
+      references: scan.references,
       scanFailed: scan.scanFailed,
       truncated: scan.truncated,
       // Says what actually happens to the senders, rather than the untrue "nothing
@@ -5464,7 +5445,6 @@ export class ExplorerController {
     // the environment-0 one is removed. Say which are left, on the confirmation and on the
     // notification alike — a removal that silently leaves an implementation standing is the
     // kind of thing you find out about much later.
-    const alsoIn = this.otherEnvironmentsImplementing(node.isMeta, selector);
     if (alsoIn.length > 0) {
       const envList = alsoIn.map((e) => `environment ${e}`).join(', ');
       const stays = `${side} also implements #${selector} in ${envList}; only the environment ${EXPLORER_METHOD_ENVIRONMENT} method is removed.`;
@@ -5516,6 +5496,209 @@ export class ExplorerController {
     // Undo rather than stacking a second message on top of it (#434).
     const undoEntry = recording?.commit();
     if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
+    this.reloadCurrentClassMethods();
+  }
+
+  // What removing `node` from `className` would leave behind, gathered before anyone is
+  // asked: the inherited implementation that takes over, the senders that survive, and the
+  // other environments still implementing the selector. Shared by the single-row removal
+  // and the multi-row one so both judge a method the same way.
+  private async methodRemovalCheck(
+    session: ActiveSession,
+    where: RemovalTarget,
+    node: MethodItem,
+  ): Promise<{
+    inheritedFrom: string | undefined;
+    scan: { references: queries.MethodSearchResult[]; scanFailed?: string; truncated: boolean };
+    alsoIn: number[];
+  }> {
+    const selector = node.info.selector;
+    // An override is the common case, and for it the sender scan is both expensive and
+    // beside the point: if a superclass still implements the selector, every send that
+    // resolved here simply resolves there instead and nothing is left calling into a hole.
+    // Asking the hierarchy first is bounded by its depth, where the sender scan is a
+    // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
+    // of methods that were never going to break.
+    //
+    // The check is deliberately one-directional: finding an implementor above skips the
+    // scan, but failing to find one only means we fall through and ask, so a hierarchy
+    // probe that under-reports (it reads environment 0) costs a question, never a wrong
+    // silent delete.
+    const inheritedFrom = this.superclassImplementorOf(
+      session,
+      where.dictIndex,
+      where.className,
+      selector,
+      node.isMeta,
+    );
+
+    const scan = inheritedFrom
+      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
+      : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
+          queries.sendersOf(session, selector, env),
+        );
+    return {
+      inheritedFrom,
+      scan: {
+        ...scan,
+        // The method's own send of its own selector goes away with it, so a recursive
+        // method is not a method with a surviving sender.
+        //
+        // The environment is part of what makes it "its own" send. A class can implement
+        // the same selector on the same side in two environments, and those are two
+        // different methods: only the one being removed disappears. Matching on
+        // class/side/selector alone crossed off the OTHER environment's method as if it
+        // were this one's recursion, hiding a sender that really does survive — the
+        // under-report this guard exists to prevent. The pane removes the environment-0
+        // method (see EXPLORER_METHOD_ENVIRONMENT), so that is the row, and only that row,
+        // which goes away with it.
+        references: scan.references.filter(
+          (r) =>
+            !(
+              r.className === where.className &&
+              r.isMeta === node.isMeta &&
+              r.selector === selector &&
+              r.environmentId === EXPLORER_METHOD_ENVIRONMENT
+            ),
+        ),
+      },
+      alsoIn: this.otherEnvironmentsImplementing(where.envLines, node.isMeta, selector),
+    };
+  }
+
+  // Remove every selected Methods-pane row as one action. Same rule as one row: when nothing
+  // sends any of them they go without a question and ONE notice says so; when anything still
+  // sends one, ONE confirmation names every method and every surviving sender across all of
+  // them. A send from another method in the same removal is not a survivor. They are removed
+  // in order, and a row that cannot be removed does not stop the ones after it: a removal
+  // usually fails because the method is already gone (another session took it, or the row is
+  // stale), which is a fact about that row alone, and a raised error is carried past the same
+  // way. Stopping abandoned removals that would have succeeded. Whatever failed is named afterwards, in one message with what did go, and one
+  // Undo restores what went. A selection of one is the single-row removal, wording and all.
+  async removeMethods(nodes: MethodItem[]): Promise<void> {
+    const seen = new Set<string>();
+    const rows = nodes.filter((n) => {
+      const key = `${n.isMeta}|${n.info.selector}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (rows.length === 0) return;
+    if (rows.length === 1) return this.removeMethod(rows[0]);
+
+    const session = this.session();
+    if (!session || this.state.className === undefined) return;
+    const className = this.state.className;
+    const dictIndex = this.state.dictIndex;
+    // Captured once, before the first scan, and every row is judged against these. The checks
+    // reach into the pane's own state, which a click could in principle move underneath a run
+    // that is several whole-image scans long.
+    const where: RemovalTarget = { className, dictIndex, envLines: this.envLines };
+    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
+    const sideOf = (n: MethodItem) => (n.isMeta ? `${className} class` : className);
+    const goingToo = (r: queries.MethodSearchResult) =>
+      r.className === className &&
+      r.environmentId === EXPLORER_METHOD_ENVIRONMENT &&
+      rows.some((n) => n.isMeta === r.isMeta && n.info.selector === r.selector);
+
+    const references = new Map<string, queries.MethodSearchResult>();
+    const scanFailures: string[] = [];
+    const notes: string[] = [];
+    const silentNotes: string[] = [];
+    let truncated = false;
+    // An override skips the sender scan (see methodRemovalCheck), so it was never searched
+    // for senders. "Nothing referenced ..." is a claim about a search, so it names only the
+    // methods a scan actually ran for: "them" when that is all of them, the selectors when it
+    // is some, and nothing at all when none were scanned -- otherwise the notice would deny
+    // an override had senders in the same breath as saying where they now resolve.
+    const scanned: string[] = [];
+    for (const node of rows) {
+      const selector = node.info.selector;
+      const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(session, where, node);
+      for (const r of scan.references) {
+        if (goingToo(r)) continue;
+        references.set(`${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`, r);
+      }
+      if (scan.scanFailed) scanFailures.push(`#${selector}: ${scan.scanFailed}`);
+      truncated ||= scan.truncated;
+      if (inheritedFrom === undefined) scanned.push(`#${selector}`);
+      if (inheritedFrom) {
+        const resolve = `senders of #${selector} now resolve to ${inheritedFrom} >> #${selector}`;
+        notes.push(`${resolve[0].toUpperCase()}${resolve.slice(1)}.`);
+        silentNotes.push(resolve);
+      }
+      if (alsoIn.length > 0) {
+        const envList = alsoIn.map((e) => `environment ${e}`).join(', ');
+        notes.push(
+          `${sideOf(node)} also implements #${selector} in ${envList}; only the environment ${EXPLORER_METHOD_ENVIRONMENT} method is removed.`,
+        );
+        silentNotes.push(`${sideOf(node)} still implements #${selector} in ${envList}`);
+      }
+    }
+
+    const unreferenced =
+      scanned.length === 0
+        ? []
+        : [
+            `nothing referenced ${scanned.length === rows.length ? 'them' : [...new Set(scanned)].join(', ')}`,
+          ];
+    const target: SafeDeleteTarget = {
+      kind: `${rows.length} methods`,
+      label: `from ${methodsBySide(className, rows)}`,
+      references: [...references.values()],
+      scanFailed: scanFailures.length > 0 ? scanFailures.join('; ') : undefined,
+      truncated,
+      note: notes.length > 0 ? notes.join('\n\n') : undefined,
+      silentNote: [...unreferenced, ...silentNotes].join('; ') || undefined,
+    };
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
+
+    // Captured after the answer, so a refused removal costs no round trip, and before any
+    // removal, since the source only exists until the removal lands.
+    const slots = rows.map((n) => ({
+      dict: dictIndex,
+      className,
+      isMeta: n.isMeta,
+      selector: n.info.selector,
+      environmentId: 0,
+    }));
+    const recording = beginMethodDeletions(session, slots, className);
+
+    const removed: typeof slots = [];
+    const failures: string[] = [];
+    for (const [i, node] of rows.entries()) {
+      let result: string;
+      try {
+        result = queries.deleteMethod(
+          session,
+          className,
+          node.isMeta,
+          node.info.selector,
+          dictIndex,
+        );
+      } catch (e) {
+        result = e instanceof Error ? e.message : String(e);
+      }
+      if (!result.startsWith('Deleted:')) {
+        failures.push(`#${node.info.selector} from ${sideOf(node)}: ${result}`);
+        continue;
+      }
+      removed.push(slots[i]);
+    }
+    const undoEntry = recording?.commit(removed);
+    if (failures.length > 0) {
+      const done = removed.map((sl) => `#${sl.selector}`);
+      notifyUndoableFailure(
+        `Remove methods — not removed: ${failures.join('; ')}. ` +
+          `Removed: ${done.length > 0 ? done.join(', ') : 'none'}.`,
+        undoEntry,
+      );
+    } else if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
     this.reloadCurrentClassMethods();
   }
 
@@ -5613,9 +5796,8 @@ export class ExplorerController {
     // that matches nothing warns and returns, and stealing the sidebar to show
     // the user nothing is worse than leaving it where it was. The wait matters
     // as much here as in revealDocument: without it every reveal in the cascade
-    // is skipped, and reapplyPaneHighlight catches the panes up only as a plain
-    // select, which does not scroll (see revealMethodRow) — so the Browse lands
-    // on a class or method row that can be sitting off-screen in a long list.
+    // is skipped, and the Browse is left to reapplyPaneHighlight's catch-up once
+    // the panes appear, instead of landing with the jump.
     await this.showExplorerAndWait();
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
       revealMethod: method,
@@ -6024,8 +6206,8 @@ export class ExplorerController {
     className: string,
     opts: {
       revealMethod?: { selector: string; isMeta: boolean };
-      /** Leave the method reveal holding the tree's focus instead of handing it back to
-       *  the editor -- see revealMethodRow. Only an explicit "take me there" gesture sets
+      /** Reveal the method row with the tree's focus rather than leaving it in the
+       *  editor -- see revealMethodRow. Only an explicit "take me there" gesture sets
        *  it; it is threaded through rather than kept on the controller so a sync that
        *  overlaps one cannot read it by accident. */
       keepTreeFocus?: boolean;
@@ -6122,7 +6304,6 @@ export class ExplorerController {
       );
       if (info) {
         await this.revealMethodRow(opts.revealMethod.isMeta, info, {
-          focusEditorAfter: true,
           keepTreeFocus: opts.keepTreeFocus,
         });
         this.syncTitles();
@@ -6230,7 +6411,6 @@ export class ExplorerController {
         );
         if (info) {
           await this.revealMethodRow(revealMethod.isMeta, info, {
-            focusEditorAfter: true,
             keepTreeFocus: opts.keepTreeFocus,
           });
           this.syncTitles();
@@ -7713,7 +7893,7 @@ export class ExplorerController {
     );
     if (!added) return;
     this.pendingNewMethod = undefined;
-    void this.revealMethodRow(pending.isMeta, added, { focusEditorAfter: true });
+    void this.revealMethodRow(pending.isMeta, added);
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
@@ -8655,6 +8835,20 @@ export interface ExplorerHandle {
   openMethodHistoryForUri(uri: vscode.Uri): Promise<void>;
 }
 
+/** How a multi-method removal names what it removes: `Array (#at:, #size) and Array class
+ *  (#new)`. Each side lists at most a handful and counts the rest. */
+function methodsBySide(className: string, rows: MethodItem[]): string {
+  const NAMED = 6;
+  const side = (isMeta: boolean) => {
+    const sels = rows.filter((n) => n.isMeta === isMeta).map((n) => `#${n.info.selector}`);
+    if (sels.length === 0) return undefined;
+    const shown = sels.slice(0, NAMED).join(', ');
+    const rest = sels.length > NAMED ? `, …(+${sels.length - NAMED} more)` : '';
+    return `${className}${isMeta ? ' class' : ''} (${shown}${rest})`;
+  };
+  return [side(false), side(true)].filter((x) => x !== undefined).join(' and ');
+}
+
 export function registerGemStoneExplorer(
   context: vscode.ExtensionContext,
   sessionManager: SessionManager,
@@ -8740,8 +8934,8 @@ export function registerGemStoneExplorer(
     // refiling a handful of classes at once is the ordinary shape of that gesture, and
     // without this a drag could only ever carry the one row VS Code handed it. The
     // single-row class actions (remove, rename, comment…) are unaffected: VS Code passes
-    // the CLICKED row as the command argument, so each still acts on that row, the same
-    // way the Methods pane has long combined multi-select drag with per-row commands.
+    // the CLICKED row as the command argument, so each still acts on that row. The
+    // Methods pane's Remove is the exception, taking the whole selection.
     canSelectMany: true,
     dragAndDropController: new ClassDragAndDrop(ctl),
   });
@@ -8751,7 +8945,8 @@ export function registerGemStoneExplorer(
   const methodView = vscode.window.createTreeView('gemstoneExplorerMethods', {
     treeDataProvider: ctl.methodProvider,
     showCollapseAll: true,
-    // Multi-select so several method rows can be dragged (move/copy) together.
+    // Multi-select so several method rows can be dragged (move/copy) together, filed out
+    // together, and removed together.
     canSelectMany: true,
     dragAndDropController: new MethodDragAndDrop(ctl),
   });
@@ -8963,14 +9158,37 @@ export function registerGemStoneExplorer(
         });
       },
     ),
-    vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
-      if (node instanceof MethodItem)
-        void ctl.removeMethod(node).catch((e: unknown) => {
+    // VS Code hands a command in a multi-select tree the clicked row AND the selection,
+    // whether it was invoked from the row's inline button or the context menu. So the two
+    // gestures are two commands: the 🗑 is drawn on one row and removes that row, even when
+    // it is one of several selected; Remove… on the context menu removes the selection.
+    vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: unknown) => {
+      if (!(node instanceof MethodItem)) return;
+      void ctl.removeMethod(node).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+    // The selection wins when the right-clicked row is part of it. VS Code does not select
+    // a row right-clicked outside the selection, so that row means itself alone.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.removeMethods',
+      (node?: unknown, selection?: unknown[]) => {
+        const selected = (Array.isArray(selection) ? selection : []).filter(
+          (n): n is MethodItem => n instanceof MethodItem,
+        );
+        const clicked = node instanceof MethodItem ? node : undefined;
+        const rows =
+          clicked && !selected.includes(clicked) ? [clicked] : selected.length > 0 ? selected : [];
+        if (rows.length === 0) return;
+        void ctl.removeMethods(rows).catch((e: unknown) => {
           void vscode.window.showErrorMessage(
-            `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+            `Remove methods failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         });
-    }),
+      },
+    ),
     vscode.commands.registerCommand('gemstone.explorer.removeClass', (node?: unknown) => {
       const item = node instanceof ClassItem || node instanceof HierarchyItem ? node : undefined;
       void ctl.removeClass(item).catch((e: unknown) => {

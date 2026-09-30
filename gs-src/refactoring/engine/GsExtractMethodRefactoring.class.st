@@ -18,7 +18,9 @@ only inside the selection is moved into the new method.
 
 The selection is DECLINED (an empty change set + a declineReason, surfaced in the
 preview, Apply blocked) when it does not resolve to whole statements / a single
-expression, assigns more than one variable used later, contains a ^ return, sends
+expression -- including a selection that takes in part of a statement, such as the
+closing ] of a block it started inside, though NOT one that merely takes in the
+enclosing sequence's | temps | declaration -- assigns more than one variable used later, contains a ^ return, sends
 to super, uses thisContext, or the new selector's arity does not match the argument
 count. A new selector already implemented in the hierarchy is a SOFT collision
 WARNING (surfaced, Apply still allowed).
@@ -48,7 +50,8 @@ Class {
 		'argNames',
 		'returnVar',
 		'internalTempNames',
-		'structuralDecline'
+		'structuralDecline',
+		'selectedSequence'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -273,18 +276,32 @@ GsExtractMethodRefactoring >> computeAnalysis [
 	isExpression := false.
 	selectedNodes := #().
 	structuralDecline := nil.
+	selectedSequence := nil.
 	tree := self parseTree.
 	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
 	stmts := self selectedStatementsIn: tree.
+	"Whole statements count only when they account for the whole selection. A
+	 selection that also takes in part of a statement -- e.g. the closing ] of a block
+	 it started inside -- would otherwise extract less than was selected, silently.
+	 The enclosing sequence's `| temps |` declaration is the one exception: it is not code
+	 the extract would leave behind, so a selection dragged from the top of a body is not a
+	 cut (see leadingSelectionIsOnly:upTo:)."
+	(stmts notEmpty and: [(self selectionOutside: (stmts first start to: stmts last stop) isOnly: '.') not])
+		ifTrue: [stmts := #()].
 	stmts notEmpty
 		ifTrue: [
 			selectedNodes := stmts.
 			firstStart := stmts first start.
 			lastStop := stmts last stop]
 		ifFalse: [
+			"The declaration allowance belongs to the whole-statements path. An expression
+			 stands on its own, and a selection reaching back over a `| temps |` to grab one
+			 has taken in code between the two that the extract would leave behind."
+			selectedSequence := nil.
 			node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
 			(node notNil and: [node isValue and: [node isReturn not
-				and: [node start >= (selStart - 1) and: [node stop <= (selStop + 1)]]]])
+				and: [(self selectionFits: node)
+				and: [self selectionOutside: (node start to: node stop) isOnly: '()']]]])
 				ifTrue: [
 					isExpression := true.
 					selectedNodes := Array with: node.
@@ -302,9 +319,6 @@ GsExtractMethodRefactoring >> computeAnalysis [
 
 { #category : 'private - analysis' }
 GsExtractMethodRefactoring >> selectedStatementsIn: tree [
-	"The statements of the deepest sequence covering the selection that OVERLAP the
-	 selection interval, in source order. Empty when the selection is not a statement
-	 run (it may be a single expression, resolved separately)."
 	"The statements FULLY inside the selection, taken from the OUTERMOST sequence that
 	 has any. Only whole-statement containment matters -- NOT where the sequence itself
 	 begins -- so selecting the leading indentation of the first line (or a trailing
@@ -312,7 +326,10 @@ GsExtractMethodRefactoring >> selectedStatementsIn: tree [
 	 (e.g. the inner expression of a ^-return) covers no whole statement here and is
 	 handled as a single-expression extract instead. Picking the outermost qualifying
 	 sequence means selecting a whole control-flow statement extracts that statement,
-	 not the contents of the block nested inside it."
+	 not the contents of the block nested inside it.
+
+	 The winning sequence is kept in selectedSequence: it owns the `| temps |` declaration
+	 the selection may have taken in, which the slack check has to recognise."
 	| best bestStmts |
 	best := nil.
 	bestStmts := nil.
@@ -322,7 +339,82 @@ GsExtractMethodRefactoring >> selectedStatementsIn: tree [
 			covered := n statements select: [:s | s start >= selStart and: [s stop <= selStop]].
 			covered notEmpty ifTrue: [
 				(best isNil or: [n start < best start]) ifTrue: [best := n. bestStmts := covered]]]].
+	selectedSequence := best.
 	^bestStmts ifNil: [OrderedCollection new]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> selectionFits: aNode [
+	"Whether aNode lies within the selection. A parenthesised node's interval includes
+	 its parentheses, so selecting just the inside of (n * n) leaves it one character
+	 wider on each side -- allowed only when that character IS the parenthesis, so a
+	 selection that stops short of a block's closing ] does not stretch to take it."
+	| src |
+	src := self sourceString.
+	^(aNode start >= selStart or: [aNode start = (selStart - 1) and: [(src at: aNode start) = $(]])
+		and: [aNode stop <= selStop or: [aNode stop = (selStop + 1) and: [(src at: aNode stop) = $)]]]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> selectionOutside: anInterval isOnly: punctuation [
+	"Whether the selected text outside anInterval is only whitespace, comments and the
+	 characters in punctuation -- statement periods around whole statements, parentheses
+	 around an expression. That is the slack a selection dragged line to line picks up;
+	 anything else is code the extract would leave behind."
+	| src |
+	src := self sourceString.
+	^(self leadingSelectionIsOnly: punctuation upTo: anInterval first - 1)
+		and: [self isSlack: src from: anInterval last + 1 to: selStop allowing: punctuation]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> leadingSelectionIsOnly: punctuation upTo: stop [
+	"The selected text BEFORE the resolved code -- ordinarily whitespace, comments and
+	 punctuation, as isSlack: decides.
+
+	 One more thing counts as slack here: the enclosing sequence's `| temps |` declaration.
+	 Dragging from the top of a method body takes it in, and it is not code the extract would
+	 leave behind -- the declaration stays with the method it is in either way, whatever the
+	 extract moves. Refusing those selections declined a perfectly ordinary gesture with a
+	 message telling the user to select whole statements, which is what they had done.
+
+	 ONLY the declaration is forgiven, and only where it actually is. The text on either side
+	 of it must still be slack, so a selection that opened a block (`[:x |`) and resolved
+	 against the block's own body is still a cut."
+	| src decl |
+	src := self sourceString.
+	decl := self selectedTemporariesDeclaration.
+	decl isNil ifTrue: [^self isSlack: src from: selStart to: stop allowing: punctuation].
+	^(self isSlack: src from: selStart to: decl first - 1 allowing: punctuation)
+		and: [self isSlack: src from: decl last + 1 to: stop allowing: punctuation]
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> selectedTemporariesDeclaration [
+	"The bar-to-bar interval of the enclosing sequence's temporaries declaration, when the
+	 selection reaches into it -- otherwise nil. A sequence that declares nothing has no bars,
+	 and a selection starting past the closing bar never touched the declaration."
+	| seq |
+	seq := selectedSequence.
+	seq isNil ifTrue: [^nil].
+	(seq leftBar isNil or: [seq rightBar isNil]) ifTrue: [^nil].
+	selStart > seq rightBar ifTrue: [^nil].
+	^seq leftBar to: seq rightBar
+]
+
+{ #category : 'private - analysis' }
+GsExtractMethodRefactoring >> isSlack: aString from: start to: stop allowing: punctuation [
+	| i ch |
+	i := start max: 1.
+	[i <= (stop min: aString size)] whileTrue: [
+		ch := aString at: i.
+		ch = $"
+			ifTrue: [
+				i := (aString indexOf: $" startingAt: i + 1) ifNil: [0].
+				(i = 0 or: [i > stop]) ifTrue: [^false]]
+			ifFalse: [(ch isSeparator or: [punctuation includes: ch]) ifFalse: [^false]].
+		i := i + 1].
+	^true
 ]
 
 { #category : 'private - analysis' }

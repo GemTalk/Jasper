@@ -148,7 +148,91 @@ GsExtractMethodRefactoringTest >> setUp [
 	"replace-similar with an argument mapped across sites"
 	self compile: 'scaleSrc: n self yourself. n printString. ^count' in: base.
 	self compile: 'scaleA: n self yourself. n printString. ^1' in: base.
-	self compile: 'scaleB: m self yourself. m printString. ^2' in: base
+	self compile: 'scaleB: m self yourself. m printString. ^2' in: base.
+	"a selection that crosses a block's closing bracket"
+	self compile: self crossesBlockSource in: base.
+	"a comment between two statements"
+	self compile: 'commented self yourself. "why" self hash. ^count' in: base.
+	"a body whose temporaries sit on their own indented line"
+	self compile: self declaredTempsSource in: base.
+	"a BLOCK that declares temporaries of its own"
+	self compile: self blockTempsSource in: base
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> crossesBlockSource [
+	"Laid out the way an editor shows it: one statement a line, tab-indented, so a
+	 selection can take in a line's leading indentation or its trailing newline."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'crossesBlock' , lf ,
+		tab , '| n |' , lf ,
+		tab , 'n := 0.' , lf ,
+		tab , '1 to: 60 do: [:second |' , lf ,
+		tab , tab , '1 to: 177000000 do: [:k | n := n max: k]].' , lf ,
+		tab , 'self assert: n > 0'
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> declaredTempsSource [
+	"Laid out the way an editor shows it, the temporaries on their own indented line, so a
+	 selection dragged from the top of the body takes the declaration in."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'declaredTemps' , lf ,
+		tab , '| a b |' , lf ,
+		tab , 'a := 1.' , lf ,
+		tab , 'b := a + 2.' , lf ,
+		tab , '^b'
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> blockTempsSource [
+	"A block with a temporaries declaration of its own, indented on its own line, so a
+	 selection can take in that declaration from inside the block or reach it from outside."
+	| lf tab |
+	lf := String with: Character lf.
+	tab := String with: Character tab.
+	^'blockTemps' , lf ,
+		tab , '| out |' , lf ,
+		tab , 'out := OrderedCollection new.' , lf ,
+		tab , '1 to: 3 do: [:i |' , lf ,
+		tab , tab , '| step |' , lf ,
+		tab , tab , 'step := i * 2.' , lf ,
+		tab , tab , 'out add: step].' , lf ,
+		tab , '^out'
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> wholeStatementsDecline [
+	^'Select one or more whole statements, or a single expression, to extract.'
+]
+
+{ #category : 'asserting' }
+GsExtractMethodRefactoringTest >> assertDeclinesAsNotWholeStatements: aRefactoring [
+	self assert: aRefactoring declineReason equals: self wholeStatementsDecline.
+	self assert: aRefactoring changeSet isEmpty
+]
+
+{ #category : 'asserting' }
+GsExtractMethodRefactoringTest >> assertResolves: aRefactoring [
+	| cs |
+	self assert: aRefactoring declineReason isNil.
+	cs := aRefactoring changeSet.
+	self assert: cs size equals: 2.
+	^self addChangeIn: cs
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> lf [
+	^String with: Character lf
+]
+
+{ #category : 'fixture' }
+GsExtractMethodRefactoringTest >> tab [
+	^String with: Character tab
 ]
 
 { #category : 'running' }
@@ -266,6 +350,92 @@ GsExtractMethodRefactoringTest >> testSelectionIncludingLeadingWhitespaceStillRe
 	self assert: (self addChangeIn: cs) notNil
 ]
 
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionIncludingTheTemporariesDeclarationResolves [
+	"Dragging from the top of a method body takes in its `| a b |`. The declaration is not
+	 code the extract would leave behind -- it stays with the method either way -- so it is
+	 slack, like the indentation and the statement periods around it."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #declaredTemps
+			select: '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+				'b := a + 2.'
+			newSelector: 'compute').
+	self assert: add newSource includesSubstring: 'a := 1'.
+	self assert: add newSource includesSubstring: 'b := a + 2'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionFromTheIndentBeforeTheTemporariesResolves [
+	"The same drag started at column 0, so the selection opens with the line's indentation
+	 and closes with a newline. Where the drag began must not decide the answer."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #declaredTemps
+			select: self tab , '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+				'b := a + 2.' , self lf
+			newSelector: 'compute').
+	self assert: add newSource includesSubstring: 'a := 1'.
+	self assert: add newSource includesSubstring: 'b := a + 2'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testTemporariesDeclarationIsSlackNotExtracted [
+	"Taking the declaration into the selection does not move it: the extract rewrites the
+	 original as a send, and b -- assigned inside and read after -- is still declared there."
+	| cs recompile |
+	cs := (self extractFrom: self baseFixture selector: #declaredTemps
+		select: self tab , '| a b |' , self lf , self tab , 'a := 1.' , self lf , self tab ,
+			'b := a + 2.'
+		newSelector: 'compute') changeSet.
+	recompile := self recompileFor: #declaredTemps in: cs.
+	self assert: recompile newSource includesSubstring: 'self compute'.
+	self deny: recompile newSource includesSubstring: 'a := 1'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionInsideABlockIncludingItsTemporariesResolves [
+	"The allowance is about the sequence the statements resolve against, whichever one that
+	 is -- a block's body declares temporaries exactly as a method body does, and a drag from
+	 the top of the block takes them in the same way."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #blockTemps
+			select: self tab , self tab , '| step |' , self lf , self tab , self tab ,
+				'step := i * 2.' , self lf , self tab , self tab , 'out add: step'
+			newSelector: 'step:into:').
+	self assert: add newSource includesSubstring: 'step := i * 2'.
+	self assert: add newSource includesSubstring: 'out add: step'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionReachingIntoABlockPastItsOpeningIsDeclined [
+	"The one that matters: the selection takes in BOTH the block's opening and the block's
+	 own temporaries declaration. Forgiving the declaration must not carry `[:i |` along with
+	 it -- that is code the extract would leave behind, and the block would lose its argument."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #blockTemps
+			select: '[:i |' , self lf , self tab , self tab , '| step |' , self lf ,
+				self tab , self tab , 'step := i * 2.' , self lf , self tab , self tab ,
+				'out add: step'
+			newSelector: 'step:into:')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionOpeningABlockIsStillDeclined [
+	"Only the temporaries declaration is slack, never whatever else lies before the
+	 statements. A selection that opens a block and does not close it is still a cut: the
+	 sequence it resolves against -- the block's body -- declares no temporaries, so there is
+	 nothing to forgive, and `[:second |` is code the extract would leave behind.
+	 (Closing the block too is a different thing entirely: that selects the whole block
+	 literal, which extracts as a single expression.)"
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '[:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'inner')
+]
+
 { #category : 'tests - staging' }
 GsExtractMethodRefactoringTest >> testStagesMethodAddThenRecompileForTwoCoreChanges [
 	| cs |
@@ -329,6 +499,100 @@ GsExtractMethodRefactoringTest >> testSelectionNotOnWholeStatementsIsDeclined [
 
 	self assert: ref declineReason notNil.
 	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionCrossingABlockCloseIsDeclined [
+	"From the inner loop through the end of the method: the selection takes in the
+	 outer block's closing ] and its period, so it cuts the outer 1 to: 60 do: [...]
+	 in two. Extracting only 'self assert: n > 0' would silently leave the inner loop
+	 behind."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '1 to: 177000000 do: [:k | n := n max: k]].' , self lf , self tab ,
+				'self assert: n > 0'
+			newSelector: 'n:')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionCrossingABlockCloseFromTheLineIndentIsDeclined [
+	"The same cut, dragged from column 0 of the inner loop's line."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , self tab , '1 to: 177000000 do: [:k | n := n max: k]].' , self lf ,
+				self tab , 'self assert: n > 0'
+			newSelector: 'n:')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionStoppingShortOfABlockCloseIsDeclined [
+	"The outer statement's opening without its closing ]: the inner loop is whole,
+	 but the statement around it is cut."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: '1 to: 60 do: [:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'loop')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionStartingInsideAStatementIsDeclined [
+	"'yourself' is the tail of 'self yourself'; only 'self hash' is whole."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #doStuff
+			select: 'yourself. self hash' newSelector: 'sideEffects')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testSelectionEndingInsideAStatementIsDeclined [
+	"'self ha' is the head of 'self hash'; only 'self yourself' is whole."
+	self assertDeclinesAsNotWholeStatements:
+		(self extractFrom: self baseFixture selector: #doStuff
+			select: 'self yourself. self ha' newSelector: 'sideEffects')
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testWholeOuterStatementWithItsIndentAndNewlineResolves [
+	"Leading indentation, the statement period and the trailing newline are slack:
+	 the whole outer loop, dragged line to line, still extracts, inner loop and all."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , '1 to: 60 do: [:second |' , self lf , self tab , self tab ,
+				'1 to: 177000000 do: [:k | n := n max: k]].' , self lf
+			newSelector: 'loop:').
+	self assert: add newSource includesSubstring: '1 to: 60 do:'.
+	self assert: add newSource includesSubstring: '1 to: 177000000 do:'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testStatementWithTrailingNewlineResolves [
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: 'n := 0.' , self lf newSelector: 'reset').
+	self assert: add newSource includesSubstring: 'n := 0'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testInnerLoopWithItsIndentResolves [
+	"A whole statement inside the block, dragged from column 0, is not a cut."
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #crossesBlock
+			select: self tab , self tab , '1 to: 177000000 do: [:k | n := n max: k]'
+			newSelector: 'inner:').
+	self assert: add newSource includesSubstring: '1 to: 177000000 do:'
+]
+
+{ #category : 'tests - selection bounds' }
+GsExtractMethodRefactoringTest >> testCommentBetweenStatementsResolves [
+	| add |
+	add := self assertResolves:
+		(self extractFrom: self baseFixture selector: #commented
+			select: 'self yourself. "why" self hash' newSelector: 'sideEffects').
+	self assert: add newSource includesSubstring: 'self yourself'.
+	self assert: add newSource includesSubstring: 'self hash'
 ]
 
 { #category : 'tests - decline' }
