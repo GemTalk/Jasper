@@ -31,8 +31,8 @@ function makeSession(opts?: { restoreReturnsNormally?: boolean }) {
     return '';
   });
   return { run, logout } as RestoreSession & {
-    run: ReturnType<typeof vi.fn>;
-    logout: ReturnType<typeof vi.fn>;
+    run: typeof run;
+    logout: typeof logout;
   };
 }
 
