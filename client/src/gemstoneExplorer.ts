@@ -636,6 +636,56 @@ export class FilterChipItem extends vscode.TreeItem {
 
 type MethodNode = MethodCategoryItem | MethodItem | FilterChipItem;
 
+/**
+ * What to say on a hierarchy row whose class the symbol list no longer binds.
+ *
+ * It names the failed-refactoring case explicitly, because that is the one where the recourse is
+ * immediate and specific: Undo puts the parent's old version back and the subtree is whole again.
+ * After a hand redefinition the same row means something different -- the user redefined the
+ * class themselves and the subclasses simply have not been carried across -- and Undo there is
+ * about their own earlier edit, which may not be what they want at all. Same row, same words up
+ * to that point, and the difference is worth the sentence.
+ */
+/**
+ * Refuse a command on a hierarchy row the symbol list no longer binds, saying which of the two
+ * things happened rather than letting the query come back with "not a class: Object".
+ *
+ * The commands here all address a class THROUGH a dictionary, which is what makes them right for
+ * a shadowed name (#396) and what leaves them nothing to say about a class no dictionary holds.
+ * Answers true when the caller should stop.
+ */
+function declineIfUnbound(item: ClassItem | HierarchyItem, what: string): boolean {
+  if (!(item instanceof HierarchyItem) || item.binding === 'bound') return false;
+  const why =
+    item.binding === 'superseded'
+      ? `${item.className} here is an older version of the class — the name now binds a newer one, ` +
+        'and no dictionary holds this one. A refactoring that failed part-way leaves exactly this: ' +
+        'Undo reverses it and puts the subtree back together.'
+      : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
+  void vscode.window.showWarningMessage(`${what} is not available here. ${why}`);
+  return true;
+}
+
+function unboundHierarchyTooltip(className: string, binding: 'superseded' | 'unbound'): string {
+  if (binding === 'unbound') {
+    return (
+      `${className} — no class of this name is bound in any dictionary.\n\n` +
+      'It is still this class\u2019s real superclass, but it has been removed from the symbol ' +
+      'list, so commands that work through a dictionary cannot reach it.'
+    );
+  }
+  return (
+    `${className} — an older version.\n\n` +
+    `The name ${className} now binds a newer version of the class. This one is still real, and ` +
+    'still the superclass of the class below it, but no dictionary holds it, so Class History, ' +
+    'Rename, Insert/Extract Superclass and Split cannot act on it.\n\n' +
+    'Redefining a class does not carry its subclasses onto the new version. This row appears ' +
+    'after a redefinition made outside a refactoring — and after a refactoring that failed ' +
+    'part-way, which stops at the first failure with the classes before it already re-versioned. ' +
+    'If that is what happened, Undo reverses it and puts the subtree back together.'
+  );
+}
+
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
 // itself → its immediate subclasses. Clicking any row navigates to that class.
@@ -657,6 +707,10 @@ export class HierarchyItem extends vscode.TreeItem {
     // query could place it. Two dictionaries can share a name, so `dictName` alone lands on the
     // first of them (#396).
     public readonly dictIndex?: number,
+    // Whether the symbol list still binds this class object under its own name. A SUPERSEDED row
+    // is a real class -- it is this subclass's actual superclass -- that the name no longer
+    // points at, so every command scoped by dictionary has nowhere to send it.
+    public readonly binding: 'bound' | 'superseded' | 'unbound' = 'bound',
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -664,11 +718,20 @@ export class HierarchyItem extends vscode.TreeItem {
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
     this.tooltip = versionTooltipOf(className, version);
+    // A row nothing binds says so on its face, and says it in full on hover. Without this the
+    // row is indistinguishable from any other ancestor, and every command on it failed with
+    // "not a class" -- which reads as a broken tool rather than as what it is.
+    if (binding !== 'bound') {
+      this.description = binding === 'superseded' ? '(old version)' : '(unbound)';
+      this.tooltip = unboundHierarchyTooltip(className, binding);
+    }
     // The dictionary position is part of the id: every subclass has chainIndex -1, so two
     // same-named subclasses from different dictionaries would otherwise share one, which a tree
     // view refuses outright.
     this.id = `h:${role}:${chainIndex}:${dictIndex ?? ''}:${className}`;
-    this.contextValue = 'explorerHierClass';
+    // A separate context value so the menus that cannot act on an unbound class are withheld
+    // rather than offered and then refused.
+    this.contextValue = binding === 'bound' ? 'explorerHierClass' : 'explorerHierClassUnbound';
     // The current class is shown by keeping it *selected* in this pane (synced
     // with the Classes pane), so no extra "current" label is needed; up/down
     // arrows distinguish superclasses from subclasses.
@@ -2425,6 +2488,7 @@ export class ExplorerController {
         hasChildren,
         this.classVersion(e.className),
         e.dictIndex,
+        e.binding,
       );
       // Each row carries its own dictionary — an ancestor often lives in another
       // one — so the affordance and the outcome are for the right class.
@@ -2444,6 +2508,7 @@ export class ExplorerController {
         false,
         this.classVersion(s.className),
         s.dictIndex,
+        s.binding,
       );
       this.decorateTestRow(item, s.dictName, s.className);
       return item;
@@ -2466,6 +2531,7 @@ export class ExplorerController {
       this.hierSubs.length > 0,
       undefined,
       e.dictIndex,
+      e.binding,
     );
     await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
   }
@@ -2483,12 +2549,22 @@ export class ExplorerController {
         true,
         undefined,
         e.dictIndex,
+        e.binding,
       );
     }
     if (element.chainIndex <= 0) return undefined;
     const i = element.chainIndex - 1;
     const e = this.hierChain[i];
-    return new HierarchyItem(e.className, e.dictName, 'ancestor', i, true, undefined, e.dictIndex);
+    return new HierarchyItem(
+      e.className,
+      e.dictName,
+      'ancestor',
+      i,
+      true,
+      undefined,
+      e.dictIndex,
+      e.binding,
+    );
   }
 
   // Clicking a hierarchy node navigates to that class (which reloads the
@@ -3949,6 +4025,7 @@ export class ExplorerController {
   // change set is previewed, any optional reference unchecked, and applied.
   // Invokable from a class row OR a hierarchy-pane class node.
   async renameClass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Rename Class')) return;
     // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
     // carries its own. Resolving it across the whole symbol list instead would rename whichever
     // class of that name comes first, and record the undo against it (#396).
@@ -4137,6 +4214,7 @@ export class ExplorerController {
   // V6 Insert Superclass: slide a new empty class between this class and its current
   // superclass (server-side new class versions, no commit). Reveals the new class after.
   async insertSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Insert Superclass')) return;
     const session = this.session();
     if (!session) return;
     // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
@@ -4154,6 +4232,7 @@ export class ExplorerController {
   // classes, hoisting chosen shared members up into it (server-side, no commit). Reveals the
   // new class after.
   async extractSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Extract Superclass')) return;
     const session = this.session();
     if (!session) return;
     // The node's own dictionary, not the selection (see insertSuperclass).
@@ -4169,6 +4248,7 @@ export class ExplorerController {
   // that use them) into a new component class, leaving the source with a lazy accessor +
   // delegating stubs (server-side, no commit). Reveals the new class after.
   async splitClass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Split Class')) return;
     const session = this.session();
     if (!session) return;
     // The node's own dictionary, not the selection (see insertSuperclass).
@@ -4359,6 +4439,7 @@ export class ExplorerController {
   // the methods that changed. Offers a redo — restore a prior version as a new
   // version (no commit). Invokable from a class row OR a hierarchy-pane class node.
   async classHistory(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Class History')) return;
     const session = this.session();
     if (!session) return;
     const className = item.className;
@@ -7346,6 +7427,7 @@ export class ExplorerController {
    *  Classes pane and from the Class Hierarchy pane, which carries its own dictionary
    *  (a superclass usually lives somewhere else). */
   async fileOutClass(node: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(node, 'File Out')) return;
     const session = this.fileOutSession();
     if (!session) return;
     const dict = node instanceof HierarchyItem ? node.dictRef : this.state.dictIndex;
@@ -7372,6 +7454,7 @@ export class ExplorerController {
    * `.extension.st`. See `queries/tonel/fileOutClassTonel.ts`.
    */
   async fileOutClassAsTonel(node: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(node, 'File Out as Tonel')) return;
     const session = this.fileOutSession();
     if (!session) return;
     if (!requireTonelAvailable(session)) return;

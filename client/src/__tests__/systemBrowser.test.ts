@@ -1054,11 +1054,16 @@ describe('SystemBrowser', () => {
 
   describe('hierarchy view', () => {
     const hierarchyData: queries.ClassHierarchyEntry[] = [
-      { className: 'Object', dictName: 'Globals', kind: 'superclass' },
-      { className: 'Collection', dictName: 'Globals', kind: 'superclass' },
-      { className: 'SequenceableCollection', dictName: 'Globals', kind: 'superclass' },
-      { className: 'Array', dictName: 'UserGlobals', kind: 'self' },
-      { className: 'SmallArray', dictName: 'UserGlobals', kind: 'subclass' },
+      { className: 'Object', dictName: 'Globals', kind: 'superclass', binding: 'bound' },
+      { className: 'Collection', dictName: 'Globals', kind: 'superclass', binding: 'bound' },
+      {
+        className: 'SequenceableCollection',
+        dictName: 'Globals',
+        kind: 'superclass',
+        binding: 'bound',
+      },
+      { className: 'Array', dictName: 'UserGlobals', kind: 'self', binding: 'bound' },
+      { className: 'SmallArray', dictName: 'UserGlobals', kind: 'subclass', binding: 'bound' },
     ];
 
     beforeEach(() => {
@@ -1082,6 +1087,8 @@ describe('SystemBrowser', () => {
       });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadHierarchy',
+        // The webview payload names its fields explicitly rather than spreading the entry, so it
+        // carries these four and not whatever else ClassHierarchyEntry grows.
         items: [
           { className: 'Object', dictName: 'Globals', kind: 'superclass', indent: 0 },
           { className: 'Collection', dictName: 'Globals', kind: 'superclass', indent: 1 },
