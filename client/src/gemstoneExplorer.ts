@@ -91,7 +91,12 @@ import {
   SafeDeleteTarget,
 } from './refactoring/safeDelete';
 import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
-import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
+import {
+  formatRenameFailureLog,
+  renameFailureNotification,
+  UNDO_RENAME,
+  SHOW_RENAME_DETAILS,
+} from './refactoring/renameFailureLog';
 import { getGciLog, logInfo, logWarning } from './gciLog';
 import { focusGemStoneExplorer } from './explorerContainer';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
@@ -179,8 +184,6 @@ const VIEW_METHODS = 'gemstoneExplorerMethods';
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
 
 // Button on a rename-failure notification; reveals the channel holding the full list.
-const SHOW_RENAME_DETAILS = 'Show Details';
-const UNDO_RENAME = 'Undo';
 
 // Highlights the filtered instance variable(s) in an opened method source while a
 // reads:/writes:/accesses: filter is active — theme-aware, styled like a search
@@ -3435,21 +3438,20 @@ export class ExplorerController {
   private reportRenameFailures(
     action: string,
     result: RenameApplyResult,
-    // Whether an Undo was armed for this rename. The toast says Undo reverses it, so it offers
-    // the button -- a toast that names a recourse and does not offer it makes the user go
-    // looking for the pane (#396). Omitted where nothing was armed.
+    // Whether an Undo was armed for this rename. It decides BOTH the button and the sentence
+    // that names it, together, in renameFailureNotification -- a toast that names a recourse
+    // and does not offer it sends the user to the Undo pane, where they reverse whatever they
+    // did before the rename (#396). Omitted where nothing was armed.
     undoable = false,
   ): void {
     if (result.failed.length === 0) return; // nothing to report; the toast names failed[0]
     const block = formatRenameFailureLog(action, result.failed);
     if (block) logWarning(block);
-    const actions = undoable ? [UNDO_RENAME, SHOW_RENAME_DETAILS] : [SHOW_RENAME_DETAILS];
-    void vscode.window
-      .showErrorMessage(formatRenameFailureToast(action, result), ...actions)
-      .then((choice) => {
-        if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
-        if (choice === UNDO_RENAME) void vscode.commands.executeCommand('gemstone.undoLast');
-      });
+    const { message, actions } = renameFailureNotification(action, result, undoable);
+    void vscode.window.showErrorMessage(message, ...actions).then((choice) => {
+      if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
+      if (choice === UNDO_RENAME) void vscode.commands.executeCommand('gemstone.undoLast');
+    });
   }
 
   // Apply the rename SERVER-SIDE, without committing. The engine re-versions the

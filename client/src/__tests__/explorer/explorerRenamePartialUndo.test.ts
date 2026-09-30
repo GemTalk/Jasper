@@ -264,5 +264,9 @@ describe('arming the Undo button follows what the stone actually recorded', () =
     const call = vi.mocked(vscode.window.showErrorMessage).mock.calls.at(-1);
     expect(call?.slice(1)).not.toContain('Undo');
     expect(call?.slice(1)).toContain('Show Details');
+    // And the toast must not NAME the recourse it is not offering. Checking only the buttons
+    // is how this drifted: the text promised an Undo on every rename while the button was
+    // conditional, so a test that read the buttons alone stayed green.
+    expect(call?.[0]).not.toContain('Undo');
   });
 });

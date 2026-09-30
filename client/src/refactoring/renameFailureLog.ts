@@ -23,22 +23,43 @@ export function formatRenameFailureLog(
   );
 }
 
+export const UNDO_RENAME = 'Undo';
+export const SHOW_RENAME_DETAILS = 'Show Details';
+
 /**
  * The notification for the same failure, from the same two inputs — so the toast and the
  * log block cannot drift apart in what they tell the user. A notification collapses
  * newlines and truncates, so it names only the first failure and leans on the channel
  * (and the toast's Show Details button) for the rest. Every rename reports the
  * not-committed caveat, which previously only the instance-variable one carried.
+ *
+ * The message and the BUTTONS are built together, from the one `undoable` flag, and handed
+ * back as a pair. They were built apart -- the caller chose the buttons from the flag, this
+ * wrote the text without ever being told -- so every toast promised "Undo reverses this
+ * rename" while three of the five rename paths armed nothing (a failed method rename arms
+ * nothing at all). A user who trusted the sentence and reached for the Undo pane reversed
+ * whatever they had done BEFORE the rename. Returning both from one place is what makes
+ * that drift unsayable rather than merely fixed: there is no way to word the recourse
+ * without also deciding the button.
  */
-export function formatRenameFailureToast(action: string, result: RenameApplyResult): string {
+export function renameFailureNotification(
+  action: string,
+  result: RenameApplyResult,
+  undoable: boolean,
+): { message: string; actions: string[] } {
   const first = result.failed[0];
   const more = result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : '';
   // Not "abort if this is not what you wanted". Abort discards every uncommitted change in the
-  // session, not this one refactoring, and a partial apply is now undoable on its own -- which is
-  // the whole point of recording the reversal before reporting the failure (#396).
-  return (
-    `${action}: applied ${result.applied} change(s), but ${result.failed.length} method(s) ` +
-    `did not recompile onto the new class version: ${first.label}: ${first.error}${more}. ` +
-    'Compiled but NOT committed — Undo reverses this rename.'
-  );
+  // session, not this one refactoring, and a partial apply is undoable on its own WHEN one was
+  // recorded -- which is the whole point of recording the reversal before reporting the
+  // failure (#396). Where none was, the sentence stops at the caveat rather than naming a
+  // recourse the user does not have.
+  const recourse = undoable ? ' — Undo reverses this rename' : '';
+  return {
+    message:
+      `${action}: applied ${result.applied} change(s), but ${result.failed.length} method(s) ` +
+      `did not recompile onto the new class version: ${first.label}: ${first.error}${more}. ` +
+      `Compiled but NOT committed${recourse}.`,
+    actions: undoable ? [UNDO_RENAME, SHOW_RENAME_DETAILS] : [SHOW_RENAME_DETAILS],
+  };
 }
