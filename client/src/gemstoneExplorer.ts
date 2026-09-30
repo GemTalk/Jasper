@@ -3911,23 +3911,29 @@ export class ExplorerController {
   private async confirmShadowingRename(
     session: ActiveSession,
     newName: string,
+    oldName: string,
     dictName: string | undefined,
+    dict: number | string | undefined,
   ): Promise<boolean> {
-    let elsewhere: string[];
+    let holders: queries.ShadowingHolder[];
     let order: string[];
     try {
-      elsewhere = queries
-        .dictionariesContainingClass(session, newName)
-        .filter((d) => d !== dictName);
+      // The stone excludes the renamed class's own dictionary by IDENTITY. Dropping it here by
+      // NAME dropped every dictionary called that, so a second one of the same name — holding a
+      // real, clashing class — vanished with it and the rename went ahead unwarned (#396).
+      holders = queries.dictionariesShadowedByRename(session, newName, oldName, dict);
       order = queries.getDictionaryNames(session);
     } catch {
       return true; // a failed probe must not block a rename
     }
-    if (elsewhere.length === 0) return true;
-    // Which of them the symbol list reaches before the destination. Unknown positions (-1) sort
-    // first, which is the cautious reading: warn rather than reassure.
-    const destAt = dictName === undefined ? -1 : order.indexOf(dictName);
-    const ahead = elsewhere.filter((d) => destAt < 0 || order.indexOf(d) < destAt);
+    if (holders.length === 0) return true;
+    const elsewhere = holders.map((h) => h.name);
+    // Which of them the symbol list reaches before the destination. Compared by POSITION, since
+    // two dictionaries can share a name and the answer is about order, not naming. An unknown
+    // destination sorts everything ahead of it, which is the cautious reading: warn rather than
+    // reassure.
+    const destAt = dictName === undefined ? -1 : order.indexOf(dictName) + 1;
+    const ahead = holders.filter((h) => destAt < 1 || h.position < destAt).map((h) => h.name);
     const detail =
       ahead.length > 0
         ? `Renaming to it leaves two classes called ${newName}, and ${ahead[0]} comes first on ` +
@@ -4085,7 +4091,8 @@ export class ExplorerController {
     const { newName, scope, options } = edit;
 
     // Allowed, but said out loud once: the rename is about to leave two classes of this name.
-    if (!(await this.confirmShadowingRename(session, newName, scopeDictName))) return;
+    if (!(await this.confirmShadowingRename(session, newName, oldName, scopeDictName, dictArg)))
+      return;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const safeClear = (): void => {

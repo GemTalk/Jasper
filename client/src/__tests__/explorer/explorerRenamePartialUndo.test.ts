@@ -11,6 +11,7 @@ vi.mock('../../browserQueries', () => ({
   isKernelClass: vi.fn(() => false),
   classDefiningDictionaryName: vi.fn(() => 'DictionaryA'),
   dictionariesContainingClass: vi.fn(() => ['DictionaryA']),
+  dictionariesShadowedByRename: vi.fn(() => []),
   startRenameClassPreview: vi.fn(() => Promise.resolve('{"token":"t1","total":1}')),
   pageRenameClassPreview: vi.fn(),
   clearRenameClassPreview: vi.fn(),
@@ -185,8 +186,13 @@ describe('a rename whose own #classRename failed arms nothing', () => {
 describe('the shadowing-rename warning names which class the new name will mean', () => {
   /** Drive the rename far enough to raise the warning, and answer its modal detail text. */
   async function warningDetail(destination: string, elsewhere: string[]): Promise<string> {
+    const order = ['DictionaryA', 'DictionaryB'];
     vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
-    vi.mocked(queries.dictionariesContainingClass).mockReturnValue(elsewhere);
+    // The stone answers holders with their symbol-list POSITION, having already dropped the
+    // renamed class's own dictionary by identity.
+    vi.mocked(queries.dictionariesShadowedByRename).mockReturnValue(
+      elsewhere.map((name) => ({ position: order.indexOf(name) + 1, name })),
+    );
     // where the class being renamed actually lives — the rename files it back into this one
     vi.mocked(queries.classDefiningDictionaryName).mockReturnValue(destination);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
@@ -209,6 +215,41 @@ describe('the shadowing-rename warning names which class the new name will mean'
     const detail = await warningDetail('DictionaryA', ['DictionaryB']);
     expect(detail).toContain('This dictionary comes first');
     expect(detail).toContain('still means this class');
+  });
+
+  it('warns about a SECOND dictionary of the destination’s own name', async () => {
+    // The case that used to pass unwarned. The client dropped every holder whose NAME matched
+    // the destination's, so a twin of that name — holding a real, clashing class — was filtered
+    // out along with the destination itself. The stone drops the one dictionary by identity, so
+    // the twin survives and is warned about (#396).
+    vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
+    vi.mocked(queries.classDefiningDictionaryName).mockReturnValue('ZzTwin');
+    vi.mocked(queries.dictionariesShadowedByRename).mockReturnValue([
+      { position: 1, name: 'ZzTwin' },
+    ]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
+
+    await makeController().renameClassNamed('ShadowedAAAAA', 'ZzTwin');
+
+    const call = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+    expect(String(call[0])).toContain('already defined in ZzTwin');
+  });
+
+  it('asks the stone to exclude the renamed class’s own dictionary, not the client', async () => {
+    vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
+    vi.mocked(queries.classDefiningDictionaryName).mockReturnValue('DictionaryA');
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
+
+    await makeController().renameClassNamed('ShadowedAAAAA', 'DictionaryA');
+
+    // The old name and the scoping dictionary go down with the question, since identity is the
+    // only thing that can pick between two dictionaries sharing a name.
+    expect(queries.dictionariesShadowedByRename).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      'ShadowedAAAAA',
+      expect.anything(),
+    );
   });
 });
 

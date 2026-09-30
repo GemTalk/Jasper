@@ -68,6 +68,11 @@ import {
   ClassReference,
 } from './refactoring/queries/resolveClassReference';
 import { classDefiningDictionaryName as sharedClassDefiningDictionaryName } from './refactoring/queries/classDefiningDictionaryName';
+import {
+  dictionariesShadowedByRename as sharedDictionariesShadowedByRename,
+  ShadowingHolder,
+} from './refactoring/queries/dictionariesShadowedByRename';
+export type { ShadowingHolder };
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -823,6 +828,22 @@ export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
 /** Which symbol dictionaries hold a class of this name, in symbol-list order. */
 export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
   return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
+}
+
+/** The dictionaries a rename to `newName` would shadow: those already holding a class of that
+ *  name, minus the one the renamed class lives in, excluded by identity in the stone. */
+export function dictionariesShadowedByRename(
+  session: ActiveSession,
+  newName: string,
+  oldName: string,
+  dict?: number | string,
+): ShadowingHolder[] {
+  return sharedDictionariesShadowedByRename(
+    defaultQueryExecutorUsing(session),
+    newName,
+    oldName,
+    dict,
+  );
 }
 
 export function fileOutClass(

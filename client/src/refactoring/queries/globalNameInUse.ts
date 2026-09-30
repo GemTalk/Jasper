@@ -10,8 +10,9 @@ import { dictLookupExpr, escapeString } from '../../queries/util';
 //
 // Its one caller is Extract Superclass, which refuses a name bound anywhere on purpose: it
 // creates a class rather than moving one, so there is nothing to weigh against a free name.
-// The shadow WARNING a rename raises is built from `dictionariesContainingClass`, which names
-// the dictionaries rather than answering yes or no.
+// The shadow WARNING a rename raises is built from `dictionariesShadowedByRename`, which names
+// the dictionaries rather than answering yes or no -- and leaves out the renamed class's own by
+// identity, since two dictionaries can share a name.
 export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
   return (
     execute(
