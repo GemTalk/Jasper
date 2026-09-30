@@ -123,7 +123,16 @@ GsRenameClassRefactoring >> superclassForShapeSource: src of: old [
 	 classHistory, never by name: a name lookup lands on whichever dictionary comes first in the
 	 symbol list, so a shadowed parent name would re-parent the restored class under a different
 	 dictionary's class (#396). If the parent's history is gone, the current superclass is kept:
-	 better a class in the wrong place than one that cannot be created at all."
+	 better a class in the wrong place than one that cannot be created at all.
+
+	 A parent that is no longer BOUND anywhere is deliberately NOT one of those cases. The
+	 restored class goes back under it, and the result is a class hanging off an ancestor no
+	 dictionary names -- which is what that version's hierarchy actually was. Falling back to the
+	 current superclass here would hand back a class that never existed in that shape, and a
+	 restore's whole job is to reproduce a version. The two fallbacks above are for a version
+	 that cannot be rebuilt at all, which this is not. The Explorer's Hierarchy pane marks such
+	 an ancestor `(unbound)` and says what it is, so the user can see where their class has
+	 landed rather than meeting a mystery row."
 	| histSuper hist |
 	src == old ifTrue: [^old superclass].
 	histSuper := src superclass.
