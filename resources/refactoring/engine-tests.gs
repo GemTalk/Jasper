@@ -2671,6 +2671,78 @@ testInsertEmptySuperclassStagesClassAdd
 	self assert: (self changeOfKind: #classDefinitionEdit for: 'GsESDog' in: cs) notNil
 %
 
+category: 'tests - unnamed dictionary'
+method: GsExtractSuperclassRefactoringTest
+withAnchorInAnUnnamedDictionaryDo: aBlock
+	"A class in a dictionary with NO name -- which is what `SymbolDictionary new` answers, since a
+	 name only exists if someone sets one. Evaluates aBlock with the anchor and the dictionary."
+	| sl at d anchor |
+	sl := System myUserProfile symbolList.
+	at := sl size + 1.
+	d := SymbolDictionary new.
+	System myUserProfile insertDictionary: d at: at.
+	[anchor := Object
+		subclass: 'GsESNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: d.
+	 aBlock value: anchor value: d]
+		ensure: [
+			d removeKey: #GsESNoNamePet ifAbsent: [].
+			d removeKey: #GsESNoName ifAbsent: [].
+			System myUserProfile removeDictionaryAt: at]
+%
+
+category: 'tests - unnamed dictionary'
+method: GsExtractSuperclassRefactoringTest
+testInsertSuperclassPreviewsForAnAnchorInAnUnnamedDictionary
+	"The generated definition writes `inDictionary: <name>` as Smalltalk source, and took that name
+	 from the anchor's own dictionary. A nameless dictionary answered nil, and concatenating nil
+	 raised ArgumentTypeError 2283 -- so a refactoring that applies perfectly well could not even
+	 be PREVIEWED. Nothing that does the work needs a name: the change carries the dictionary
+	 itself."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | ref cs |
+		ref := GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil.
+		cs := ref changeSet.
+
+		self assert: ref decline isNil.
+		self assert: (cs changes detect: [:c | c kind = #classAdd] ifNone: [nil]) notNil]
+%
+
+category: 'tests - unnamed dictionary'
+method: GsExtractSuperclassRefactoringTest
+testTheDefinitionNamesTheDictionaryTheApplyWillUse
+	"Display and apply must describe one dictionary, not two. The definition on screen read the
+	 ANCHOR's dictionary while the apply files the class through dictObjectForNewClass; they
+	 happen to agree, until one of them cannot answer. A nameless dictionary is written by its
+	 symbol-list position, which is unambiguous and valid Smalltalk."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | ref idx |
+		ref := GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil.
+		"the definition is built from the analysis, so stage the change set first"
+		ref changeSet.
+		idx := System myUserProfile symbolList indexOf: d.
+
+		self assert: ref newClassDefinition
+			includesSubstring: 'symbolList at: ', idx printString]
+%
+
+category: 'tests - unnamed dictionary'
+method: GsExtractSuperclassRefactoringTest
+testInsertSuperclassFilesTheNewClassInTheUnnamedDictionary
+	"And it really applies: the new superclass lands in the dictionary the anchor lives in, which
+	 is the point -- declining would have made the refactoring simply unavailable there."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | json |
+		json := (GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil)
+				applyDeselected: #().
+
+		self assert: json includesSubstring: '"failed":[]'.
+		self assert: (d at: #GsESNoNamePet ifAbsent: [nil]) notNil.
+		self assert: (d at: #GsESNoName) superclass == (d at: #GsESNoNamePet)]
+%
+
 category: 'tests - V6 insert'
 method: GsExtractSuperclassRefactoringTest
 testInsertEmptySuperclassApplies

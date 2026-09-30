@@ -526,13 +526,28 @@ GsSplitClassRefactoring >> answersSelf: aSelector in: aClass [
 
 { #category : 'private' }
 GsSplitClassRefactoring >> newClassDictName [
-	"What to WRITE in the generated `inDictionary:` of the new class's definition: the caller's
-	 chosen name, else the name of the dictionary the anchor lives in. A name, because this ends
-	 up in Smalltalk source -- everything that RESOLVES a dictionary uses dictObjectForNewClass
-	 instead, since a name cannot pick between two dictionaries that share one and cannot name a
-	 dictionary that has none."
+	"What to WRITE in the generated `inDictionary:` of the new class's definition -- display only.
+
+	 It reads the dictionary dictObjectForNewClass answers, which is the one the apply actually
+	 files the class into, so the definition on screen cannot name a different dictionary from
+	 the one the refactoring writes to. It used to read the ANCHOR's dictionary instead: the two
+	 agree in the ordinary case, and disagreeing about which dictionary is exactly the defect
+	 this branch exists to remove.
+
+	 A dictionary with NO name -- what `SymbolDictionary new` answers until someone names one --
+	 is written by its symbol-list position, which is unambiguous and is valid Smalltalk. Asking
+	 for its name answered nil, and concatenating nil into the definition raised, so a
+	 refactoring that applies perfectly well could not even be previewed there. Nothing that does
+	 the work ever needed a name: the staged change carries the dictionary itself."
+	| d idx |
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^(self dictForClass: sourceClass) ifNotNil: [:d | d name ifNotNil: [:n | n asString]]
+	d := self dictObjectForNewClass.
+	d isNil ifTrue: [^'UserGlobals'].
+	d name ifNotNil: [:n | ^n asString].
+	idx := environment symbolList indexOf: d.
+	^idx = 0
+		ifTrue: ['UserGlobals']
+		ifFalse: ['(System myUserProfile symbolList at: ', idx printString, ')']
 ]
 
 { #category : 'private' }
