@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { renderMethodPanelHtml, renderMethodCards } from '../renameMethodPanelHtml';
@@ -278,6 +278,87 @@ describe('paginated rename-method panel', () => {
       expect(vscode.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'apply' }),
       );
+    });
+
+    /**
+     * The panel is built after a round trip to the stone, so the Enter that opened it was
+     * released while there was no page to hear the keyup — and opening it with the mouse leaves
+     * nothing to hear either. Waiting for a keyup therefore ate the first DELIBERATE press, and
+     * the Enter-to-Enter flow needed two. A short idle arms it instead, which separates the two
+     * cases by the only thing that actually differs: an auto-repeat cascade lands within tens of
+     * milliseconds, a person reading a preview does not.
+     */
+    describe('a panel that never saw a keyup', () => {
+      const advance = (ms: number): void => {
+        vi.setSystemTime(new Date(Date.now() + ms));
+      };
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('still ignores an Enter arriving at once, which is what a held key does', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        down(document.body);
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('applies a press made after the panel has been open a moment', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        down(document.body);
+
+        expect(vscode.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('stops a held key activating Apply natively before that', () => {
+        mount([change('1', 'A')], 1, true);
+
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          repeat: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(true);
+      });
+
+      it('lets Enter activate Apply natively once it is armed', () => {
+        mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(false);
+      });
+
+      it('arms on a keyup without waiting, when there is one to hear', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        release();
+        down(document.body);
+
+        expect(vscode.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
     });
 
     it('leaves Enter alone on a button, so Cancel with focus stays Cancel', () => {

@@ -169,7 +169,21 @@
     //
     // The keydown capture on Apply is what stops the native activation; preventDefault on a
     // bubbling document listener would be too late.
+    // ...or once the panel has simply been open a moment. A keyup is the ideal signal and the
+    // page often never hears one: this panel is built after a round trip to the stone, so the
+    // Enter that opened it was released while there was no page to listen, and opening it with
+    // the mouse leaves nothing to hear either. The keyup alone therefore ate the first
+    // DELIBERATE Enter and the Enter-to-Enter flow needed two presses.
+    //
+    // A short idle closes that without weakening the guard, because the two cases are separated
+    // by orders of magnitude: an auto-repeat cascade lands within tens of milliseconds of the
+    // panel appearing, and a person who has read a preview takes far longer. Testing e.repeat
+    // instead was the other candidate and is NOT safe here -- the flag is the browser's record
+    // of the key already being down, kept per document, so the first keydown delivered to a
+    // webview that only just took focus can arrive unflagged, and an unflagged repeat is
+    // exactly the cascade this exists to stop.
     doc.__gsEnterArmed = false;
+    doc.__gsArmAt = Date.now() + 300;
     if (doc.__gsArmEnter) doc.removeEventListener('keyup', doc.__gsArmEnter);
     doc.__gsArmEnter = function () {
       doc.__gsEnterArmed = true;
@@ -180,7 +194,7 @@
         applyEl.removeEventListener('keydown', applyEl.__gsEnterGuard, true);
       applyEl.__gsEnterGuard = function (e) {
         if (e.key !== 'Enter' && e.key !== ' ') return;
-        if (doc.__gsEnterArmed) return;
+        if (doc.__gsEnterArmed || Date.now() >= doc.__gsArmAt) return;
         e.preventDefault();
         e.stopPropagation();
       };
@@ -190,7 +204,8 @@
     if (doc.__gsApplyOnEnter) doc.removeEventListener('keydown', doc.__gsApplyOnEnter);
     doc.__gsApplyOnEnter = function (e) {
       if (e.key !== 'Enter' || e.defaultPrevented) return;
-      if (!doc.__gsEnterArmed) return; // a held Enter from an earlier step, not a new one
+      // a held Enter from an earlier step, not a new one
+      if (!(doc.__gsEnterArmed || Date.now() >= doc.__gsArmAt)) return;
       const t = e.target;
       const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
       if (tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'SUMMARY') return;
