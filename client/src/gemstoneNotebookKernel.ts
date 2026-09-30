@@ -3,14 +3,17 @@ import { SessionManager, ActiveSession } from './sessionManager';
 import { logError } from './gciLog';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
+import { describeSession, onDidChangeActiveSession } from './activeSessionDisplay';
 
-// Shared base for GemStone-backed kernels in Microsoft's Jupyter extension.
-// The Jupyter extension owns the `jupyter-notebook` notebook type; any
-// NotebookController registered against that type appears in its kernel
-// picker, so opening a .ipynb and selecting a GemStone kernel routes cell
-// execution through the active GemStone session. Concrete kernels (Grail
-// Python, GemStone Smalltalk) differ only in id/label/cell language and in
-// how a cell's source is evaluated.
+// Shared base for GemStone-backed notebook kernels. VS Code's built-in ipynb
+// support owns the `jupyter-notebook` notebook type (Microsoft's Jupyter
+// extension adds kernels to it but is not needed); any NotebookController
+// registered against that type appears in its kernel picker, so opening a
+// .ipynb and selecting a GemStone kernel routes cell execution through a
+// GemStone session: the active one, or the one a per-session kernel is bound
+// to (sessionKernels.ts). Concrete kernels (Grail Python, GemStone Smalltalk)
+// differ only in id/label/cell language, bound session, and in how a cell's
+// source is evaluated.
 
 export const GEMSTONE_NOTEBOOK_TYPE = 'jupyter-notebook';
 
@@ -27,6 +30,12 @@ export interface NotebookKernelSpec {
    * output streams live while the cell executes).
    */
   evaluate: (session: ActiveSession, source: string, scopeId: string) => string | Promise<string>;
+  /**
+   * Run every cell in this one session instead of the active one. In
+   * multiple-session mode Jasper makes one such kernel per logged-in session
+   * (see sessionKernels.ts), so the kernel picker lists each session.
+   */
+  sessionId?: number;
 }
 
 export interface NotebookCellResult {
@@ -52,9 +61,30 @@ export function classifyCellResult(result: string): NotebookCellResult {
 }
 
 export class GemStoneNotebookKernel {
+  // Which session each notebook on a per-session kernel is bound to, so a
+  // command acting on "the notebook's session" (Reset Grail Notebook Scope)
+  // finds it rather than the active one.
+  private static readonly boundSessions = new Map<vscode.NotebookDocument, number>();
+
+  /** The session `doc` is bound to, or undefined when it follows the active session. */
+  static sessionBoundTo(doc: vscode.NotebookDocument): number | undefined {
+    return GemStoneNotebookKernel.boundSessions.get(doc);
+  }
+
   protected readonly controller: vscode.NotebookController;
   private readonly evaluate: NotebookKernelSpec['evaluate'];
+  private readonly baseLabel: string;
+  private readonly sessionId: number | undefined;
   private executionOrder = 0;
+  // Notebooks bound to this kernel, or that it is Preferred for — the ones
+  // whose toolbar must redraw when the label changes — each with the affinity
+  // to send back for the redraw (see refreshLabel).
+  private readonly affinities = new Map<
+    vscode.NotebookDocument,
+    vscode.NotebookControllerAffinity
+  >();
+  private readonly subscriptions: vscode.Disposable[] = [];
+  private disposed = false;
 
   constructor(
     protected sessionManager: SessionManager,
@@ -70,10 +100,92 @@ export class GemStoneNotebookKernel {
     this.controller.supportsExecutionOrder = true;
     this.controller.description = spec.description;
     this.controller.executeHandler = (cells) => this.executeCells(cells);
+
+    this.baseLabel = spec.label;
+    this.sessionId = spec.sessionId;
+    this.subscriptions.push(
+      this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+        const bound = GemStoneNotebookKernel.boundSessions;
+        if (selected) {
+          if (!this.affinities.has(notebook)) {
+            this.affinities.set(notebook, vscode.NotebookControllerAffinity.Default);
+          }
+          if (this.sessionId === undefined) bound.delete(notebook);
+          else bound.set(notebook, this.sessionId);
+          void this.adoptEmptyCells(notebook, spec.supportedLanguages);
+        } else {
+          // One it is Preferred for stays: the next label change redraws it too.
+          if (this.affinities.get(notebook) === vscode.NotebookControllerAffinity.Default) {
+            this.affinities.delete(notebook);
+          }
+          if (bound.get(notebook) === this.sessionId) bound.delete(notebook);
+        }
+      }),
+      vscode.workspace.onDidCloseNotebookDocument((doc) => {
+        this.affinities.delete(doc);
+        GemStoneNotebookKernel.boundSessions.delete(doc);
+      }),
+    );
+    if (this.sessionId === undefined) {
+      this.subscriptions.push(onDidChangeActiveSession(sessionManager, () => this.refreshLabel()));
+      this.refreshLabel();
+    } else {
+      const session = sessionManager.getSession(this.sessionId);
+      this.controller.label = session
+        ? `${this.baseLabel} · ${describeSession(session)}`
+        : this.baseLabel;
+    }
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.subscriptions.forEach((d) => d.dispose());
     this.controller.dispose();
+  }
+
+  // Switching kernels should switch the language of the cells not yet written
+  // in, so a blank notebook follows the kernel. Written cells keep theirs:
+  // Smalltalk source does not become Python by relabelling it.
+  private async adoptEmptyCells(
+    notebook: vscode.NotebookDocument,
+    languages: string[],
+  ): Promise<void> {
+    const [language] = languages;
+    for (const cell of notebook.getCells()) {
+      if (
+        cell.kind === vscode.NotebookCellKind.Code &&
+        cell.document.getText().trim() === '' &&
+        !languages.includes(cell.document.languageId)
+      ) {
+        await vscode.languages.setTextDocumentLanguage(cell.document, language);
+      }
+    }
+  }
+
+  protected prefer(doc: vscode.NotebookDocument): void {
+    this.affinities.set(doc, vscode.NotebookControllerAffinity.Preferred);
+    this.controller.updateNotebookAffinity(doc, vscode.NotebookControllerAffinity.Preferred);
+  }
+
+  // Cells run in the active session, so the kernel label — the notebook's
+  // top-right corner — names it, marked "active" to tell it apart from the
+  // kernel bound to that same session. VS Code's kernel toolbar does not redraw on a
+  // label change, only on an affinity change, so re-send each notebook's own
+  // affinity after it — Default is enough, and does not promote a notebook
+  // that was only selected into one this kernel is suggested for.
+  // After, not with: a label change reaches VS Code on a microtask while an
+  // affinity change goes at once, so an immediate nudge redraws the old label.
+  private refreshLabel(): void {
+    const session = this.sessionManager.getSelectedSession();
+    this.controller.label = session
+      ? `${this.baseLabel} · active ${describeSession(session)}`
+      : this.baseLabel;
+    setTimeout(() => {
+      if (this.disposed) return;
+      for (const [doc, affinity] of this.affinities) {
+        this.controller.updateNotebookAffinity(doc, affinity);
+      }
+    }, 0);
   }
 
   // Cells run sequentially: each shares the single GemStone session, and the
@@ -96,11 +208,16 @@ export class GemStoneNotebookKernel {
       return;
     }
 
-    const session = await this.sessionManager.resolveSession();
+    const session =
+      this.sessionId === undefined
+        ? await this.sessionManager.resolveSession()
+        : this.sessionManager.getSession(this.sessionId);
     if (!session) {
       await this.endWithError(
         execution,
-        'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.',
+        this.sessionId === undefined
+          ? 'No GemStone session is active. Log in from the GemStone Logins view, then re-run the cell.'
+          : `Session ${this.sessionId} has logged out. Pick another kernel, then re-run the cell.`,
       );
       return;
     }

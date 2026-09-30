@@ -133,8 +133,14 @@ import {
 } from './languageIds';
 import { provideDocumentFormattingEdits } from './formattingMiddleware';
 import { openWorkspace } from './workspace';
+import { openScratchNotebook } from './scratchNotebook';
+import {
+  chooseActiveSession,
+  WorkspaceSessionLensProvider,
+  WORKSPACE_SESSION_SELECTORS,
+} from './activeSessionDisplay';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
-import { openTutorialNotebook } from './tutorialNotebook';
+import { openTutorialNotebook, registerTutorialContext } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
@@ -158,8 +164,9 @@ import { StepPointHintsProvider } from './stepPointHints';
 import { StepPointHoverProvider } from './stepPointHover';
 import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
-import { GrailNotebookController } from './grailNotebookController';
-import { SmalltalkNotebookController } from './smalltalkNotebookController';
+import { GrailNotebookController, grailSessionKernel } from './grailNotebookController';
+import { SmalltalkNotebookController, smalltalkSessionKernel } from './smalltalkNotebookController';
+import { SessionKernels } from './sessionKernels';
 import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
@@ -1108,6 +1115,7 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
+  const workspaceSessionLens = new WorkspaceSessionLensProvider(sessionManager);
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(GCI_PROVIDER_SELECTORS, definitionProvider),
     vscode.languages.registerHoverProvider(GCI_PROVIDER_SELECTORS, hoverProvider),
@@ -1115,6 +1123,8 @@ export function activate(context: vscode.ExtensionContext) {
     completionProvider, // dispose() cancels a prime still waiting out its debounce
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
+    vscode.languages.registerCodeLensProvider(WORKSPACE_SESSION_SELECTORS, workspaceSessionLens),
+    workspaceSessionLens,
     // Hosts the RB family under the native "Refactor…" menu in a saved
     // (scheme:gemstone) method editor — and there alone; see
     // REFACTOR_CODE_ACTION_SELECTOR for why that is narrower than it was.
@@ -1325,6 +1335,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(grailNotebookController);
   const smalltalkNotebookController = new SmalltalkNotebookController(sessionManager);
   context.subscriptions.push(smalltalkNotebookController);
+  context.subscriptions.push(
+    new SessionKernels(sessionManager, [smalltalkSessionKernel, grailSessionKernel]),
+  );
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -2053,11 +2066,20 @@ export function activate(context: vscode.ExtensionContext) {
       await openWorkspace();
     }),
 
+    vscode.commands.registerCommand('gemstone.switchSession', () =>
+      chooseActiveSession(sessionManager),
+    ),
+
+    vscode.commands.registerCommand('gemstone.openNotebook', async () => {
+      await openScratchNotebook();
+    }),
+
     registerStartHere(),
 
     vscode.commands.registerCommand('gemstone.openTutorial', async () => {
       await openTutorialNotebook();
     }),
+    registerTutorialContext(),
 
     vscode.commands.registerCommand('gemstone.installServerSupport', async () => {
       await runInstallServerSupport(sessionManager, context.extensionPath);
@@ -2843,7 +2865,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (item) {
           sessionManager.selectSession(item.activeSession.id);
         } else {
-          await sessionManager.resolveSession();
+          await chooseActiveSession(sessionManager);
         }
         treeProvider.refresh();
       },
