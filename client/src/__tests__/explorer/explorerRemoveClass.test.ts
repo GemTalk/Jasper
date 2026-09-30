@@ -25,7 +25,7 @@ vi.mock('../../methodResultsPicker', () => ({
     `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
 }));
 
-import { window } from '../../__mocks__/vscode';
+import { window, type MessageOptions } from 'vscode';
 import { ExplorerController } from '../../gemstoneExplorer';
 import {
   canClassBeWritten,
@@ -48,13 +48,22 @@ function makeController(onClassRemoved?: (sessionId: number, className: string) 
   return ctl;
 }
 
-const warn = window.showWarningMessage as ReturnType<typeof vi.fn>;
-const info = window.showInformationMessage as ReturnType<typeof vi.fn>;
-const error = window.showErrorMessage as ReturnType<typeof vi.fn>;
-const deleteClassMock = deleteClass as ReturnType<typeof vi.fn>;
-const descendantsMock = getClassDescendantNames as ReturnType<typeof vi.fn>;
-const writableMock = canClassBeWritten as ReturnType<typeof vi.fn>;
-const referencesMock = referencesToClassInDict as ReturnType<typeof vi.fn>;
+// `showWarningMessage` is overloaded and `vi.mocked` types the mock via the last
+// (`MessageItem`) overload; removeClass uses the string one, so narrow to it. Assigning
+// rather than casting keeps the compiler checking it against the real overloads, though
+// only loosely for their generic item and return types.
+const showStringWarning: (
+  message: string,
+  options: MessageOptions,
+  ...items: string[]
+) => Thenable<string | undefined> = window.showWarningMessage;
+const warn = vi.mocked(showStringWarning);
+const info = vi.mocked(window.showInformationMessage);
+const error = vi.mocked(window.showErrorMessage);
+const deleteClassMock = vi.mocked(deleteClass);
+const descendantsMock = vi.mocked(getClassDescendantNames);
+const writableMock = vi.mocked(canClassBeWritten);
+const referencesMock = vi.mocked(referencesToClassInDict);
 
 // A descendant now carries the dictionary that binds it (resolved by object identity
 // in the query layer), so removeClass never has to guess by name.
@@ -62,7 +71,11 @@ const referencesMock = referencesToClassInDict as ReturnType<typeof vi.fn>;
  *  Answering with a hard-coded string instead would silently turn every one of these into a
  *  "cancelled" run the day the label changes; the label itself is pinned by its own test below. */
 const confirmSubtreeOnce = () =>
-  warn.mockImplementationOnce((...args: unknown[]) => Promise.resolve(args[args.length - 1]));
+  // The cast is needed because the rest-args echo is typed `unknown`, while the
+  // string overload this mock now carries must resolve `string | undefined`.
+  warn.mockImplementationOnce((...args: unknown[]) =>
+    Promise.resolve(args[args.length - 1] as string | undefined),
+  );
 
 const descendant = (className: string, dictIndex: number, dictName = 'UserGlobals') => ({
   className,

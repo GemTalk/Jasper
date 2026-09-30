@@ -119,7 +119,7 @@ export async function openLoopbackConnectionWith(
     // `server.listen`'s callback type is `() => void`; it doesn't await a
     // returned promise, so a rejection from `connectClient` would otherwise
     // become an unhandled rejection instead of failing this Promise.
-    server.listen(0, '127.0.0.1', () => onListening().catch(reject));
+    server.listen(0, '127.0.0.1', () => void onListening().catch(reject));
   });
 }
 
