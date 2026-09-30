@@ -14,7 +14,7 @@ Class {
 	#instVars : [
 		'id',
 		'kind',
-		'dictName',
+		'dict',
 		'className',
 		'isMeta',
 		'selector',
@@ -29,32 +29,32 @@ Class {
 }
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> classDefinitionEditId: anId dictName: dn className: cn oldSource: os newSource: ns [
+GsRefactoringChange class >> classDefinitionEditId: anId dict: dn className: cn oldSource: os newSource: ns [
 	^self new
-		setId: anId kind: #classDefinitionEdit dictName: dn className: cn
+		setId: anId kind: #classDefinitionEdit dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> methodRecompileId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns [
+GsRefactoringChange class >> methodRecompileId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns [
 	^self new
-		setId: anId kind: #methodRecompile dictName: dn className: cn
+		setId: anId kind: #methodRecompile dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns [
+GsRefactoringChange class >> methodAddId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns [
 	"A brand-new method to compile (it does not yet exist in the class): apply =
 	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
 	 diff renders as an all-added method. Used by extract-method for the extracted
 	 method."
 	^self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w [
+GsRefactoringChange class >> methodOverwriteId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w [
 	"A method to compile onto a class that ALREADY defines the selector: apply = compile
 	 newSource, exactly like a #methodAdd (the kind IS #methodAdd, so the apply path is
 	 unchanged). Unlike a plain add, oldSource carries the class's EXISTING definition so
@@ -63,45 +63,45 @@ GsRefactoringChange class >> methodOverwriteId: anId dictName: dn className: cn 
 	 superclass that already implements the selector) and push-down (onto a subclass that
 	 already overrides it) as an opt-in, data-losing change."
 	^(self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns)
 		setWarning: w
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os [
+GsRefactoringChange class >> methodRemoveId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os [
 	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
 	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
 	 renders as an all-removed method."
 	^self new
-		setId: anId kind: #methodRemove dictName: dn className: cn
+		setId: anId kind: #methodRemove dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> methodRenameId: anId dictName: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns [
+GsRefactoringChange class >> methodRenameId: anId dict: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns [
 	"A method whose selector changes: apply = compile newSource (under newSel),
 	 then remove the old-selector method. `selector` holds the old selector."
 	^(self new
-		setId: anId kind: #methodRename dictName: dn className: cn
+		setId: anId kind: #methodRename dict: dn className: cn
 		isMeta: aBool selector: oldSel category: cat oldSource: os newSource: ns)
 		setNewSelector: newSel
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> classRenameId: anId dictName: dn className: cn newName: nn oldSource: os newSource: ns [
+GsRefactoringChange class >> classRenameId: anId dict: dn className: cn newName: nn oldSource: os newSource: ns [
 	"The target class of a rename: `className` holds the OLD name, `newName` the new.
 	 Apply (server-side) creates a new version under the new name, copies the old
 	 version's methods forward, then rebinds the dictionary key (add new, remove old).
 	 oldSource/newSource are the old/new class definitions, for the before/after diff."
 	^(self new
-		setId: anId kind: #classRename dictName: dn className: cn
+		setId: anId kind: #classRename dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns)
 		setNewName: nn
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns [
+GsRefactoringChange class >> classAddId: anId dict: dn className: cn superclassName: sn newSource: ns [
 	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
 	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
 	 unlike #classReparent there is no old version to version off. `className` is the new class's
@@ -109,31 +109,31 @@ GsRefactoringChange class >> classAddId: anId dictName: dn className: cn supercl
 	 generated class definition. oldSource is nil so the before/after diff renders as an
 	 all-added class."
 	^(self new
-		setId: anId kind: #classAdd dictName: dn className: cn
+		setId: anId kind: #classAdd dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
 		setNewName: sn
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> classRemoveId: anId dictName: dn className: cn oldSource: os [
+GsRefactoringChange class >> classRemoveId: anId dict: dn className: cn oldSource: os [
 	"A class to UNBIND from its dictionary. Staged only by an UNDO: a refactoring that CREATED a
 	 class (extract-superclass's inserted parent, split-class's component) has no earlier version
 	 to revert that class to, so reversing it means taking the name back out. oldSource is the
 	 class's current definition and newSource is nil, so the before/after diff renders as an
 	 all-removed class. No forward refactoring stages this kind."
 	^self new
-		setId: anId kind: #classRemove dictName: dn className: cn
+		setId: anId kind: #classRemove dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: nil
 ]
 
 { #category : 'instance creation' }
-GsRefactoringChange class >> classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns [
+GsRefactoringChange class >> classReparentId: anId dict: dn className: cn oldSource: os newSource: ns [
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
 	 child, so its definition names the new superclass). `className` is the descendant's
 	 own (unchanged) name. oldSource/newSource are its old/new definition."
 	^self new
-		setId: anId kind: #classReparent dictName: dn className: cn
+		setId: anId kind: #classReparent dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 ]
 
@@ -143,8 +143,30 @@ GsRefactoringChange >> className [
 ]
 
 { #category : 'accessing' }
+GsRefactoringChange >> dict [
+	"The SymbolDictionary this change was computed against, pinned as the OBJECT.
+
+	 A name is not an identity. Two dictionaries can share one, and a dictionary made by
+	 `SymbolDictionary new` has none at all -- that is simply what a fresh one answers -- so a
+	 change that recorded only the name recorded nil for it, and the apply fell back to
+	 first-match across the symbol list: someone else's same-named class, re-versioned in
+	 silence (#396). The environment already resolves the dictionary by identity; this is that
+	 answer kept rather than flattened to a string one line later. Same rule as the undo plan,
+	 which pins its dictionaries too (GsRefactoringUndo>>dictRefForEntry:).
+
+	 May be nil, for a change staged by a caller that had no dictionary to give."
+	^dict
+]
+
+{ #category : 'accessing' }
 GsRefactoringChange >> dictName [
-	^dictName
+	"What to CALL this change's dictionary -- for the preview panel and for nothing else.
+	 Resolution uses #dict. nil when the dictionary has no name, or when there is no
+	 dictionary; both read as 'unlabelled' to a human and neither is something to resolve by."
+	^dict ifNil: [nil] ifNotNil: [:d |
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [d name ifNil: [nil] ifNotNil: [:n | n asString]]
+			ifFalse: [d asString]]
 ]
 
 { #category : 'serializing' }
@@ -200,7 +222,7 @@ GsRefactoringChange >> jsonOn: aStream [
 	aStream nextPutAll: ',"kind":'.
 	self jsonValue: kind on: aStream.
 	aStream nextPutAll: ',"dictName":'.
-	self jsonValue: dictName on: aStream.
+	self jsonValue: self dictName on: aStream.
 	aStream nextPutAll: ',"className":'.
 	self jsonValue: className on: aStream.
 	aStream nextPutAll: ',"isMeta":'.
@@ -302,10 +324,10 @@ GsRefactoringChange >> setNewSelector: aSelector [
 ]
 
 { #category : 'private' }
-GsRefactoringChange >> setId: anId kind: aKind dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns [
+GsRefactoringChange >> setId: anId kind: aKind dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns [
 	id := anId.
 	kind := aKind.
-	dictName := dn.
+	dict := dn.
 	className := cn.
 	isMeta := aBool.
 	selector := sel.

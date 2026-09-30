@@ -646,7 +646,7 @@ removeallclassmethods GsPushUpMethodRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsRefactoringChange'
-  instVarNames: #('id' 'kind' 'dictName' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource' 'warning')
+  instVarNames: #('id' 'kind' 'dict' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource' 'warning')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -1313,11 +1313,12 @@ keyForClass: aClass isMeta: aBool
 
 category: 'private'
 method: GsChangeSignatureRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -1446,7 +1447,7 @@ stageImplementorRename: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -1486,7 +1487,7 @@ stageSenderRewrite: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel
@@ -2581,11 +2582,12 @@ methodCategory
 
 category: 'private'
 method: GsExtractMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -2653,7 +2655,7 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	self declineReason notNil ifTrue: [^cs].
-	dict := self dictNameForClass: definingClass.
+	dict := self dictForClass: definingClass.
 	cs
 		addMethodAddInDictionary: dict
 		className: definingClass name
@@ -2716,7 +2718,7 @@ stageSimilarInClass: cls selector: sel into: cs
 			lStop := window last stop.
 			call := self sendSourceWithArgs: (argNames collect: [:nm | binding at: nm ifAbsent: [nm]]).
 			cs
-				addMethodRecompileInDictionary: (self dictNameForClass: cls)
+				addMethodRecompileInDictionary: (self dictForClass: cls)
 				className: cls thisClass name
 				isMeta: cls isMeta
 				selector: sel
@@ -3320,7 +3322,7 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -3342,7 +3344,7 @@ stageExtractedEdit: aClass into: cs
 	oldDef := aClass definition.
 	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
 	cs
-		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
@@ -3356,7 +3358,7 @@ stageReparent: aClass into: cs
 	| oldDef |
 	oldDef := aClass definition.
 	cs
-		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		addClassReparentInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: oldDef
@@ -3372,7 +3374,7 @@ stageHoistOf: aSelector into: cs
 	src := self sourceOf: aSelector in: anchorClass.
 	cat := self categoryOf: aSelector in: anchorClass.
 	cs
-		addMethodAddInDictionary: (self newClassDictName)
+		addMethodAddInDictionary: (self dictObjectForNewClass)
 		className: newName
 		isMeta: false
 		selector: aSelector
@@ -3381,7 +3383,7 @@ stageHoistOf: aSelector into: cs
 	extractedClasses do: [:e |
 		(e includesSelector: aSelector) ifTrue: [
 			cs
-				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				addMethodRemoveInDictionary: (self dictForClass: e)
 				className: e name asString
 				isMeta: false
 				selector: aSelector
@@ -3452,19 +3454,23 @@ quotedList: aCollection
 category: 'private'
 method: GsExtractSuperclassRefactoring
 newClassDictName
-	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
-	 dictionary."
+	"What to WRITE in the generated `inDictionary:` of the new class's definition: the caller's
+	 chosen name, else the name of the dictionary the anchor lives in. A name, because this ends
+	 up in Smalltalk source -- everything that RESOLVES a dictionary uses dictObjectForNewClass
+	 instead, since a name cannot pick between two dictionaries that share one and cannot name a
+	 dictionary that has none."
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: anchorClass
+	^(self dictForClass: anchorClass) ifNotNil: [:d | d name ifNotNil: [:n | n asString]]
 %
 
 category: 'private'
 method: GsExtractSuperclassRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -4100,7 +4106,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -4235,11 +4241,12 @@ methodCategory
 
 category: 'private'
 method: GsExtractTemporaryRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -4867,11 +4874,12 @@ categoryOfClass: aBehavior selector: aSelector
 
 category: 'private'
 method: GsInlineMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -4902,7 +4910,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -4911,7 +4919,7 @@ buildChangeSet
 		newSource: self rewrittenSource.
 	lastSender ifTrue: [
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClass: targetClass thisClass)
+			addMethodRemoveInDictionary: (self dictForClass: targetClass thisClass)
 			className: targetClass thisClass name
 			isMeta: targetClass isMeta
 			selector: targetSelector
@@ -5399,7 +5407,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -5527,11 +5535,12 @@ methodCategory
 
 category: 'private'
 method: GsInlineTemporaryRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -5916,11 +5925,12 @@ isEditedClass: aClass
 
 category: 'private'
 method: GsInstVarRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -5954,7 +5964,7 @@ category: 'building'
 method: GsInstVarRefactoring
 stageClassChange: aClass into: cs
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
 	(self isEditedClass: aClass)
 		ifTrue: [cs
@@ -6899,10 +6909,10 @@ simpleAccessorKindOf: tree forVar: v
 
 category: 'private'
 method: GsInstVarStructureRefactoring
-dictNameForClassNamed: aName
+dictForClassNamed: aName
 	"DEPRECATED, and kept only so an external caller does not break: a NAME cannot say which
 	 dictionary is meant when the name is shadowed, and answering the first match is what sent
-	 staged changes to the wrong class (#396). Use #dictNameForClass:, which resolves the class
+	 staged changes to the wrong class (#396). Use #dictForClass:, which resolves the class
 	 object by identity. Nothing in the engine calls this."
 	| dicts |
 	dicts := environment dictionariesDefiningClassNamed: aName.
@@ -6938,11 +6948,12 @@ isEditedClass: aClass
 
 category: 'private'
 method: GsInstVarStructureRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -6975,7 +6986,7 @@ buildChangeSet
 	affected do: [:cls | self stageClassChange: cls into: cs].
 	accessorRemovals do: [:r |
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClass: (r at: 5))
+			addMethodRemoveInDictionary: (self dictForClass: (r at: 5))
 			className: (r at: 2)
 			isMeta: false
 			selector: (r at: 1)
@@ -6983,7 +6994,7 @@ buildChangeSet
 			oldSource: (r at: 3)].
 	accessorAdds do: [:a |
 		cs
-			addMethodAddInDictionary: (self dictNameForClass: (a at: 5))
+			addMethodAddInDictionary: (self dictForClass: (a at: 5))
 			className: (a at: 2)
 			isMeta: false
 			selector: (a at: 1)
@@ -6997,7 +7008,7 @@ category: 'building'
 method: GsInstVarStructureRefactoring
 stageClassChange: aClass into: cs
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
 	(self isEditedClass: aClass)
 		ifTrue: [cs
@@ -7020,7 +7031,7 @@ stageMethodRewriteInto: cs
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	cat := (behavior categoryOfSelector: methodSelector environmentId: 0) ifNil: ['as yet unclassified'].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: (methodRewrite at: 1)
 		isMeta: (methodRewrite at: 3)
 		selector: (methodRewrite at: 2)
@@ -7649,11 +7660,12 @@ commaList: aCollection
 
 category: 'private'
 method: GsMoveMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -7726,14 +7738,14 @@ stageMoveOf: aSelector into: cs
 	src := method sourceString.
 	cat := self categoryOfSelector: aSelector.
 	cs
-		addMethodAddInDictionary: (self dictNameForClass: targetClass)
+		addMethodAddInDictionary: (self dictForClass: targetClass)
 		className: targetClass name asString
 		isMeta: toMeta
 		selector: aSelector
 		category: cat
 		newSource: src.
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -8130,11 +8142,12 @@ tree: aTree referencesName: aName
 
 category: 'private'
 method: GsPushDownMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -8250,14 +8263,14 @@ stagePushOf: aSelector into: cs
 		existing := self existingSourceIn: sub for: aSelector.
 		existing isNil
 			ifTrue: [cs
-				addMethodAddInDictionary: (self dictNameForClass: sub)
+				addMethodAddInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
 				category: cat
 				newSource: src]
 			ifFalse: [cs
-				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				addMethodOverwriteInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
@@ -8266,7 +8279,7 @@ stagePushOf: aSelector into: cs
 				newSource: src
 				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -8701,11 +8714,12 @@ commaList: aCollection
 
 category: 'private'
 method: GsPushUpMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -8789,14 +8803,14 @@ stagePushOf: aSelector into: cs
 	existing := self targetExistingSourceFor: aSelector.
 	existing isNil
 		ifTrue: [cs
-			addMethodAddInDictionary: (self dictNameForClass: superClass)
+			addMethodAddInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
 			category: cat
 			newSource: src]
 		ifFalse: [cs
-			addMethodOverwriteInDictionary: (self dictNameForClass: superClass)
+			addMethodOverwriteInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
@@ -8805,7 +8819,7 @@ stagePushOf: aSelector into: cs
 			newSource: src
 			warning: (self overwriteWarningFor: aSelector)].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -9079,8 +9093,31 @@ className
 
 category: 'accessing'
 method: GsRefactoringChange
+dict
+	"The SymbolDictionary this change was computed against, pinned as the OBJECT.
+
+	 A name is not an identity. Two dictionaries can share one, and a dictionary made by
+	 `SymbolDictionary new` has none at all -- that is simply what a fresh one answers -- so a
+	 change that recorded only the name recorded nil for it, and the apply fell back to
+	 first-match across the symbol list: someone else's same-named class, re-versioned in
+	 silence (#396). The environment already resolves the dictionary by identity; this is that
+	 answer kept rather than flattened to a string one line later. Same rule as the undo plan,
+	 which pins its dictionaries too (GsRefactoringUndo>>dictRefForEntry:).
+
+	 May be nil, for a change staged by a caller that had no dictionary to give."
+	^dict
+%
+
+category: 'accessing'
+method: GsRefactoringChange
 dictName
-	^dictName
+	"What to CALL this change's dictionary -- for the preview panel and for nothing else.
+	 Resolution uses #dict. nil when the dictionary has no name, or when there is no
+	 dictionary; both read as 'unlabelled' to a human and neither is something to resolve by."
+	^dict ifNil: [nil] ifNotNil: [:d |
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [d name ifNil: [nil] ifNotNil: [:n | n asString]]
+			ifFalse: [d asString]]
 %
 
 category: 'serializing'
@@ -9142,7 +9179,7 @@ jsonOn: aStream
 	aStream nextPutAll: ',"kind":'.
 	self jsonValue: kind on: aStream.
 	aStream nextPutAll: ',"dictName":'.
-	self jsonValue: dictName on: aStream.
+	self jsonValue: self dictName on: aStream.
 	aStream nextPutAll: ',"className":'.
 	self jsonValue: className on: aStream.
 	aStream nextPutAll: ',"isMeta":'.
@@ -9257,10 +9294,10 @@ setNewSelector: aSelector
 
 category: 'private'
 method: GsRefactoringChange
-setId: anId kind: aKind dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
+setId: anId kind: aKind dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 	id := anId.
 	kind := aKind.
-	dictName := dn.
+	dict := dn.
 	className := cn.
 	isMeta := aBool.
 	selector := sel.
@@ -9271,35 +9308,35 @@ setId: anId kind: aKind dictName: dn className: cn isMeta: aBool selector: sel c
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classDefinitionEditId: anId dictName: dn className: cn oldSource: os newSource: ns
+classDefinitionEditId: anId dict: dn className: cn oldSource: os newSource: ns
 	^self new
-		setId: anId kind: #classDefinitionEdit dictName: dn className: cn
+		setId: anId kind: #classDefinitionEdit dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRecompileId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
+methodRecompileId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 	^self new
-		setId: anId kind: #methodRecompile dictName: dn className: cn
+		setId: anId kind: #methodRecompile dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
+methodAddId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
 	"A brand-new method to compile (it does not yet exist in the class): apply =
 	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
 	 diff renders as an all-added method. Used by extract-method for the extracted
 	 method."
 	^self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
+methodOverwriteId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
 	"A method to compile onto a class that ALREADY defines the selector: apply = compile
 	 newSource, exactly like a #methodAdd (the kind IS #methodAdd, so the apply path is
 	 unchanged). Unlike a plain add, oldSource carries the class's EXISTING definition so
@@ -9308,49 +9345,49 @@ methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel c
 	 superclass that already implements the selector) and push-down (onto a subclass that
 	 already overrides it) as an opt-in, data-losing change."
 	^(self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns)
 		setWarning: w
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
+methodRemoveId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
 	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
 	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
 	 renders as an all-removed method."
 	^self new
-		setId: anId kind: #methodRemove dictName: dn className: cn
+		setId: anId kind: #methodRemove dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRenameId: anId dictName: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns
+methodRenameId: anId dict: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns
 	"A method whose selector changes: apply = compile newSource (under newSel),
 	 then remove the old-selector method. `selector` holds the old selector."
 	^(self new
-		setId: anId kind: #methodRename dictName: dn className: cn
+		setId: anId kind: #methodRename dict: dn className: cn
 		isMeta: aBool selector: oldSel category: cat oldSource: os newSource: ns)
 		setNewSelector: newSel
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classRenameId: anId dictName: dn className: cn newName: nn oldSource: os newSource: ns
+classRenameId: anId dict: dn className: cn newName: nn oldSource: os newSource: ns
 	"The target class of a rename: `className` holds the OLD name, `newName` the new.
 	 Apply (server-side) creates a new version under the new name, copies the old
 	 version's methods forward, then rebinds the dictionary key (add new, remove old).
 	 oldSource/newSource are the old/new class definitions, for the before/after diff."
 	^(self new
-		setId: anId kind: #classRename dictName: dn className: cn
+		setId: anId kind: #classRename dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns)
 		setNewName: nn
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
+classAddId: anId dict: dn className: cn superclassName: sn newSource: ns
 	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
 	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
 	 unlike #classReparent there is no old version to version off. `className` is the new class's
@@ -9358,33 +9395,33 @@ classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
 	 generated class definition. oldSource is nil so the before/after diff renders as an
 	 all-added class."
 	^(self new
-		setId: anId kind: #classAdd dictName: dn className: cn
+		setId: anId kind: #classAdd dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
 		setNewName: sn
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classRemoveId: anId dictName: dn className: cn oldSource: os
+classRemoveId: anId dict: dn className: cn oldSource: os
 	"A class to UNBIND from its dictionary. Staged only by an UNDO: a refactoring that CREATED a
 	 class (extract-superclass's inserted parent, split-class's component) has no earlier version
 	 to revert that class to, so reversing it means taking the name back out. oldSource is the
 	 class's current definition and newSource is nil, so the before/after diff renders as an
 	 all-removed class. No forward refactoring stages this kind."
 	^self new
-		setId: anId kind: #classRemove dictName: dn className: cn
+		setId: anId kind: #classRemove dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: nil
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns
+classReparentId: anId dict: dn className: cn oldSource: os newSource: ns
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
 	 child, so its definition names the new superclass). `className` is the descendant's
 	 own (unchanged) name. oldSource/newSource are its old/new definition."
 	^self new
-		setId: anId kind: #classReparent dictName: dn className: cn
+		setId: anId kind: #classReparent dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 %
 
@@ -9395,7 +9432,7 @@ addClassDefinitionEditInDictionary: dn className: cn oldSource: os newSource: ns
 	 commits. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classDefinitionEditId: self nextIdString dictName: dn className: cn
+		classDefinitionEditId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9410,7 +9447,7 @@ addMethodRecompileInDictionary: dn className: cn isMeta: aBool selector: sel cat
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRecompileId: self nextIdString dictName: dn className: cn
+		methodRecompileId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9425,7 +9462,7 @@ addMethodAddInDictionary: dn className: cn isMeta: aBool selector: sel category:
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodAddId: self nextIdString dictName: dn className: cn
+		methodAddId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat newSource: ns.
 	changes add: change.
 	^change
@@ -9442,7 +9479,7 @@ addMethodOverwriteInDictionary: dn className: cn isMeta: aBool selector: sel cat
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodOverwriteId: self nextIdString dictName: dn className: cn
+		methodOverwriteId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w.
 	changes add: change.
 	^change
@@ -9456,7 +9493,7 @@ addMethodRemoveInDictionary: dn className: cn isMeta: aBool selector: sel catego
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRemoveId: self nextIdString dictName: dn className: cn
+		methodRemoveId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os.
 	changes add: change.
 	^change
@@ -9470,7 +9507,7 @@ addMethodRenameInDictionary: dn className: cn isMeta: aBool oldSelector: oldSel 
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRenameId: self nextIdString dictName: dn className: cn
+		methodRenameId: self nextIdString dict: dn className: cn
 		isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat
 		oldSource: os newSource: ns.
 	changes add: change.
@@ -9486,7 +9523,7 @@ addClassRenameInDictionary: dn className: cn newName: nn oldSource: os newSource
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classRenameId: self nextIdString dictName: dn className: cn
+		classRenameId: self nextIdString dict: dn className: cn
 		newName: nn oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9500,7 +9537,7 @@ addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns
 	 superclassName. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classAddId: self nextIdString dictName: dn className: cn
+		classAddId: self nextIdString dict: dn className: cn
 		superclassName: sn newSource: ns.
 	changes add: change.
 	^change
@@ -9511,10 +9548,10 @@ method: GsRefactoringChangeSet
 addClassRemoveInDictionary: dn className: cn oldSource: os
 	"Stage the UNBINDING of a class. Records the change only; NEVER removes or commits. Staged
 	 only by an undo reversing a refactoring that created the class -- see
-	 GsRefactoringChange class>>classRemoveId:dictName:className:oldSource:."
+	 GsRefactoringChange class>>classRemoveId:dict:className:oldSource:."
 	| change |
 	change := GsRefactoringChange
-		classRemoveId: self nextIdString dictName: dn className: cn oldSource: os.
+		classRemoveId: self nextIdString dict: dn className: cn oldSource: os.
 	changes add: change.
 	^change
 %
@@ -9528,7 +9565,7 @@ addClassReparentInDictionary: dn className: cn oldSource: os newSource: ns
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classReparentId: self nextIdString dictName: dn className: cn
+		classReparentId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9710,18 +9747,22 @@ dictionaryForNewVersionOf: aClass
 
 category: 'dictionaries'
 method: GsRefactoringEnvironment
-dictionaryNameDefiningClass: aClass
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity: taking the first dictionary that binds the NAME records a
-	 different class's dictionary whenever the name is shadowed, and the apply then writes the
-	 change there (#396). nil when no dictionary binds the class under its own name, which the
-	 apply falls back on as before.
+dictionaryPinnedForClass: aClass
+	"The dictionary that binds aClass ITSELF, pinned on a staged change so the apply can find
+	 its way back to the same class. Resolved by identity: taking the first dictionary that
+	 binds the NAME finds a different class's dictionary whenever the name is shadowed, and the
+	 apply then writes the change there (#396).
 
-	 Every refactoring records a change this way, so it lives here rather than in each of them:
-	 seventeen copies of one method is seventeen places for the identity rule to be lost."
-	^(self dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	 The OBJECT, not its name. This used to answer `dict name`, which threw the identity away
+	 one line after establishing it -- and a name cannot stand in for a dictionary: two can
+	 share one, and `SymbolDictionary new` has none at all, so a class in a nameless dictionary
+	 recorded nil and fell straight into the first-match path this engine exists to remove.
+
+	 nil when no dictionary binds the class under its own name, which the apply falls back on
+	 as before. Every refactoring pins a change this way, so it lives here rather than in each
+	 of them: seventeen copies of one method is seventeen places for the identity rule to be
+	 lost."
+	^self dictionaryDefiningClass: aClass
 %
 
 category: 'selectors'
@@ -9871,7 +9912,7 @@ dictionaryDefiningClass: aClass
 	 that the obvious wrong answer -- take the class's name and use the first dictionary that
 	 binds it -- silently picks a DIFFERENT class whenever the name is shadowed. Refactoring
 	 wrote that wrong answer in three places (#396): the dictionary a reshaped class was rebound
-	 into, the dictionary name recorded on a staged change, and the class a change was applied
+	 into, the dictionary pinned on a staged change, and the class a change was applied
 	 to. All three now come through here.
 
 	 Identity also makes the answer honest when it cannot be given: a class that is unbound, or
@@ -9889,23 +9930,29 @@ method: GsRefactoringEnvironment
 classForChange: aChange
 	"The class a staged change was computed against, or nil.
 
-	 A change records its class as a NAME plus the name of the dictionary it was found in, so
-	 this resolves the pair rather than the name alone. Resolving the name alone is what
-	 `classNamed:` does, and it answers the first binding on the symbol list -- which, for a
-	 shadowed name, is a different class from the one the refactoring analysed. Applying a
-	 change to it writes the user's refactoring onto a class they never chose (#396).
+	 A change records its class as a NAME plus the DICTIONARY it was found in -- the dictionary
+	 object, pinned at staging time -- so this asks that dictionary directly. Resolving the name
+	 alone is what `classNamed:` does, and it answers the first binding on the symbol list --
+	 which, for a shadowed name, is a different class from the one the refactoring analysed.
+	 Applying a change to it writes the user's refactoring onto a class they never chose (#396).
 
-	 A change with no dictionary name falls back to `classNamed:`. That is the pre-#396
-	 behaviour and is kept deliberately: an undo entry or change set recorded before this fix,
-	 or staged by a caller that has no dictionary to give, still applies as well as it ever did.
+	 Asking the pinned dictionary settles every shape a name cannot: two dictionaries sharing a
+	 name, a dictionary with NO name, two dictionaries with no name, and a symbol list reordered
+	 between the preview and the apply. It also answers nil, rather than somebody else's class,
+	 for a dictionary that has since left the symbol list -- which callers turn into
+	 'Class not found: ...', a decline the user can act on rather than damage they cannot see.
 
-	 A dictionary NAME resolves to the first dictionary on the symbol list with that name, and the
-	 class is looked for there only: a second dictionary of the same name is never consulted, so a
-	 change recorded against it resolves to nil (or to the first dictionary's class of that name)
-	 rather than to its own. Only a SymbolList index says which of two same-named dictionaries is
-	 meant."
+	 A change with no dictionary at all falls back to `classNamed:`. That is the pre-#396
+	 behaviour and is kept deliberately: a change staged by a caller that has no dictionary to
+	 give still applies as well as it ever did."
 	aChange isNil ifTrue: [^nil].
-	^self classNamed: aChange className inDictionaryNamed: aChange dictName
+	aChange dict ifNotNil: [:d |
+		"A pinned dictionary answers for itself. A NAME (or a SymbolList index) still arrives
+		 from the undo plan's older records, which resolve as they always did."
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [^d at: aChange className asSymbol otherwise: nil]
+			ifFalse: [^self classNamed: aChange className inDictionaryNamed: d]].
+	^self classNamed: aChange className inDictionaryNamed: nil
 %
 
 category: 'accessing'
@@ -11794,7 +11841,7 @@ stageClassRenameInto: aChangeSet
 	oldDef := definingClass definition.
 	newDef := self renameClassNameIn: oldDef from: oldName to: newName.
 	aChangeSet
-		addClassRenameInDictionary: (self dictNameForClass: definingClass)
+		addClassRenameInDictionary: (self dictForClass: definingClass)
 		className: oldName
 		newName: newName
 		oldSource: oldDef
@@ -11818,7 +11865,7 @@ stageReparentsInto: aChangeSet
 			ifTrue: [self renameSuperclassNameIn: oldDef from: oldName to: newName]
 			ifFalse: [oldDef].
 		aChangeSet
-			addClassReparentInDictionary: (self dictNameForClass: sub)
+			addClassReparentInDictionary: (self dictForClass: sub)
 			className: sub name asString
 			oldSource: oldDef
 			newSource: newDef]
@@ -11864,7 +11911,7 @@ stageReferenceRewrite: aMethod base: base into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -11923,11 +11970,12 @@ hierarchyScopeClasses
 
 category: 'private'
 method: GsRenameClassRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'source rewriting'
@@ -12574,7 +12622,7 @@ stageClassDefinitionEditInto: aChangeSet
 	newDef := self renameClassVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -12611,7 +12659,7 @@ stageMethodRewrite: aMethod into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -12632,11 +12680,12 @@ baseClassOf: aMethod
 
 category: 'private'
 method: GsRenameClassVariableRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -13008,11 +13057,12 @@ definingClass
 
 category: 'private'
 method: GsRenameInstanceVariableRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'accessing'
@@ -13137,7 +13187,7 @@ stageClassDefinitionEditInto: aChangeSet
 	newDef := self renameInstVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -13154,7 +13204,7 @@ stageMethodRecompilesInto: aChangeSet
 		inHierarchyOf: definingClass.
 	affected do: [:assoc | | cls dn |
 		cls := assoc key.
-		dn := self dictNameForClass: cls.
+		dn := self dictForClass: cls.
 		assoc value do: [:sel | | m oldSrc newSrc cat |
 			m := cls compiledMethodAt: sel environmentId: 0 otherwise: nil.
 			m ifNotNil: [
@@ -13533,11 +13583,12 @@ definingClass
 
 category: 'private'
 method: GsRenameMethodRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'accessing'
@@ -13838,7 +13889,7 @@ stageImplementorRename: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -13864,7 +13915,7 @@ stageSenderRewrite: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel
@@ -14163,7 +14214,7 @@ buildChangeSet
 			replaceFrom: node start to: node stop with: newName).
 		node token value: newName].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -14182,11 +14233,12 @@ methodCategory
 
 category: 'private'
 method: GsRenameTemporaryRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -14746,9 +14798,9 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	sn := sourceClass name asString.
-	srcDict := self dictNameForClass: sourceClass.
+	srcDict := self dictForClass: sourceClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -14769,7 +14821,7 @@ buildChangeSet
 		newSource: self sourceDefinitionAfterSplit.
 	(environment descendantsOf: sourceClass) do: [:d |
 		cs
-			addClassReparentInDictionary: (self dictNameForClass: d)
+			addClassReparentInDictionary: (self dictForClass: d)
 			className: d name asString
 			oldSource: d definition
 			newSource: d definition].
@@ -14911,17 +14963,23 @@ answersSelf: aSelector in: aClass
 category: 'private'
 method: GsSplitClassRefactoring
 newClassDictName
+	"What to WRITE in the generated `inDictionary:` of the new class's definition: the caller's
+	 chosen name, else the name of the dictionary the anchor lives in. A name, because this ends
+	 up in Smalltalk source -- everything that RESOLVES a dictionary uses dictObjectForNewClass
+	 instead, since a name cannot pick between two dictionaries that share one and cannot name a
+	 dictionary that has none."
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: sourceClass
+	^(self dictForClass: sourceClass) ifNotNil: [:d | d name ifNotNil: [:n | n asString]]
 %
 
 category: 'private'
 method: GsSplitClassRefactoring
-dictNameForClass: aClass
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'

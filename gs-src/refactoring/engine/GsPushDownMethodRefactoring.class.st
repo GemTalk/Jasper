@@ -197,11 +197,12 @@ GsPushDownMethodRefactoring >> tree: aTree referencesName: aName [
 ]
 
 { #category : 'private' }
-GsPushDownMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsPushDownMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }
@@ -306,14 +307,14 @@ GsPushDownMethodRefactoring >> stagePushOf: aSelector into: cs [
 		existing := self existingSourceIn: sub for: aSelector.
 		existing isNil
 			ifTrue: [cs
-				addMethodAddInDictionary: (self dictNameForClass: sub)
+				addMethodAddInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
 				category: cat
 				newSource: src]
 			ifFalse: [cs
-				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				addMethodOverwriteInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
@@ -322,7 +323,7 @@ GsPushDownMethodRefactoring >> stagePushOf: aSelector into: cs [
 				newSource: src
 				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector

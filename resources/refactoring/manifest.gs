@@ -73,7 +73,7 @@ m add: (Array with: 'GsInstVarStructureRefactoring' with: 69).
 m add: (Array with: 'GsMoveMethodRefactoring' with: 42).
 m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).
-m add: (Array with: 'GsRefactoringChange' with: 31).
+m add: (Array with: 'GsRefactoringChange' with: 32).
 m add: (Array with: 'GsRefactoringChangeSet' with: 20).
 m add: (Array with: 'GsRefactoringEnvironment' with: 39).
 m add: (Array with: 'GsRefactoringJson' with: 3).

@@ -371,9 +371,9 @@ GsSplitClassRefactoring >> buildChangeSet [
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	sn := sourceClass name asString.
-	srcDict := self dictNameForClass: sourceClass.
+	srcDict := self dictForClass: sourceClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -394,7 +394,7 @@ GsSplitClassRefactoring >> buildChangeSet [
 		newSource: self sourceDefinitionAfterSplit.
 	(environment descendantsOf: sourceClass) do: [:d |
 		cs
-			addClassReparentInDictionary: (self dictNameForClass: d)
+			addClassReparentInDictionary: (self dictForClass: d)
 			className: d name asString
 			oldSource: d definition
 			newSource: d definition].
@@ -526,16 +526,22 @@ GsSplitClassRefactoring >> answersSelf: aSelector in: aClass [
 
 { #category : 'private' }
 GsSplitClassRefactoring >> newClassDictName [
+	"What to WRITE in the generated `inDictionary:` of the new class's definition: the caller's
+	 chosen name, else the name of the dictionary the anchor lives in. A name, because this ends
+	 up in Smalltalk source -- everything that RESOLVES a dictionary uses dictObjectForNewClass
+	 instead, since a name cannot pick between two dictionaries that share one and cannot name a
+	 dictionary that has none."
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: sourceClass
+	^(self dictForClass: sourceClass) ifNotNil: [:d | d name ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'private' }
-GsSplitClassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsSplitClassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'serializing' }

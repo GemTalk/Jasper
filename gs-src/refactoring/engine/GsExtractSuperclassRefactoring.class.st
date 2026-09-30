@@ -440,7 +440,7 @@ GsExtractSuperclassRefactoring >> buildChangeSet [
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -461,7 +461,7 @@ GsExtractSuperclassRefactoring >> stageExtractedEdit: aClass into: cs [
 	oldDef := aClass definition.
 	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
 	cs
-		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
@@ -474,7 +474,7 @@ GsExtractSuperclassRefactoring >> stageReparent: aClass into: cs [
 	| oldDef |
 	oldDef := aClass definition.
 	cs
-		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		addClassReparentInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: oldDef
@@ -489,7 +489,7 @@ GsExtractSuperclassRefactoring >> stageHoistOf: aSelector into: cs [
 	src := self sourceOf: aSelector in: anchorClass.
 	cat := self categoryOf: aSelector in: anchorClass.
 	cs
-		addMethodAddInDictionary: (self newClassDictName)
+		addMethodAddInDictionary: (self dictObjectForNewClass)
 		className: newName
 		isMeta: false
 		selector: aSelector
@@ -498,7 +498,7 @@ GsExtractSuperclassRefactoring >> stageHoistOf: aSelector into: cs [
 	extractedClasses do: [:e |
 		(e includesSelector: aSelector) ifTrue: [
 			cs
-				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				addMethodRemoveInDictionary: (self dictForClass: e)
 				className: e name asString
 				isMeta: false
 				selector: aSelector
@@ -564,18 +564,22 @@ GsExtractSuperclassRefactoring >> quotedList: aCollection [
 
 { #category : 'private' }
 GsExtractSuperclassRefactoring >> newClassDictName [
-	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
-	 dictionary."
+	"What to WRITE in the generated `inDictionary:` of the new class's definition: the caller's
+	 chosen name, else the name of the dictionary the anchor lives in. A name, because this ends
+	 up in Smalltalk source -- everything that RESOLVES a dictionary uses dictObjectForNewClass
+	 instead, since a name cannot pick between two dictionaries that share one and cannot name a
+	 dictionary that has none."
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: anchorClass
+	^(self dictForClass: anchorClass) ifNotNil: [:d | d name ifNotNil: [:n | n asString]]
 ]
 
 { #category : 'private' }
-GsExtractSuperclassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsExtractSuperclassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'serializing' }

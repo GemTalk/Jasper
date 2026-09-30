@@ -264,7 +264,7 @@ GsRenameClassRefactoring >> stageClassRenameInto: aChangeSet [
 	oldDef := definingClass definition.
 	newDef := self renameClassNameIn: oldDef from: oldName to: newName.
 	aChangeSet
-		addClassRenameInDictionary: (self dictNameForClass: definingClass)
+		addClassRenameInDictionary: (self dictForClass: definingClass)
 		className: oldName
 		newName: newName
 		oldSource: oldDef
@@ -287,7 +287,7 @@ GsRenameClassRefactoring >> stageReparentsInto: aChangeSet [
 			ifTrue: [self renameSuperclassNameIn: oldDef from: oldName to: newName]
 			ifFalse: [oldDef].
 		aChangeSet
-			addClassReparentInDictionary: (self dictNameForClass: sub)
+			addClassReparentInDictionary: (self dictForClass: sub)
 			className: sub name asString
 			oldSource: oldDef
 			newSource: newDef]
@@ -331,7 +331,7 @@ GsRenameClassRefactoring >> stageReferenceRewrite: aMethod base: base into: aCha
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -385,11 +385,12 @@ GsRenameClassRefactoring >> hierarchyScopeClasses [
 ]
 
 { #category : 'private' }
-GsRenameClassRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsRenameClassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'source rewriting' }

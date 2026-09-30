@@ -606,11 +606,12 @@ GsExtractMethodRefactoring >> methodCategory [
 ]
 
 { #category : 'private' }
-GsExtractMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsExtractMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -674,7 +675,7 @@ GsExtractMethodRefactoring >> buildChangeSet [
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	self declineReason notNil ifTrue: [^cs].
-	dict := self dictNameForClass: definingClass.
+	dict := self dictForClass: definingClass.
 	cs
 		addMethodAddInDictionary: dict
 		className: definingClass name
@@ -735,7 +736,7 @@ GsExtractMethodRefactoring >> stageSimilarInClass: cls selector: sel into: cs [
 			lStop := window last stop.
 			call := self sendSourceWithArgs: (argNames collect: [:nm | binding at: nm ifAbsent: [nm]]).
 			cs
-				addMethodRecompileInDictionary: (self dictNameForClass: cls)
+				addMethodRecompileInDictionary: (self dictForClass: cls)
 				className: cls thisClass name
 				isMeta: cls isMeta
 				selector: sel

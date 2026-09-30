@@ -259,11 +259,12 @@ GsMoveMethodRefactoring >> commaList: aCollection [
 ]
 
 { #category : 'private' }
-GsMoveMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsMoveMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }
@@ -328,14 +329,14 @@ GsMoveMethodRefactoring >> stageMoveOf: aSelector into: cs [
 	src := method sourceString.
 	cat := self categoryOfSelector: aSelector.
 	cs
-		addMethodAddInDictionary: (self dictNameForClass: targetClass)
+		addMethodAddInDictionary: (self dictForClass: targetClass)
 		className: targetClass name asString
 		isMeta: toMeta
 		selector: aSelector
 		category: cat
 		newSource: src.
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector

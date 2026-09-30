@@ -5781,6 +5781,54 @@ testAddWithAccessorsCompilesThemOntoTheActedOnClassNewVersion
 		ensure: [System myUserProfile removeDictionaryAt: 1]
 %
 
+category: 'tests - unnamed dictionary'
+method: GsInstVarRefactoringTest
+withUnnamedDictionaryDo: aBlock
+	"A SymbolDictionary with NO name -- which is simply what `SymbolDictionary new` answers,
+	 since a name only exists if someone sets one -- sitting AFTER UserGlobals on the symbol
+	 list, each holding its own GsIVNoName. Evaluates aBlock with the UserGlobals class, the
+	 unnamed dictionary's class, and the dictionary, then cleans up."
+	| sl at decoy mine theirs |
+	sl := System myUserProfile symbolList.
+	at := sl size + 1.
+	decoy := SymbolDictionary new.
+	System myUserProfile insertDictionary: decoy at: at.
+	[mine := Object
+		subclass: 'GsIVNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 theirs := Object
+		subclass: 'GsIVNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 aBlock value: mine value: theirs value: decoy]
+		ensure: [
+			UserGlobals removeKey: #GsIVNoName ifAbsent: [].
+			System myUserProfile removeDictionaryAt: at]
+%
+
+category: 'tests - unnamed dictionary'
+method: GsInstVarRefactoringTest
+testAddReachesTheClassInAnUnnamedDictionary
+	"A change recorded only the dictionary's NAME, so a class in a nameless dictionary recorded
+	 nil -- and nil is the compatibility path, first-match across the symbol list. That is the
+	 same-named class in UserGlobals. The targeted class was left untouched and an unrelated one
+	 was re-versioned, silently. A name cannot identify a dictionary that has none. See #396."
+	self withUnnamedDictionaryDo: [:mine :theirs :decoy | | json |
+		json := (GsInstVarRefactoring class: theirs addInstVar: 'newOne')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		"the class in the unnamed dictionary is the one that gained the variable"
+		self assert: ((decoy at: #GsIVNoName) instVarNames collect: [:e | e asString])
+			includesItem: 'newOne'.
+		"and UserGlobals' same-named class was not touched at all"
+		self deny: ((UserGlobals at: #GsIVNoName) instVarNames collect: [:e | e asString])
+			includesItem: 'newOne'.
+		self assert: (UserGlobals at: #GsIVNoName) == mine]
+%
+
 category: 'tests - shadowed lineage'
 method: GsInstVarRefactoringTest
 withShadowedLineageDo: aBlock

@@ -306,11 +306,12 @@ GsInstVarRefactoring >> isEditedClass: aClass [
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsInstVarRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -340,7 +341,7 @@ GsInstVarRefactoring >> buildChangeSet [
 { #category : 'building' }
 GsInstVarRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
 	(self isEditedClass: aClass)
 		ifTrue: [cs

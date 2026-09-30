@@ -123,18 +123,22 @@ GsRefactoringEnvironment >> dictionaryForNewVersionOf: aClass [
 ]
 
 { #category : 'dictionaries' }
-GsRefactoringEnvironment >> dictionaryNameDefiningClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF, for the `dictName` recorded on a staged
-	 change. Resolved by identity: taking the first dictionary that binds the NAME records a
-	 different class's dictionary whenever the name is shadowed, and the apply then writes the
-	 change there (#396). nil when no dictionary binds the class under its own name, which the
-	 apply falls back on as before.
+GsRefactoringEnvironment >> dictionaryPinnedForClass: aClass [
+	"The dictionary that binds aClass ITSELF, pinned on a staged change so the apply can find
+	 its way back to the same class. Resolved by identity: taking the first dictionary that
+	 binds the NAME finds a different class's dictionary whenever the name is shadowed, and the
+	 apply then writes the change there (#396).
 
-	 Every refactoring records a change this way, so it lives here rather than in each of them:
-	 seventeen copies of one method is seventeen places for the identity rule to be lost."
-	^(self dictionaryDefiningClass: aClass)
-		ifNil: [nil]
-		ifNotNil: [:dict | dict name ifNil: [nil] ifNotNil: [:n | n asString]]
+	 The OBJECT, not its name. This used to answer `dict name`, which threw the identity away
+	 one line after establishing it -- and a name cannot stand in for a dictionary: two can
+	 share one, and `SymbolDictionary new` has none at all, so a class in a nameless dictionary
+	 recorded nil and fell straight into the first-match path this engine exists to remove.
+
+	 nil when no dictionary binds the class under its own name, which the apply falls back on
+	 as before. Every refactoring pins a change this way, so it lives here rather than in each
+	 of them: seventeen copies of one method is seventeen places for the identity rule to be
+	 lost."
+	^self dictionaryDefiningClass: aClass
 ]
 
 { #category : 'selectors' }
@@ -274,7 +278,7 @@ GsRefactoringEnvironment >> dictionaryDefiningClass: aClass [
 	 that the obvious wrong answer -- take the class's name and use the first dictionary that
 	 binds it -- silently picks a DIFFERENT class whenever the name is shadowed. Refactoring
 	 wrote that wrong answer in three places (#396): the dictionary a reshaped class was rebound
-	 into, the dictionary name recorded on a staged change, and the class a change was applied
+	 into, the dictionary pinned on a staged change, and the class a change was applied
 	 to. All three now come through here.
 
 	 Identity also makes the answer honest when it cannot be given: a class that is unbound, or
@@ -291,23 +295,29 @@ GsRefactoringEnvironment >> dictionaryDefiningClass: aClass [
 GsRefactoringEnvironment >> classForChange: aChange [
 	"The class a staged change was computed against, or nil.
 
-	 A change records its class as a NAME plus the name of the dictionary it was found in, so
-	 this resolves the pair rather than the name alone. Resolving the name alone is what
-	 `classNamed:` does, and it answers the first binding on the symbol list -- which, for a
-	 shadowed name, is a different class from the one the refactoring analysed. Applying a
-	 change to it writes the user's refactoring onto a class they never chose (#396).
+	 A change records its class as a NAME plus the DICTIONARY it was found in -- the dictionary
+	 object, pinned at staging time -- so this asks that dictionary directly. Resolving the name
+	 alone is what `classNamed:` does, and it answers the first binding on the symbol list --
+	 which, for a shadowed name, is a different class from the one the refactoring analysed.
+	 Applying a change to it writes the user's refactoring onto a class they never chose (#396).
 
-	 A change with no dictionary name falls back to `classNamed:`. That is the pre-#396
-	 behaviour and is kept deliberately: an undo entry or change set recorded before this fix,
-	 or staged by a caller that has no dictionary to give, still applies as well as it ever did.
+	 Asking the pinned dictionary settles every shape a name cannot: two dictionaries sharing a
+	 name, a dictionary with NO name, two dictionaries with no name, and a symbol list reordered
+	 between the preview and the apply. It also answers nil, rather than somebody else's class,
+	 for a dictionary that has since left the symbol list -- which callers turn into
+	 'Class not found: ...', a decline the user can act on rather than damage they cannot see.
 
-	 A dictionary NAME resolves to the first dictionary on the symbol list with that name, and the
-	 class is looked for there only: a second dictionary of the same name is never consulted, so a
-	 change recorded against it resolves to nil (or to the first dictionary's class of that name)
-	 rather than to its own. Only a SymbolList index says which of two same-named dictionaries is
-	 meant."
+	 A change with no dictionary at all falls back to `classNamed:`. That is the pre-#396
+	 behaviour and is kept deliberately: a change staged by a caller that has no dictionary to
+	 give still applies as well as it ever did."
 	aChange isNil ifTrue: [^nil].
-	^self classNamed: aChange className inDictionaryNamed: aChange dictName
+	aChange dict ifNotNil: [:d |
+		"A pinned dictionary answers for itself. A NAME (or a SymbolList index) still arrives
+		 from the undo plan's older records, which resolve as they always did."
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [^d at: aChange className asSymbol otherwise: nil]
+			ifFalse: [^self classNamed: aChange className inDictionaryNamed: d]].
+	^self classNamed: aChange className inDictionaryNamed: nil
 ]
 
 { #category : 'accessing' }

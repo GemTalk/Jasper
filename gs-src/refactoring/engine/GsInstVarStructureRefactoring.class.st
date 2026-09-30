@@ -650,10 +650,10 @@ GsInstVarStructureRefactoring >> simpleAccessorKindOf: tree forVar: v [
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> dictNameForClassNamed: aName [
+GsInstVarStructureRefactoring >> dictForClassNamed: aName [
 	"DEPRECATED, and kept only so an external caller does not break: a NAME cannot say which
 	 dictionary is meant when the name is shadowed, and answering the first match is what sent
-	 staged changes to the wrong class (#396). Use #dictNameForClass:, which resolves the class
+	 staged changes to the wrong class (#396). Use #dictForClass:, which resolves the class
 	 object by identity. Nothing in the engine calls this."
 	| dicts |
 	dicts := environment dictionariesDefiningClassNamed: aName.
@@ -685,11 +685,12 @@ GsInstVarStructureRefactoring >> isEditedClass: aClass [
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsInstVarStructureRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -719,7 +720,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 	affected do: [:cls | self stageClassChange: cls into: cs].
 	accessorRemovals do: [:r |
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClass: (r at: 5))
+			addMethodRemoveInDictionary: (self dictForClass: (r at: 5))
 			className: (r at: 2)
 			isMeta: false
 			selector: (r at: 1)
@@ -727,7 +728,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 			oldSource: (r at: 3)].
 	accessorAdds do: [:a |
 		cs
-			addMethodAddInDictionary: (self dictNameForClass: (a at: 5))
+			addMethodAddInDictionary: (self dictForClass: (a at: 5))
 			className: (a at: 2)
 			isMeta: false
 			selector: (a at: 1)
@@ -740,7 +741,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 { #category : 'building' }
 GsInstVarStructureRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
 	(self isEditedClass: aClass)
 		ifTrue: [cs
@@ -762,7 +763,7 @@ GsInstVarStructureRefactoring >> stageMethodRewriteInto: cs [
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	cat := (behavior categoryOfSelector: methodSelector environmentId: 0) ifNil: ['as yet unclassified'].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: (methodRewrite at: 1)
 		isMeta: (methodRewrite at: 3)
 		selector: (methodRewrite at: 2)

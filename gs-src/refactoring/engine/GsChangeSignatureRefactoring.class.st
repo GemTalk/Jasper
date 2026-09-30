@@ -327,11 +327,12 @@ GsChangeSignatureRefactoring >> keyForClass: aClass isMeta: aBool [
 ]
 
 { #category : 'private' }
-GsChangeSignatureRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsChangeSignatureRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -455,7 +456,7 @@ GsChangeSignatureRefactoring >> stageImplementorRename: aMethod base: base isMet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -493,7 +494,7 @@ GsChangeSignatureRefactoring >> stageSenderRewrite: aMethod base: base isMeta: i
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel

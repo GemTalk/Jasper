@@ -495,11 +495,12 @@ GsInlineMethodRefactoring >> categoryOfClass: aBehavior selector: aSelector [
 ]
 
 { #category : 'private' }
-GsInlineMethodRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsInlineMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -527,7 +528,7 @@ GsInlineMethodRefactoring >> buildChangeSet [
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -536,7 +537,7 @@ GsInlineMethodRefactoring >> buildChangeSet [
 		newSource: self rewrittenSource.
 	lastSender ifTrue: [
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClass: targetClass thisClass)
+			addMethodRemoveInDictionary: (self dictForClass: targetClass thisClass)
 			className: targetClass thisClass name
 			isMeta: targetClass isMeta
 			selector: targetSelector

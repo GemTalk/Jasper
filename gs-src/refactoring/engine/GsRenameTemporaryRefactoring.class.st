@@ -324,7 +324,7 @@ GsRenameTemporaryRefactoring >> buildChangeSet [
 			replaceFrom: node start to: node stop with: newName).
 		node token value: newName].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -341,11 +341,12 @@ GsRenameTemporaryRefactoring >> methodCategory [
 ]
 
 { #category : 'private' }
-GsRenameTemporaryRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsRenameTemporaryRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }

@@ -173,7 +173,7 @@ GsRenameClassVariableRefactoring >> stageClassDefinitionEditInto: aChangeSet [
 	newDef := self renameClassVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -208,7 +208,7 @@ GsRenameClassVariableRefactoring >> stageMethodRewrite: aMethod into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -227,11 +227,12 @@ GsRenameClassVariableRefactoring >> baseClassOf: aMethod [
 ]
 
 { #category : 'private' }
-GsRenameClassVariableRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsRenameClassVariableRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }

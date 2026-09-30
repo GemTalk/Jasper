@@ -82,11 +82,12 @@ GsRenameInstanceVariableRefactoring >> definingClass [
 ]
 
 { #category : 'private' }
-GsRenameInstanceVariableRefactoring >> dictNameForClass: aClass [
-	"The name of the dictionary that binds aClass ITSELF -- by identity, never by name.
-	 See GsRefactoringEnvironment>>dictionaryNameDefiningClass:, which is where the rule and
+GsRenameInstanceVariableRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
 	 its reasons live."
-	^environment dictionaryNameDefiningClass: aClass
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'accessing' }
@@ -201,7 +202,7 @@ GsRenameInstanceVariableRefactoring >> stageClassDefinitionEditInto: aChangeSet 
 	newDef := self renameInstVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -217,7 +218,7 @@ GsRenameInstanceVariableRefactoring >> stageMethodRecompilesInto: aChangeSet [
 		inHierarchyOf: definingClass.
 	affected do: [:assoc | | cls dn |
 		cls := assoc key.
-		dn := self dictNameForClass: cls.
+		dn := self dictForClass: cls.
 		assoc value do: [:sel | | m oldSrc newSrc cat |
 			m := cls compiledMethodAt: sel environmentId: 0 otherwise: nil.
 			m ifNotNil: [
