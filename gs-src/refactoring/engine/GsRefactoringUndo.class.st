@@ -1127,9 +1127,16 @@ GsRefactoringUndo >> reverseUnavailableReason [
 	| env cls ref |
 	revertPlan isNil ifFalse: [
 		env := GsRefactoringEnvironment new.
+		"Through dictRefForEntry:, which is what the REVERSAL uses. This asked by dictionary NAME
+		 while the revert asks the dictionary the capture pinned, so the gate and the work could
+		 disagree about which class they meant -- both ways round. With two dictionaries of one
+		 name and the class in the second, the name found the first, saw nothing, and refused an
+		 undo that would have worked; with the pinned dictionary gone and a twin still binding
+		 that name, the name found the twin's class, let the undo through, and every entry then
+		 failed on apply. A gate has to ask the question the work will ask."
 		(revertPlan anySatisfy: [:e |
 			(env classNamed: (e at: 1)
-				inDictionaryNamed: (e size >= 4 ifTrue: [e at: 4] ifFalse: [nil])) notNil]) ifFalse: [
+				inDictionaryNamed: (self dictRefForEntry: e)) notNil]) ifFalse: [
 			^'None of the classes this refactoring reshaped still exist, so it cannot be reversed.'].
 		^nil].
 	reverseOp isNil ifTrue: [^nil].

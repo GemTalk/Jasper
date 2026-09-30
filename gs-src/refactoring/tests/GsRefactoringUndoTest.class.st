@@ -1822,6 +1822,66 @@ GsRefactoringUndoTest >> testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSa
 ]
 
 { #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testAvailabilityFindsTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"The gate asked a different question than the reversal answers. It resolved each plan entry by
+	 dictionary NAME while the reversal uses the dictionary the capture PINNED, so with two
+	 dictionaries of one name and the class in the second, the gate looked in the first, found
+	 nothing, and refused an undo that would have worked -- 'None of the classes this refactoring
+	 reshaped still exist'."
+	| dicts second |
+	dicts := self twinNamedDictionaries.
+	second := dicts last.
+	"the FIRST twin binds no class of that name, so a lookup by name finds nothing at all --
+	 which is what makes the gate refuse rather than merely look at the wrong class"
+	dicts first removeKey: #GsUndoTwinClass ifAbsent: [].
+	[GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+
+	 self assert: GsRefactoringUndo currentEntry reverseUnavailableReason isNil]
+		ensure: [self removeDictionaries: dicts]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testAvailabilityDeclinesWhenThePinnedDictionaryIsGone [
+	"The other direction, and the worse one. With the pinned dictionary off the symbol list and
+	 another of the same name still binding a class of that name, the name lookup found THAT one
+	 and let the undo through -- and every entry then failed on apply with 'not a class'. Being
+	 told an undo is available and handed a wall of failures is worse than being told no."
+	| dicts second |
+	dicts := self twinNamedDictionaries.
+	second := dicts last.
+	[GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+
+	 "drop the pinned dictionary; its twin, still on the list, still binds a GsUndoTwinClass"
+	 System myUserProfile removeDictionaryAt: (self indexOfDictionary: second).
+	 self assert: (dicts first at: #GsUndoTwinClass ifAbsent: [nil]) notNil.
+
+	 self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil]
+		ensure: [self removeDictionaries: dicts]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
 GsRefactoringUndoTest >> testUndoHistoryRevertUnbindsACreatedClassOnlyFromItsOwnDictionary [
 	"A class the refactoring created is unbound from the dictionary it was filed in. That dictionary
 	 was found by NAME, so every dictionary of that name lost its binding -- including an unrelated
@@ -1920,11 +1980,16 @@ GsRefactoringUndoTest >> testCreatedClassesGoToTheRootEntrysDictionary [
 ]
 
 { #category : 'tests - shadowed dictionary name' }
-GsRefactoringUndoTest >> testUndoHistoryRevertReportsAClassWhoseDictionaryWasRemoved [
+GsRefactoringUndoTest >> testUndoHistoryRevertDeclinesWhenTheDictionaryItPinnedIsGone [
 	"The dictionary the capture pinned has left the symbol list by the time of the undo. The
 	 reversal has nowhere to put the class back, and says so, instead of reverting a same-named
-	 class somewhere else -- here, another dictionary that carries the same NAME."
-	| dicts second json |
+	 class somewhere else -- here, another dictionary that carries the same NAME.
+
+	 It now says so BEFORE running, not per-entry afterwards: the availability check resolves the
+	 same way the reversal does, so it refuses rather than opening a panel over a reversal that
+	 will fail on every row. The protection is unchanged -- the twin's class is not touched --
+	 and the user hears about it one step sooner."
+	| dicts second reason |
 	dicts := self twinNamedDictionaries.
 	second := dicts last.
 	[GsRefactoringUndo
@@ -1941,10 +2006,12 @@ GsRefactoringUndoTest >> testUndoHistoryRevertReportsAClassWhoseDictionaryWasRem
 		created: #().
 	 System myUserProfile removeDictionaryAt: (self indexOfDictionary: second).
 
-	 json := self undoAll.
+	 reason := GsRefactoringUndo currentEntry reverseUnavailableReason.
 
-	 self deny: json includesSubstring: '"failed":[]'.
-	 self assert: json includesSubstring: 'not a class']
+	 self assert: reason notNil.
+	 "and the twin's same-named class is left exactly as it was"
+	 self assert: ((dicts first at: #GsUndoTwinClass) instVarNames collect: [:e | e asString])
+		equals: #('gsuOwn')]
 		ensure: [self removeDictionaries: dicts]
 ]
 
