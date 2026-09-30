@@ -53,36 +53,36 @@ describe('inspect it routing (integration)', () => {
   // enhanced panel instead of falling back to the tree. On any healthy image the
   // two agree (both true when fully installed, both false when absent); this
   // guards the exact gap the blank-tab episode exposed.
-  it('the availability probe and the deep install check agree', () => {
-    const available = q.checkEnhancedInspectorAvailable(session());
-    const installed = isEnhancedInspectorInstalled(session());
+  it('the availability probe and the deep install check agree', async () => {
+    const available = await q.checkEnhancedInspectorAvailable(session());
+    const installed = await isEnhancedInspectorInstalled(session());
 
     expect(available).toBe(installed);
   });
 
-  it('routes to the enhanced inspector once the feature is installed on a supported version', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it('routes to the enhanced inspector once the feature is installed on a supported version', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    expect(refreshEnhancedInspectorAvailable(session())).toBe(true);
+    expect(await refreshEnhancedInspectorAvailable(session())).toBe(true);
   });
 
   // Degradation assertion: on a bare stone, or a version too old for the Enhanced
   // Inspector, routing must fall back rather than ever answer true.
-  it('never routes to the enhanced inspector when the feature is absent', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('never routes to the enhanced inspector when the feature is absent', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
-    expect(refreshEnhancedInspectorAvailable(session())).toBe(false);
+    expect(await refreshEnhancedInspectorAvailable(session())).toBe(false);
   });
 
   // Degradation assertions: when the enhanced inspector is absent, every Inspect
   // It falls back to the basic tabbed Inspector, whose every tab is built from
   // the doits below. `Globals` is a live SymbolDictionary present on every
   // stone, so it is a stable fixture for the dictionary path.
-  it('the fallback inspector reads a live dictionary through the real queries', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector reads a live dictionary through the real queries', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     const globalsOop = gci.resolveSymbol(handle, 'Globals');
-    const header = bi.fetchObjectHeader(exec(), globalsOop);
+    const header = await bi.fetchObjectHeader(exec(), globalsOop);
 
     expect(header).not.toBeNull();
     expect(header!.className).toBe('SymbolDictionary');
@@ -92,27 +92,27 @@ describe('inspect it routing (integration)', () => {
 
     // A row's label is the key's printString, so a Symbol key arrives quoted —
     // `#'Array'` on 3.6.2. Strip the syntax to assert on the name itself.
-    const keys = bi
-      .fetchEntries(exec(), globalsOop, 1, header!.entryCount)
-      .map((row) => row.label.replace(/^#/, '').replace(/^'(.*)'$/, '$1'));
+    const keys = (await bi.fetchEntries(exec(), globalsOop, 1, header!.entryCount)).map((row) =>
+      row.label.replace(/^#/, '').replace(/^'(.*)'$/, '$1'),
+    );
     expect(keys).toContain('Array');
     expect(keys).toContain('String');
   });
 
-  it('the fallback inspector reads indexed items as elements, not raw slots', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector reads indexed items as elements, not raw slots', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     // SmallIntegers, deliberately: a string literal in a GCI-compiled doit is a
     // Unicode7 on 3.6.x, which would make the expected class name depend on the
     // stone's version rather than on anything this query does.
     const arrayOop = gci.execute(handle, '#(10 20 30)');
-    const header = bi.fetchObjectHeader(exec(), arrayOop);
+    const header = await bi.fetchObjectHeader(exec(), arrayOop);
 
     expect(header!.className).toBe('Array');
     expect(header!.isDictionary).toBe(false);
     expect(header!.itemCount).toBe(3);
 
-    const items = bi.fetchItems(exec(), arrayOop, 1, 10);
+    const items = await bi.fetchItems(exec(), arrayOop, 1, 10);
     expect(items.map((row) => row.label)).toEqual(['[1]', '[2]', '[3]']);
     expect(items.map((row) => row.value)).toEqual(['10', '20', '30']);
     expect(items.map((row) => row.className)).toEqual([
@@ -126,22 +126,22 @@ describe('inspect it routing (integration)', () => {
     expect(items.map((row) => row.index)).toEqual([1, 2, 3]);
   });
 
-  it('the fallback inspector reads named slots on an object that has them', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector reads named slots on an object that has them', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     // A class object always has named instance variables (Behavior's), so it is
     // a fixture the Slots path can rely on without defining anything.
-    const slots = bi.fetchSlots(exec(), gci.resolveSymbol(handle, 'Array'));
+    const slots = await bi.fetchSlots(exec(), gci.resolveSymbol(handle, 'Array'));
 
     expect(slots.length).toBeGreaterThan(0);
     expect(slots.map((row) => row.index)).toEqual(slots.map((_, i) => i + 1));
     expect(slots.every((row) => row.label.length > 0)).toBe(true);
   });
 
-  it('the fallback inspector reads class metadata without any server support', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector reads class metadata without any server support', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
-    const meta = bi.fetchObjectMeta(exec(), gci.execute(handle, 'Array new: 3'));
+    const meta = await bi.fetchObjectMeta(exec(), gci.execute(handle, 'Array new: 3'));
 
     expect(meta).not.toBeNull();
     expect(meta!.className).toBe('Array');
@@ -149,19 +149,19 @@ describe('inspect it routing (integration)', () => {
     expect(meta!.instanceSelectors.length).toBeGreaterThan(0);
   });
 
-  it('the fallback inspector reads bytes as numbers', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector reads bytes as numbers', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     // Numbers, not text: an unprintable byte cannot corrupt the payload the way
     // an escaped-text round trip could.
     const bytesOop = gci.execute(handle, '#[104 101 108 108 111]');
 
-    expect(bi.fetchObjectHeader(exec(), bytesOop)!.isBytes).toBe(true);
-    expect(bi.fetchBytes(exec(), bytesOop, 1, 16)).toEqual([104, 101, 108, 108, 111]);
+    expect((await bi.fetchObjectHeader(exec(), bytesOop))!.isBytes).toBe(true);
+    expect(await bi.fetchBytes(exec(), bytesOop, 1, 16)).toEqual([104, 101, 108, 108, 111]);
   });
 
-  it('the fallback inspector counts a wide String in bytes, not in characters', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector counts a wide String in bytes, not in characters', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     // A DoubleByteString stores each character in two bytes, so `size` is half
     // what `_basicSize` — and so the Bytes tab — can read. The header carries
@@ -176,17 +176,17 @@ describe('inspect it routing (integration)', () => {
     // a stone carrying the server payloads and not on the plain ones this leg
     // runs against.
     const wideOop = gci.execute(handle, 'DoubleByteString new: 3');
-    const header = bi.fetchObjectHeader(exec(), wideOop);
+    const header = await bi.fetchObjectHeader(exec(), wideOop);
 
     expect(header!.className).toBe('DoubleByteString');
     expect(header!.isBytes).toBe(true);
     expect(header!.itemCount).toBe(3);
     expect(header!.byteSize).toBe(6);
-    expect(bi.fetchBytes(exec(), wideOop, 1, 16)).toHaveLength(6);
+    expect(await bi.fetchBytes(exec(), wideOop, 1, 16)).toHaveLength(6);
   });
 
-  it('the fallback inspector evaluates an expression with the object bound to self', (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
+  it('the fallback inspector evaluates an expression with the object bound to self', async (ctx) => {
+    await requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     const resultOop = debug.evaluateWithReceiverToOop(
       session(),

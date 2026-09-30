@@ -87,6 +87,9 @@ export function applyInlineMethod(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearInlineMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsInlineMethodRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearInlineMethodPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsInlineMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

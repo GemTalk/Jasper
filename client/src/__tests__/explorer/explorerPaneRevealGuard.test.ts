@@ -111,16 +111,16 @@ function seedHierarchy(ctl: ExplorerController): void {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetConfig();
-  vi.mocked(getDictionaryNames).mockReturnValue([DICT, OTHER_DICT]);
-  vi.mocked(getAllClassNames).mockReturnValue([
+  vi.mocked(getDictionaryNames).mockResolvedValue([DICT, OTHER_DICT]);
+  vi.mocked(getAllClassNames).mockResolvedValue([
     { className: CLASS, dictName: DICT, dictIndex: 1 },
     { className: SUPER, dictName: DICT, dictIndex: 1 },
   ]);
-  vi.mocked(getClassesWithCategory).mockReturnValue([
+  vi.mocked(getClassesWithCategory).mockResolvedValue([
     { className: CLASS, category: 'Finance', hasComment: false },
     { className: SUPER, category: 'Kernel', hasComment: false },
   ]);
-  vi.mocked(getClassEnvironments).mockReturnValue([
+  vi.mocked(getClassEnvironments).mockResolvedValue([
     { isMeta: false, envId: 0, category: 'accessing', selectors: ['balance'] },
   ]);
 });
@@ -133,7 +133,7 @@ describe('a cascade navigation leaves closed panes closed', () => {
     collapse(panes, 'dict', 'category', 'klass');
     vi.clearAllMocks();
 
-    ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
+    await ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
     await vi.waitFor(() => expect(ctl.state.className).toBe(SUPER));
 
     // The navigation happened — only the highlight was withheld.
@@ -148,7 +148,7 @@ describe('a cascade navigation leaves closed panes closed', () => {
     seedHierarchy(ctl);
     vi.clearAllMocks();
 
-    ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
+    await ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
     await vi.waitFor(() => expect(ctl.state.className).toBe(SUPER));
 
     await vi.waitFor(() => expect(panes.klass.reveal).toHaveBeenCalled());
@@ -162,7 +162,7 @@ describe('a cascade navigation leaves closed panes closed', () => {
     collapse(panes, 'klass');
     vi.clearAllMocks();
 
-    ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
+    await ctl.selectHierarchyNode(new HierarchyItem(SUPER, DICT, 'ancestor', 0, true));
     await vi.waitFor(() => expect(ctl.state.className).toBe(SUPER));
 
     // A class landing asks for focus:true; withholding the reveal is what keeps
@@ -176,7 +176,7 @@ describe('a cascade navigation leaves closed panes closed', () => {
   // dictionary — a coarser landing inside the same one folds into the first.
   async function twoLandings(ctl: ExplorerController) {
     await ctl.findClass(CLASS, SESSION_ID, DICT, { selector: 'balance', isMeta: false });
-    ctl.selectDict({ dictName: OTHER_DICT, dictIndex: 2 });
+    await ctl.selectDict({ dictName: OTHER_DICT, dictIndex: 2 });
     expect(ctl.history.canGoBack()).toBe(true);
   }
 
@@ -313,7 +313,7 @@ describe('a pane catches up on the highlight it missed when the user opens it', 
     const { ctl, panes } = makeController();
     collapse(panes, 'category');
     await ctl.findClass(CLASS, SESSION_ID, DICT);
-    ctl.selectClassCategory({ fullPath: 'Finance', label: 'Finance' } as never);
+    await ctl.selectClassCategory({ fullPath: 'Finance', label: 'Finance' } as never);
     expect(panes.category.reveal).not.toHaveBeenCalled();
 
     expand(ctl, panes, 'category');

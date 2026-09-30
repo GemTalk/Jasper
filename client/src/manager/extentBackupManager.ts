@@ -96,7 +96,7 @@ export async function runOnlineExtentBackup(deps: ExtentBackupDeps): Promise<boo
   // Full-logging pre-flight — a clear early error beats a bare suspend failure.
   let logging: boolean | undefined;
   try {
-    logging = extentBackup.fullLoggingEnabled(deps.execute);
+    logging = await extentBackup.fullLoggingEnabled(deps.execute);
   } catch (e) {
     vscode.window.showErrorMessage(`Could not read the stone configuration: ${errorMessage(e)}`);
     return false;
@@ -111,7 +111,9 @@ export async function runOnlineExtentBackup(deps: ExtentBackupDeps): Promise<boo
 
   // Resolve the extent files: ask the stone first (authoritative — excludes
   // tranlogs and honours custom layouts), else scan <dataDir>/extent*.dbf.
-  let extents = extentBackup.extentFileNames(deps.execute).filter((p) => deps.fileExists(p));
+  let extents = (await extentBackup.extentFileNames(deps.execute)).filter((p) =>
+    deps.fileExists(p),
+  );
   if (extents.length === 0) {
     extents = deps
       .listDataFiles(deps.dataDir)
@@ -152,7 +154,7 @@ export async function runOnlineExtentBackup(deps: ExtentBackupDeps): Promise<boo
   // Suspend checkpoints immediately before copying — abort if not suspended.
   let suspended: boolean;
   try {
-    suspended = extentBackup.suspendCheckpoints(deps.execute, minutes);
+    suspended = await extentBackup.suspendCheckpoints(deps.execute, minutes);
   } catch (e) {
     vscode.window.showErrorMessage(`Could not suspend checkpoints: ${errorMessage(e)}`);
     return false;
@@ -194,7 +196,7 @@ export async function runOnlineExtentBackup(deps: ExtentBackupDeps): Promise<boo
 
   let resumed: boolean;
   try {
-    resumed = extentBackup.resumeCheckpoints(deps.execute);
+    resumed = await extentBackup.resumeCheckpoints(deps.execute);
   } catch (e) {
     status.dispose();
     vscode.window.showErrorMessage(

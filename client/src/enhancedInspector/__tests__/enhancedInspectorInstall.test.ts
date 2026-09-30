@@ -415,26 +415,26 @@ describe('installEnhancedInspectorSupport', () => {
 describe('isEnhancedInspectorInstalled', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('is true when both the marker class and the Object extension are present', () => {
+  it('is true when both the marker class and the Object extension are present', async () => {
     const { session } = createMockSession();
     executeFetchStringMock.mockReturnValue('true');
 
-    expect(isEnhancedInspectorInstalled(session)).toBe(true);
+    expect(await isEnhancedInspectorInstalled(session)).toBe(true);
   });
 
-  it('is false when the probe reports the support is absent', () => {
+  it('is false when the probe reports the support is absent', async () => {
     const { session } = createMockSession();
     executeFetchStringMock.mockReturnValue('false');
 
-    expect(isEnhancedInspectorInstalled(session)).toBe(false);
+    expect(await isEnhancedInspectorInstalled(session)).toBe(false);
   });
 
-  it('is false when the probe itself raises', () => {
+  it('is false when the probe itself raises', async () => {
     const { session } = createMockSession();
     executeFetchStringMock.mockImplementation(() => {
       throw new Error('session busy');
     });
 
-    expect(isEnhancedInspectorInstalled(session)).toBe(false);
+    expect(await isEnhancedInspectorInstalled(session)).toBe(false);
   });
 });

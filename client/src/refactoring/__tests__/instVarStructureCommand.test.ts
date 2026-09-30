@@ -78,7 +78,7 @@ beforeEach(() => {
   resetUndoStacks();
   vi.mocked(ensureRbSupport).mockResolvedValue(true);
   vi.mocked(saveIfDirty).mockResolvedValue(true);
-  vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
+  vi.mocked(queries.refactoringUndoStatus).mockResolvedValue('{"available":false}');
 });
 
 describe('instance-variable structure command — apply/decline flow', () => {
@@ -177,7 +177,7 @@ describe('instance-variable structure command — apply/decline flow', () => {
     vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue(
       JSON.stringify({
         available: true,
         label: "Move instance variable 'tailLength'",

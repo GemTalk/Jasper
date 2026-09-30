@@ -17,9 +17,9 @@ import { isGrailInstalled } from '../../python';
  * Present-world gate: call at the top of a test that only applies when Grail IS
  * installed, so the test exercises Grail-dependent behavior.
  */
-export function requireGrail(ctx: TestContext, execute: QueryExecutor): void {
+export async function requireGrail(ctx: TestContext, execute: QueryExecutor): Promise<void> {
   ctx.skip(
-    !isGrailInstalled(execute),
+    !(await isGrailInstalled(execute)),
     'skipping: Grail is not installed; this test only applies when Grail is present',
   );
 }
@@ -28,9 +28,9 @@ export function requireGrail(ctx: TestContext, execute: QueryExecutor): void {
  * Absent-world gate: call at the top of a test that only applies when Grail is
  * ABSENT — the tests asserting fallback/degraded behavior without Grail.
  */
-export function requireGrailAbsent(ctx: TestContext, execute: QueryExecutor): void {
+export async function requireGrailAbsent(ctx: TestContext, execute: QueryExecutor): Promise<void> {
   ctx.skip(
-    isGrailInstalled(execute),
+    await isGrailInstalled(execute),
     'skipping: Grail is installed; this test only applies to the absent scenario',
   );
 }

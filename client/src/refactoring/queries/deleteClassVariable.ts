@@ -16,12 +16,12 @@ import { classLookupExpr, escapeString } from '../../queries/util';
  *  Methods that still reference the variable keep the association in their literal frame
  *  and go on running against a binding nothing declares any more — which is why the caller
  *  looks for those methods first (see methodsAccessingClassVar). */
-export function deleteClassVariable(
+export async function deleteClassVariable(
   execute: QueryExecutor,
   className: string,
   classVarName: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const name = escapeString(classVarName);
   const code = `| cls want |
 want := '${name}' asSymbol.
@@ -32,5 +32,5 @@ cls isNil
     (cls classVarNames anySatisfy: [:e | e asSymbol == want])
       ifFalse: ['not-declared']
       ifTrue: [cls removeClassVarName: '${name}'. 'ok']]`;
-  return execute(code);
+  return await execute(code);
 }

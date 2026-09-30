@@ -127,9 +127,9 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
   const replaceSimilar = analysis.safeVoidShape;
 
   const token = `xtm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearExtractMethodPreview(session, token);
+      await queries.clearExtractMethodPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -156,7 +156,7 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
     void vscode.window.showErrorMessage(
       `Extract preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -165,13 +165,13 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
   // banner (the user may proceed).
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.total === 0) {
     refuse('Nothing to extract from the selection.');
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -188,7 +188,7 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
           `Extract method #${newSelector}`,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
     focusEditor();

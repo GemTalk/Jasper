@@ -64,9 +64,9 @@ export async function refreshWorkingSessionAfterInstall(
   sessionManager: SessionManager,
   doneMessage: string,
 ): Promise<boolean> {
-  const needsCommit = sessionNeedsCommit(base);
+  const needsCommit = await sessionNeedsCommit(base);
   if (needsCommit === false) {
-    return safeAbortWorkingSession(base, sessionManager);
+    return await safeAbortWorkingSession(base, sessionManager);
   }
   const detail = needsCommit
     ? 'This discards this session’s uncommitted changes.'
@@ -77,16 +77,19 @@ export async function refreshWorkingSessionAfterInstall(
     'Later',
   );
   if (choice === 'Refresh') {
-    return safeAbortWorkingSession(base, sessionManager);
+    return await safeAbortWorkingSession(base, sessionManager);
   }
   return false;
 }
 
 /** Abort (refresh) the working session, tolerating a session that was logged out
  *  while the install ran. Returns true only when the view was actually refreshed. */
-function safeAbortWorkingSession(base: ActiveSession, sessionManager: SessionManager): boolean {
+async function safeAbortWorkingSession(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+): Promise<boolean> {
   try {
-    return sessionManager.abort(base.id).success;
+    return (await sessionManager.abort(base.id)).success;
   } catch {
     return false;
   }

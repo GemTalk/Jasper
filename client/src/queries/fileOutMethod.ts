@@ -19,16 +19,16 @@ const FILE_OUT_ENVIRONMENT = 0;
  * than answering placeholder text — a file-out that can't read the method should
  * fail visibly instead of writing a `.gs` whose contents are an error message.
  */
-export function fileOutMethod(
+export async function fileOutMethod(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ Error signal: 'Class not found: ${escapeString(className)}'].
 ${isMeta ? 'cls class' : 'cls'} fileOutMethod: #'${escapeString(selector)}' environmentId: ${FILE_OUT_ENVIRONMENT}`;
-  return execute(code);
+  return await execute(code);
 }

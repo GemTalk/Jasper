@@ -64,7 +64,10 @@ export function dictionaryPreamble(dictName: string): string {
  * silent empty file would look like a dictionary that legitimately holds no classes —
  * and when it has no name, which there is no way to write an `inDictionary:` for.
  */
-export function fileOutDictionary(execute: QueryExecutor, dict: number | string): string {
+export async function fileOutDictionary(
+  execute: QueryExecutor,
+  dict: number | string,
+): Promise<string> {
   const code = `| ws d |
 d := ${dictLookupExpr(dict)}.
 d ifNil: [^ Error signal: 'Dictionary not found'].
@@ -73,7 +76,7 @@ ws := WriteStream on: String new.
 ws nextPutAll: d name asString; lf.
 ClassOrganizer new fileOutClassesAndMethodsInDictionary: d on: ws.
 ws contents`;
-  const answer = execute(code);
+  const answer = await execute(code);
   const split = answer.indexOf('\n');
   const name = split < 0 ? answer : answer.slice(0, split);
   const body = split < 0 ? '' : answer.slice(split + 1);

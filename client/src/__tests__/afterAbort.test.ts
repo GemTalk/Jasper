@@ -93,7 +93,7 @@ describe('resyncEditorsAfterAbort', () => {
   it('closes the tab over a method the abort discarded', async () => {
     const gone = methodTab(BALANCE);
     openTabs(gone);
-    vi.mocked(readMethodSlotState).mockReturnValue([absent()]);
+    vi.mocked(readMethodSlotState).mockResolvedValue([absent()]);
 
     await resyncEditorsAfterAbort(SESSION);
 
@@ -102,7 +102,7 @@ describe('resyncEditorsAfterAbort', () => {
 
   it('keeps the tab over a method that survived', async () => {
     openTabs(methodTab(BALANCE));
-    vi.mocked(readMethodSlotState).mockReturnValue([present()]);
+    vi.mocked(readMethodSlotState).mockResolvedValue([present()]);
 
     await resyncEditorsAfterAbort(SESSION);
 
@@ -113,7 +113,7 @@ describe('resyncEditorsAfterAbort', () => {
     const gone = methodTab(BALANCE);
     const kept = methodTab(TOTAL);
     openTabs(gone, kept);
-    vi.mocked(readMethodSlotState).mockReturnValue([absent(), present()]);
+    vi.mocked(readMethodSlotState).mockResolvedValue([absent(), present()]);
 
     await resyncEditorsAfterAbort(SESSION);
 
@@ -132,7 +132,7 @@ describe('resyncEditorsAfterAbort', () => {
       value: [{ uri: { scheme: 'gemstone', toString: () => BALANCE }, isDirty: false }],
       writable: true,
     });
-    vi.mocked(readMethodSlotState).mockReturnValue([present()]);
+    vi.mocked(readMethodSlotState).mockResolvedValue([present()]);
 
     await resyncEditorsAfterAbort(SESSION);
 
@@ -145,7 +145,7 @@ describe('resyncEditorsAfterAbort', () => {
   // A stale tab beats a tab closed over a method that is really still there.
   it('closes nothing when the stone could not be asked', async () => {
     openTabs(methodTab(BALANCE));
-    vi.mocked(readMethodSlotState).mockReturnValue(undefined);
+    vi.mocked(readMethodSlotState).mockResolvedValue(undefined);
 
     await resyncEditorsAfterAbort(SESSION);
 
@@ -160,7 +160,7 @@ describe('resyncEditorsAfterAbort', () => {
 
   it('still re-reads the editors when nothing was closed', async () => {
     openTabs(methodTab(BALANCE));
-    vi.mocked(readMethodSlotState).mockReturnValue(undefined);
+    vi.mocked(readMethodSlotState).mockResolvedValue(undefined);
     Object.defineProperty(vscode.workspace, 'textDocuments', {
       value: [{ uri: { scheme: 'gemstone', toString: () => BALANCE }, isDirty: false }],
       writable: true,

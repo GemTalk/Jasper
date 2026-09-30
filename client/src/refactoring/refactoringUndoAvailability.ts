@@ -33,13 +33,15 @@ const NOTHING: UndoStatus = {
 
 /** Ask the stone whether it holds an undo entry. Never throws: a session that is
  *  gone, busy, or has no engine simply reports "nothing to undo". */
-export function checkRefactoringUndoAvailable(session: ActiveSession | undefined): UndoStatus {
+export async function checkRefactoringUndoAvailable(
+  session: ActiveSession | undefined,
+): Promise<UndoStatus> {
   if (!session) {
     logInfo('[undoRefactoring] status probe skipped: no session');
     return NOTHING;
   }
   try {
-    const raw = queries.refactoringUndoStatus(session);
+    const raw = await queries.refactoringUndoStatus(session);
     // The raw answer, every time: whether an Undo is offered turns on this one string, and a
     // stone that answers `{"available":false}` and a probe that threw look identical from the
     // outside — both end as a notice with no button.

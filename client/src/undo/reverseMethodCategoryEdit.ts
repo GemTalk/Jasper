@@ -53,7 +53,7 @@ export async function reverseMethodCategoryEdit(
 
   let categories: string[];
   try {
-    categories = getMethodCategories(
+    categories = await getMethodCategories(
       session,
       entry.slot.className,
       entry.slot.isMeta,
@@ -87,7 +87,7 @@ export async function reverseMethodCategoryEdit(
   }
 
   try {
-    renameCategory(
+    await renameCategory(
       session,
       entry.slot.className,
       entry.slot.isMeta,
@@ -136,7 +136,7 @@ async function removeReal(
 ): Promise<boolean> {
   let answer: string;
   try {
-    answer = removeMethodCategory(
+    answer = await removeMethodCategory(
       session,
       entry.slot.className,
       entry.slot.isMeta,

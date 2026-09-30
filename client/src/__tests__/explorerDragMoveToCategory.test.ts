@@ -52,11 +52,11 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
-  vi.mocked(queries.recategorizeMethod).mockReturnValue('ok');
+  vi.mocked(queries.recategorizeMethod).mockResolvedValue('ok');
   // The slot's captured state carries the CATEGORY: the source category on the way in, the
   // target on the way out.
   captureCalls = 0;
-  vi.mocked(captureMethodSlots).mockImplementation((_e, slots) => {
+  vi.mocked(captureMethodSlots).mockImplementation(async (_e, slots) => {
     captureCalls += 1;
     return slots.map((slot) => ({
       exists: true,
@@ -134,7 +134,7 @@ describe('ExplorerController.dragMoveToCategory', () => {
 
   it('reports a move the stone refused, and does not claim success', async () => {
     const { ctl, reload } = makeController();
-    vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
+    vi.mocked(queries.recategorizeMethod).mockImplementation(async () => {
       throw new Error('classErrMethCatNotFound');
     });
 
@@ -186,7 +186,7 @@ describe('ExplorerController.dragMoveToCategory', () => {
 
   it('records nothing when the move failed', async () => {
     const { ctl } = makeController();
-    vi.mocked(queries.recategorizeMethod).mockImplementation(() => {
+    vi.mocked(queries.recategorizeMethod).mockImplementation(async () => {
       throw new Error('classErrMethCatNotFound');
     });
 

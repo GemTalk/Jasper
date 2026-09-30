@@ -71,7 +71,7 @@ describe('method history across a refactoring (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
   const CLS = 'RMHItFixture';
@@ -81,42 +81,45 @@ describe('method history across a refactoring (integration)', () => {
    *  each already carrying a hand-edit history, so the only question below is whether the
    *  refactoring ADDS to it. The last two are for the class-re-versioning case: one method the
    *  rename rewrites, and one it merely carries across. */
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #(count) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(
+    await q.compileMethod(
       session(),
       CLS,
       false,
       'moving',
       'movePointX: x y: y\n\t^Array with: x with: y',
     );
-    q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 1 y: 2');
-    q.compileMethod(session(), CLS, false, 'moving', 'local\n\t| t |\n\tt := 1.\n\t^t + t');
+    await q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 1 y: 2');
+    await q.compileMethod(session(), CLS, false, 'moving', 'local\n\t| t |\n\tt := 1.\n\t^t + t');
     // Reads the instance variable, so renaming it rewrites THIS method and no other.
-    q.compileMethod(session(), CLS, false, 'accessing', 'readsIvar\n\t^ count + 1');
+    await q.compileMethod(session(), CLS, false, 'accessing', 'readsIvar\n\t^ count + 1');
     // Touches nothing the ivar rename rewrites — the control for the copy-forward guard.
-    q.compileMethod(session(), CLS, false, 'accessing', 'untouched\n\t^ 42');
+    await q.compileMethod(session(), CLS, false, 'accessing', 'untouched\n\t^ 42');
   };
 
-  const historyOf = (selector: string) =>
-    parseMethodHistory(q.getMethodHistory(session(), CLS, selector, false));
+  const historyOf = async (selector: string) =>
+    parseMethodHistory(await q.getMethodHistory(session(), CLS, selector, false));
 
   /** The versions the history really holds — a method with no history still answers one synthetic
    *  `notInHistory` row standing for what is installed now. */
-  const recorded = (selector: string) => historyOf(selector).filter((v) => !v.notInHistory);
+  const recorded = async (selector: string) =>
+    (await historyOf(selector)).filter((v) => !v.notInHistory);
 
   /** The class of a method's #sourceString, which is what the history read compares on. */
-  const sourceKind = (selector: string): string =>
-    exec(
-      `(${CLS} compiledMethodAt: #'${selector}' environmentId: 0) sourceString class name`,
+  const sourceKind = async (selector: string): Promise<string> =>
+    (
+      await exec(
+        `(${CLS} compiledMethodAt: #'${selector}' environmentId: 0) sourceString class name`,
+      )
     ).trim();
 
-  const installedSource = (selector: string): string =>
-    exec(`(${CLS} compiledMethodAt: #'${selector}' environmentId: 0) sourceString`);
+  const installedSource = async (selector: string): Promise<string> =>
+    await exec(`(${CLS} compiledMethodAt: #'${selector}' environmentId: 0) sourceString`);
 
   /** Rename `movePointX:y:` to `moveY:x:` across the whole system, previewing then applying. */
   const renameMovePoint = async (token: string): Promise<void> => {
@@ -139,7 +142,7 @@ describe('method history across a refactoring (integration)', () => {
 
   /** Rename the temporary `t` to `sum` in `local` — one method recompiled, selector unchanged. */
   const renameLocalTemp = async (token: string): Promise<void> => {
-    const offset = installedSource('local').indexOf('t :=') + 1;
+    const offset = (await installedSource('local')).indexOf('t :=') + 1;
     const start = parseTempStartPreview(
       await startRenameTemporaryPreview(
         asyncExec,
@@ -180,9 +183,9 @@ describe('method history across a refactoring (integration)', () => {
 
   /** Rename the instance variable `count` to `total`, previewing then applying. */
   const renameIvar = async (token: string): Promise<void> => {
-    const exec2 = (code: string): string => exec(code);
-    startRenameInstVarPreview(exec2, CLS, 'count', 'total', token);
-    applyRenameInstVar(exec2, token, []);
+    const exec2 = async (code: string): Promise<string> => await exec(code);
+    await startRenameInstVarPreview(exec2, CLS, 'count', 'total', token);
+    await applyRenameInstVar(exec2, token, []);
   };
 
   // ── a refactoring that RE-VERSIONS the class ───────────────────────────────
@@ -195,50 +198,50 @@ describe('method history across a refactoring (integration)', () => {
    */
   describe('rename instance variable', () => {
     it('records the rewritten body of the method that read the variable', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const before = recorded('readsIvar').length;
+      const before = (await recorded('readsIvar')).length;
       await renameIvar(`rmhit-ivar-${CLS}`);
 
-      const after = recorded('readsIvar');
-      expect(installedSource('readsIvar')).toContain('total + 1');
+      const after = await recorded('readsIvar');
+      expect(await installedSource('readsIvar')).toContain('total + 1');
       expect(after.length).toBe(before + 1);
       expect(after[0].source).toContain('total + 1');
     });
 
     it('keeps the pre-refactoring source available to go back to', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameIvar(`rmhit-ivar-back-${CLS}`);
 
-      expect(recorded('readsIvar').map((v) => v.source)).toContainEqual(
+      expect((await recorded('readsIvar')).map((v) => v.source)).toContainEqual(
         expect.stringContaining('count + 1'),
       );
     });
 
     it('does not stamp a version onto every method the re-version carried across', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const before = recorded('untouched').length;
+      const before = (await recorded('untouched')).length;
       await renameIvar(`rmhit-ivar-quiet-${CLS}`);
 
       // A new class version starts with an empty method dictionary, so EVERY method comes through
       // the copy-forward — including ones the rename did not rewrite. Recording those would turn one
       // rename into a version on every method of the class.
-      expect(installedSource('untouched')).toContain('^ 42');
-      expect(recorded('untouched').length).toBe(before);
+      expect(await installedSource('untouched')).toContain('^ 42');
+      expect((await recorded('untouched')).length).toBe(before);
     });
 
     it('still opens the history of a method it carried across untouched', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameIvar(`rmhit-ivar-open-${CLS}`);
 
@@ -265,13 +268,13 @@ describe('method history across a refactoring (integration)', () => {
    */
   describe('the kind of string each compile path installs', () => {
     it('is a string class on both sides of a refactoring, whichever the stone uses', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const handEdited = sourceKind('caller');
+      const handEdited = await sourceKind('caller');
       await renameMovePoint(`rmhit-kind-${CLS}`);
-      const engineCompiled = sourceKind('caller');
+      const engineCompiled = await sourceKind('caller');
 
       // Unicode7 and Unicode16 on 3.6.x, String on 3.7.x — the point is only that both are strings
       // and neither is asserted to be a particular one.
@@ -280,9 +283,9 @@ describe('method history across a refactoring (integration)', () => {
     });
 
     it('does not decide whether the history can be read', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       // `local` goes through the engine, `caller` does not, so on a stone where the two paths
       // disagree this is one class holding both kinds at once — the case that used to raise.
@@ -290,7 +293,7 @@ describe('method history across a refactoring (integration)', () => {
 
       expect(() => historyOf('local')).not.toThrow();
       expect(() => historyOf('caller')).not.toThrow();
-      expect(recorded('local').length).toBeGreaterThanOrEqual(1);
+      expect((await recorded('local')).length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -298,9 +301,9 @@ describe('method history across a refactoring (integration)', () => {
 
   describe('opening the history of a method a refactoring recompiled', () => {
     it('does not raise for a sender a rename method rewrote', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameMovePoint(`rmhit-open-sender-${CLS}`);
 
@@ -308,9 +311,9 @@ describe('method history across a refactoring (integration)', () => {
     });
 
     it('does not raise for the implementor a rename method moved', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameMovePoint(`rmhit-open-impl-${CLS}`);
 
@@ -318,9 +321,9 @@ describe('method history across a refactoring (integration)', () => {
     });
 
     it('does not raise for a method a rename temporary rewrote', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameLocalTemp(`rmhit-open-temp-${CLS}`);
 
@@ -328,9 +331,9 @@ describe('method history across a refactoring (integration)', () => {
     });
 
     it('does not raise for a method the refactoring did NOT touch', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameLocalTemp(`rmhit-open-untouched-${CLS}`);
 
@@ -344,41 +347,41 @@ describe('method history across a refactoring (integration)', () => {
 
   describe('rename method', () => {
     it('records the rewritten body of a sender it recompiled', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const before = recorded('caller').length;
+      const before = (await recorded('caller')).length;
       await renameMovePoint(`rmhit-sender-${CLS}`);
 
-      const after = recorded('caller');
-      expect(installedSource('caller')).toContain('moveY: 2 x: 1');
+      const after = await recorded('caller');
+      expect(await installedSource('caller')).toContain('moveY: 2 x: 1');
       expect(after.length).toBe(before + 1);
       expect(after[0].source).toContain('moveY: 2 x: 1');
     });
 
     it('keeps the pre-refactoring source of that sender available to go back to', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameMovePoint(`rmhit-back-${CLS}`);
 
-      expect(recorded('caller').map((v) => v.source)).toContainEqual(
+      expect((await recorded('caller')).map((v) => v.source)).toContainEqual(
         expect.stringContaining('movePointX: 1 y: 2'),
       );
     });
 
     it('flags the version it just compiled as the current one', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameMovePoint(`rmhit-current-${CLS}`);
 
       // Not `notInHistory`: the installed source must BE one of the recorded versions, which is
       // what makes Revert-to-previous meaningful after a refactoring.
-      const current = historyOf('caller').find((v) => v.isCurrent);
+      const current = (await historyOf('caller')).find((v) => v.isCurrent);
       expect(current?.notInHistory).not.toBe(true);
       expect(current?.source).toContain('moveY: 2 x: 1');
     });
@@ -391,74 +394,74 @@ describe('method history across a refactoring (integration)', () => {
      * panel must not claim one of them is what the stone is running.
      */
     it('leaves the old selector’s history readable, so a regretted rename can be restored', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
       // A second hand edit, so the old selector has a history worth recovering.
-      q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 3 y: 4');
+      await q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 3 y: 4');
 
-      const before = recorded('caller').length;
+      const before = (await recorded('caller')).length;
       await renameCaller(`rmhit-oldsel-${CLS}`);
 
-      const old = recorded('caller');
-      expect(installedSource('callerRenamed')).toContain('movePointX: 3 y: 4');
+      const old = await recorded('caller');
+      expect(await installedSource('callerRenamed')).toContain('movePointX: 3 y: 4');
       // Every version it had is still there ...
       expect(old.length).toBe(before);
       expect(old.map((v) => v.source)).toContainEqual(
         expect.stringContaining('movePointX: 3 y: 4'),
       );
       // ... and none of them claims to be what is installed, because nothing is.
-      expect(historyOf('caller').some((v) => v.isCurrent)).toBe(false);
+      expect((await historyOf('caller')).some((v) => v.isCurrent)).toBe(false);
     });
 
     it('records the renamed implementor under its new selector', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameMovePoint(`rmhit-impl-${CLS}`);
 
-      const versions = recorded('moveY:x:');
+      const versions = await recorded('moveY:x:');
       expect(versions.length).toBeGreaterThanOrEqual(1);
       expect(versions[0].source).toContain('moveY: y x: x');
     });
 
     it('leaves the history of a method it did not recompile alone', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const before = recorded('local').length;
+      const before = (await recorded('local')).length;
       await renameMovePoint(`rmhit-untouched-${CLS}`);
 
       // The control on the other side: history must not grow for a method nothing happened to.
-      expect(recorded('local').length).toBe(before);
+      expect((await recorded('local')).length).toBe(before);
     });
   });
 
   describe('rename temporary', () => {
     it('records the rewritten body of the one method it recompiled', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
-      const before = recorded('local').length;
+      const before = (await recorded('local')).length;
       await renameLocalTemp(`rmhit-temp-${CLS}`);
 
-      const after = recorded('local');
-      expect(installedSource('local')).toContain('sum := 1');
+      const after = await recorded('local');
+      expect(await installedSource('local')).toContain('sum := 1');
       expect(after.length).toBe(before + 1);
       expect(after[0].source).toContain('sum := 1');
     });
 
     it('keeps the pre-refactoring source available to go back to', async (ctx) => {
-      requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
-      defineFixture();
+      await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+      await installMethodHistory(session());
+      await defineFixture();
 
       await renameLocalTemp(`rmhit-temp-back-${CLS}`);
 
-      expect(recorded('local').map((v) => v.source)).toContainEqual(
+      expect((await recorded('local')).map((v) => v.source)).toContainEqual(
         expect.stringContaining('t := 1'),
       );
     });

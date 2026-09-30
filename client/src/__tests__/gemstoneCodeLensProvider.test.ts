@@ -80,9 +80,9 @@ describe('GemStoneCodeLensProvider', () => {
 
   // The count is computed off the resolve path (so a spinner can paint first),
   // so resolving twice with the deferred work flushed in between yields the count.
-  function resolveCount(lens: CodeLens): CodeLens {
+  async function resolveCount(lens: CodeLens): Promise<CodeLens> {
     provider.resolveCodeLens(lens); // first resolve → spinner + schedules the lookup
-    vi.runAllTimers(); // run the deferred sendersOf/implementorsOf
+    await vi.runAllTimersAsync(); // run the deferred sendersOf/implementorsOf
     return provider.resolveCodeLens(lens); // re-resolve → cache hit → the count
   }
 
@@ -319,7 +319,7 @@ foo
       expect(queries.sendersOf).not.toHaveBeenCalled(); // the lookup is deferred, not run inline
     });
 
-    it('replaces the spinner with the real count once the lookup completes', () => {
+    it('replaces the spinner with the real count once the lookup completes', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
       (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}]);
@@ -331,7 +331,7 @@ foo
       const lens = methodLenses(provider.provideCodeLenses(doc))[0];
 
       expect(provider.resolveCodeLens(lens).command?.title).toContain('$(loading~spin)');
-      vi.runAllTimers(); // the deferred lookup runs and caches the count
+      await vi.runAllTimersAsync(); // the deferred lookup runs and caches the count
       expect(provider.resolveCodeLens(lens).command?.title).toBe('2 senders');
     });
 
@@ -351,7 +351,7 @@ foo
       }
     });
 
-    it('emits the senders lens first, dispatching to gemstone.sendersOfSelector', () => {
+    it('emits the senders lens first, dispatching to gemstone.sendersOfSelector', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
 
@@ -368,14 +368,14 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      const sendersLens = resolveCount(lenses[0]);
+      const sendersLens = await resolveCount(lenses[0]);
 
       expect(sendersLens.command?.title).toBe('2 senders');
       expect(sendersLens.command?.command).toBe('gemstone.sendersOfSelector');
       expect(sendersLens.command?.arguments).toEqual([{ selector: 'foo', sessionId: session.id }]);
     });
 
-    it('emits the implementors lens second, dispatching to gemstone.implementorsOfSelector', () => {
+    it('emits the implementors lens second, dispatching to gemstone.implementorsOfSelector', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
 
@@ -392,7 +392,7 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      const implementorsLens = resolveCount(lenses[1]);
+      const implementorsLens = await resolveCount(lenses[1]);
 
       expect(implementorsLens.command?.title).toBe('1 implementor');
       expect(implementorsLens.command?.command).toBe('gemstone.implementorsOfSelector');
@@ -405,7 +405,7 @@ foo
     // queries implementorsOf and vice versa. Catches a regression where
     // the resolve path computed both for every lens (doubling the GCI work
     // for the two-lens pair).
-    it('the senders lens does not call implementorsOf', () => {
+    it('the senders lens does not call implementorsOf', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
       (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([]);
@@ -416,13 +416,13 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      resolveCount(lenses[0]); // senders lens
+      await resolveCount(lenses[0]); // senders lens
 
       expect(queries.sendersOf).toHaveBeenCalled();
       expect(queries.implementorsOf).not.toHaveBeenCalled();
     });
 
-    it('the implementors lens does not call sendersOf', () => {
+    it('the implementors lens does not call sendersOf', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
       (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([]);
@@ -433,13 +433,13 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      resolveCount(lenses[1]); // implementors lens
+      await resolveCount(lenses[1]); // implementors lens
 
       expect(queries.implementorsOf).toHaveBeenCalled();
       expect(queries.sendersOf).not.toHaveBeenCalled();
     });
 
-    it('handles singular counts on each lens', () => {
+    it('handles singular counts on each lens', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
 
@@ -455,11 +455,11 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      expect(resolveCount(lenses[0]).command?.title).toBe('1 sender');
-      expect(resolveCount(lenses[1]).command?.title).toBe('1 implementor');
+      expect((await resolveCount(lenses[0])).command?.title).toBe('1 sender');
+      expect((await resolveCount(lenses[1])).command?.title).toBe('1 implementor');
     });
 
-    it('caches counts so a re-resolve does not re-run the server lookup', () => {
+    it('caches counts so a re-resolve does not re-run the server lookup', async () => {
       // A re-resolve happens whenever another CodeLens provider on the same
       // document changes (e.g. the debugger's inline-values toggle). The count
       // must come from cache then — no extra sendersOf/implementorsOf calls.
@@ -472,7 +472,7 @@ foo
   ^ 42
 %`);
       const lenses = methodLenses(provider.provideCodeLenses(doc));
-      expect(resolveCount(lenses[0]).command?.title).toBe('3 senders');
+      expect((await resolveCount(lenses[0])).command?.title).toBe('3 senders');
       // Re-provide + re-resolve (fresh lens objects, as VS Code does on a refresh):
       // the count comes from cache, so no second server lookup.
       const again = methodLenses(provider.provideCodeLenses(doc));
@@ -480,7 +480,7 @@ foo
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     });
 
-    it('dispose() cancels a pending count lookup (no blocking GCI after teardown)', () => {
+    it('dispose() cancels a pending count lookup (no blocking GCI after teardown)', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
 
@@ -491,12 +491,12 @@ foo
       provider.resolveCodeLens(methodLenses(provider.provideCodeLenses(doc))[0]); // schedules the lookup
 
       provider.dispose();
-      vi.runAllTimers(); // a still-pending timer would fire here
+      await vi.runAllTimersAsync(); // a still-pending timer would fire here
 
       expect(queries.sendersOf).not.toHaveBeenCalled();
     });
 
-    it('refresh() clears the count cache (so a recompile can recount)', () => {
+    it('refresh() clears the count cache (so a recompile can recount)', async () => {
       const session = createMockSession();
       sessionManager.getSelectedSession = () => session;
       (queries.sendersOf as ReturnType<typeof vi.fn>).mockReturnValue([{}, {}, {}]);
@@ -505,9 +505,9 @@ foo
 foo
   ^ 42
 %`);
-      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+      await resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
       provider.refresh();
-      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
+      await resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
     });
   });

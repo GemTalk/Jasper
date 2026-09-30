@@ -153,7 +153,7 @@ describe('releasing the stash as entries leave the stack', () => {
   });
 
   it('never lets a failed release break the edit that triggered it', () => {
-    vi.mocked(releaseStashKeys).mockImplementation(() => {
+    vi.mocked(releaseStashKeys).mockImplementation(async () => {
       throw new Error('session busy');
     });
     pushUndoEntry(classEdit(['JasperUndoStash_1']));

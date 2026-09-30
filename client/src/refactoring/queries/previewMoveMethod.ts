@@ -107,6 +107,9 @@ export function applyMoveMethod(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearMoveMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsMoveMethodRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearMoveMethodPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsMoveMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

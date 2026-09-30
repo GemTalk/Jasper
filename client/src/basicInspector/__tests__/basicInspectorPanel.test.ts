@@ -110,8 +110,11 @@ function open(oop = 100n, label = 'anAccount'): BasicInspector {
 }
 
 /** Deliver a webview message to the panel, as the webview bridge would. */
-function send(msg: Record<string, unknown>): void {
-  panel.webview.onDidReceiveMessage.mock.calls[0][0](msg);
+async function send(msg: Record<string, unknown>): Promise<void> {
+  const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (
+    m: Record<string, unknown>,
+  ) => Promise<void>;
+  await handler(msg);
 }
 
 const postsOf = (command: string) =>
@@ -143,12 +146,12 @@ beforeEach(() => {
   );
   // Tests run in random order and `clearAllMocks` clears calls but not queued
   // return values, so every default a test may override is re-stated here.
-  vi.mocked(queries.fetchObjectHeader).mockReturnValue(HEADER);
-  vi.mocked(queries.fetchSlots).mockReturnValue([]);
-  vi.mocked(queries.fetchItems).mockReturnValue([]);
-  vi.mocked(queries.fetchEntries).mockReturnValue([]);
-  vi.mocked(queries.fetchBytes).mockReturnValue([]);
-  vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
+  vi.mocked(queries.fetchObjectHeader).mockResolvedValue(HEADER);
+  vi.mocked(queries.fetchSlots).mockResolvedValue([]);
+  vi.mocked(queries.fetchItems).mockResolvedValue([]);
+  vi.mocked(queries.fetchEntries).mockResolvedValue([]);
+  vi.mocked(queries.fetchBytes).mockResolvedValue([]);
+  vi.mocked(queries.fetchBrowseLocation).mockResolvedValue(null);
   vi.mocked(debug.evaluateWithReceiverToOop).mockReturnValue(777n);
   vi.mocked(debug.getInstVarOop).mockReturnValue(500n);
   vi.mocked(debug.isSpecialOop).mockReturnValue(false);
@@ -212,10 +215,10 @@ describe('opening the panel', () => {
     expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(4);
   });
 
-  it('sends the inspected object once the webview says it is ready', () => {
+  it('sends the inspected object once the webview says it is ready', async () => {
     open(100n, 'anAccount');
 
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
 
     expect(postsOf('addRoot')[0]).toMatchObject({
       columnId: 0,
@@ -225,36 +228,36 @@ describe('opening the panel', () => {
     });
   });
 
-  it('still opens a column for an object the stone will not describe', () => {
-    vi.mocked(queries.fetchObjectHeader).mockReturnValue(null);
+  it('still opens a column for an object the stone will not describe', async () => {
+    vi.mocked(queries.fetchObjectHeader).mockResolvedValue(null);
     open();
 
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
 
     expect(postsOf('addRoot')[0].header).toMatchObject({ className: '<unreadable>' });
   });
 });
 
 describe('serving a tab', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
   });
 
-  it('reads named slots for the slots tab', () => {
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
+  it('reads named slots for the slots tab', async () => {
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
 
     expect(queries.fetchSlots).toHaveBeenCalledWith(expect.any(Function), 100n);
   });
 
-  it('asks for one page of items at a time', () => {
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101 });
+  it('asks for one page of items at a time', async () => {
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101 });
 
     expect(queries.fetchItems).toHaveBeenCalledWith(expect.any(Function), 100n, 101, 100);
   });
 
-  it('prints an object in full, past the printString cap', () => {
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+  it('prints an object in full, past the printString cap', async () => {
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
 
     expect(debug.fetchFullPrintString).toHaveBeenCalledWith(session, 100n);
     expect(postsOf('tabData').at(-1)).toMatchObject({ tab: 'print', text: 'an Account' });
@@ -262,7 +265,7 @@ describe('serving a tab', () => {
 
   /** A reader that answers full pages until `total` rows are gone. */
   function pagesOf(total: number) {
-    return (_exec: unknown, _oop: bigint, from: number, count: number) =>
+    return async (_exec: unknown, _oop: bigint, from: number, count: number) =>
       Array.from({ length: Math.max(0, Math.min(count, total - from + 1)) }, (_, i) => ({
         label: `[${from + i}]`,
         value: '1',
@@ -272,27 +275,34 @@ describe('serving a tab', () => {
       }));
   }
 
-  it('takes one page when the tab asks for one page', () => {
+  it('takes one page when the tab asks for one page', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1 });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1 });
 
     expect(queries.fetchItems).toHaveBeenCalledTimes(1);
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(100);
   });
 
-  it('reads on to the end of the object for a Load all', () => {
+  it('reads on to the end of the object for a Load all', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(450);
   });
 
-  it('carries a Load all on from the rows already loaded', () => {
+  it('carries a Load all on from the rows already loaded', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101, all: true });
+    await send({
+      command: 'fetchTab',
+      columnId: 0,
+      oop: '100',
+      tab: 'items',
+      from: 101,
+      all: true,
+    });
 
     expect(queries.fetchItems).toHaveBeenNthCalledWith(1, expect.any(Function), 100n, 101, 100);
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(350);
@@ -302,35 +312,56 @@ describe('serving a tab', () => {
    * What a refetch after a write sends, so a tab the user had paged through
    * comes back the length it was rather than as page one.
    */
-  it('reads on until it has the rows a refetch asked to restore', () => {
+  it('reads on until it has the rows a refetch asked to restore', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 300 });
+    await send({
+      command: 'fetchTab',
+      columnId: 0,
+      oop: '100',
+      tab: 'items',
+      from: 1,
+      through: 300,
+    });
 
     expect(queries.fetchItems).toHaveBeenCalledTimes(3);
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(300);
   });
 
-  it('takes one page when a refetch has only one page to restore', () => {
+  it('takes one page when a refetch has only one page to restore', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 100 });
+    await send({
+      command: 'fetchTab',
+      columnId: 0,
+      oop: '100',
+      tab: 'items',
+      from: 1,
+      through: 100,
+    });
 
     expect(queries.fetchItems).toHaveBeenCalledTimes(1);
   });
 
-  it('stops a refetch at the same ceiling a Load all stops at', () => {
+  it('stops a refetch at the same ceiling a Load all stops at', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, through: 20_000 });
+    await send({
+      command: 'fetchTab',
+      columnId: 0,
+      oop: '100',
+      tab: 'items',
+      from: 1,
+      through: 20_000,
+    });
 
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(5000);
   });
 
-  it('stops a Load all at a ceiling rather than holding the session', () => {
+  it('stops a Load all at a ceiling rather than holding the session', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     // 50 pages of 100. The tab still shows a remainder, and another click
     // carries on from there.
@@ -342,86 +373,86 @@ describe('serving a tab', () => {
    * what happened, so the reply carries whether the ceiling is what stopped it
    * and how many rows one click is worth.
    */
-  it('reports a Load all that stopped at the ceiling, and what a click is worth', () => {
+  it('reports a Load all that stopped at the ceiling, and what a click is worth', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: true, loadAllRows: 5000 });
   });
 
-  it('reports no ceiling when a Load all reached the end of the object', () => {
+  it('reports no ceiling when a Load all reached the end of the object', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(450));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: false });
   });
 
-  it('reports no ceiling for a plain Load more, which only ever wanted one page', () => {
+  it('reports no ceiling for a plain Load more, which only ever wanted one page', async () => {
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101 });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 101 });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: false });
   });
 
-  it('reads as far as the user has set the ceiling', () => {
+  it('reads as far as the user has set the ceiling', async () => {
     settings.loadAllPageLimit = 200;
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ loadAllRows: 20_000 });
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(20_000);
   });
 
-  it('falls back to the standard ceiling when the setting is nonsense', () => {
+  it('falls back to the standard ceiling when the setting is nonsense', async () => {
     settings.loadAllPageLimit = 0;
     vi.mocked(queries.fetchItems).mockImplementation(pagesOf(1_000_000));
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'items', from: 1, all: true });
 
     expect((postsOf('tabData').at(-1)!.rows as unknown[]).length).toBe(5000);
   });
 
-  it('counts the bytes ceiling in bytes, which page four at a time', () => {
+  it('counts the bytes ceiling in bytes, which page four at a time', async () => {
     vi.mocked(queries.fetchBytes).mockImplementation(
-      (_exec: unknown, _oop: bigint, _from: number, count: number) =>
+      async (_exec: unknown, _oop: bigint, _from: number, count: number) =>
         Array.from({ length: count }, () => 98),
     );
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'bytes', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'bytes', from: 1, all: true });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ stoppedAtLimit: true, loadAllRows: 20_000 });
   });
 
-  it('reads every remaining byte for a Load all on the bytes tab', () => {
+  it('reads every remaining byte for a Load all on the bytes tab', async () => {
     vi.mocked(queries.fetchBytes).mockImplementation(
-      (_exec: unknown, _oop: bigint, from: number, count: number) =>
+      async (_exec: unknown, _oop: bigint, from: number, count: number) =>
         Array.from({ length: Math.max(0, Math.min(count, 1000 - from + 1)) }, () => 98),
     );
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'bytes', from: 1, all: true });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'bytes', from: 1, all: true });
 
     expect((postsOf('tabData').at(-1)!.bytes as unknown[]).length).toBe(1000);
   });
 
-  it('answers the column that asked, so a stale reply cannot land elsewhere', () => {
-    send({ command: 'fetchTab', columnId: 7, oop: '100', tab: 'slots', from: 1 });
+  it('answers the column that asked, so a stale reply cannot land elsewhere', async () => {
+    await send({ command: 'fetchTab', columnId: 7, oop: '100', tab: 'slots', from: 1 });
 
     expect(postsOf('tabData').at(-1)).toMatchObject({ columnId: 7, tab: 'slots' });
   });
 });
 
 describe('drilling and diving', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
   });
 
-  it('gives a drilled column its own id, to the right of its source', () => {
-    send({ command: 'inspectRow', sourceColumnId: 0, oop: '900', label: 'balance' });
+  it('gives a drilled column its own id, to the right of its source', async () => {
+    await send({ command: 'inspectRow', sourceColumnId: 0, oop: '900', label: 'balance' });
 
     expect(postsOf('addChild')[0]).toMatchObject({
       columnId: 1,
@@ -431,21 +462,21 @@ describe('drilling and diving', () => {
     });
   });
 
-  it('never reuses a column id across drills', () => {
-    send({ command: 'inspectRow', sourceColumnId: 0, oop: '900', label: 'a' });
-    send({ command: 'inspectRow', sourceColumnId: 0, oop: '901', label: 'b' });
+  it('never reuses a column id across drills', async () => {
+    await send({ command: 'inspectRow', sourceColumnId: 0, oop: '900', label: 'a' });
+    await send({ command: 'inspectRow', sourceColumnId: 0, oop: '901', label: 'b' });
 
     expect(postsOf('addChild').map((m) => m.columnId)).toEqual([1, 2]);
   });
 
-  it('replaces a column in place on a dive, keeping its id', () => {
-    send({ command: 'diveHere', columnId: 0, oop: '900', label: 'balance', remember: true });
+  it('replaces a column in place on a dive, keeping its id', async () => {
+    await send({ command: 'diveHere', columnId: 0, oop: '900', label: 'balance', remember: true });
 
     expect(postsOf('replaceColumn')[0]).toMatchObject({ columnId: 0, oop: '900' });
   });
 
-  it('echoes back whether a dive should be remembered, since the webview owns the history', () => {
-    send({ command: 'diveHere', columnId: 0, oop: '900', label: 'b', remember: false });
+  it('echoes back whether a dive should be remembered, since the webview owns the history', async () => {
+    await send({ command: 'diveHere', columnId: 0, oop: '900', label: 'b', remember: false });
 
     expect(postsOf('replaceColumn')[0]).toMatchObject({ remember: false });
   });
@@ -461,42 +492,42 @@ describe('editing a slot', () => {
     expression: 'self balance * 2',
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
   });
 
-  it('evaluates the expression with the inspected object bound to self', () => {
-    send(EDIT);
+  it('evaluates the expression with the inspected object bound to self', async () => {
+    await send(EDIT);
 
     expect(debug.evaluateWithReceiverToOop).toHaveBeenCalledWith(session, 100n, 'self balance * 2');
   });
 
-  it('stores the evaluated result into the named slot', () => {
-    send(EDIT);
+  it('stores the evaluated result into the named slot', async () => {
+    await send(EDIT);
 
     expect(debug.setInstVar).toHaveBeenCalledWith(session, 100n, 2, 777n);
     expect(postsOf('setSlotResult').at(-1)).toMatchObject({ ok: true });
   });
 
-  it('writes an indexed element with at:put:', () => {
-    send({ ...EDIT, kind: 'indexed', index: 3 });
+  it('writes an indexed element with at:put:', async () => {
+    await send({ ...EDIT, kind: 'indexed', index: 3 });
 
     expect(debug.setIndexedVar).toHaveBeenCalledWith(session, 100n, 3, 777n);
   });
 
-  it('writes a dictionary entry at its key, not at a slot number', () => {
-    send({ ...EDIT, kind: 'entry', index: 0, keyOop: '800' });
+  it('writes a dictionary entry at its key, not at a slot number', async () => {
+    await send({ ...EDIT, kind: 'entry', index: 0, keyOop: '800' });
 
     expect(debug.setDictionaryValue).toHaveBeenCalledWith(session, 100n, 800n, 777n);
   });
 
-  it('leaves the slot untouched when the expression will not evaluate', () => {
+  it('leaves the slot untouched when the expression will not evaluate', async () => {
     vi.mocked(debug.evaluateWithReceiverToOop).mockImplementationOnce(() => {
       throw new Error('doesNotUnderstand');
     });
 
-    send(EDIT);
+    await send(EDIT);
 
     expect(debug.setInstVar).not.toHaveBeenCalled();
     expect(postsOf('setSlotResult').at(-1)).toMatchObject({
@@ -505,95 +536,95 @@ describe('editing a slot', () => {
     });
   });
 
-  it('refuses to write while the session is mid-call', () => {
+  it('refuses to write while the session is mid-call', async () => {
     callInProgress = 1;
 
-    send(EDIT);
+    await send(EDIT);
 
     expect(debug.setInstVar).not.toHaveBeenCalled();
     expect(String(postsOf('setSlotResult').at(-1)!.error)).toContain('busy');
   });
 
-  it('pins the value a slot held so a revert cannot restore a recycled oop', () => {
-    send(EDIT);
+  it('pins the value a slot held so a revert cannot restore a recycled oop', async () => {
+    await send(EDIT);
 
     expect(debug.saveObjs).toHaveBeenCalledWith(session, [500n]);
   });
 
-  it('does not pin an immediate, which cannot be collected', () => {
+  it('does not pin an immediate, which cannot be collected', async () => {
     vi.mocked(debug.isSpecialOop).mockReturnValue(true);
 
-    send(EDIT);
+    await send(EDIT);
 
     expect(debug.saveObjs).not.toHaveBeenCalled();
   });
 
-  it('keeps the value from before the first edit, not from the previous one', () => {
-    send(EDIT);
+  it('keeps the value from before the first edit, not from the previous one', async () => {
+    await send(EDIT);
     vi.mocked(debug.getInstVarOop).mockReturnValue(999n);
 
-    send({ ...EDIT, expression: 'self balance * 3' });
-    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+    await send({ ...EDIT, expression: 'self balance * 3' });
+    await send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
 
     expect(vi.mocked(debug.setInstVar).mock.calls.at(-1)).toEqual([session, 100n, 2, 500n]);
   });
 
-  it('restores the original without re-evaluating anything', () => {
-    send(EDIT);
+  it('restores the original without re-evaluating anything', async () => {
+    await send(EDIT);
     const evaluations = vi.mocked(debug.evaluateWithReceiverToOop).mock.calls.length;
 
-    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+    await send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
 
     expect(vi.mocked(debug.evaluateWithReceiverToOop).mock.calls).toHaveLength(evaluations);
     expect(postsOf('setSlotResult').at(-1)).toMatchObject({ ok: true });
   });
 
-  it('says so rather than guessing when a slot has no recorded original', () => {
-    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+  it('says so rather than guessing when a slot has no recorded original', async () => {
+    await send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
 
     expect(postsOf('setSlotResult').at(-1)).toMatchObject({ ok: false });
     expect(debug.setInstVar).not.toHaveBeenCalled();
   });
 
-  it('offers no revert on a slot whose original could not be pinned', () => {
+  it('offers no revert on a slot whose original could not be pinned', async () => {
     vi.mocked(debug.saveObjs).mockImplementationOnce(() => {
       throw new Error('export set full');
     });
 
-    send(EDIT);
-    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+    await send(EDIT);
+    await send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
 
     expect(postsOf('setSlotResult').at(-1)).toMatchObject({ ok: false });
   });
 
-  it('marks an edited slot so its rows come back offering a revert', () => {
-    vi.mocked(queries.fetchSlots).mockReturnValue([
+  it('marks an edited slot so its rows come back offering a revert', async () => {
+    vi.mocked(queries.fetchSlots).mockResolvedValue([
       { label: 'owner', value: "'Fred'", oop: '901', className: 'String', index: 1 },
       { label: 'balance', value: '84', oop: '902', className: 'SmallInteger', index: 2 },
     ]);
-    send(EDIT);
+    await send(EDIT);
 
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
 
     const rows = postsOf('tabData').at(-1)!.rows as { label: string; revertible?: boolean }[];
     expect(rows.map((r) => r.revertible)).toEqual([undefined, true]);
   });
 
-  it('stops marking a slot once its original has been put back', () => {
-    vi.mocked(queries.fetchSlots).mockReturnValue([
+  it('stops marking a slot once its original has been put back', async () => {
+    vi.mocked(queries.fetchSlots).mockResolvedValue([
       { label: 'balance', value: '42', oop: '902', className: 'SmallInteger', index: 2 },
     ]);
-    send(EDIT);
+    await send(EDIT);
 
-    send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
-    send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
+    await send({ command: 'revertSlot', columnId: 0, oop: '100', kind: 'instvar', index: 2 });
+    await send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'slots', from: 1 });
 
     const rows = postsOf('tabData').at(-1)!.rows as { revertible?: boolean }[];
     expect(rows[0].revertible).toBeUndefined();
   });
 
-  it('releases every pinned value when the panel closes', () => {
-    send(EDIT);
+  it('releases every pinned value when the panel closes', async () => {
+    await send(EDIT);
 
     panel.dispose();
 
@@ -602,27 +633,27 @@ describe('editing a slot', () => {
 });
 
 describe('the evaluation pane', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
   });
 
   const EVAL = { command: 'evaluate', columnId: 0, oop: '100', expression: 'self size' };
 
-  it('shows the printString of the result when asked to display it', () => {
-    send({ ...EVAL, mode: 'display' });
+  it('shows the printString of the result when asked to display it', async () => {
+    await send({ ...EVAL, mode: 'display' });
 
     expect(postsOf('evalResult').at(-1)).toMatchObject({ ok: true, text: '84' });
   });
 
-  it('opens the result in a new column when asked to inspect it', () => {
-    send({ ...EVAL, mode: 'inspect' });
+  it('opens the result in a new column when asked to inspect it', async () => {
+    await send({ ...EVAL, mode: 'inspect' });
 
     expect(postsOf('addChild').at(-1)).toMatchObject({ sourceColumnId: 0, oop: '777' });
   });
 
-  it('says nothing about the result when asked to execute it', () => {
-    send({ ...EVAL, mode: 'execute' });
+  it('says nothing about the result when asked to execute it', async () => {
+    await send({ ...EVAL, mode: 'execute' });
 
     expect(debug.evaluateWithReceiverToOop).toHaveBeenCalled();
     expect(postsOf('evalResult').at(-1)).toMatchObject({ ok: true, text: '' });
@@ -630,21 +661,21 @@ describe('the evaluation pane', () => {
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalled();
   });
 
-  it('reports why an expression failed instead of opening an empty column', () => {
+  it('reports why an expression failed instead of opening an empty column', async () => {
     vi.mocked(debug.evaluateWithReceiverToOop).mockImplementationOnce(() => {
       throw new Error('doesNotUnderstand: #nope');
     });
 
-    send({ ...EVAL, mode: 'inspect' });
+    await send({ ...EVAL, mode: 'inspect' });
 
     expect(postsOf('evalResult').at(-1)).toMatchObject({ ok: false });
     expect(postsOf('addChild')).toHaveLength(0);
   });
 
-  it('refuses to evaluate while the session is mid-call', () => {
+  it('refuses to evaluate while the session is mid-call', async () => {
     callInProgress = 1;
 
-    send({ ...EVAL, mode: 'display' });
+    await send({ ...EVAL, mode: 'display' });
 
     expect(debug.evaluateWithReceiverToOop).not.toHaveBeenCalled();
     expect(postsOf('evalResult').at(-1)).toMatchObject({ ok: false });
@@ -652,22 +683,22 @@ describe('the evaluation pane', () => {
 });
 
 describe('acting on a row', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
   });
 
   /**
    * Class browsing lives in the GemStone Explorer, so a row's Browse Class
    * cascades its panes rather than opening the System Browser.
    */
-  it('browses the class of the value the row points at, in the Explorer', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+  it('browses the class of the value the row points at, in the Explorer', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue({
       dictName: 'UserGlobals',
       className: 'Account',
     });
 
-    send({ command: 'browseClass', oop: '900' });
+    await send({ command: 'browseClass', oop: '900' });
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
@@ -678,21 +709,21 @@ describe('acting on a row', () => {
   });
 
   /** The dictionary goes with the name, so a shadowed class resolves to this one. */
-  it('names the dictionary it resolved, not just the class', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+  it('names the dictionary it resolved, not just the class', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue({
       dictName: 'OtherDict',
       className: 'Account',
     });
 
-    send({ command: 'browseClass', oop: '900' });
+    await send({ command: 'browseClass', oop: '900' });
 
     expect(vi.mocked(vscode.commands.executeCommand).mock.calls[0][3]).toBe('OtherDict');
   });
 
-  it('says so rather than navigating to nothing', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
+  it('says so rather than navigating to nothing', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue(null);
 
-    send({ command: 'browseClass', oop: '900' });
+    await send({ command: 'browseClass', oop: '900' });
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
@@ -703,13 +734,13 @@ describe('acting on a row', () => {
    * row's value belongs to, refined to the selector — which is where the
    * debugger's frame Browse goes too.
    */
-  it('browses a Meta tab selector to that method in the Explorer', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+  it('browses a Meta tab selector to that method in the Explorer', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue({
       dictName: 'UserGlobals',
       className: 'Account',
     });
 
-    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+    await send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
@@ -721,23 +752,23 @@ describe('acting on a row', () => {
   });
 
   /** A selector that exists on both sides must land on the side being looked at. */
-  it('carries the class side through', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+  it('carries the class side through', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue({
       dictName: 'UserGlobals',
       className: 'Account',
     });
 
-    send({ command: 'browseMethod', oop: '900', selector: 'new', isMeta: true });
+    await send({ command: 'browseMethod', oop: '900', selector: 'new', isMeta: true });
 
     expect(vi.mocked(vscode.commands.executeCommand).mock.calls[0][4]).toMatchObject({
       isMeta: true,
     });
   });
 
-  it('names the method it could not locate rather than navigating to nothing', () => {
-    vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
+  it('names the method it could not locate rather than navigating to nothing', async () => {
+    vi.mocked(queries.fetchBrowseLocation).mockResolvedValue(null);
 
-    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+    await send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
@@ -745,14 +776,14 @@ describe('acting on a row', () => {
     );
   });
 
-  it('copies text to the clipboard', () => {
-    send({ command: 'copyText', text: '900', what: 'OOP' });
+  it('copies text to the clipboard', async () => {
+    await send({ command: 'copyText', text: '900', what: 'OOP' });
 
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('900');
   });
 
-  it('opens the setting the ceiling note links to', () => {
-    send({ command: 'openSetting', id: 'gemstone.inspector.loadAllPageLimit' });
+  it('opens the setting the ceiling note links to', async () => {
+    await send({ command: 'openSetting', id: 'gemstone.inspector.loadAllPageLimit' });
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'workbench.action.openSettings',
@@ -765,37 +796,37 @@ describe('acting on a row', () => {
    * an id straight off the webview wire would let the panel open Settings on
    * anything at all — including another extension's secrets-shaped keys.
    */
-  it('ignores a request to open any setting it does not itself link to', () => {
-    send({ command: 'openSetting', id: 'gemstone' });
-    send({ command: 'openSetting', id: 'files.autoSave' });
-    send({ command: 'openSetting', id: '' });
+  it('ignores a request to open any setting it does not itself link to', async () => {
+    await send({ command: 'openSetting', id: 'gemstone' });
+    await send({ command: 'openSetting', id: 'files.autoSave' });
+    await send({ command: 'openSetting', id: '' });
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });
 });
 
 describe('the panel title and lifetime', () => {
-  it('names the panel after the focused column', () => {
+  it('names the panel after the focused column', async () => {
     open();
-    send({ command: 'ready' });
+    await send({ command: 'ready' });
 
-    send({ command: 'setTitle', title: 'Account › balance' });
+    await send({ command: 'setTitle', title: 'Account › balance' });
 
     expect(panel.title).toBe('Inspector: Account › balance');
   });
 
-  it('falls back to a plain name when there is nothing to name it after', () => {
+  it('falls back to a plain name when there is nothing to name it after', async () => {
     open();
 
-    send({ command: 'setTitle', title: '' });
+    await send({ command: 'setTitle', title: '' });
 
     expect(panel.title).toBe('Inspector');
   });
 
-  it('closes the panel when its last column goes', () => {
+  it('closes the panel when its last column goes', async () => {
     open();
 
-    send({ command: 'closePanel' });
+    await send({ command: 'closePanel' });
 
     expect(panel.dispose).toHaveBeenCalled();
   });

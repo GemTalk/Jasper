@@ -758,7 +758,7 @@ interface MethodHistoryPanelEntry {
   // and get their own tab, rather than one revealing the other's history.
   dict: number | string | undefined;
   panel: vscode.WebviewPanel;
-  refresh: () => void;
+  refresh: () => Promise<void>;
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -1423,21 +1423,21 @@ export class ExplorerController {
   // Set (or clear, with an empty pattern) a pane's filter: update the map, then
   // refresh the pane and titles. Clearing is offered via the in-pane filter chip
   // (see FilterChipItem), so no context key is needed to gate a title Clear button.
-  private setFilterState(viewId: string, pattern: string | undefined): void {
+  private async setFilterState(viewId: string, pattern: string | undefined): Promise<void> {
     if (pattern) this.filters.set(viewId, pattern);
     else this.filters.delete(viewId);
     this.providerFor(viewId).refresh();
     this.syncTitles();
     // A changed Methods filter changes which ivar (if any) is highlighted.
-    if (viewId === VIEW_METHODS) this.refreshIvarHighlights();
+    if (viewId === VIEW_METHODS) await this.refreshIvarHighlights();
   }
 
-  clearFilter(viewId: string): void {
-    this.setFilterState(viewId, undefined);
+  async clearFilter(viewId: string): Promise<void> {
+    await this.setFilterState(viewId, undefined);
   }
 
-  private clearFilters(...viewIds: string[]): void {
-    for (const id of viewIds) this.setFilterState(id, undefined);
+  private async clearFilters(...viewIds: string[]): Promise<void> {
+    for (const id of viewIds) await this.setFilterState(id, undefined);
   }
 
   // Narrow the Methods pane with VS Code's own find box — the one that opens inside the
@@ -1521,9 +1521,9 @@ export class ExplorerController {
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
-    box.onDidChangeValue((value) => {
+    box.onDidChangeValue(async (value) => {
       lastAppliedByBox = value.trim() || undefined;
-      this.setFilterState(viewId, lastAppliedByBox);
+      await this.setFilterState(viewId, lastAppliedByBox);
     });
     const accept = () => {
       accepted = true;
@@ -1532,7 +1532,7 @@ export class ExplorerController {
     box.onDidAccept(accept);
     const entry = { commit: accept };
     this.openFilterBox = entry;
-    box.onDidHide(() => {
+    box.onDidHide(async () => {
       // Undo ONLY this box's own edit, and only when there is something to undo.
       //
       // Restoring unconditionally was wrong: plenty of things clear a pane's filter while the
@@ -1550,7 +1550,7 @@ export class ExplorerController {
         this.filters.get(viewId) === lastAppliedByBox &&
         lastAppliedByBox !== filterBeforeEdit
       ) {
-        this.setFilterState(viewId, filterBeforeEdit);
+        await this.setFilterState(viewId, filterBeforeEdit);
       }
       this.filteringView = undefined;
       // Deregister this box only. beginFilter commits an open box before creating the next, so
@@ -1581,14 +1581,14 @@ export class ExplorerController {
   // switches to the instance side, since instance variables are only accessed by
   // instance-side methods. `selectClass` clears the Methods filter, so seed the
   // token after it.
-  filterMethodsByIvar(
+  async filterMethodsByIvar(
     kind: 'reads' | 'writes' | 'accesses',
     ivarName: string,
     className: string,
-  ): void {
-    if (className !== this.state.className) this.selectClass(new ClassItem(className), false);
+  ): Promise<void> {
+    if (className !== this.state.className) await this.selectClass(new ClassItem(className), false);
     this.setMethodSide(false);
-    this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
+    await this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
   }
 
   applyFilter(names: string[], viewId: string): string[] {
@@ -1597,7 +1597,7 @@ export class ExplorerController {
   }
 
   // Called when the active session changes: reset everything and reload dicts.
-  reset(): void {
+  async reset(): Promise<void> {
     this.state.dictName = undefined;
     this.state.dictIndex = undefined;
     this.state.classCategory = undefined;
@@ -1619,7 +1619,7 @@ export class ExplorerController {
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
-    this.clearFilters(...EXPLORER_VIEWS);
+    await this.clearFilters(...EXPLORER_VIEWS);
     this.dictProvider.refresh();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -1630,7 +1630,7 @@ export class ExplorerController {
     // first open. A programmatic tree selection does NOT fire the view's selection
     // handler (which is what runs selectDict), so without this the panes stay empty
     // until the user clicks a dictionary even though one looks highlighted.
-    this.autoSelectDefaultDict();
+    await this.autoSelectDefaultDict();
   }
 
   // Select a sensible default dictionary (UserGlobals if present, else the first)
@@ -1640,19 +1640,19 @@ export class ExplorerController {
   // which does NOT call this). Lets a freshly-connected session land on a populated
   // dictionary instead of empty class/category panes. No-op without a session or
   // dictionaries.
-  private autoSelectDefaultDict(): void {
+  private async autoSelectDefaultDict(): Promise<void> {
     const session = this.session();
     if (session === undefined) return;
     let names: string[];
     try {
-      names = queries.getDictionaryNames(session);
+      names = await queries.getDictionaryNames(session);
     } catch {
       return;
     }
     const i = defaultDictionaryIndex(names);
     if (i < 0) return;
     const item = new DictItem(names[i], i + 1);
-    this.selectDict(item);
+    await this.selectDict(item);
     // A cascade: selecting the dictionary above is what populates the panes, and
     // the reveal only scrolls the row into sight -- worth nothing to someone not
     // looking at it, and worth less than the sidebar being yanked away from what
@@ -1701,9 +1701,9 @@ export class ExplorerController {
     // dictionary so the class/category/hierarchy/method panes reflect the stone.
     let currentDictIndex = dictIndex;
     try {
-      const pos = queries.getDictionaryNames(session).indexOf(dictName);
+      const pos = (await queries.getDictionaryNames(session)).indexOf(dictName);
       if (pos < 0) {
-        this.reset();
+        await this.reset();
         return;
       }
       currentDictIndex = pos + 1;
@@ -1717,18 +1717,18 @@ export class ExplorerController {
     // fetch rather than blanking the tree out from under the user.
     let listingRead = true;
     try {
-      this.classCategoryEntries = queries.getClassesWithCategory(session, currentDictIndex);
+      this.classCategoryEntries = await queries.getClassesWithCategory(session, currentDictIndex);
     } catch {
       listingRead = false; /* keep stale on failure */
     }
-    this.loadClassRowMetadata();
+    await this.loadClassRowMetadata();
     // Only against a listing that was actually re-read: a failed fetch leaves the stale one,
     // which says nothing about what is bound now.
     if (listingRead) this.dropVanishedSelection();
     const stillSelected = this.state.className;
     if (stillSelected !== undefined) {
       try {
-        this.envLines = queries.getClassEnvironments(
+        this.envLines = await queries.getClassEnvironments(
           session,
           currentDictIndex,
           stillSelected,
@@ -1737,7 +1737,7 @@ export class ExplorerController {
       } catch {
         /* keep stale on failure */
       }
-      this.loadHierarchy();
+      await this.loadHierarchy();
     }
 
     this.dictProvider.refresh();
@@ -1825,7 +1825,7 @@ export class ExplorerController {
     void this.refreshRetainingSelection({ reveal: false });
   }
 
-  selectDict(item: DictItem): void {
+  async selectDict(item: DictItem): Promise<void> {
     this.state.dictName = item.dictName;
     this.state.dictIndex = item.dictIndex;
     this.state.classCategory = undefined;
@@ -1840,12 +1840,12 @@ export class ExplorerController {
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
-    this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
+    await this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
     const session = this.session();
     this.classCategoryEntries = session
-      ? queries.getClassesWithCategory(session, item.dictIndex)
+      ? await queries.getClassesWithCategory(session, item.dictIndex)
       : [];
-    this.loadClassRowMetadata();
+    await this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -1854,7 +1854,7 @@ export class ExplorerController {
     this.recordLanding();
   }
 
-  selectClassCategory(item: ClassCategoryItem): void {
+  async selectClassCategory(item: ClassCategoryItem): Promise<void> {
     this.state.classCategory = item.fullPath;
     // A category node keeps showing (and the classes pane keeps highlighting) a
     // selected class that still lives under it. Dropping the controller's className
@@ -1871,7 +1871,7 @@ export class ExplorerController {
       this.hierChain = [];
       this.hierSubs = [];
     }
-    this.clearFilters(VIEW_CLASSES, VIEW_METHODS);
+    await this.clearFilters(VIEW_CLASSES, VIEW_METHODS);
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
@@ -1912,11 +1912,11 @@ export class ExplorerController {
   // pane renders from) and refresh the affected panes. Called after a change that
   // alters the visible class's selectors — e.g. a method rename — so the method
   // list, override arrows, and class list reflect it without reselecting the class.
-  reloadCurrentClassMethods(): void {
+  async reloadCurrentClassMethods(): Promise<void> {
     const session = this.session();
     this.envLines =
       session && this.state.dictIndex !== undefined && this.state.className !== undefined
-        ? queries.getClassEnvironments(
+        ? await queries.getClassEnvironments(
             session,
             this.state.dictIndex,
             this.state.className,
@@ -2006,7 +2006,7 @@ export class ExplorerController {
       if (parsed.isMeta !== isMeta) continue;
       const sel = unescapeSelectorSlashes(parsed.selector);
       if (!selectors.includes(sel)) continue;
-      if (this.classStillDefines(session, sourceClass, sel, isMeta)) continue;
+      if (await this.classStillDefines(session, sourceClass, sel, isMeta)) continue;
       try {
         await vscode.window.tabGroups.close(tab);
       } catch {
@@ -2054,21 +2054,21 @@ export class ExplorerController {
   // True when className still defines selector on the given side (its OWN method), used to
   // decide whether a source-method editor is stale after a push. On any query error, assume
   // it is still defined (do not close the editor).
-  private classStillDefines(
+  private async classStillDefines(
     session: ActiveSession,
     className: string,
     selector: string,
     isMeta: boolean,
-  ): boolean {
+  ): Promise<boolean> {
     const behavior = isMeta ? `${className} class` : className;
     try {
       return (
-        queries
-          .executeFetchString(
+        (
+          await queries.executeFetchString(
             session,
             `((${behavior} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil) printString`,
           )
-          .trim() === 'true'
+        ).trim() === 'true'
       );
     } catch {
       return true;
@@ -2078,7 +2078,7 @@ export class ExplorerController {
   // `revealHierarchy` false loads the hierarchy data but doesn't reveal (and thus
   // can't force-open) the Hierarchy pane — used when selecting the class is a
   // side effect (e.g. filtering methods by one of its ivars), not a navigation.
-  selectClass(item: ClassItem, revealHierarchy = true): void {
+  async selectClass(item: ClassItem, revealHierarchy = true): Promise<void> {
     this.state.className = item.className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -2086,13 +2086,18 @@ export class ExplorerController {
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
-    this.clearFilters(VIEW_METHODS);
+    await this.clearFilters(VIEW_METHODS);
     const session = this.session();
     this.envLines =
       session && this.state.dictIndex !== undefined
-        ? queries.getClassEnvironments(session, this.state.dictIndex, item.className, this.maxEnv())
+        ? await queries.getClassEnvironments(
+            session,
+            this.state.dictIndex,
+            item.className,
+            this.maxEnv(),
+          )
         : [];
-    this.loadHierarchy();
+    await this.loadHierarchy();
     this.methodProvider.refresh();
     this.hierarchyProvider.refresh();
     if (revealHierarchy) void this.revealHierarchySelf();
@@ -2108,17 +2113,17 @@ export class ExplorerController {
 
   // Resolve a class's dictionary (name + 1-based index). Prefers the given dict
   // name; falls back to a full class-name lookup when it's blank/unresolvable.
-  private resolveClassDict(
+  private async resolveClassDict(
     className: string,
     dictName?: string,
-  ): { dictName: string; dictIndex: number } | undefined {
+  ): Promise<{ dictName: string; dictIndex: number } | undefined> {
     const session = this.session();
     if (!session) return undefined;
     if (dictName) {
-      const index = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+      const index = (await queries.getDictionaryNames(session)).indexOf(dictName) + 1;
       if (index > 0) return { dictName, dictIndex: index };
     }
-    const match = queries.getAllClassNames(session).find((e) => e.className === className);
+    const match = (await queries.getAllClassNames(session)).find((e) => e.className === className);
     return match ? { dictName: match.dictName, dictIndex: match.dictIndex } : undefined;
   }
 
@@ -2163,7 +2168,7 @@ export class ExplorerController {
   // dictionary (it may live elsewhere than the currently-shown one), mirroring
   // openHierarchyDefinition.
   async openHierarchyComment(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = await this.resolveClassDict(item.className, item.dictName);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2203,7 +2208,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = await this.resolveClassDict(item.className, item.dictName);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className) {
@@ -2218,7 +2223,7 @@ export class ExplorerController {
       ({ className, dictName, dictIndex } = entry);
     }
     if (!dictName || dictIndex === undefined) {
-      const resolved = this.resolveClassDict(className, dictName);
+      const resolved = await this.resolveClassDict(className, dictName);
       if (!resolved) {
         void vscode.window.showWarningMessage(`Can't locate class ${className}.`);
         return;
@@ -2233,7 +2238,7 @@ export class ExplorerController {
   private async pickClass(
     session: ActiveSession,
   ): Promise<{ className: string; dictName: string; dictIndex: number } | undefined> {
-    const classes = queries.getAllClassNames(session);
+    const classes = await queries.getAllClassNames(session);
     if (classes.length === 0) {
       void vscode.window.showInformationMessage('No classes found in this session.');
       return undefined;
@@ -2255,7 +2260,7 @@ export class ExplorerController {
   // in a different dictionary than the one currently browsed). Opens to the side
   // like the Classes-pane button, without changing the navigator selection.
   async openHierarchyDefinition(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = await this.resolveClassDict(item.className, item.dictName);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2281,7 +2286,7 @@ export class ExplorerController {
   // double-click event, so a class row's `command` (fired on each click) records
   // the click; two on the same class within the threshold open its definition.
   private readonly classClicks = new DoubleClickDetector(500);
-  handleClassClick(className: string): void {
+  async handleClassClick(className: string): Promise<void> {
     // (Re)select the class even when VS Code's tree still shows it highlighted from
     // a DIFFERENT dictionary: a same-named class in another dictionary shares this
     // row's tree id (`k:<className>`), so switching dictionaries leaves the row
@@ -2291,7 +2296,7 @@ export class ExplorerController {
     // matching guard on the classView selection wiring keeps this to exactly one
     // selectClass per click.
     if (className !== this.state.className) {
-      this.selectClass(new ClassItem(className));
+      await this.selectClass(new ClassItem(className));
     }
     if (this.classClicks.register(className)) {
       void this.openClassDefinition(new ClassItem(className));
@@ -2312,7 +2317,7 @@ export class ExplorerController {
   // ── Hierarchy pane ──────────────────────────────────────────────────────────
 
   // Fetch the selected class's superclass chain + immediate subclasses.
-  private loadHierarchy(): void {
+  private async loadHierarchy(): Promise<void> {
     const session = this.session();
     if (!session || this.state.className === undefined) {
       this.hierChain = [];
@@ -2324,7 +2329,11 @@ export class ExplorerController {
       // Scope the lookup to the selected dictionary: without dictIndex, a class
       // name shadowed across dictionaries resolves to the global first match, so
       // the Hierarchy pane would show the OTHER dictionary's class's lineage.
-      entries = queries.getClassHierarchy(session, this.state.className, this.state.dictIndex);
+      entries = await queries.getClassHierarchy(
+        session,
+        this.state.className,
+        this.state.dictIndex,
+      );
     } catch {
       this.hierChain = [];
       this.hierSubs = [];
@@ -2411,12 +2420,12 @@ export class ExplorerController {
 
   // Clicking a hierarchy node navigates to that class (which reloads the
   // hierarchy centered on it, plus the methods and the other panes).
-  selectHierarchyNode(item: HierarchyItem): void {
+  async selectHierarchyNode(item: HierarchyItem): Promise<void> {
     if (item.role === 'self') return; // already the current class
     // The hierarchy query supplies a dict name, but it can be blank (a class
     // reachable only in another symbol-list scope); the resolver falls back to a
     // full class-name lookup so nodes like Object always navigate.
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = await this.resolveClassDict(item.className, item.dictName);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2481,7 +2490,7 @@ export class ExplorerController {
   // memoized name lists. Called wherever the class listing itself is (re)loaded.
   // A failed probe leaves the maps empty rather than breaking navigation — classes
   // just render flat and untagged.
-  private loadClassRowMetadata(): void {
+  private async loadClassRowMetadata(): Promise<void> {
     const session = this.session();
     this.definedIvarNamesCache.clear();
     this.hierNeighborsCache.clear();
@@ -2493,17 +2502,20 @@ export class ExplorerController {
       return;
     }
     try {
-      this.definedIvarCounts = queries.getDefinedInstVarCounts(session, this.state.dictIndex);
+      this.definedIvarCounts = await queries.getDefinedInstVarCounts(session, this.state.dictIndex);
     } catch {
       this.definedIvarCounts = new Map();
     }
     try {
-      this.definedClassVarCounts = queries.getDefinedClassVarCounts(session, this.state.dictIndex);
+      this.definedClassVarCounts = await queries.getDefinedClassVarCounts(
+        session,
+        this.state.dictIndex,
+      );
     } catch {
       this.definedClassVarCounts = new Map();
     }
     try {
-      this.classVersions = queries.getClassVersions(session, this.state.dictIndex);
+      this.classVersions = await queries.getClassVersions(session, this.state.dictIndex);
     } catch {
       this.classVersions = new Map();
     }
@@ -2552,14 +2564,16 @@ export class ExplorerController {
   // class name shadowed across dictionaries this only affects arrow visibility / reveal target —
   // the refactoring itself stays correct: the source class is resolved dict-scoped, and the engine
   // binds each chosen destination within the source's own lineage rather than by unscoped name.
-  private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
+  private async hierNeighbors(
+    className: string,
+  ): Promise<{ superclass?: string; subclasses: string[] }> {
     const cached = this.hierNeighborsCache.get(className);
     if (cached) return cached;
     let neighbors: { superclass?: string; subclasses: string[] } = { subclasses: [] };
     const session = this.session();
     if (session) {
       try {
-        const entries = queries.getClassHierarchy(session, className);
+        const entries = await queries.getClassHierarchy(session, className);
         const supers = entries.filter((e) => e.kind === 'superclass');
         neighbors = {
           // superclasses are root-first, so the immediate parent is the last one.
@@ -2574,18 +2588,18 @@ export class ExplorerController {
     return neighbors;
   }
 
-  classHasSubclasses(className: string): boolean {
-    return this.hierNeighbors(className).subclasses.length > 0;
+  async classHasSubclasses(className: string): Promise<boolean> {
+    return (await this.hierNeighbors(className)).subclasses.length > 0;
   }
 
-  definedIvarNames(className: string): string[] {
+  async definedIvarNames(className: string): Promise<string[]> {
     const cached = this.definedIvarNamesCache.get(className);
     if (cached) return cached;
     const session = this.session();
     let names: string[] = [];
     if (session) {
       try {
-        names = queries.getDefinedInstVarNames(session, className, this.state.dictIndex);
+        names = await queries.getDefinedInstVarNames(session, className, this.state.dictIndex);
       } catch {
         /* leave empty — the row simply shows no children */
       }
@@ -2595,14 +2609,14 @@ export class ExplorerController {
   }
 
   // Locally-defined class variable names for a class, memoized per dict load.
-  definedClassVarNames(className: string): string[] {
+  async definedClassVarNames(className: string): Promise<string[]> {
     const cached = this.definedClassVarNamesCache.get(className);
     if (cached) return cached;
     const session = this.session();
     let names: string[] = [];
     if (session) {
       try {
-        names = queries.getDefinedClassVarNames(session, className, this.state.dictIndex);
+        names = await queries.getDefinedClassVarNames(session, className, this.state.dictIndex);
       } catch {
         /* leave empty — the row simply shows no class-variable children */
       }
@@ -2778,7 +2792,9 @@ export class ExplorerController {
     // a reason instead.
     try {
       if (
-        queries.getVisibleClassVarNames(session, className, this.state.dictIndex).includes(name)
+        (await queries.getVisibleClassVarNames(session, className, this.state.dictIndex)).includes(
+          name,
+        )
       ) {
         void vscode.window.showWarningMessage(
           `'${name}' is already a class variable visible to ${className}.`,
@@ -2806,7 +2822,7 @@ export class ExplorerController {
       selector: a.selector,
       environmentId: 0,
     }));
-    const recording = beginClassVarAdd(
+    const recording = await beginClassVarAdd(
       session,
       { dict: this.state.dictIndex, className, varName: name },
       accessorSlots,
@@ -2814,7 +2830,7 @@ export class ExplorerController {
 
     let addResult: string;
     try {
-      addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
+      addResult = await queries.addClassVariable(session, className, name, this.state.dictIndex);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -2857,7 +2873,7 @@ export class ExplorerController {
     // were generated too.
     notifyUndoable(
       `Added class variable ${name} to ${className}`,
-      recording?.commit(`Add class variable ${name} to ${className}`),
+      await recording?.commit(`Add class variable ${name} to ${className}`),
     );
   }
 
@@ -2886,10 +2902,16 @@ export class ExplorerController {
       selector: a.selector,
       environmentId: 0,
     }));
-    const recording = undoable ? beginMethodEdit(session, slots) : undefined;
+    const recording = undoable ? await beginMethodEdit(session, slots) : undefined;
     let result;
     try {
-      result = queries.addAccessors(session, className, isMeta, accessors, this.state.dictIndex);
+      result = await queries.addAccessors(
+        session,
+        className,
+        isMeta,
+        accessors,
+        this.state.dictIndex,
+      );
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Add accessors failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -2927,7 +2949,7 @@ export class ExplorerController {
       `for ${varName}${skipNote}.`;
     // Re-read what the add actually left rather than assume it compiled all of them: it
     // skips any selector the class already implements, and only the stone knows which.
-    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    const after = recording ? await readMethodSlotState(session, slots) : undefined;
     notifyUndoable(
       message,
       after && recording
@@ -3003,7 +3025,7 @@ export class ExplorerController {
     const { className, classVarName } = item;
 
     // Kernel/system classes can't be modified here, so a removal could only fail.
-    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+    if (!(await queries.canClassBeWritten(session, className, this.state.dictIndex))) {
       void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
       return;
     }
@@ -3014,7 +3036,7 @@ export class ExplorerController {
     // also covers the query and MCP paths; this is here so that if a caller ever does hand
     // over an inherited name, it is refused with a sentence rather than silently acting on
     // the wrong class. Uses the memoized accessor — the same list the row was built from.
-    if (!this.definedClassVarNames(className).includes(classVarName)) {
+    if (!(await this.definedClassVarNames(className)).includes(classVarName)) {
       void vscode.window.showWarningMessage(
         `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
       );
@@ -3038,7 +3060,12 @@ export class ExplorerController {
 
     let result: string;
     try {
-      result = queries.deleteClassVariable(session, className, classVarName, this.state.dictIndex);
+      result = await queries.deleteClassVariable(
+        session,
+        className,
+        classVarName,
+        this.state.dictIndex,
+      );
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Remove class variable failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -3101,7 +3128,7 @@ export class ExplorerController {
     const target = targets[0];
     if (target) {
       this.views?.klass
-        .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
+        .reveal(new IvarItem(target, item.ivarName, await this.classHasSubclasses(target)), {
           select: true,
           focus: true,
         })
@@ -3121,8 +3148,9 @@ export class ExplorerController {
     if (direction === 'up') {
       // superclass entries are root-first; reverse so the immediate superclass leads the list.
       // Dict-scoped like the down path so a shadowed class name offers the right lineage.
-      const ancestors = queries
-        .getClassHierarchy(session, item.className, this.state.dictIndex)
+      const ancestors = (
+        await queries.getClassHierarchy(session, item.className, this.state.dictIndex)
+      )
         .filter((e) => e.kind === 'superclass')
         .map((e) => e.className)
         .reverse();
@@ -3145,7 +3173,7 @@ export class ExplorerController {
       return chosen ? [chosen.label] : undefined;
     }
 
-    const descendants = queries.getClassDescendantNames(
+    const descendants = await queries.getClassDescendantNames(
       session,
       item.className,
       this.state.dictIndex,
@@ -3205,9 +3233,9 @@ export class ExplorerController {
     // dictionary forward, so a client that replayed the staged changes itself would
     // destroy every method the change set doesn't mention.
     const token = `rivPreview_${crypto.randomBytes(8).toString('hex')}`;
-    const safeClear = (): void => {
+    const safeClear = async (): Promise<void> => {
       try {
-        queries.clearRenameInstVarPreview(session, token);
+        await queries.clearRenameInstVarPreview(session, token);
       } catch {
         /* best-effort — the token expires with the session anyway */
       }
@@ -3238,7 +3266,7 @@ export class ExplorerController {
     } catch {
       const detail = json.length > 200 ? `${json.slice(0, 200)}…` : json;
       void vscode.window.showErrorMessage(`Rename preview failed: ${detail}`);
-      safeClear();
+      await safeClear();
       return false;
     }
 
@@ -3247,7 +3275,7 @@ export class ExplorerController {
         `No references to '${oldName}' were found in ${className} or its ` +
           'subclasses; nothing to rename.',
       );
-      safeClear();
+      await safeClear();
       return false;
     }
 
@@ -3256,7 +3284,7 @@ export class ExplorerController {
     const ordered = orderChangesClassDefFirst(preview.changes);
     const selectedIds = await showRenameInstVarPanel(oldName, newName, ordered);
     if (!selectedIds || selectedIds.length === 0) {
-      safeClear();
+      await safeClear();
       return false;
     }
 
@@ -3265,7 +3293,7 @@ export class ExplorerController {
     // discover afterwards, so confirm it explicitly.
     const dropping = deselectedLabels(ordered, selectedIds);
     if (dropping.length > 0 && !(await confirmDroppedMethods(dropping))) {
-      safeClear();
+      await safeClear();
       return false;
     }
 
@@ -3277,7 +3305,7 @@ export class ExplorerController {
       oldName,
       newName,
     );
-    safeClear();
+    await safeClear();
     return applied;
   }
 
@@ -3291,7 +3319,7 @@ export class ExplorerController {
    * `from` is the name in force now and `to` the one to go back to; `className` is the class
    * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
    */
-  private recordReverseRename(
+  private async recordReverseRename(
     session: ActiveSession,
     kind: ReverseRenameKind,
     className: string,
@@ -3300,9 +3328,9 @@ export class ExplorerController {
     label: string,
     engine: string,
     scope?: { kind: string; dictName?: string },
-  ): void {
+  ): Promise<void> {
     try {
-      const answer = queries.recordReverseRename(
+      const answer = await queries.recordReverseRename(
         session,
         kind,
         className,
@@ -3366,9 +3394,9 @@ export class ExplorerController {
           title: `Applying rename '${oldName}' → '${newName}'…`,
           cancellable: false,
         },
-        () =>
-          Promise.resolve(
-            parseRenameApplyResult(queries.applyRenameInstVar(session, token, deselectedIds)),
+        async () =>
+          await Promise.resolve(
+            parseRenameApplyResult(await queries.applyRenameInstVar(session, token, deselectedIds)),
           ),
       );
     } catch (e: unknown) {
@@ -3382,12 +3410,12 @@ export class ExplorerController {
     // DEFINING class: it re-fetches the environment and re-selects that class (not a
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
-    this.loadClassRowMetadata();
+    await this.loadClassRowMetadata();
     await this.refreshAfterClassReshape(className);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
     this.views?.klass
-      .reveal(new IvarItem(className, newName, this.classHasSubclasses(className)), {
+      .reveal(new IvarItem(className, newName, await this.classHasSubclasses(className)), {
         select: true,
         focus: true,
       })
@@ -3404,7 +3432,7 @@ export class ExplorerController {
       );
       return true;
     }
-    this.recordReverseRename(
+    await this.recordReverseRename(
       session,
       'instVarRename',
       className,
@@ -3464,7 +3492,14 @@ export class ExplorerController {
     // Best-effort argument names for the editor rows (display only).
     let argNames: string[];
     try {
-      const src = queries.getMethodSource(session, className, isMeta, oldSelector, 0, dictIndex);
+      const src = await queries.getMethodSource(
+        session,
+        className,
+        isMeta,
+        oldSelector,
+        0,
+        dictIndex,
+      );
       argNames = parseArgNames(src, oldSelector);
     } catch {
       argNames = parseArgNames('', oldSelector);
@@ -3492,9 +3527,9 @@ export class ExplorerController {
     // A client-generated token keys this preview's server-side state (the built
     // change set stored in SessionTemps) for paging and the eventual apply.
     const token = `rmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const safeClear = (): void => {
+    const safeClear = async (): Promise<void> => {
       try {
-        queries.clearRenameMethodPreview(session, token);
+        await queries.clearRenameMethodPreview(session, token);
       } catch {
         /* best-effort cleanup */
       }
@@ -3519,12 +3554,12 @@ export class ExplorerController {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Rename preview failed: ${msg}`);
-      safeClear();
+      await safeClear();
       return false;
     }
 
     if (start.total === 0) {
-      safeClear();
+      await safeClear();
       void vscode.window.showInformationMessage(
         `No implementors or senders of '${oldSelector}' were found in the chosen scope; ` +
           'nothing to rename.',
@@ -3549,7 +3584,7 @@ export class ExplorerController {
             `Rename #${oldSelector} to #${newSelector}`,
           ),
         ),
-      cleanup: safeClear,
+      cleanup: () => void safeClear(),
     });
     if (!result) return false; // cancelled/closed
 
@@ -3563,7 +3598,7 @@ export class ExplorerController {
 
     // Selectors changed, so the current class's cached method environment is
     // stale — reload it and reopen any editor that was on the renamed selector.
-    this.reloadCurrentClassMethods();
+    await this.reloadCurrentClassMethods();
     await this.refreshRenamedSelectorEditors(oldSelector, newSelector);
 
     if (result.failed.length > 0) {
@@ -3639,7 +3674,7 @@ export class ExplorerController {
     }
     // Nowhere to reveal: the source lost the method — reload its method list so the removed
     // row disappears.
-    this.reloadCurrentClassMethods();
+    await this.reloadCurrentClassMethods();
   }
 
   // Bring the tree and any open editors up to date after a signature change: the
@@ -3647,7 +3682,7 @@ export class ExplorerController {
   // implementor must reopen under its new selector. Public so BOTH entry points (the
   // Explorer method row and the source-pane Refactor… command) share it.
   async refreshAfterSignatureChange(oldSelector: string, newSelector: string): Promise<void> {
-    this.reloadCurrentClassMethods();
+    await this.reloadCurrentClassMethods();
     await this.refreshRenamedSelectorEditors(oldSelector, newSelector);
   }
 
@@ -3676,11 +3711,14 @@ export class ExplorerController {
   // (showRenameClassEditor), so catching a collision here surfaces it inline while the
   // user is still typing — they correct the name in place, instead of the rename starting
   // and failing server-side with a costlier, later error. Returns an error string or undefined.
-  private validateRenameTarget(newName: string, oldName: string): string | undefined {
+  private async validateRenameTarget(
+    newName: string,
+    oldName: string,
+  ): Promise<string | undefined> {
     const fmt = validateNewClassName(newName, oldName);
     if (fmt) return fmt;
     const session = this.session();
-    if (session && queries.globalNameInUse(session, newName)) {
+    if (session && (await queries.globalNameInUse(session, newName))) {
       return `The name ${newName} is already in use. Choose another.`;
     }
     return undefined;
@@ -3700,7 +3738,7 @@ export class ExplorerController {
     }
     let entries: queries.ClassCategoryEntry[];
     try {
-      entries = queries.getClassesWithCategory(session, dictIndex);
+      entries = await queries.getClassesWithCategory(session, dictIndex);
     } catch {
       this.classProvider.refresh();
       this.hierarchyProvider.refresh();
@@ -3711,8 +3749,8 @@ export class ExplorerController {
       return;
     }
     this.classCategoryEntries = entries;
-    this.loadClassRowMetadata();
-    this.loadHierarchy();
+    await this.loadClassRowMetadata();
+    await this.loadHierarchy();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -3747,7 +3785,7 @@ export class ExplorerController {
     // kernel histories are deliberately size 1) — warn before proceeding.
     let isKernel = false;
     try {
-      isKernel = queries.isKernelClass(session, oldName);
+      isKernel = await queries.isKernelClass(session, oldName);
     } catch {
       /* if the probe fails, don't block the rename */
     }
@@ -3771,7 +3809,7 @@ export class ExplorerController {
     // probe fails, and to no "This dictionary" option if the class is unbound.
     let scopeDictName = this.state.dictName;
     try {
-      const homeDict = queries.classDefiningDictionaryName(session, oldName, dictArg);
+      const homeDict = await queries.classDefiningDictionaryName(session, oldName, dictArg);
       scopeDictName = homeDict.length > 0 ? homeDict : undefined;
     } catch {
       /* keep the Explorer selection as a best-effort fallback */
@@ -3784,9 +3822,9 @@ export class ExplorerController {
     const { newName, scope, options } = edit;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const safeClear = (): void => {
+    const safeClear = async (): Promise<void> => {
       try {
-        queries.clearRenameClassPreview(session, token);
+        await queries.clearRenameClassPreview(session, token);
       } catch {
         /* best-effort cleanup */
       }
@@ -3808,12 +3846,12 @@ export class ExplorerController {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Rename preview failed: ${msg}`);
-      safeClear();
+      await safeClear();
       return;
     }
 
     if (start.total === 0) {
-      safeClear();
+      await safeClear();
       void vscode.window.showInformationMessage(`Nothing to rename for '${oldName}'.`);
       return;
     }
@@ -3834,7 +3872,7 @@ export class ExplorerController {
           ),
         apply: async (deselected) =>
           parseClassApplyResult(await queries.applyRenameClass(session, token, deselected)),
-        cleanup: safeClear,
+        cleanup: () => void safeClear(),
       },
     );
     if (!result) return;
@@ -3864,7 +3902,7 @@ export class ExplorerController {
       : 'Compiled but NOT committed — commit when ready.';
     // The class is bound under `newName` now, so that is what the reversal looks up; it
     // renames it back to `oldName`, reusing the scope the forward rename ran in.
-    this.recordReverseRename(
+    await this.recordReverseRename(
       session,
       'classRename',
       newName,
@@ -3969,9 +4007,9 @@ export class ExplorerController {
     }
 
     const token = `rcvp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const safeClear = (): void => {
+    const safeClear = async (): Promise<void> => {
       try {
-        queries.clearRenameClassVarPreview(session, token);
+        await queries.clearRenameClassVarPreview(session, token);
       } catch {
         /* best-effort cleanup */
       }
@@ -3992,13 +4030,13 @@ export class ExplorerController {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Rename preview failed: ${msg}`);
-      safeClear();
+      await safeClear();
       reselect();
       return false;
     }
 
     if (start.total === 0) {
-      safeClear();
+      await safeClear();
       void vscode.window.showInformationMessage(
         `No references to '${oldName}' were found in ${className} or its subclasses; ` +
           'nothing to rename.',
@@ -4015,7 +4053,7 @@ export class ExplorerController {
       // All-or-nothing: the query ignores deselection, so we don't thread it.
       apply: async () =>
         parseClassVarApplyResult(await queries.applyRenameClassVar(session, token)),
-      cleanup: safeClear,
+      cleanup: () => void safeClear(),
     });
     if (!result) {
       reselect();
@@ -4064,7 +4102,7 @@ export class ExplorerController {
       );
       return true;
     }
-    this.recordReverseRename(
+    await this.recordReverseRename(
       session,
       'classVarRename',
       className,
@@ -4094,7 +4132,7 @@ export class ExplorerController {
 
     let versions;
     try {
-      versions = parseClassHistory(queries.getClassHistory(session, className));
+      versions = parseClassHistory(await queries.getClassHistory(session, className));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Class history failed: ${msg}`);
@@ -4124,17 +4162,19 @@ export class ExplorerController {
         ];
         const recording =
           dictRef !== undefined
-            ? beginClassEdit(
+            ? await beginClassEdit(
                 session,
                 names.map((className) => ({ dict: dictRef, className })),
               )
             : undefined;
 
-        const result = parseRevertResult(queries.revertClassToVersion(session, currentName, index));
+        const result = parseRevertResult(
+          await queries.revertClassToVersion(session, currentName, index),
+        );
         const previousName = currentName;
         if (result.reverted && result.name) currentName = result.name;
         const refreshed = result.reverted
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
+          ? parseClassHistory(await queries.getClassHistory(session, currentName))
           : versions;
         // The class was reshaped/renamed (a new version) — re-cascade so the
         // Explorer's Classes + Hierarchy panes show the restored name and version.
@@ -4142,15 +4182,17 @@ export class ExplorerController {
         if (result.reverted) {
           notifyUndoable(
             `Restored ${previousName} to version ${index}`,
-            recording?.commit(`Restore ${previousName} to version ${index}`),
+            await recording?.commit(`Restore ${previousName} to version ${index}`),
           );
         }
         return { result, versions: refreshed };
       },
       remove: async (index) => {
-        const result = parseRemoveResult(queries.removeClassVersion(session, currentName, index));
+        const result = parseRemoveResult(
+          await queries.removeClassVersion(session, currentName, index),
+        );
         const refreshed = result.removed
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
+          ? parseClassHistory(await queries.getClassHistory(session, currentName))
           : versions;
         // The version count / tag changed — refresh the tree's version tags.
         if (result.removed) await this.refreshAfterClassReshape(currentName);
@@ -4209,21 +4251,23 @@ export class ExplorerController {
     // envelope (a login bootstrap that was skipped or failed) — installing ahead of
     // every open cost a full GCI round trip just to hit the server's already-installed
     // short-circuit.
-    const readHistory = (): MethodVersion[] =>
-      parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta, dict));
+    const readHistory = async (): Promise<MethodVersion[]> =>
+      parseMethodHistory(
+        await queries.getMethodHistory(session, className, selector, isMeta, dict),
+      );
 
     let versions: MethodVersion[];
     try {
-      versions = readHistory();
+      versions = await readHistory();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!isHelperMissingError(msg)) {
         void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
         return;
       }
-      installMethodHistory(session);
+      await installMethodHistory(session);
       try {
-        versions = readHistory();
+        versions = await readHistory();
       } catch (e2: unknown) {
         const msg2 = e2 instanceof Error ? e2.message : String(e2);
         void vscode.window.showErrorMessage(`Method history failed: ${msg2}`);
@@ -4254,7 +4298,7 @@ export class ExplorerController {
         try {
           // Recompiling routes through the ordinary compile path, which records
           // this as a new (current) version — so the restore is itself undoable.
-          queries.compileMethod(
+          await queries.compileMethod(
             session,
             className,
             isMeta,
@@ -4267,7 +4311,7 @@ export class ExplorerController {
           return { versions: current, error: e instanceof Error ? e.message : String(e) };
         }
         current = parseMethodHistory(
-          queries.getMethodHistory(session, className, selector, isMeta, dict),
+          await queries.getMethodHistory(session, className, selector, isMeta, dict),
         );
         // The installed method changed — re-render the Methods pane so its
         // session-method indicators reflect the recompiled source.
@@ -4292,10 +4336,10 @@ export class ExplorerController {
       isMeta,
       dict,
       panel,
-      refresh: () => {
+      refresh: async () => {
         try {
           current = parseMethodHistory(
-            queries.getMethodHistory(session, className, selector, isMeta, dict),
+            await queries.getMethodHistory(session, className, selector, isMeta, dict),
           );
           refreshMethodHistoryPanel(panel, current);
         } catch {
@@ -4350,7 +4394,7 @@ export class ExplorerController {
     for (const entry of this.methodHistoryPanels) {
       if (entry.sessionId !== sessionId || entry.className !== className) continue;
       if (selector !== undefined && entry.selector !== selector) continue;
-      entry.refresh();
+      void entry.refresh();
     }
   }
 
@@ -4373,7 +4417,7 @@ export class ExplorerController {
    */
   refreshAllMethodHistoryPanels(sessionId: number): void {
     for (const entry of this.methodHistoryPanels) {
-      if (entry.sessionId === sessionId) entry.refresh();
+      if (entry.sessionId === sessionId) void entry.refresh();
     }
   }
 
@@ -4388,7 +4432,7 @@ export class ExplorerController {
   // 'as yet unclassified', which is a REAL category name GemStone files uncategorized methods
   // under, not a label this pane invents. The only computed rows are SESSION and the
   // ALL_METHODS lookup key below.
-  methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
+  async methodCategories(isMeta: boolean, filter?: string): Promise<MethodCategoryItem[]> {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
     const real = [...new Set(lines.map((l) => l.category).filter((c) => c && c.length))];
     const fresh = [...this.newMethodCategories[isMeta ? 'meta' : 'instance']].filter(
@@ -4406,14 +4450,19 @@ export class ExplorerController {
     // any selector inside it matches. Name-matching first: it is a cached-parse
     // lookup plus a string compare (parseFilter re-parses only when the raw filter
     // string changes), where the selector scan can pull in the ivar-access map.
-    const hasMatch = (category: string) =>
-      filter === undefined ||
-      this.methodCategoryMatchesFilter(category, filter) ||
-      this.selectorsFor(isMeta, category).some((info) =>
-        this.methodMatchesFilter(isMeta, info.selector, filter),
-      );
+    const hasMatch = async (category: string): Promise<boolean> => {
+      if (filter === undefined || this.methodCategoryMatchesFilter(category, filter)) return true;
+      for (const info of this.selectorsFor(isMeta, category)) {
+        if (await this.methodMatchesFilter(isMeta, info.selector, filter)) return true;
+      }
+      return false;
+    };
     const expanded = filter !== undefined;
-    if (filter !== undefined) combined = combined.filter(hasMatch);
+    if (filter !== undefined) {
+      const matching: string[] = [];
+      for (const c of combined) if (await hasMatch(c)) matching.push(c);
+      combined = matching;
+    }
     const items: MethodCategoryItem[] = [];
     // No ALL METHODS pseudo-category row (#387). It duplicated what the real
     // categories already show — for an uncategorized class it listed exactly what "as
@@ -4425,7 +4474,7 @@ export class ExplorerController {
     //
     // ALL_METHODS_CATEGORY itself stays: selectorsFor() still uses it as the
     // enumerate-every-selector lookup key that reveal and the flat view depend on.
-    if (hasSession && hasMatch(SESSION_METHODS_CATEGORY))
+    if (hasSession && (await hasMatch(SESSION_METHODS_CATEGORY)))
       items.push(new MethodCategoryItem(isMeta, SESSION_METHODS_CATEGORY, true, expanded));
     return items.concat(combined.map((c) => new MethodCategoryItem(isMeta, c, false, expanded)));
   }
@@ -4441,49 +4490,54 @@ export class ExplorerController {
 
   // All of one side's methods as flat rows (no category parent) — used when
   // category grouping is off, or when a filter is narrowing the list.
-  flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
-    return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
-      .filter(
-        (info) =>
-          filter === undefined ||
-          this.methodMatchesFilter(isMeta, info.selector, filter) ||
-          // A category-name match keeps that category's methods here too (#387).
-          // Without this, filtering 'accessing' listed the category in grouped mode and
-          // then emptied the pane the moment the user turned grouping off, even though
-          // the filter had not changed. Ivar-token filters are excluded for free --
-          // methodCategoryMatchesFilter answers false for them.
-          this.methodCategoryMatchesFilter(info.category, filter),
-      )
-      .map((info) => {
-        const item = new MethodItem(
-          isMeta,
-          info,
-          undefined,
-          this.methodSourceUri(isMeta, info),
-          this.ivarAccessMark(isMeta, info.selector, filter),
-        );
-        this.decorateTestRow(
-          item,
-          this.state.dictName,
-          this.state.className ?? '',
-          info.selector,
-          isMeta,
-        );
-        return item;
-      });
+  async flatMethods(isMeta: boolean, filter?: string): Promise<MethodItem[]> {
+    const items: MethodItem[] = [];
+    for (const info of this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)) {
+      const kept =
+        filter === undefined ||
+        (await this.methodMatchesFilter(isMeta, info.selector, filter)) ||
+        // A category-name match keeps that category's methods here too (#387).
+        // Without this, filtering 'accessing' listed the category in grouped mode and
+        // then emptied the pane the moment the user turned grouping off, even though
+        // the filter had not changed. Ivar-token filters are excluded for free --
+        // methodCategoryMatchesFilter answers false for them.
+        this.methodCategoryMatchesFilter(info.category, filter);
+      if (!kept) continue;
+      const item = new MethodItem(
+        isMeta,
+        info,
+        undefined,
+        this.methodSourceUri(isMeta, info),
+        await this.ivarAccessMark(isMeta, info.selector, filter),
+      );
+      this.decorateTestRow(
+        item,
+        this.state.dictName,
+        this.state.className ?? '',
+        info.selector,
+        isMeta,
+      );
+      items.push(item);
+    }
+    return items;
   }
 
   // Lazily load + cache the per-method instance-variable read/write map for the
   // current class. Called only when a reads:/writes:/accesses: filter is active,
   // so plain textual filters never pay for the extra round trip.
-  private methodIvarAccess(): Map<string, queries.MethodInstVarAccess> {
+  private async methodIvarAccess(): Promise<Map<string, queries.MethodInstVarAccess>> {
     const session = this.session();
     const { className, dictIndex } = this.state;
     if (!session || className === undefined || dictIndex === undefined) return new Map();
     // Valid as long as the method list (envLines) hasn't been reloaded since.
     if (this.ivarAccessCache?.envLines === this.envLines) return this.ivarAccessCache.map;
     const map = new Map<string, queries.MethodInstVarAccess>();
-    for (const r of queries.getMethodInstVarAccess(session, dictIndex, className, this.maxEnv())) {
+    for (const r of await queries.getMethodInstVarAccess(
+      session,
+      dictIndex,
+      className,
+      this.maxEnv(),
+    )) {
       map.set(`${r.isMeta}:${r.selector}`, r);
     }
     this.ivarAccessCache = { envLines: this.envLines, map };
@@ -4501,12 +4555,12 @@ export class ExplorerController {
   // Whether a method row passes the active filter — the selector prefix plus any
   // reads:/writes:/accesses: ivar tokens. The ivar map is only consulted (and
   // hence only loaded) when the filter actually carries an ivar token.
-  methodMatchesFilter(isMeta: boolean, selector: string, raw: string): boolean {
+  async methodMatchesFilter(isMeta: boolean, selector: string, raw: string): Promise<boolean> {
     const filter = this.parseFilter(raw);
     if (filter.ivar.length === 0) {
       return filter.selector === undefined || filterMatches(selector, filter.selector);
     }
-    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    const access = (await this.methodIvarAccess()).get(`${isMeta}:${selector}`);
     return matchesMethodFilter(filter, selector, access);
   }
 
@@ -4526,18 +4580,22 @@ export class ExplorerController {
 
   // The r/w/rw glyph a method row should show under an active ivar filter, or
   // undefined when the filter has no ivar token (nothing to mark).
-  ivarAccessMark(isMeta: boolean, selector: string, raw?: string): 'r' | 'w' | 'rw' | undefined {
+  async ivarAccessMark(
+    isMeta: boolean,
+    selector: string,
+    raw?: string,
+  ): Promise<'r' | 'w' | 'rw' | undefined> {
     if (raw === undefined) return undefined;
     const filter = this.parseFilter(raw);
     if (filter.ivar.length === 0) return undefined;
-    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    const access = (await this.methodIvarAccess()).get(`${isMeta}:${selector}`);
     return computeIvarAccessMark(filter, access);
   }
 
   // The instance-variable names to highlight in a method-source editor: the ivars
   // the method actually reads/writes that match an active reads:/writes:/accesses:
   // token. Empty unless a gemstone:// method source and an ivar filter line up.
-  ivarsToHighlight(uri: vscode.Uri): string[] {
+  async ivarsToHighlight(uri: vscode.Uri): Promise<string[]> {
     if (uri.scheme !== 'gemstone') return [];
     const raw = this.filters.get(VIEW_METHODS);
     if (raw === undefined) return [];
@@ -4545,7 +4603,7 @@ export class ExplorerController {
     if (filter.ivar.length === 0) return [];
     const method = parseMethodUri(uri);
     if (!method) return [];
-    const access = this.methodIvarAccess().get(`${method.isMeta}:${method.selector}`);
+    const access = (await this.methodIvarAccess()).get(`${method.isMeta}:${method.selector}`);
     if (!access) return [];
     const patterns = filter.ivar.map((c) => c.pattern);
     return [...new Set([...access.reads, ...access.writes])].filter((n) =>
@@ -4557,9 +4615,9 @@ export class ExplorerController {
   // nothing to highlight (the common case — no active ivar filter) just clear,
   // without reading the document text, so this stays off the editor-open hot path
   // (it runs on every activation, alongside the async CodeLens render).
-  private applyIvarHighlight(editor?: vscode.TextEditor): void {
+  private async applyIvarHighlight(editor?: vscode.TextEditor): Promise<void> {
     if (!editor) return;
-    const names = this.ivarsToHighlight(editor.document.uri);
+    const names = await this.ivarsToHighlight(editor.document.uri);
     if (names.length === 0) {
       editor.setDecorations(ivarHighlightDecoration, []);
       return;
@@ -4572,13 +4630,13 @@ export class ExplorerController {
 
   // Re-apply ivar highlighting across every open source editor — after opening a
   // method or changing the filter, so highlights track the active ivar filter.
-  refreshIvarHighlights(): void {
-    for (const editor of vscode.window.visibleTextEditors) this.applyIvarHighlight(editor);
+  async refreshIvarHighlights(): Promise<void> {
+    for (const editor of vscode.window.visibleTextEditors) await this.applyIvarHighlight(editor);
   }
 
   // Highlight in whichever editor just became active (tab switch).
-  highlightActiveEditor(editor?: vscode.TextEditor): void {
-    this.applyIvarHighlight(editor);
+  async highlightActiveEditor(editor?: vscode.TextEditor): Promise<void> {
+    await this.applyIvarHighlight(editor);
   }
 
   // Flip the persistent group-by-category setting (from the title-bar toggle).
@@ -4855,7 +4913,7 @@ export class ExplorerController {
     if (mode === 'preview') this.maybeHintKeepMethodsOpen(`${node.isMeta}:${node.info.selector}`);
     // Under an active ivar filter, highlight the filtered ivar in the just-opened
     // source (it may not be the active editor, so refresh all visible editors).
-    this.refreshIvarHighlights();
+    await this.refreshIvarHighlights();
   }
 
   // The key (`isMeta:selector`) of the last method opened as a preview, so we can
@@ -4900,14 +4958,14 @@ export class ExplorerController {
   // (EXPLORER_METHOD_ENVIRONMENT), and a send compiled in one environment resolves in that
   // environment, so environment 0 is the question being asked. The caller documents what an
   // under-report costs here: a question, never a wrong silent delete.
-  private superclassImplementorOf(
+  private async superclassImplementorOf(
     session: ActiveSession,
     className: string,
     selector: string,
     isMeta: boolean,
-  ): string | undefined {
+  ): Promise<string | undefined> {
     try {
-      const above = queries.hierarchyImplementorsOf(
+      const above = await queries.hierarchyImplementorsOf(
         session,
         this.state.dictIndex ?? 1,
         className,
@@ -4944,7 +5002,7 @@ export class ExplorerController {
   // identical loop.
   private async scanReferences(
     title: string,
-    scan: (environmentId: number) => queries.MethodSearchResult[],
+    scan: (environmentId: number) => Promise<queries.MethodSearchResult[]>,
   ): Promise<{
     references: queries.MethodSearchResult[];
     scanFailed?: string;
@@ -4956,20 +5014,21 @@ export class ExplorerController {
         title,
         cancellable: false,
       },
-      () => {
+      async () => {
         try {
-          const perEnv = this.environmentsToScan().map((env) => scan(env));
+          const perEnv: queries.MethodSearchResult[][] = [];
+          for (const env of this.environmentsToScan()) perEnv.push(await scan(env));
           const truncated = perEnv.some((rows) => rows.length >= METHOD_SEARCH_RESULT_LIMIT);
-          return Promise.resolve({
+          return {
             references: dedupeMethodResults(perEnv.flat()),
             truncated,
-          });
+          };
         } catch (e: unknown) {
-          return Promise.resolve({
+          return {
             references: [],
             scanFailed: e instanceof Error ? e.message : String(e),
             truncated: false,
-          });
+          };
         }
       },
     );
@@ -4991,7 +5050,7 @@ export class ExplorerController {
     // Kernel/system classes can't be modified in this repository, so a removal
     // there can only fail. Guard before prompting (mirrors createNewMethod's
     // canClassBeWritten check) rather than popping a modal that leads nowhere.
-    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+    if (!(await queries.canClassBeWritten(session, className, this.state.dictIndex))) {
       void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
       return;
     }
@@ -5007,7 +5066,12 @@ export class ExplorerController {
     // scan, but failing to find one only means we fall through and ask, so a hierarchy
     // probe that under-reports (it reads environment 0) costs a question, never a wrong
     // silent delete.
-    const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
+    const inheritedFrom = await this.superclassImplementorOf(
+      session,
+      className,
+      selector,
+      node.isMeta,
+    );
 
     const scan = inheritedFrom
       ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
@@ -5068,7 +5132,7 @@ export class ExplorerController {
     // the method still present and the user thinks the click didn't register.
     // Snapshot before removing: the source only exists until the removal lands, so undo
     // has to capture it here (#434). A capture that fails just means no undo.
-    const recording = beginMethodDeletion(session, {
+    const recording = await beginMethodDeletion(session, {
       dict: this.state.dictIndex,
       className,
       isMeta: node.isMeta,
@@ -5078,7 +5142,7 @@ export class ExplorerController {
 
     let result: string;
     try {
-      result = queries.deleteMethod(
+      result = await queries.deleteMethod(
         session,
         className,
         node.isMeta,
@@ -5101,7 +5165,7 @@ export class ExplorerController {
     // Undo rather than stacking a second message on top of it (#434).
     const undoEntry = recording?.commit();
     if (decision === 'silent') notifyUndoable(silentDeleteMessage(target), undoEntry);
-    this.reloadCurrentClassMethods();
+    await this.reloadCurrentClassMethods();
   }
 
   // ── Find Class ────────────────────────────────────────────────────────────
@@ -5238,7 +5302,7 @@ export class ExplorerController {
     if (!session) return;
     let entries: queries.ClassNameEntry[];
     try {
-      entries = queries.getAllClassNames(session);
+      entries = await queries.getAllClassNames(session);
     } catch {
       return;
     }
@@ -5262,14 +5326,14 @@ export class ExplorerController {
   async revealDictionaryByName(name: string, sessionId?: number): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
-    const names = queries.getDictionaryNames(session);
+    const names = await queries.getDictionaryNames(session);
     const idx = names.indexOf(name);
     if (idx < 0) {
       void vscode.window.showWarningMessage(`No dictionary matching "${name}".`);
       return;
     }
     const item = new DictItem(name, idx + 1);
-    this.selectDict(item);
+    await this.selectDict(item);
     // Deliberately NOT a cascade (revealCascade): asking GemStone Search to take
     // you to a dictionary is asking to see it, so this one opens its pane, exactly
     // as the category jump below does.
@@ -5294,13 +5358,13 @@ export class ExplorerController {
   ): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
-    const names = queries.getDictionaryNames(session);
+    const names = await queries.getDictionaryNames(session);
     const idx = names.indexOf(dictName);
     if (idx < 0) {
       void vscode.window.showWarningMessage(`No dictionary matching "${dictName}".`);
       return;
     }
-    this.selectDict(new DictItem(dictName, idx + 1));
+    await this.selectDict(new DictItem(dictName, idx + 1));
 
     // Check the category actually exists in this dictionary's loaded forest BEFORE mutating the
     // category/classes panes. selectDict has just (synchronously) loaded classCategoryEntries, so
@@ -5320,7 +5384,7 @@ export class ExplorerController {
 
     const segment = categoryPath.split('-').pop() ?? categoryPath;
     const catItem = new ClassCategoryItem(segment, categoryPath, false);
-    this.selectClassCategory(catItem);
+    await this.selectClassCategory(catItem);
 
     // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
     // TreeView.reveal() can no-op — which is exactly how a GemStone Search category jump looked like it landed
@@ -5529,7 +5593,7 @@ export class ExplorerController {
     }
     let dictIndex: number;
     try {
-      dictIndex = queries.getDictionaryNames(session).indexOf(landing.dictName) + 1;
+      dictIndex = (await queries.getDictionaryNames(session)).indexOf(landing.dictName) + 1;
     } catch {
       return false;
     }
@@ -5541,7 +5605,7 @@ export class ExplorerController {
     }
 
     if (landing.className === undefined) {
-      this.selectDict(new DictItem(landing.dictName, dictIndex));
+      await this.selectDict(new DictItem(landing.dictName, dictIndex));
       // Highlight only -- the panes are already correct from state, and Go
       // Back/Forward is not a request to be shown a pane. Cascade, so a closed
       // pane stays closed; see revealCascade.
@@ -5550,7 +5614,7 @@ export class ExplorerController {
         const path = landing.classCategory;
         const segment = path.split('-').pop() ?? path;
         const item = new ClassCategoryItem(segment, path, false);
-        this.selectClassCategory(item);
+        await this.selectClassCategory(item);
         await this.revealCascade(this.views?.category, item, { select: true, expand: true });
       }
       return true;
@@ -5617,8 +5681,8 @@ export class ExplorerController {
     let entries: queries.ClassCategoryEntry[];
     let envLines: queries.EnvCategoryLine[];
     try {
-      entries = queries.getClassesWithCategory(session, dictIndex);
-      envLines = queries.getClassEnvironments(session, dictIndex, className, this.maxEnv());
+      entries = await queries.getClassesWithCategory(session, dictIndex);
+      envLines = await queries.getClassEnvironments(session, dictIndex, className, this.maxEnv());
     } catch (e) {
       void vscode.window.showWarningMessage(
         `Couldn't open ${className}: ${e instanceof Error ? e.message : String(e)}`,
@@ -5634,7 +5698,7 @@ export class ExplorerController {
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
-    this.loadClassRowMetadata();
+    await this.loadClassRowMetadata();
     const catEntry = this.classCategoryEntries.find((e) => e.className === className);
     // Do NOT pin the pane to the revealed class's OWN category. That filters the Classes pane down
     // to that category -- often a single class -- so the rest of the dictionary looks like it
@@ -5657,8 +5721,8 @@ export class ExplorerController {
     this.newMethodCategories.meta.clear();
     this.pendingNewMethod = undefined;
     this.envLines = envLines;
-    this.loadHierarchy();
-    this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
+    await this.loadHierarchy();
+    await this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -5797,7 +5861,7 @@ export class ExplorerController {
       return;
     }
 
-    const dictIndex = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+    const dictIndex = (await queries.getDictionaryNames(session)).indexOf(dictName) + 1;
     if (dictIndex <= 0) return;
     await this.revealClass(dictName, dictIndex, className, {
       revealMethod,
@@ -5817,19 +5881,19 @@ export class ExplorerController {
       })
     )?.trim();
     if (!name) return;
-    queries.addDictionary(session, name);
+    await queries.addDictionary(session, name);
     this.dictProvider.refresh();
     this.onSymbolListChanged?.(session.id);
     // Recorded after the fact: there is nothing to capture before a dictionary exists, and
     // the position it landed at is only knowable afterwards (#434).
-    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(session, name));
+    notifyUndoable(`Added dictionary ${name}`, await recordDictionaryAdd(session, name));
     // Select the new dictionary so its (empty) categories/classes cascade, and
     // highlight its row.
-    const names = queries.getDictionaryNames(session);
+    const names = await queries.getDictionaryNames(session);
     const idx = names.indexOf(name);
     if (idx >= 0) {
       const item = new DictItem(name, idx + 1);
-      this.selectDict(item);
+      await this.selectDict(item);
       try {
         await this.views?.dict.reveal(item, { select: true, focus: true });
       } catch {
@@ -5855,9 +5919,9 @@ export class ExplorerController {
     // Stash the dictionary and its POSITION before unlisting it: `symbolList remove:` does
     // not destroy it, so the same object can go back with every class it holds -- but only
     // while something still references it, and only at its old index (#434).
-    const recording = beginDictionaryRemoval(session, node.dictName);
+    const recording = await beginDictionaryRemoval(session, node.dictName);
     try {
-      queries.removeDictionary(session, node.dictIndex);
+      await queries.removeDictionary(session, node.dictIndex);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Could not remove "${node.dictName}": ${e instanceof Error ? e.message : String(e)}`,
@@ -5866,7 +5930,7 @@ export class ExplorerController {
     }
     // Indices have shifted and the selection may be gone; rebuild from scratch and
     // auto-select a default dictionary.
-    this.reset();
+    await this.reset();
     this.onSymbolListChanged?.(session.id);
     notifyUndoable(`Removed dictionary ${node.dictName}`, recording?.commit());
   }
@@ -5911,11 +5975,11 @@ export class ExplorerController {
     );
     if (confirmed !== 'Rename') return;
 
-    const recording = beginDictionaryRename(session, oldName);
+    const recording = await beginDictionaryRename(session, oldName);
 
     let result: string;
     try {
-      result = queries.renameDictionary(session, node.dictIndex, newName);
+      result = await queries.renameDictionary(session, node.dictIndex, newName);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Could not rename "${oldName}": ${e instanceof Error ? e.message : String(e)}`,
@@ -6022,10 +6086,10 @@ export class ExplorerController {
     // MERGES into a category that already exists, and skips any class it cannot write -- so
     // only the diff knows which classes actually moved, and only their own former labels put
     // them back without dragging along the ones that were already there.
-    const recording = beginClassCategoryEdit(session, dictIndex);
+    const recording = await beginClassCategoryEdit(session, dictIndex);
     let result: string;
     try {
-      result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
+      result = await queries.renameClassCategory(session, dictIndex, oldPath, newPath);
     } catch (e) {
       void vscode.window.showErrorMessage(
         `Rename class category failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -6071,7 +6135,7 @@ export class ExplorerController {
 
     // Class categories changed, so refetch the dictionary's class/category data
     // and redraw, then reveal the renamed category.
-    this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+    this.classCategoryEntries = await queries.getClassesWithCategory(session, dictIndex);
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.methodProvider.refresh();
@@ -6087,7 +6151,7 @@ export class ExplorerController {
     }
     // Recorded either way; the notice carries Undo only where there was one to show. A warned
     // rename already has the user's attention on a warning, so it is not given a second notice.
-    const undoEntry = recording?.commit(`Rename class category ${oldPath} to ${newPath}`);
+    const undoEntry = await recording?.commit(`Rename class category ${oldPath} to ${newPath}`);
     if (!warned) {
       notifyUndoable(`Renamed class category ${oldPath} → ${newPath}`, undoEntry);
     }
@@ -6095,9 +6159,9 @@ export class ExplorerController {
 
   /** The class a class-level command should act on: an explicit row, else the selection.
    *  Answers undefined (having said so) when there is nothing to act on. */
-  private targetClass(
+  private async targetClass(
     item?: ClassItem | HierarchyItem,
-  ): { className: string; dictName: string; dictIndex: number } | undefined {
+  ): Promise<{ className: string; dictName: string; dictIndex: number } | undefined> {
     let className: string | undefined;
     let dictName: string | undefined;
     let dictIndex: number | undefined;
@@ -6107,7 +6171,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = await this.resolveClassDict(item.className, item.dictName);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -6137,7 +6201,7 @@ export class ExplorerController {
     const dictIndex = this.state.dictIndex;
     if (!session || dictIndex === undefined) return;
     try {
-      this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+      this.classCategoryEntries = await queries.getClassesWithCategory(session, dictIndex);
     } catch {
       // Keep stale entries rather than blanking the pane out from under the user.
       return;
@@ -6153,7 +6217,7 @@ export class ExplorerController {
       // the row highlight, so it is a cascade: an undo pressed from somewhere else
       // must not spring this pane open. reapplyPaneHighlight catches it up from
       // state when the user does open it.
-      this.selectClassCategory(catItem);
+      await this.selectClassCategory(catItem);
       await this.revealCascade(this.views?.category, catItem, { select: true, expand: true });
     } else if (
       this.state.classCategory !== undefined &&
@@ -6176,19 +6240,18 @@ export class ExplorerController {
   async moveClassToDictionary(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const target = this.targetClass(item);
+    const target = await this.targetClass(item);
     if (!target) return;
     const { className, dictIndex } = target;
 
-    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+    if (!(await queries.canClassBeWritten(session, className, dictIndex))) {
       void vscode.window.showWarningMessage(
         `${className} is not writable in this repository — it cannot be moved.`,
       );
       return;
     }
 
-    const choices = queries
-      .getDictionaryNames(session)
+    const choices = (await queries.getDictionaryNames(session))
       .map((name, i) => ({ label: name, index: i + 1 }))
       .filter((c) => c.index !== dictIndex);
     if (choices.length === 0) {
@@ -6202,14 +6265,14 @@ export class ExplorerController {
     if (!picked) return;
 
     // Snapshot both names before the move: the one it leaves and the one it arrives under.
-    const recording = beginClassEdit(session, [
+    const recording = await beginClassEdit(session, [
       { dict: dictIndex, className },
       { dict: picked.index, className },
     ]);
 
     let result: string;
     try {
-      result = queries.moveClass(session, dictIndex, picked.index, className);
+      result = await queries.moveClass(session, dictIndex, picked.index, className);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Move class failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -6233,7 +6296,7 @@ export class ExplorerController {
     this.onClassRemoved?.(session.id, className);
     notifyUndoable(
       `Moved ${className} to ${picked.label}`,
-      recording?.commit(`Move class ${className} to ${picked.label}`),
+      await recording?.commit(`Move class ${className} to ${picked.label}`),
     );
   }
 
@@ -6245,7 +6308,7 @@ export class ExplorerController {
   async moveClassToCategory(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const target = this.targetClass(item);
+    const target = await this.targetClass(item);
     if (!target) return;
     const { className, dictName, dictIndex } = target;
 
@@ -6265,11 +6328,11 @@ export class ExplorerController {
     });
     if (!picked) return;
 
-    const recording = beginClassCategoryEdit(session, dictIndex);
+    const recording = await beginClassCategoryEdit(session, dictIndex);
 
     let result: string;
     try {
-      result = queries.recategorizeClass(session, className, picked, dictIndex);
+      result = await queries.recategorizeClass(session, className, picked, dictIndex);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Move to category failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -6295,7 +6358,7 @@ export class ExplorerController {
     // class stays selected, since it is inside the category being selected.
     const segment = picked.split('-').pop() ?? picked;
     const catItem = new ClassCategoryItem(segment, picked, false);
-    this.selectClassCategory(catItem);
+    await this.selectClassCategory(catItem);
     this.categoryProvider.refresh();
     try {
       await this.views?.category.reveal(catItem, { select: true, expand: true });
@@ -6305,7 +6368,7 @@ export class ExplorerController {
 
     notifyUndoable(
       `Filed ${className} under '${picked}'`,
-      recording?.commit(`Move class ${className} to category ${picked}`),
+      await recording?.commit(`Move class ${className} to category ${picked}`),
     );
   }
 
@@ -6332,7 +6395,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = await this.resolveClassDict(item.className, item.dictName);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -6346,7 +6409,7 @@ export class ExplorerController {
     }
 
     // Kernel/system classes can't be modified in this repository — guard before prompting.
-    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+    if (!(await queries.canClassBeWritten(session, className, dictIndex))) {
       void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
       return;
     }
@@ -6355,7 +6418,7 @@ export class ExplorerController {
     // lineage; each descendant carries the dictionary that binds it BY OBJECT IDENTITY
     // (not by name), so a subclass whose name is shadowed in another dictionary still
     // resolves to its own class, never a same-named one elsewhere.
-    const descendants = queries.getClassDescendantNames(session, className, dictIndex);
+    const descendants = await queries.getClassDescendantNames(session, className, dictIndex);
 
     // Resolve and vet the whole subtree BEFORE prompting, so the all-or-none promise
     // holds: if any member can't be located in a dictionary or can't be written, abort
@@ -6368,7 +6431,7 @@ export class ExplorerController {
     for (const d of descendants) {
       if (d.dictIndex <= 0) {
         blockers.push(`${d.className} (not found in any dictionary)`);
-      } else if (!queries.canClassBeWritten(session, d.className, d.dictIndex)) {
+      } else if (!(await queries.canClassBeWritten(session, d.className, d.dictIndex))) {
         blockers.push(`${d.className} (not writable)`);
       } else {
         targets.push({ className: d.className, dictName: d.dictName, dictIndex: d.dictIndex });
@@ -6432,7 +6495,7 @@ export class ExplorerController {
     // the stone -- `deleteClass` only unbinds the name, so the very same version can go back
     // exactly as it was, but only while something still holds it (#434). One entry for the
     // subtree: putting half of it back is not a reversal of what the user asked for.
-    const recording = beginClassDeletion(
+    const recording = await beginClassDeletion(
       session,
       targets.map((t) => ({ dict: t.dictIndex, className: t.className })),
     );
@@ -6441,7 +6504,7 @@ export class ExplorerController {
     const removed: string[] = [];
     for (const t of targets) {
       try {
-        const result = queries.deleteClass(session, t.dictIndex, t.className);
+        const result = await queries.deleteClass(session, t.dictIndex, t.className);
         if (result.startsWith('Deleted class:')) removed.push(t.className);
         else failures.push(`${t.className}: ${result}`);
       } catch (e: unknown) {
@@ -6458,8 +6521,11 @@ export class ExplorerController {
       this.hierSubs = [];
     }
     if (this.state.dictIndex !== undefined) {
-      this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-      this.loadClassRowMetadata();
+      this.classCategoryEntries = await queries.getClassesWithCategory(
+        session,
+        this.state.dictIndex,
+      );
+      await this.loadClassRowMetadata();
     }
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -6473,7 +6539,7 @@ export class ExplorerController {
     // failure doesn't drop a class that is still there.
     for (const name of removed) this.onClassRemoved?.(session.id, name);
 
-    const undoEntry = removed.length > 0 ? recording?.commit() : undefined;
+    const undoEntry = removed.length > 0 ? await recording?.commit() : undefined;
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
@@ -6652,7 +6718,7 @@ export class ExplorerController {
     );
     if (hasServerMethods) {
       try {
-        queries.renameCategory(
+        await queries.renameCategory(
           session,
           className,
           item.isMeta,
@@ -6681,7 +6747,7 @@ export class ExplorerController {
     // A server rename changed the class's methods, so refetch; an overlay-only
     // rename just needs the tree redrawn.
     if (hasServerMethods) {
-      this.reloadIfCurrent(className, dictIndex);
+      await this.reloadIfCurrent(className, dictIndex);
     } else {
       this.methodProvider.refresh();
       this.syncTitles();
@@ -6838,7 +6904,7 @@ export class ExplorerController {
       let result: RemoveCategoryResult;
       try {
         result = parseRemoveCategoryResult(
-          queries.removeCategory(
+          await queries.removeCategory(
             session,
             className,
             item.isMeta,
@@ -6860,7 +6926,7 @@ export class ExplorerController {
         // The pane is out of date in every one of these cases — a method appeared,
         // the category is already gone, the class moved — so refetch rather than
         // leaving the stale row.
-        this.reloadIfCurrent(className, dictIndex);
+        await this.reloadIfCurrent(className, dictIndex);
         return;
       }
     }
@@ -6878,7 +6944,7 @@ export class ExplorerController {
     // A server removal changed the class's categories, so refetch; an overlay-only
     // one just needs the tree redrawn.
     if (existsOnServer) {
-      this.reloadIfCurrent(className, dictIndex);
+      await this.reloadIfCurrent(className, dictIndex);
     } else {
       this.methodProvider.refresh();
       this.syncTitles();
@@ -6919,9 +6985,9 @@ export class ExplorerController {
       title: `File Out ${node.dictName}`,
       defaultFileName: fileOutFileName(node.dictName),
       label: node.dictName,
-      build: () =>
-        composeFileOut(queries.fileOutHeader(session), [
-          queries.fileOutDictionary(session, node.dictIndex),
+      build: async () =>
+        composeFileOut(await queries.fileOutHeader(session), [
+          await queries.fileOutDictionary(session, node.dictIndex),
         ]),
     });
   }
@@ -6958,10 +7024,10 @@ export class ExplorerController {
       title: `File Out ${node.fullPath}`,
       defaultFileName: fileOutFileName(node.fullPath),
       label: node.fullPath,
-      build: () => {
-        const ordered = queries
-          .getDictionaryClassFileOutOrder(session, dictIndex)
-          .filter((name) => inCategory.has(name));
+      build: async () => {
+        const ordered = (await queries.getDictionaryClassFileOutOrder(session, dictIndex)).filter(
+          (name) => inCategory.has(name),
+        );
         // The order query answers nothing at all for a dictionary that no longer
         // resolves — a `state.dictIndex` gone stale because the dictionary was removed
         // in another session, or a tree not yet refreshed — and answers a short list
@@ -6976,10 +7042,11 @@ export class ExplorerController {
               `${missing.join(', ')} — no longer in this dictionary. Refresh and try again.`,
           );
         }
-        return composeFileOut(
-          queries.fileOutHeader(session),
-          ordered.map((name) => this.classFileOutBody(session, name, dictIndex)),
-        );
+        const header = await queries.fileOutHeader(session);
+        const bodies: string[] = [];
+        for (const name of ordered)
+          bodies.push(await this.classFileOutBody(session, name, dictIndex));
+        return composeFileOut(header, bodies);
       },
     });
   }
@@ -6995,9 +7062,9 @@ export class ExplorerController {
       title: `File Out ${node.className}`,
       defaultFileName: fileOutFileName(node.className),
       label: node.className,
-      build: () =>
-        composeFileOut(queries.fileOutHeader(session), [
-          this.classFileOutBody(session, node.className, dict),
+      build: async () =>
+        composeFileOut(await queries.fileOutHeader(session), [
+          await this.classFileOutBody(session, node.className, dict),
         ]),
     });
   }
@@ -7016,15 +7083,15 @@ export class ExplorerController {
   async fileOutClassAsTonel(node: ClassItem | HierarchyItem): Promise<void> {
     const session = this.fileOutSession();
     if (!session) return;
-    if (!requireTonelAvailable(session)) return;
+    if (!(await requireTonelAvailable(session))) return;
     const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
     await this.runFileOut({
       title: `File Out ${node.className} (.st)`,
       defaultFileName: `${sanitizeFileNameStem(node.className)}.class.st`,
       label: `${node.className} (Tonel)`,
       filters: TONEL_FILE_OUT_FILTERS,
-      build: () => {
-        const tonel = queries.fileOutClassTonel(session, node.className, dict);
+      build: async () => {
+        const tonel = await queries.fileOutClassTonel(session, node.className, dict);
         if (isTonelFileOutError(tonel)) throw new Error(tonel);
         return tonel;
       },
@@ -7034,12 +7101,12 @@ export class ExplorerController {
   /** One class's file-out body, turning `fileOutClass`'s not-found sentinel into a
    *  raise — the caller is writing a file, and a `.gs` whose whole contents are
    *  "Class not found: X" is worse than a reported failure. */
-  private classFileOutBody(
+  private async classFileOutBody(
     session: ActiveSession,
     className: string,
     dict?: number | string,
-  ): string {
-    const source = queries.fileOutClass(session, className, dict);
+  ): Promise<string> {
+    const source = await queries.fileOutClass(session, className, dict);
     if (isClassNotFound(source)) throw new Error(source);
     return source;
   }
@@ -7065,9 +7132,15 @@ export class ExplorerController {
       title: `File Out ${node.category}`,
       defaultFileName: fileOutFileName(`${className}-${node.category}`),
       label,
-      build: () =>
-        composeFileOut(queries.fileOutHeader(session), [
-          queries.fileOutMethodCategory(session, className, node.isMeta, node.category, dictIndex),
+      build: async () =>
+        composeFileOut(await queries.fileOutHeader(session), [
+          await queries.fileOutMethodCategory(
+            session,
+            className,
+            node.isMeta,
+            node.category,
+            dictIndex,
+          ),
         ]),
     });
   }
@@ -7101,13 +7174,16 @@ export class ExplorerController {
         single ? `${className}-${single.info.selector}` : `${className}-methods`,
       ),
       label,
-      build: () =>
-        composeFileOut(
-          queries.fileOutHeader(session),
-          nodes.map((n) =>
-            queries.fileOutMethod(session, className, n.isMeta, n.info.selector, dictIndex),
-          ),
-        ),
+      build: async () => {
+        const header = await queries.fileOutHeader(session);
+        const bodies: string[] = [];
+        for (const n of nodes) {
+          bodies.push(
+            await queries.fileOutMethod(session, className, n.isMeta, n.info.selector, dictIndex),
+          );
+        }
+        return composeFileOut(header, bodies);
+      },
     });
   }
 
@@ -7150,7 +7226,7 @@ export class ExplorerController {
       // may still be highlighted — adopt it so "New Method" acts on what the user
       // sees selected (this also reloads its methods and hierarchy).
       const fromTree = this.selectedClassInTree();
-      if (fromTree) this.selectClass(fromTree);
+      if (fromTree) await this.selectClass(fromTree);
     }
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
@@ -7209,7 +7285,11 @@ export class ExplorerController {
     // a save into e.g. a system/kernel class silently no-ops server-side.
     let writable = true;
     try {
-      writable = queries.canClassBeWritten(session, this.state.className, this.state.dictIndex);
+      writable = await queries.canClassBeWritten(
+        session,
+        this.state.className,
+        this.state.dictIndex,
+      );
     } catch {
       /* session busy — let the compile itself report any failure */
     }
@@ -7337,7 +7417,7 @@ export class ExplorerController {
       try {
         // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
         // …', 'Not a class: …'), so the answer has to be read, not just awaited.
-        const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
+        const result = await queries.recategorizeClass(session, p.className, category, p.dictIndex);
         if (result.startsWith('Recategorized:')) moved.push(p.className);
         else failures.push(`${p.className}: ${result}`);
       } catch (e: unknown) {
@@ -7350,7 +7430,10 @@ export class ExplorerController {
       // the client-side overlay that kept an empty one visible.
       this.newClassCategories.delete(category);
       if (this.state.dictIndex !== undefined) {
-        this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
+        this.classCategoryEntries = await queries.getClassesWithCategory(
+          session,
+          this.state.dictIndex,
+        );
       }
       this.categoryProvider.refresh();
       this.classProvider.refresh();
@@ -7417,11 +7500,11 @@ export class ExplorerController {
       selector: p.selector,
       environmentId: 0,
     }));
-    const recording = beginMethodEdit(session, slots);
+    const recording = await beginMethodEdit(session, slots);
 
     try {
       for (const p of toMove) {
-        queries.recategorizeMethod(
+        await queries.recategorizeMethod(
           session,
           p.className,
           p.isMeta,
@@ -7436,7 +7519,7 @@ export class ExplorerController {
       );
       return;
     }
-    this.reloadIfCurrent(toMove[0].className, toMove[0].dictIndex);
+    await this.reloadIfCurrent(toMove[0].className, toMove[0].dictIndex);
 
     const message =
       toMove.length === 1
@@ -7446,7 +7529,7 @@ export class ExplorerController {
       slots.length === 1
         ? `Move ${slotLabel(slots[0])} to '${category}'`
         : `Move ${slots.length} methods to '${category}'`;
-    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    const after = recording ? await readMethodSlotState(session, slots) : undefined;
     notifyUndoable(message, after && recording ? recording.commit(label, after) : undefined);
   }
 
@@ -7549,7 +7632,7 @@ export class ExplorerController {
     if (toCopy.length === 0) return;
     try {
       for (const p of toCopy) {
-        queries.copyMethodToClass(
+        await queries.copyMethodToClass(
           session,
           p.className,
           targetClass,
@@ -7565,7 +7648,7 @@ export class ExplorerController {
       );
       return;
     }
-    this.reloadIfCurrent(targetClass, toCopy[0].dictIndex);
+    await this.reloadIfCurrent(targetClass, toCopy[0].dictIndex);
     void vscode.window.showInformationMessage(
       toCopy.length === 1
         ? `Copied #${toCopy[0].selector} to ${targetClass}.`
@@ -7654,11 +7737,16 @@ export class ExplorerController {
   }
 
   // Reload the method list when the class just mutated is the one on screen.
-  private reloadIfCurrent(className: string, dictIndex: number): void {
+  private async reloadIfCurrent(className: string, dictIndex: number): Promise<void> {
     const session = this.session();
     if (!session || this.state.className !== className || this.state.dictIndex !== dictIndex)
       return;
-    this.envLines = queries.getClassEnvironments(session, dictIndex, className, this.maxEnv());
+    this.envLines = await queries.getClassEnvironments(
+      session,
+      dictIndex,
+      className,
+      this.maxEnv(),
+    );
     this.methodProvider.refresh();
     this.syncTitles();
   }
@@ -7715,7 +7803,11 @@ export class ExplorerController {
   // compiled (Save). When it's the class we're showing, reload so the new method
   // / class appears in the panels without a manual refresh.
 
-  onExternalMethodCompiled(sessionId: number, className: string, selector?: string): void {
+  async onExternalMethodCompiled(
+    sessionId: number,
+    className: string,
+    selector?: string,
+  ): Promise<void> {
     // Refresh any open method-history viewer for this method first — independent of
     // what the explorer currently has selected (the panel outlives the selection).
     // The compile event carries the selector when the URI had one, so only the panel
@@ -7731,7 +7823,7 @@ export class ExplorerController {
     ) {
       return;
     }
-    this.envLines = queries.getClassEnvironments(
+    this.envLines = await queries.getClassEnvironments(
       session,
       this.state.dictIndex,
       className,
@@ -7776,11 +7868,15 @@ export class ExplorerController {
     this.classProvider.refresh();
   }
 
-  onExternalClassCompiled(sessionId: number, className: string, dictName?: string): void {
+  async onExternalClassCompiled(
+    sessionId: number,
+    className: string,
+    dictName?: string,
+  ): Promise<void> {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
-    this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-    this.loadClassRowMetadata();
+    this.classCategoryEntries = await queries.getClassesWithCategory(session, this.state.dictIndex);
+    await this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     // If the compiled class lives in the current dictionary, select it so the
@@ -7796,7 +7892,7 @@ export class ExplorerController {
     // — e.g. a new class whose `inDictionary:` names a different dictionary. Jump
     // the explorer to where the class actually lives so it's revealed there,
     // rather than leaving the panes on a dictionary that doesn't contain it.
-    const resolved = this.resolveClassDict(className, dictName);
+    const resolved = await this.resolveClassDict(className, dictName);
     if (resolved) {
       void this.revealClass(resolved.dictName, resolved.dictIndex, className);
     } else {
@@ -7813,7 +7909,7 @@ abstract class RefreshableProvider<T> implements vscode.TreeDataProvider<T> {
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
   }
-  abstract getChildren(element?: T): T[];
+  abstract getChildren(element?: T): T[] | Promise<T[]>;
   getTreeItem(element: T): vscode.TreeItem {
     return element as unknown as vscode.TreeItem;
   }
@@ -7840,12 +7936,11 @@ class DictProvider extends RefreshableProvider<DictItem | FilterChipItem> {
   getParent(): DictItem | undefined {
     return undefined;
   }
-  getChildren(element?: DictItem | FilterChipItem): (DictItem | FilterChipItem)[] {
+  async getChildren(element?: DictItem | FilterChipItem): Promise<(DictItem | FilterChipItem)[]> {
     if (element) return [];
     const session = this.ctl.session();
     if (!session) return [];
-    const rows = queries
-      .getDictionaryNames(session)
+    const rows = (await queries.getDictionaryNames(session))
       .map((name, i) => new DictItem(name, i + 1))
       .filter((d) => filterMatches(d.dictName, this.ctl.getFilter(VIEW_DICTS)));
     return withFilterChip(VIEW_DICTS, this.ctl, rows);
@@ -7889,7 +7984,7 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     if (element instanceof VarSideItem) return new ClassItem(element.className);
     return undefined;
   }
-  getChildren(element?: ClassNode | FilterChipItem): (ClassNode | FilterChipItem)[] {
+  async getChildren(element?: ClassNode | FilterChipItem): Promise<(ClassNode | FilterChipItem)[]> {
     if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
       const rows = this.ctl.classNames().map((n) => {
@@ -7910,24 +8005,27 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     // no chevron and so is never asked for children.
     if (element instanceof ClassItem) {
       return variableSides(
-        this.ctl.definedIvarNames(element.className),
-        this.ctl.definedClassVarNames(element.className),
+        await this.ctl.definedIvarNames(element.className),
+        await this.ctl.definedClassVarNames(element.className),
       ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
       return element.isMeta
-        ? this.ctl
-            .definedClassVarNames(element.className)
-            .map((cv) => new ClassVarItem(element.className, cv))
-        : this.ctl
-            .definedIvarNames(element.className)
-            .map(
-              (iv) =>
-                new IvarItem(element.className, iv, this.ctl.classHasSubclasses(element.className)),
-            );
+        ? (await this.ctl.definedClassVarNames(element.className)).map(
+            (cv) => new ClassVarItem(element.className, cv),
+          )
+        : await this.ivarItems(element.className);
     }
     return [];
+  }
+
+  private async ivarItems(className: string): Promise<IvarItem[]> {
+    const items: IvarItem[] = [];
+    for (const iv of await this.ctl.definedIvarNames(className)) {
+      items.push(new IvarItem(className, iv, await this.ctl.classHasSubclasses(className)));
+    }
+    return items;
   }
 }
 
@@ -7962,7 +8060,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     // Category rows and the filter chip are roots.
     return undefined;
   }
-  getChildren(element?: MethodNode): MethodNode[] {
+  async getChildren(element?: MethodNode): Promise<MethodNode[]> {
     if (this.ctl.state.className === undefined) return [];
 
     if (!element) {
@@ -7973,8 +8071,8 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
       const isMeta = this.ctl.showClassMethods;
       const filter = this.ctl.getFilter(VIEW_METHODS);
       const rows: MethodNode[] = !this.ctl.groupMethodsByCategory()
-        ? this.ctl.flatMethods(isMeta, filter)
-        : this.ctl.methodCategories(isMeta, filter);
+        ? await this.ctl.flatMethods(isMeta, filter)
+        : await this.ctl.methodCategories(isMeta, filter);
       // While filtering, lead with a filter chip (funnel row + inline ✕) so the
       // active filter reads distinctly from the method rows and can be cleared
       // here — the same helper the other three panes use.
@@ -7988,31 +8086,30 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
       // with their category's name.
       const nameMatched =
         filter !== undefined && this.ctl.methodCategoryMatchesFilter(element.category, filter);
-      return this.ctl
-        .selectorsFor(element.isMeta, element.category)
-        .filter(
-          (info) =>
-            filter === undefined ||
-            nameMatched ||
-            this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
-        )
-        .map((info) => {
-          const item = new MethodItem(
-            element.isMeta,
-            info,
-            element.category,
-            this.ctl.methodSourceUri(element.isMeta, info),
-            this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
-          );
-          this.ctl.decorateTestRow(
-            item,
-            this.ctl.state.dictName,
-            this.ctl.state.className ?? '',
-            info.selector,
-            element.isMeta,
-          );
-          return item;
-        });
+      const items: MethodNode[] = [];
+      for (const info of this.ctl.selectorsFor(element.isMeta, element.category)) {
+        const kept =
+          filter === undefined ||
+          nameMatched ||
+          (await this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter));
+        if (!kept) continue;
+        const item = new MethodItem(
+          element.isMeta,
+          info,
+          element.category,
+          this.ctl.methodSourceUri(element.isMeta, info),
+          await this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
+        );
+        this.ctl.decorateTestRow(
+          item,
+          this.ctl.state.dictName,
+          this.ctl.state.className ?? '',
+          info.selector,
+          element.isMeta,
+        );
+        items.push(item);
+      }
+      return items;
     }
     return [];
   }
@@ -8296,24 +8393,25 @@ export function registerGemStoneExplorer(
   // though the order doesn't change the outcome — committing never restores anything.
   commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
 
-  dictView.onDidChangeSelection((e) => {
+  dictView.onDidChangeSelection(async (e) => {
     const node = e.selection[0];
-    if (node instanceof DictItem) ctl.selectDict(node);
+    if (node instanceof DictItem) await ctl.selectDict(node);
   });
-  categoryView.onDidChangeSelection((e) => {
+  categoryView.onDidChangeSelection(async (e) => {
     const node = e.selection[0];
-    if (node instanceof ClassCategoryItem) ctl.selectClassCategory(node);
+    if (node instanceof ClassCategoryItem) await ctl.selectClassCategory(node);
   });
-  classView.onDidChangeSelection((e) => {
+  classView.onDidChangeSelection(async (e) => {
     // Only a class row navigates; selecting an ivar child is inert (it's acted on
     // via its inline pencil, not selection). Skip when the class is already the
     // selected one so a click doesn't run selectClass twice — the row's classClicked
     // command also (re)selects; between the two, exactly one runs per click.
     const node = e.selection[0];
-    if (node instanceof ClassItem && node.className !== ctl.state.className) ctl.selectClass(node);
+    if (node instanceof ClassItem && node.className !== ctl.state.className)
+      await ctl.selectClass(node);
   });
-  hierarchyView.onDidChangeSelection((e) => {
-    if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
+  hierarchyView.onDidChangeSelection(async (e) => {
+    if (e.selection[0]) await ctl.selectHierarchyNode(e.selection[0]);
   });
   // Catch each pane up on the cascade highlight it skipped while it was closed
   // (see ExplorerController.revealCascade). Without these, guarding the reveals
@@ -8343,9 +8441,9 @@ export function registerGemStoneExplorer(
     classView,
     hierarchyView,
     methodView,
-    sessionManager.onDidChangeSelection((id) => {
+    sessionManager.onDidChangeSelection(async (id) => {
       syncActiveContext();
-      ctl.reset();
+      await ctl.reset();
       // One chain per session: switching sessions switches the trail with it,
       // rather than leaving another stone's methods on show. Done after the reset,
       // which is what clears the panes the old chain's landings referred to.
@@ -8366,8 +8464,8 @@ export function registerGemStoneExplorer(
     // deliberately not contributed in package.json: a pane refresh is not enough, because
     // the Dictionaries pane IS the symbol list and every index below the change has moved,
     // so this is the same full rebuild the forward commands do (#434).
-    vscode.commands.registerCommand(SYMBOL_LIST_CHANGED_COMMAND, (sessionId?: number) => {
-      ctl.reset();
+    vscode.commands.registerCommand(SYMBOL_LIST_CHANGED_COMMAND, async (sessionId?: number) => {
+      await ctl.reset();
       if (typeof sessionId === 'number') onSymbolListChanged?.(sessionId);
     }),
     // An undo is renaming a still-empty method category back. Internal, and deliberately not
@@ -8437,8 +8535,8 @@ export function registerGemStoneExplorer(
     // chip belongs to (it carries its own view id).
     vscode.commands.registerCommand(
       'gemstone.explorer.clearFilterChip',
-      (item?: FilterChipItem) => {
-        if (item instanceof FilterChipItem) ctl.clearFilter(item.viewId);
+      async (item?: FilterChipItem) => {
+        if (item instanceof FilterChipItem) await ctl.clearFilter(item.viewId);
       },
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
@@ -8597,9 +8695,12 @@ export function registerGemStoneExplorer(
       },
     ),
     // Per-click hook powering double-click-to-open-definition.
-    vscode.commands.registerCommand('gemstone.explorer.classClicked', (className?: string) => {
-      if (typeof className === 'string') ctl.handleClassClick(className);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.classClicked',
+      async (className?: string) => {
+        if (typeof className === 'string') await ctl.handleClassClick(className);
+      },
+    ),
     // Per-click hook powering double-click-to-promote-the-preview-tab.
     vscode.commands.registerCommand('gemstone.explorer.methodClicked', (node?: MethodItem) => {
       if (node instanceof MethodItem) ctl.handleMethodClick(node);
@@ -8641,18 +8742,25 @@ export function registerGemStoneExplorer(
     }),
     // Filter the Methods pane to the readers / writers / references of an ivar
     // (its row's context menu) — seeds a reads:/writes:/accesses: token.
-    vscode.commands.registerCommand('gemstone.explorer.filterReadersOfIvar', (item?: IvarItem) => {
-      if (item instanceof IvarItem) ctl.filterMethodsByIvar('reads', item.ivarName, item.className);
-    }),
-    vscode.commands.registerCommand('gemstone.explorer.filterWritersOfIvar', (item?: IvarItem) => {
-      if (item instanceof IvarItem)
-        ctl.filterMethodsByIvar('writes', item.ivarName, item.className);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.filterReadersOfIvar',
+      async (item?: IvarItem) => {
+        if (item instanceof IvarItem)
+          await ctl.filterMethodsByIvar('reads', item.ivarName, item.className);
+      },
+    ),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.filterWritersOfIvar',
+      async (item?: IvarItem) => {
+        if (item instanceof IvarItem)
+          await ctl.filterMethodsByIvar('writes', item.ivarName, item.className);
+      },
+    ),
     vscode.commands.registerCommand(
       'gemstone.explorer.filterReferencesToIvar',
-      (item?: IvarItem) => {
+      async (item?: IvarItem) => {
         if (item instanceof IvarItem)
-          ctl.filterMethodsByIvar('accesses', item.ivarName, item.className);
+          await ctl.filterMethodsByIvar('accesses', item.ivarName, item.className);
       },
     ),
     // Add / remove an instance variable (V1).
@@ -9068,8 +9176,8 @@ export function registerGemStoneExplorer(
     ),
     // Editor-focus → navigator: when a gemstone:// method/class editor gains
     // focus, cascade the panels to its location.
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      ctl.highlightActiveEditor(editor);
+    vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+      await ctl.highlightActiveEditor(editor);
       if (editor) void ctl.syncToEditor(editor.document.uri);
     }),
     ivarHighlightDecoration,
@@ -9077,9 +9185,9 @@ export function registerGemStoneExplorer(
 
   return {
     onMethodCompiled: (sessionId, className, selector) =>
-      ctl.onExternalMethodCompiled(sessionId, className, selector),
+      void ctl.onExternalMethodCompiled(sessionId, className, selector),
     onClassCompiled: (sessionId, className, dictName) =>
-      ctl.onExternalClassCompiled(sessionId, className, dictName),
+      void ctl.onExternalClassCompiled(sessionId, className, dictName),
     onClassCommentSaved: (sessionId, dictName, className, hasComment) =>
       ctl.onClassCommentSaved(sessionId, dictName, className, hasComment),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),

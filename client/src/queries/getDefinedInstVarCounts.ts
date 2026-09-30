@@ -6,10 +6,10 @@ import { splitLines, dictLookupExpr } from './util';
 // uses this up front to decide whether a class row shows an expansion chevron for
 // its variable sub-tree, so classes with no locally-defined variables stay flat.
 // Accepts a dictionary by 1-based index (canonical for Jasper) or by name.
-export function getDefinedInstVarCounts(
+export async function getDefinedInstVarCounts(
   execute: QueryExecutor,
   dict: number | string,
-): Map<string, number> {
+): Promise<Map<string, number>> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -22,7 +22,7 @@ dict keysAndValuesDo: [:k :v |
     ws nextPutAll: k; tab; print: n; lf]].
 ws contents`;
   const map = new Map<string, number>();
-  for (const line of splitLines(execute(code))) {
+  for (const line of splitLines(await execute(code))) {
     const tab = line.indexOf('\t');
     if (tab < 0) continue;
     map.set(line.slice(0, tab), parseInt(line.slice(tab + 1), 10) || 0);

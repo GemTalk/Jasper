@@ -51,7 +51,7 @@ describe('showRenameClassEditor', () => {
   };
 
   it('resolves with the new name, scope, and options when validation passes', async () => {
-    const result = showRenameClassEditor({ oldName: 'Account' }, () => undefined);
+    const result = showRenameClassEditor({ oldName: 'Account' }, async () => undefined);
     lastPanel().__emit({
       command: 'ok',
       newName: 'BankAccount',
@@ -67,13 +67,14 @@ describe('showRenameClassEditor', () => {
   });
 
   it('rejects a name in use without closing, then resolves once a free name is entered', async () => {
-    const validate = vi.fn((name: string) =>
+    const validate = vi.fn(async (name: string) =>
       name === 'Taken' ? 'The name Taken is already in use.' : undefined,
     );
 
     const result = showRenameClassEditor({ oldName: 'Account' }, validate);
     const panel = lastPanel();
     panel.__emit({ command: 'ok', newName: 'Taken', scope: { kind: 'wholeSystem' } });
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(panel.webview.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'invalid' }),
@@ -93,14 +94,14 @@ describe('showRenameClassEditor', () => {
   });
 
   it('resolves undefined when cancelled', async () => {
-    const result = showRenameClassEditor({ oldName: 'Account' }, () => undefined);
+    const result = showRenameClassEditor({ oldName: 'Account' }, async () => undefined);
     lastPanel().__emit({ command: 'cancel' });
 
     expect(await result).toBeUndefined();
   });
 
   it('rejects a malformed scope from the webview without closing, then resolves on a valid one', async () => {
-    const validate = vi.fn(() => undefined);
+    const validate = vi.fn(async () => undefined);
     const result = showRenameClassEditor({ oldName: 'Account' }, validate);
     const panel = lastPanel();
 

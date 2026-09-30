@@ -134,7 +134,9 @@ function expectNoMultiWordSelectors(session: ActiveSession): void {
  * Runs a generator against a session that captures the Smalltalk handed to it
  * instead of evaluating it, and returns that source for inspection.
  */
-function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
+async function generatedSmalltalkFrom(
+  run: (session: ActiveSession) => Promise<unknown>,
+): Promise<string> {
   const session = createMockSession();
   let generated = '';
   (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
@@ -144,7 +146,7 @@ function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
     },
   );
 
-  run(session);
+  await run(session);
 
   return generated;
 }
@@ -265,13 +267,13 @@ describe('debugQueries', () => {
   });
 
   describe('getMethodUriInfo', () => {
-    it('parses tab-separated result into MethodUriInfo', () => {
+    it('parses tab-separated result into MethodUriInfo', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
         () => 'Globals\tSmallInteger\tinstance\tarithmetic\t/',
       );
 
-      const result = debug.getMethodUriInfo(session, METHOD_OOP);
+      const result = await debug.getMethodUriInfo(session, METHOD_OOP);
 
       expect(result).toEqual({
         dictName: 'Globals',
@@ -282,22 +284,22 @@ describe('debugQueries', () => {
       });
     });
 
-    it('returns undefined when the execute fails', () => {
+    it('returns undefined when the execute fails', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
         throw new Error('error');
       });
 
-      expect(debug.getMethodUriInfo(session, METHOD_OOP)).toBeUndefined();
+      expect(await debug.getMethodUriInfo(session, METHOD_OOP)).toBeUndefined();
     });
 
-    it('parses class-side methods correctly', () => {
+    it('parses class-side methods correctly', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
         () => 'Globals\tArray\tclass\tinstance creation\tnew',
       );
 
-      const result = debug.getMethodUriInfo(session, METHOD_OOP);
+      const result = await debug.getMethodUriInfo(session, METHOD_OOP);
 
       expect(result).toEqual({
         dictName: 'Globals',
@@ -318,9 +320,9 @@ describe('debugQueries', () => {
       return session;
     }
 
-    it('parses an instance-side DNU (keyword selector) into DnuInfo', () => {
+    it('parses an instance-side DNU (keyword selector) into DnuInfo', async () => {
       const session = sessionReturning('SmallInteger\tinstance\tGlobals\tfourtyTwo:bar:\t2');
-      expect(debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toEqual({
+      expect(await debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toEqual({
         className: 'SmallInteger',
         isMeta: false,
         dictName: 'Globals',
@@ -329,9 +331,9 @@ describe('debugQueries', () => {
       });
     });
 
-    it('parses a class-side DNU (message sent to a class)', () => {
+    it('parses a class-side DNU (message sent to a class)', async () => {
       const session = sessionReturning('JasperDebugDemo\tclass\tUserGlobals\tmakeWidget\t0');
-      expect(debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toEqual({
+      expect(await debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toEqual({
         className: 'JasperDebugDemo',
         isMeta: true,
         dictName: 'UserGlobals',
@@ -340,17 +342,19 @@ describe('debugQueries', () => {
       });
     });
 
-    it('returns undefined when the process is not parked on a doesNotUnderstand:', () => {
+    it('returns undefined when the process is not parked on a doesNotUnderstand:', async () => {
       // The doit returns '' when no DNU frame is found.
-      expect(debug.getDoesNotUnderstandInfo(sessionReturning(''), GS_PROCESS)).toBeUndefined();
+      expect(
+        await debug.getDoesNotUnderstandInfo(sessionReturning(''), GS_PROCESS),
+      ).toBeUndefined();
     });
 
-    it('returns undefined when the execute fails', () => {
+    it('returns undefined when the execute fails', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
         throw new Error('boom');
       });
-      expect(debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toBeUndefined();
+      expect(await debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toBeUndefined();
     });
   });
 
@@ -363,7 +367,7 @@ describe('debugQueries', () => {
       return session;
     }
 
-    it('parses the full chain (most-specific first), flagging the class that implements the selector', () => {
+    it('parses the full chain (most-specific first), flagging the class that implements the selector', async () => {
       // Interval -> SequenceableCollection -> Collection (implements it) -> Object (implements it).
       const session = sessionReturning(
         'Interval\tinstance\tGlobals\t0\n' +
@@ -371,7 +375,9 @@ describe('debugQueries', () => {
           'Collection\tinstance\tKernel\t1\n' +
           'Object\tinstance\tKernel\t1',
       );
-      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'asOrderedCollection')).toEqual([
+      expect(
+        await debug.getReceiverClassChain(session, RECEIVER_OOP, 'asOrderedCollection'),
+      ).toEqual([
         { className: 'Interval', isMeta: false, dictName: 'Globals', implementsSelector: false },
         {
           className: 'SequenceableCollection',
@@ -384,9 +390,9 @@ describe('debugQueries', () => {
       ]);
     });
 
-    it('parses a single-class chain', () => {
+    it('parses a single-class chain', async () => {
       const session = sessionReturning('SmallInteger\tinstance\tGlobals\t0');
-      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo')).toEqual([
+      expect(await debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo')).toEqual([
         {
           className: 'SmallInteger',
           isMeta: false,
@@ -396,23 +402,25 @@ describe('debugQueries', () => {
       ]);
     });
 
-    it('marks a class-side chain (class receiver) and a blank dict for a non-symbol-list class', () => {
+    it('marks a class-side chain (class receiver) and a blank dict for a non-symbol-list class', async () => {
       const session = sessionReturning('Loner\tclass\t\t1');
-      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo')).toEqual([
+      expect(await debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo')).toEqual([
         { className: 'Loner', isMeta: true, dictName: '', implementsSelector: true },
       ]);
     });
 
-    it('returns [] when the chain is empty', () => {
-      expect(debug.getReceiverClassChain(sessionReturning(''), RECEIVER_OOP, 'foo')).toEqual([]);
+    it('returns [] when the chain is empty', async () => {
+      expect(await debug.getReceiverClassChain(sessionReturning(''), RECEIVER_OOP, 'foo')).toEqual(
+        [],
+      );
     });
 
-    it('returns [] when the execute fails', () => {
+    it('returns [] when the execute fails', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
         throw new Error('boom');
       });
-      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'Object')).toEqual([]);
+      expect(await debug.getReceiverClassChain(session, RECEIVER_OOP, 'Object')).toEqual([]);
     });
   });
 
@@ -425,9 +433,9 @@ describe('debugQueries', () => {
       return session;
     }
 
-    it('parses the defining class, dictionary, and category for an instance-side method', () => {
+    it('parses the defining class, dictionary, and category for an instance-side method', async () => {
       const session = sessionReturning('Collection\tinstance\tKernel\taccessing');
-      expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'asOrderedCollection')).toEqual({
+      expect(await debug.getBrowseTarget(session, RECEIVER_OOP, 'asOrderedCollection')).toEqual({
         className: 'Collection',
         isMeta: false,
         dictName: 'Kernel',
@@ -435,9 +443,9 @@ describe('debugQueries', () => {
       });
     });
 
-    it('parses a class-side method', () => {
+    it('parses a class-side method', async () => {
       const session = sessionReturning('Array\tclass\tGlobals\tinstance creation');
-      expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'new')).toEqual({
+      expect(await debug.getBrowseTarget(session, RECEIVER_OOP, 'new')).toEqual({
         className: 'Array',
         isMeta: true,
         dictName: 'Globals',
@@ -445,9 +453,9 @@ describe('debugQueries', () => {
       });
     });
 
-    it('reports a blank dictionary and category when the class is outside the symbol list and the method is uncategorized', () => {
+    it('reports a blank dictionary and category when the class is outside the symbol list and the method is uncategorized', async () => {
       const session = sessionReturning('Loner\tinstance\t\t');
-      expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toEqual({
+      expect(await debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toEqual({
         className: 'Loner',
         isMeta: false,
         dictName: '',
@@ -455,16 +463,18 @@ describe('debugQueries', () => {
       });
     });
 
-    it('returns undefined when the selector is not found in the chain', () => {
-      expect(debug.getBrowseTarget(sessionReturning(''), RECEIVER_OOP, 'foo')).toBeUndefined();
+    it('returns undefined when the selector is not found in the chain', async () => {
+      expect(
+        await debug.getBrowseTarget(sessionReturning(''), RECEIVER_OOP, 'foo'),
+      ).toBeUndefined();
     });
 
-    it('returns undefined when the execute fails', () => {
+    it('returns undefined when the execute fails', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
         throw new Error('boom');
       });
-      expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toBeUndefined();
+      expect(await debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toBeUndefined();
     });
   });
 
@@ -484,8 +494,8 @@ describe('debugQueries', () => {
         'the implementation-candidate chain',
         (s: ActiveSession) => debug.getReceiverClassChain(s, RECEIVER_OOP, 'foo'),
       ],
-    ])("%s starts its walk at the receiver's class", (_label, run) => {
-      const code = generatedSmalltalkFrom(run);
+    ])("%s starts its walk at the receiver's class", async (_label, run) => {
+      const code = await generatedSmalltalkFrom(run);
 
       expect(code).toContain('cls := rcvr class.');
       expect(code).not.toContain('cls := rcvr.');
@@ -494,30 +504,30 @@ describe('debugQueries', () => {
     // The metaclass chain runs on into Class and its superclasses, which are
     // instance-side, so the side has to come from the class the row is actually
     // about rather than from what the receiver was.
-    it('reports the side of the class that defines the method, not of the receiver', () => {
-      const code = generatedSmalltalkFrom((session) =>
+    it('reports the side of the class that defines the method, not of the receiver', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
         debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
       );
 
       expect(code).toContain("def isMeta ifTrue: ['class']");
     });
 
-    it('reports the side of each candidate row, not of the receiver', () => {
-      const code = generatedSmalltalkFrom((session) =>
+    it('reports the side of each candidate row, not of the receiver', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
         debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
       );
 
       expect(code).toContain("cls isMeta ifTrue: ['class']");
     });
 
-    it('parses a chain that crosses from the metaclass side to the instance side', () => {
+    it('parses a chain that crosses from the metaclass side to the instance side', async () => {
       const session = createMockSession();
       (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
         () =>
           'Widget\tclass\tUserGlobals\t1\nObject\tclass\tGlobals\t0\nClass\tinstance\tGlobals\t1',
       );
 
-      expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'new')).toEqual([
+      expect(await debug.getReceiverClassChain(session, RECEIVER_OOP, 'new')).toEqual([
         { className: 'Widget', isMeta: true, dictName: 'UserGlobals', implementsSelector: true },
         { className: 'Object', isMeta: true, dictName: 'Globals', implementsSelector: false },
         { className: 'Class', isMeta: false, dictName: 'Globals', implementsSelector: true },
@@ -537,7 +547,7 @@ describe('debugQueries', () => {
     // that resolved the wrong twin would parse just as cleanly.
     // Each query with the temp it holds its non-meta class in, so the assertion
     // below can ask for that query's own home-dictionary expression.
-    const queries: [string, (session: ActiveSession) => void, string][] = [
+    const queries: [string, (session: ActiveSession) => Promise<unknown>, string][] = [
       [
         "a frame's method URI",
         (session) => debug.getMethodUriInfo(session, METHOD_OOP),
@@ -566,29 +576,34 @@ describe('debugQueries', () => {
     // `ifAbsent:` wrong — which is precisely what the two loops this replaced
     // were. Going through `queries/util` is the property under test, so a query
     // that stops doing so fails here whatever it re-rolls in its place.
-    it.each(queries)('%s compares the binding by identity', (_label, run, classVar) => {
-      const code = generatedSmalltalkFrom(run);
+    it.each(queries)('%s compares the binding by identity', async (_label, run, classVar) => {
+      const code = await generatedSmalltalkFrom(run);
 
       expect(code).toContain(homeDictionaryNameExpr(classVar));
     });
 
-    it.each(queries)('%s does not settle for a dictionary holding the name', (_label, run) => {
-      expect(generatedSmalltalkFrom(run)).not.toContain('includesKey:');
-    });
+    it.each(queries)(
+      '%s does not settle for a dictionary holding the name',
+      async (_label, run) => {
+        expect(await generatedSmalltalkFrom(run)).not.toContain('includesKey:');
+      },
+    );
   });
 
   describe('tab separators in generated Smalltalk (3.6.2-compatible via Character tab)', () => {
     const GS_PROCESS = 0x123n;
 
-    it('delimits the fields of a stack frame method location lookup', () => {
-      const code = generatedSmalltalkFrom((session) => debug.getMethodUriInfo(session, METHOD_OOP));
+    it('delimits the fields of a stack frame method location lookup', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
+        debug.getMethodUriInfo(session, METHOD_OOP),
+      );
 
       expect(code).toContain('(String with: Character tab)');
       expect(code).not.toContain('String tab');
     });
 
-    it('delimits the fields of an implementation-candidate class chain lookup', () => {
-      const code = generatedSmalltalkFrom((session) =>
+    it('delimits the fields of an implementation-candidate class chain lookup', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
         debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
       );
 
@@ -596,8 +611,8 @@ describe('debugQueries', () => {
       expect(code).not.toContain('String tab');
     });
 
-    it('delimits the fields of a lookup for where a running method is defined', () => {
-      const code = generatedSmalltalkFrom((session) =>
+    it('delimits the fields of a lookup for where a running method is defined', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
         debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
       );
 
@@ -605,8 +620,8 @@ describe('debugQueries', () => {
       expect(code).not.toContain('String tab');
     });
 
-    it('delimits the fields of a missing-method details lookup', () => {
-      const code = generatedSmalltalkFrom((session) =>
+    it('delimits the fields of a missing-method details lookup', async () => {
+      const code = await generatedSmalltalkFrom((session) =>
         debug.getDoesNotUnderstandInfo(session, GS_PROCESS),
       );
 
@@ -778,14 +793,14 @@ describe('debugQueries', () => {
       } as ActiveSession;
     }
 
-    it('returns the result printString ("7") for "3 + 4" instead of raising', () => {
+    it('returns the result printString ("7") for "3 + 4" instead of raising', async () => {
       const session = evalSession();
-      expect(debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3)).toBe('7');
+      expect(await debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3)).toBe('7');
     });
 
-    it("evaluates the expression string with self bound to the frame's self", () => {
+    it("evaluates the expression string with self bound to the frame's self", async () => {
       const session = evalSession();
-      debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
       expect(session.gci.GciTsNewString).toHaveBeenCalledWith({}, '3 + 4');
       const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
@@ -800,9 +815,9 @@ describe('debugQueries', () => {
     // The one-argument String>>evaluateInContext: does not exist before GemStone
     // 3.7, where the perform fails with NameError 2404. A frame with nothing extra
     // to bind must still go through the two-argument form.
-    it('never sends the one-argument form, which older stones do not implement', () => {
+    it('never sends the one-argument form, which older stones do not implement', async () => {
       const session = evalSession();
-      debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
       const sels = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.map(
         (c: unknown[]) => c[3],
@@ -810,9 +825,9 @@ describe('debugQueries', () => {
       expect(sels).not.toContain('evaluateInContext:');
     });
 
-    it('never sends the removed _framePerform:withArgs:onLevel: primitive (the original bug)', () => {
+    it('never sends the removed _framePerform:withArgs:onLevel: primitive (the original bug)', async () => {
       const session = evalSession();
-      debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
       const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
       expect(performCalls.some((c: unknown[]) => c[3] === '_framePerform:withArgs:onLevel:')).toBe(
@@ -829,20 +844,24 @@ describe('debugQueries', () => {
     describe('when the frame contents cannot be read at all', () => {
       const unreadable = /Could not read the contents of frame 3/;
 
-      it('blames the frame instead of evaluating against an empty context', () => {
+      it('blames the frame instead of evaluating against an empty context', async () => {
         const session = evalSession();
         (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockImplementation(() => {
           throw new Error('the gem went away');
         });
 
-        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+        await expect(debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).rejects.toThrow(
+          unreadable,
+        );
       });
 
-      it('blames the frame when the server answers a payload with no receiver in it', () => {
+      it('blames the frame when the server answers a payload with no receiver in it', async () => {
         const session = evalSession();
         (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockReturnValue('');
 
-        expect(() => debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).toThrow(unreadable);
+        await expect(debug.evaluateInFrame(session, GS_PROCESS, 'limit', 3)).rejects.toThrow(
+          unreadable,
+        );
       });
 
       // evaluateInFrameNb is not an `async` function, so a synchronous throw out
@@ -927,9 +946,9 @@ describe('debugQueries', () => {
       } as ActiveSession;
     }
 
-    it('evaluates via evaluateInContext:symbolList: (not the self-only path)', () => {
+    it('evaluates via evaluateInContext:symbolList: (not the self-only path)', async () => {
       const session = tempSession();
-      expect(debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3)).toBe('150');
+      expect(await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3)).toBe('150');
 
       const calls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
       const sels = calls.map((c: unknown[]) => c[3]);
@@ -937,9 +956,9 @@ describe('debugQueries', () => {
       expect(sels).not.toContain('evaluateInContext:');
     });
 
-    it('prepends the temp dictionary to the user symbol list', () => {
+    it('prepends the temp dictionary to the user symbol list', async () => {
       const session = tempSession();
-      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
       const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
@@ -947,9 +966,9 @@ describe('debugQueries', () => {
       expect(evalCall![4]).toEqual([FRAME_SELF, 0xddcn]);
     });
 
-    it('interns each temp name and stores its value in the dictionary', () => {
+    it('interns each temp name and stores its value in the dictionary', async () => {
       const session = tempSession();
-      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
       expect(session.gci.GciTsNewSymbol).toHaveBeenCalledWith({}, 'amount');
       const atPut = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -959,7 +978,7 @@ describe('debugQueries', () => {
       expect(atPut![4]).toEqual([AMOUNT_SYMBOL, AMOUNT_VALUE]); // dict at: #amount put: value
     });
 
-    it('falls back to the plain session symbol list when the temps cannot be bound', () => {
+    it('falls back to the plain session symbol list when the temps cannot be bound', async () => {
       const session = tempSession();
       // SymbolDictionary fails to resolve → no temp dictionary can be built, so
       // the eval runs against the user's own symbol list instead. `amount` will
@@ -971,7 +990,7 @@ describe('debugQueries', () => {
         },
       );
 
-      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
       const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
@@ -984,7 +1003,7 @@ describe('debugQueries', () => {
      * path of every Display It and every inspector slot edit. It answers the
      * same persistent object all session, so it is read once.
      */
-    it('reads the session symbol list once and reuses it', () => {
+    it('reads the session symbol list once and reuses it', async () => {
       const session = tempSession();
       // No temp dictionary to build, so each eval takes the plain session list.
       (session.gci.resolveSymbol as ReturnType<typeof vi.fn>).mockImplementation(
@@ -994,8 +1013,8 @@ describe('debugQueries', () => {
         },
       );
 
-      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
-      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 3', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+      await debug.evaluateInFrame(session, GS_PROCESS, 'amount * 3', 3);
 
       const sels = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.map(
         (c: unknown[]) => c[3],
@@ -1394,6 +1413,8 @@ describe('debugQueries', () => {
           },
         });
         run.catch(() => {});
+        // The call starts only once the frame setup before it has settled.
+        await vi.advanceTimersByTimeAsync(0);
         cancel!();
         cancel!();
         await vi.advanceTimersByTimeAsync(400);

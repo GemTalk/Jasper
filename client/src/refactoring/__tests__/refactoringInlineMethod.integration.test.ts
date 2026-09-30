@@ -39,69 +39,71 @@ describe('inline method (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'XIMItBase';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #('count') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     // A target with more than one sender (kept on inline) ...
-    q.compileMethod(session(), BASE, false, 'accessing', 'total\n\t^ count');
-    q.compileMethod(session(), BASE, false, 'printing', 'report\n\t^ self total');
-    q.compileMethod(session(), BASE, false, 'printing', 'report2\n\t^ self total');
+    await q.compileMethod(session(), BASE, false, 'accessing', 'total\n\t^ count');
+    await q.compileMethod(session(), BASE, false, 'printing', 'report\n\t^ self total');
+    await q.compileMethod(session(), BASE, false, 'printing', 'report2\n\t^ self total');
     // ... and a target sent from exactly one place (removed on inline).
-    q.compileMethod(session(), BASE, false, 'accessing', 'ximSolo\n\t^ count');
-    q.compileMethod(session(), BASE, false, 'printing', 'useSolo\n\t^ self ximSolo');
+    await q.compileMethod(session(), BASE, false, 'accessing', 'ximSolo\n\t^ count');
+    await q.compileMethod(session(), BASE, false, 'printing', 'useSolo\n\t^ self ximSolo');
   };
 
   // 1-based offset of a send's selector text in the stored caller source.
-  const sendOffset = (caller: string, sendText: string): number => {
-    const src = exec(
+  const sendOffset = async (caller: string, sendText: string): Promise<number> => {
+    const src = await exec(
       `(${BASE} compiledMethodAt: #${caller} environmentId: 0 otherwise: nil) sourceString`,
     );
     return src.indexOf(sendText) + 1;
   };
 
-  it('reports inline-method engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports inline-method engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the inline-method GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+  it('runs the inline-method GS SUnit suite in-stone with zero failures', async (ctx) => {
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pre-flights a self send, resolving the target method', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeInlineSend(
@@ -109,8 +111,8 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
         BASE,
         'report',
         false,
-        sendOffset('report', 'total'),
-        userIndex(),
+        await sendOffset('report', 'total'),
+        await userIndex(),
       ),
     );
 
@@ -119,9 +121,9 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
   });
 
   it('inlines one call and keeps the target when other senders remain', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
-    defineFixture();
+    await defineFixture();
     const token = `imit-keep-${BASE}`;
 
     const start = parseStartPreview(
@@ -130,10 +132,10 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
         BASE,
         'report',
         false,
-        sendOffset('report', 'total'),
+        await sendOffset('report', 'total'),
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(1);
@@ -143,8 +145,8 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 
-    expect(exec(`(${BASE} includesSelector: #total) printString`).trim()).toBe('true');
-    const rewritten = exec(
+    expect((await exec(`(${BASE} includesSelector: #total) printString`)).trim()).toBe('true');
+    const rewritten = await exec(
       `(${BASE} compiledMethodAt: #report environmentId: 0 otherwise: nil) sourceString`,
     );
     expect(rewritten).toContain('count');
@@ -152,9 +154,9 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
   });
 
   it('inlines the last sender and removes the now-unused target', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
-    defineFixture();
+    await defineFixture();
     const token = `imit-solo-${BASE}`;
 
     const start = parseStartPreview(
@@ -163,10 +165,10 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
         BASE,
         'useSolo',
         false,
-        sendOffset('useSolo', 'ximSolo'),
+        await sendOffset('useSolo', 'ximSolo'),
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(2);
@@ -176,8 +178,8 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 
-    expect(exec(`(${BASE} includesSelector: #ximSolo) printString`).trim()).toBe('false');
-    const rewritten = exec(
+    expect((await exec(`(${BASE} includesSelector: #ximSolo) printString`)).trim()).toBe('false');
+    const rewritten = await exec(
       `(${BASE} compiledMethodAt: #useSolo environmentId: 0 otherwise: nil) sourceString`,
     );
     expect(rewritten).toContain('count');

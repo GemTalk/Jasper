@@ -71,7 +71,7 @@ export interface PluginFeature {
    *  engine loads on every release; the Enhanced Inspector needs 3.7.5+.) */
   isApplicable(stoneVersion: string | undefined): boolean;
   /** Live presence check against the session — a fresh answer, not a cached flag. */
-  probe(session: ActiveSession): boolean;
+  probe(session: ActiveSession): Promise<boolean>;
   /** File the feature in over a write-capable (SystemUser) session. */
   install(
     session: ActiveSession,

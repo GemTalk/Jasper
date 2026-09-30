@@ -329,7 +329,7 @@ describe('removeMethod records an undo (#434)', () => {
 
   it('captures the source before the method is removed', () => {
     const order: string[] = [];
-    vi.mocked(captureMethodSlots).mockImplementation(() => {
+    vi.mocked(captureMethodSlots).mockImplementation(async () => {
       order.push('capture');
       return [present('at: i\n  ^1', 'accessing')];
     });
@@ -344,7 +344,7 @@ describe('removeMethod records an undo (#434)', () => {
   });
 
   it('records an entry naming the method', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([present('at: i\n  ^1', 'accessing')]);
 
     await makeController().removeMethod(methodItem());
 
@@ -356,7 +356,7 @@ describe('removeMethod records an undo (#434)', () => {
 
   it('records nothing when GemStone refused the removal', async () => {
     // The method is still there; offering to restore it would be a lie.
-    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([present('at: i\n  ^1', 'accessing')]);
     (queries.deleteMethod as ReturnType<typeof vi.fn>).mockReturnValue('Selector not found');
 
     await makeController().removeMethod(methodItem());
@@ -379,7 +379,7 @@ describe('removeMethod records an undo (#434)', () => {
   it('puts Undo on the silent-delete notice, rather than a second notice beside it', async () => {
     // Safe delete's own sentence is the ONE notice for a deletion nothing referenced, so it is
     // the one that has to carry the button — two messages for one deletion would be noise.
-    vi.mocked(captureMethodSlots).mockReturnValue([
+    vi.mocked(captureMethodSlots).mockResolvedValue([
       { exists: true, source: 'at: i\n\t^1', category: 'accessing' },
     ]);
 
@@ -396,7 +396,7 @@ describe('removeMethod records an undo (#434)', () => {
     // still on the stack, reachable from the status bar and Ctrl+K U.
     sendersOf.mockReturnValue([sender({ className: 'Other', selector: 'usesIt' })]);
     (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue('Remove Anyway');
-    vi.mocked(captureMethodSlots).mockReturnValue([
+    vi.mocked(captureMethodSlots).mockResolvedValue([
       { exists: true, source: 'at: i\n\t^1', category: 'accessing' },
     ]);
 
@@ -407,7 +407,7 @@ describe('removeMethod records an undo (#434)', () => {
   });
 
   it('removes the method normally when the capture fails', async () => {
-    vi.mocked(captureMethodSlots).mockImplementation(() => {
+    vi.mocked(captureMethodSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -667,12 +667,12 @@ describe('ExplorerController.removeMethod — the selector is still implemented 
 describe('ExplorerController.removeMethod — the selector also lives in another environment', () => {
   // envLines is what the Methods pane is built from; reloadCurrentClassMethods fills it the same
   // way selecting the class in the tree does.
-  const seedEnvironments = (
+  const seedEnvironments = async (
     ctl: ExplorerController,
     lines: { isMeta: boolean; envId: number; category: string; selectors: string[] }[],
   ) => {
     getClassEnvironments.mockReturnValue(lines);
-    ctl.reloadCurrentClassMethods();
+    await ctl.reloadCurrentClassMethods();
     getClassEnvironments.mockReturnValue(lines);
   };
 
@@ -683,7 +683,7 @@ describe('ExplorerController.removeMethod — the selector also lives in another
 
   it('names the surviving environment in the notification when nothing else is in the way', async () => {
     const ctl = makeController();
-    seedEnvironments(ctl, bothEnvironments);
+    await seedEnvironments(ctl, bothEnvironments);
 
     await ctl.removeMethod(methodItem());
 
@@ -695,7 +695,7 @@ describe('ExplorerController.removeMethod — the selector also lives in another
 
   it('says only the environment 0 method goes when it has to ask anyway', async () => {
     const ctl = makeController();
-    seedEnvironments(ctl, bothEnvironments);
+    await seedEnvironments(ctl, bothEnvironments);
     sendersOf.mockReturnValue([sender()]);
     showWarningMessage.mockResolvedValue(undefined);
 
@@ -708,7 +708,9 @@ describe('ExplorerController.removeMethod — the selector also lives in another
 
   it('says nothing extra when the selector lives in environment 0 alone', async () => {
     const ctl = makeController();
-    seedEnvironments(ctl, [{ isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] }]);
+    await seedEnvironments(ctl, [
+      { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] },
+    ]);
 
     await ctl.removeMethod(methodItem());
 
@@ -724,7 +726,7 @@ describe('ExplorerController.removeMethod — the selector also lives in another
     const ctl = makeController();
     // Only the CLASS side has an environment-1 twin; removing the instance-side method
     // must not claim one survives.
-    seedEnvironments(ctl, [
+    await seedEnvironments(ctl, [
       { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] },
       { isMeta: true, envId: 1, category: 'accessing', selectors: ['at:'] },
     ]);

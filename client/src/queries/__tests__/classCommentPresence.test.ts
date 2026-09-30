@@ -50,9 +50,9 @@ describe('hasRealCommentExpr', () => {
     expect(hasRealCommentExpr('v')).toContain('on: Error do: [:e | false]');
   });
 
-  it('is what the Explorer builds its commented-classes set from', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassesWithCategory(execute, 1);
+  it('is what the Explorer builds its commented-classes set from', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassesWithCategory(execute, 1);
     expect(execute.mock.calls[0][0]).toContain(hasRealCommentExpr('v'));
   });
 });
@@ -62,13 +62,13 @@ describe('hasRealCommentExpr', () => {
  * same comment read back off the stone would disagree about whether it exists.
  */
 describe('the two spellings agree on the whitespace rule', () => {
-  it.each(['', '\n', '  \t '])('treats %j as no comment on both sides', (text) => {
+  it.each(['', '\n', '  \t '])('treats %j as no comment on both sides', async (text) => {
     expect(isRealClassComment(text)).toBe(false);
     // The Smalltalk side's test for the same thing: any non-separator character.
     expect(hasRealCommentExpr('v')).toContain('detect: [:ch | ch isSeparator not]');
     // And the save path acts on it — an empty comment removes the key.
-    const execute = vi.fn<QueryExecutor>(() => '');
-    setClassComment(execute, 'Foo', text);
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await setClassComment(execute, 'Foo', text);
     expect(execute.mock.calls[0][0]).toContain('_extraDictRemoveKey: #comment');
   });
 });

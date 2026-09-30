@@ -90,9 +90,9 @@ export async function inlineTemporaryCommand(
   }
 
   const token = `itt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearInlineTemporaryPreview(session, token);
+      await queries.clearInlineTemporaryPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -116,20 +116,20 @@ export async function inlineTemporaryCommand(
     void vscode.window.showErrorMessage(
       `Inline preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.total === 0) {
     refuse('Nothing to inline.');
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -141,7 +141,7 @@ export async function inlineTemporaryCommand(
       parseApplyResult(
         await queries.applyInlineTemporary(session, token, `Inline temporary '${start.name}'`),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
     focusEditor();

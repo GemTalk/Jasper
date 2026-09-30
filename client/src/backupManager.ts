@@ -53,7 +53,7 @@ function timestamp(): string {
 export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean> {
   let hasPrivilege: boolean;
   try {
-    hasPrivilege = backup.hasFileControlPrivilege(deps.execute);
+    hasPrivilege = await backup.hasFileControlPrivilege(deps.execute);
   } catch (e) {
     vscode.window.showErrorMessage(`Could not check backup privileges: ${errorMessage(e)}`);
     return false;
@@ -75,7 +75,7 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
   // we stop before asking for anything else.
   let backupFolder: string;
   try {
-    backupFolder = backupFolderInServer(deps.execute);
+    backupFolder = await backupFolderInServer(deps.execute);
   } catch (e) {
     void vscode.window.showErrorMessage(
       `Could not determine the backups directory for "${deps.stoneName}": ${errorMessage(e)}`,
@@ -85,7 +85,7 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
 
   let needsCommit: boolean;
   try {
-    needsCommit = backup.sessionNeedsCommit(deps.execute);
+    needsCommit = await backup.sessionNeedsCommit(deps.execute);
   } catch (e) {
     vscode.window.showErrorMessage(`Could not check the session state: ${errorMessage(e)}`);
     return false;
@@ -99,7 +99,7 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
     );
     if (proceed !== 'Discard changes and back up') return false;
     try {
-      backup.abortTransaction(deps.execute);
+      await backup.abortTransaction(deps.execute);
     } catch (e) {
       vscode.window.showErrorMessage(`Could not abort the session: ${errorMessage(e)}`);
       return false;
@@ -136,7 +136,7 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
   // confirm-or-cancel shape as the needsCommit warning above.
   let backupFileAlreadyExists: boolean;
   try {
-    backupFileAlreadyExists = backup.serverFileExists(deps.execute, destination);
+    backupFileAlreadyExists = await backup.serverFileExists(deps.execute, destination);
   } catch (e) {
     vscode.window.showErrorMessage(
       `Could not determine whether a backup already exists at "${destination}": ${errorMessage(e)}`,

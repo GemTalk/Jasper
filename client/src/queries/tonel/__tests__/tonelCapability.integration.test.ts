@@ -26,37 +26,37 @@ describe('tonel capability (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   // Runs as the harness's configured user (DataCurator), NOT SystemUser — that
   // is what proves the reach-through in `../rowanLookup` works for the user who
   // cannot see the Rowan dictionaries directly.
   const rowan3 = useRowan3Stone(() => exec);
 
-  it('answers without raising on any stone', () => {
+  it('answers without raising on any stone', async () => {
     // The probe is the gate itself: if it throws rather than answering, every
     // command and every suite downstream fails in a way that looks like a bug in
     // the feature instead of an absent capability. It must answer on a base
     // extent too — with everything missing.
-    const result = tonelCapability(exec);
+    const result = await tonelCapability(exec);
     expect(typeof result.available).toBe('boolean');
     expect(Array.isArray(result.missing)).toBe(true);
     for (const name of result.missing) expect(TONEL_CAPABILITIES).toContain(name);
   });
 
-  it('reports every capability present on a rowan3 stone, as DataCurator', (ctx) => {
+  it('reports every capability present on a rowan3 stone, as DataCurator', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // DataCurator's symbol list has none of the Rw* classes. Passing here means
     // the reach-through found them anyway, which is the requirement.
-    expect(tonelCapability(exec)).toEqual({ available: true, missing: [] });
+    expect(await tonelCapability(exec)).toEqual({ available: true, missing: [] });
   });
 
-  it('names what is absent rather than answering a bare false', () => {
+  it('names what is absent rather than answering a bare false', async () => {
     // On a base extent `missing` is the whole list; on rowan3 it is empty. The
     // invariant either way is that unavailability is always *explained*, never a
     // bare false — "Rowan is here but RwTonelParser is not" is a different
     // problem from "this is a base extent", and the user sees the same hidden
     // menu for both. Asserted as a biconditional so it holds on both stones.
-    const result = tonelCapability(exec);
+    const result = await tonelCapability(exec);
     expect(result.missing.length === 0).toBe(result.available);
   });
 });

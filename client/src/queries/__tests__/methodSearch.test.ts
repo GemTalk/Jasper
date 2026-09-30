@@ -32,16 +32,19 @@ const row = 'Globals\tArray\t0\tsize\taccessing\n';
  * silently. These pin the fallback that keeps such a term answerable.
  */
 describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
-  const codeFor = (term: string, mode: Parameters<typeof searchMethodSource>[3]): string => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    searchMethodSource(execute, term, true, mode);
+  const codeFor = async (
+    term: string,
+    mode: Parameters<typeof searchMethodSource>[3],
+  ): Promise<string> => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await searchMethodSource(execute, term, true, mode);
     return execute.mock.calls[0][0];
   };
 
-  it('keeps fuzzy for a plain identifier', () => {
+  it('keeps fuzzy for a plain identifier', async () => {
     expect(effectiveScanMode('ordcol', 'fuzzyToken')).toBe('fuzzyToken');
     expect(effectiveScanMode('order_col9', 'fuzzyToken')).toBe('fuzzyToken');
-    expect(codeFor('ordcol', 'fuzzyToken')).toContain('isAlphaNumeric');
+    expect(await codeFor('ordcol', 'fuzzyToken')).toContain('isAlphaNumeric');
   });
 
   it.each([
@@ -49,9 +52,9 @@ describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
     ['a unary selector with a colon', 'printOn:'],
     ['a phrase', 'no such element'],
     ['punctuation', 'foo-bar'],
-  ])('runs %s as substring instead of matching nothing', (_label, term) => {
+  ])('runs %s as substring instead of matching nothing', async (_label, term) => {
     expect(effectiveScanMode(term, 'fuzzyToken')).toBe('substring');
-    const code = codeFor(term, 'fuzzyToken');
+    const code = await codeFor(term, 'fuzzyToken');
     // The engine's substring scan, not the per-identifier walk.
     expect(code).toContain('substringSearch:');
     expect(code).not.toContain('isAlphaNumeric');
@@ -69,47 +72,47 @@ describe('fuzzy Source falls back for terms that cannot be identifiers', () => {
  * The needle is folded once; the source is folded one character at a time.
  */
 describe('fuzzy Source folds case without copying method bodies', () => {
-  const codeFor = (ignoreCase: boolean): string => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    searchMethodSource(execute, 'ordcol', ignoreCase, 'fuzzyToken');
+  const codeFor = async (ignoreCase: boolean): Promise<string> => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await searchMethodSource(execute, 'ordcol', ignoreCase, 'fuzzyToken');
     return execute.mock.calls[0][0];
   };
 
-  it('never lowercases the whole source', () => {
-    const code = codeFor(true);
+  it('never lowercases the whole source', async () => {
+    const code = await codeFor(true);
     expect(code).toContain('m sourceString]');
     expect(code).not.toContain('m sourceString asLowercase');
   });
 
-  it('folds the needle once and each source character at comparison', () => {
-    const code = codeFor(true);
+  it('folds the needle once and each source character at comparison', async () => {
+    const code = await codeFor(true);
     expect(code).toContain("needle := 'ordcol' asLowercase");
     expect(code).toContain('ch asLowercase = (needle at: ni)');
   });
 
-  it('folds nothing when the search is case-sensitive', () => {
-    const code = codeFor(false);
+  it('folds nothing when the search is case-sensitive', async () => {
+    const code = await codeFor(false);
     expect(code).not.toContain('asLowercase');
     expect(code).toContain('ch = (needle at: ni)');
   });
 });
 
 describe('searchMethodSource word-boundary narrowing', () => {
-  const codeFor = (term: string, ignoreCase: boolean, narrowed: boolean): string => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    searchMethodSource(execute, term, ignoreCase, narrowed ? 'wordStart' : 'substring');
+  const codeFor = async (term: string, ignoreCase: boolean, narrowed: boolean): Promise<string> => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await searchMethodSource(execute, term, ignoreCase, narrowed ? 'wordStart' : 'substring');
     return execute.mock.calls[0][0];
   };
 
-  it('adds no filter by default, so Substring and Fuzzy scan as before', () => {
-    const code = codeFor('foo', true, false);
+  it('adds no filter by default, so Substring and Fuzzy scan as before', async () => {
+    const code = await codeFor('foo', true, false);
     expect(code).toContain("substringSearch: 'foo'");
     expect(code).not.toContain('indexOfSubCollection');
     expect(code).not.toContain('select:');
   });
 
-  it('filters on the character before the match when asked', () => {
-    const code = codeFor('foo', true, true);
+  it('filters on the character before the match when asked', async () => {
+    const code = await codeFor('foo', true, true);
     expect(code).toContain("substringSearch: 'foo'");
     expect(code).toContain('methods := methods select:');
     // A word character before the match disqualifies it; anything else starts a token.
@@ -119,8 +122,8 @@ describe('searchMethodSource word-boundary narrowing', () => {
 
   // The camelCase hump that `omniMatch.isWordStart` counts as a word start is
   // deliberately NOT honoured here: it would keep `doFooling` as a hit for `foo`.
-  it('tests only the preceding character, not a camelCase hump', () => {
-    expect(codeFor('foo', true, true)).not.toContain('isUppercase');
+  it('tests only the preceding character, not a camelCase hump', async () => {
+    expect(await codeFor('foo', true, true)).not.toContain('isUppercase');
   });
 
   /**
@@ -129,8 +132,8 @@ describe('searchMethodSource word-boundary narrowing', () => {
    * different Unicode case-folding implementations either side of the same test,
    * and where they disagree the filter drops methods the scan legitimately matched.
    */
-  it('folds the needle in Smalltalk, not in JavaScript, when case is ignored', () => {
-    const code = codeFor('Foo', true, true);
+  it('folds the needle in Smalltalk, not in JavaScript, when case is ignored', async () => {
+    const code = await codeFor('Foo', true, true);
 
     // The term reaches the stone as typed, and is folded there.
     expect(code).toContain("needle := 'Foo' asLowercase");
@@ -139,49 +142,49 @@ describe('searchMethodSource word-boundary narrowing', () => {
     expect(code).not.toContain("needle := 'foo'");
   });
 
-  it('compares as typed when case is significant', () => {
-    const code = codeFor('Foo', false, true);
+  it('compares as typed when case is significant', async () => {
+    const code = await codeFor('Foo', false, true);
     expect(code).toContain("needle := 'Foo'");
     expect(code).not.toContain('asLowercase');
   });
 
   // Bound once rather than inlined at both search sites, so the two can never drift.
-  it('binds the needle once and reuses it', () => {
-    const code = codeFor('Foo', true, true);
+  it('binds the needle once and reuses it', async () => {
+    const code = await codeFor('Foo', true, true);
     expect(code.match(/indexOfSubCollection: needle/g)).toHaveLength(2);
     expect(code.match(/needle :=/g)).toHaveLength(1);
     expect(code).toContain('classDict sl needle |');
   });
 
   // The temp is only declared when the filter is actually emitted.
-  it('does not declare the needle when not narrowing', () => {
-    expect(codeFor('Foo', true, false)).not.toContain('needle');
+  it('does not declare the needle when not narrowing', async () => {
+    expect(await codeFor('Foo', true, false)).not.toContain('needle');
   });
 
   // The filter runs before methodSerialization, so METHOD_SEARCH_RESULT_LIMIT caps
   // boundary hits rather than truncating substring hits before they are reached.
-  it('narrows before the result cap is applied', () => {
-    const code = codeFor('foo', true, true);
+  it('narrows before the result cap is applied', async () => {
+    const code = await codeFor('foo', true, true);
     expect(code.indexOf('methods := methods select:')).toBeLessThan(code.indexOf('limit :='));
   });
 
-  it('escapes a term carrying a quote', () => {
-    expect(codeFor("it's", true, true)).toContain("needle := 'it''s'");
+  it('escapes a term carrying a quote', async () => {
+    expect(await codeFor("it's", true, true)).toContain("needle := 'it''s'");
   });
 
   // 3.6.2 does not implement includesSubstring:, and non-ASCII in generated source
   // trips ComStrmSetCursor.
-  it('stays on 3.6.2-safe, ASCII-only primitives', () => {
-    const code = codeFor('foo', true, true);
+  it('stays on 3.6.2-safe, ASCII-only primitives', async () => {
+    const code = await codeFor('foo', true, true);
     expect(code).not.toContain('includesSubstring:');
     expect([...code].every((ch) => ch.charCodeAt(0) < 128)).toBe(true);
   });
 });
 
 describe('environment on a result row', () => {
-  it('reads the environment column when the scan reports one', () => {
-    const results = searchMethodSource(
-      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t3\n'),
+  it('reads the environment column when the scan reports one', async () => {
+    const results = await searchMethodSource(
+      vi.fn<QueryExecutor>(async () => 'Globals\tArray\t0\tsize\taccessing\t3\n'),
       'size',
       true,
     );
@@ -189,9 +192,9 @@ describe('environment on a result row', () => {
     expect(results[0].environmentId).toBe(3);
   });
 
-  it('falls back to environment 0 rather than dropping a row that has no column', () => {
-    const results = searchMethodSource(
-      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\n'),
+  it('falls back to environment 0 rather than dropping a row that has no column', async () => {
+    const results = await searchMethodSource(
+      vi.fn<QueryExecutor>(async () => 'Globals\tArray\t0\tsize\taccessing\n'),
       'size',
       true,
     );
@@ -200,19 +203,19 @@ describe('environment on a result row', () => {
     expect(results[0].environmentId).toBe(0);
   });
 
-  it('serializes the environment it was asked for', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
+  it('serializes the environment it was asked for', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    sendersOf(execute, 'size', 2);
+    await sendersOf(execute, 'size', 2);
 
     expect(execute.mock.calls[0][0]).toContain("nextPutAll: '2'");
   });
 });
 
 describe('methodSearch shared parser', () => {
-  it('parses tab-separated rows into MethodSearchResult', () => {
-    const results = searchMethodSource(
-      vi.fn<QueryExecutor>(() => row),
+  it('parses tab-separated rows into MethodSearchResult', async () => {
+    const results = await searchMethodSource(
+      vi.fn<QueryExecutor>(async () => row),
       'size',
       true,
     );
@@ -228,19 +231,19 @@ describe('methodSearch shared parser', () => {
     ]);
   });
 
-  it('returns [] for empty output', () => {
+  it('returns [] for empty output', async () => {
     expect(
-      sendersOf(
-        vi.fn<QueryExecutor>(() => ''),
+      await sendersOf(
+        vi.fn<QueryExecutor>(async () => ''),
         'nope',
       ),
     ).toEqual([]);
   });
 
-  it('maps isMeta=true when the third column is "1"', () => {
+  it('maps isMeta=true when the third column is "1"', async () => {
     const raw = 'Globals\tArray\t1\tnew\tinstance creation\n';
-    const results = implementorsOf(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await implementorsOf(
+      vi.fn<QueryExecutor>(async () => raw),
       'new',
     );
     expect(results[0].isMeta).toBe(true);
@@ -248,26 +251,26 @@ describe('methodSearch shared parser', () => {
 });
 
 describe('searchMethodSource', () => {
-  it('passes ignoreCase flag and escaped term to Smalltalk', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    searchMethodSource(execute, "foo's", false);
+  it('passes ignoreCase flag and escaped term to Smalltalk', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await searchMethodSource(execute, "foo's", false);
     const code = execute.mock.calls[0][0];
     expect(code).toContain("substringSearch: 'foo''s' ignoreCase: false");
   });
 });
 
 describe('sendersOf', () => {
-  it('uses sendersOf: and "at: 1" to unwrap the result array', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    sendersOf(execute, 'size');
+  it('uses sendersOf: and "at: 1" to unwrap the result array', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await sendersOf(execute, 'size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("sendersOf: #'size'");
     expect(code).toMatch(/sendersOf: #'size'\) at: 1/s);
   });
 
-  it('propagates environmentId to both the query and the serialization', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    sendersOf(execute, 'x', 3);
+  it('propagates environmentId to both the query and the serialization', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await sendersOf(execute, 'x', 3);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('environmentId: 3');
     expect(code).toContain('categoryOfSelector: each selector environmentId: 3');
@@ -275,9 +278,9 @@ describe('sendersOf', () => {
 });
 
 describe('implementorsOf', () => {
-  it('uses implementorsOf: and asArray to normalize the collection', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    implementorsOf(execute, 'size');
+  it('uses implementorsOf: and asArray to normalize the collection', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await implementorsOf(execute, 'size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("implementorsOf: #'size'");
     expect(code).toContain('asArray');
@@ -285,36 +288,36 @@ describe('implementorsOf', () => {
 });
 
 describe('referencesToObject', () => {
-  it('uses ClassOrganizer referencesToObject: with objectNamed: lookup', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    referencesToObject(execute, 'MyGlobal');
+  it('uses ClassOrganizer referencesToObject: with objectNamed: lookup', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await referencesToObject(execute, 'MyGlobal');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
   });
 
-  it('answers nothing for a name the symbol list does not bind', () => {
+  it('answers nothing for a name the symbol list does not bind', async () => {
     // objectNamed: answers nil for an unbound name, and `referencesToObject: nil` is a
     // real question with a useless answer — references to nil, reported as though they
     // were references to the global. The MCP find_references_to tool takes its name from
     // a model, so an invented global is an ordinary input, not an edge case.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    referencesToObject(execute, 'NoSuchGlobal');
+    await referencesToObject(execute, 'NoSuchGlobal');
 
     expect(execute.mock.calls[0][0]).toContain("obj isNil ifTrue: [^ '']");
   });
 
-  it('scopes the organizer to the environment, not just the serialization', () => {
+  it('scopes the organizer to the environment, not just the serialization', async () => {
     // The organizer gathers its classes under one environment, so a hardwired 0 here
     // answered environment-0 references however high an environment the caller asked
     // about. A sweep did not pay for a scan per environment — the organizer is cached
     // per environment key, so every pass hit the same cached one — it collected the
     // same environment-0 answer N times under N different environment stamps, which
     // dedupeMethodResults keys on and so could not fold together.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    referencesToObject(execute, 'MyGlobal', 2);
+    await referencesToObject(execute, 'MyGlobal', 2);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('ClassOrganizer newForEnvironment: 2');
@@ -322,12 +325,12 @@ describe('referencesToObject', () => {
     expect(code).not.toContain('JasperClassOrganizer_0');
   });
 
-  it('normalizes the organizer result to an Array before indexing it', () => {
+  it('normalizes the organizer result to an Array before indexing it', async () => {
     // methodSerialization indexes `methods` with `at: i`, so the collection
     // referencesToObject: answers has to be an Array first.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    referencesToObject(execute, 'MyGlobal');
+    await referencesToObject(execute, 'MyGlobal');
 
     // Anchored to the send under test, so an `asArray` elsewhere in the doit cannot
     // satisfy it.
@@ -336,15 +339,15 @@ describe('referencesToObject', () => {
 });
 
 describe('referencesToClassInDict', () => {
-  it('scopes the organizer to the environment, not just the serialization', () => {
+  it('scopes the organizer to the environment, not just the serialization', async () => {
     // A bare `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a
     // class referenced only from another environment came back unreferenced — and safe
     // delete would then report that nothing referenced it and delete without asking.
     // The environment is now set where the organizer gathers its classes rather than
     // afterwards, and the cache is keyed by it so environments cannot share one.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    referencesToClassInDict(execute, 'Account', 3, 2);
+    await referencesToClassInDict(execute, 'Account', 3, 2);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('ClassOrganizer newForEnvironment: 2');
@@ -352,14 +355,14 @@ describe('referencesToClassInDict', () => {
     expect(code).not.toMatch(/ClassOrganizer new /);
   });
 
-  it('reuses one organizer per session rather than building one per query', () => {
+  it('reuses one organizer per session rather than building one per query', async () => {
     // `ClassOrganizer new` indexes the whole image, so its cost follows the image
     // rather than the question. One per query filled the gem's temporary object
     // memory on a large image, which killed the session — and everything else in
     // it then reported a broken connection instead of its own result.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    searchMethodSource(execute, 'printOn', false);
+    await searchMethodSource(execute, 'printOn', false);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('SessionTemps current');
@@ -367,17 +370,17 @@ describe('referencesToClassInDict', () => {
     expect(code).not.toMatch(/ClassOrganizer new /);
   });
 
-  it('shares the organizer with the hierarchy queries', () => {
+  it('shares the organizer with the hierarchy queries', async () => {
     // They ask `subclassesOf:` and `allSuperclassesOf:`, which read the same
     // snapshot the searches do, and paid the same per-image build for it. Every
     // refactoring that creates the class they would then ask about compiles it
     // through `compileClassDefinition`, which drops the cache in the doit that
     // creates it — so the snapshot they read is never one short.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    getClassHierarchy(execute, 'Account');
-    getSiblingClassNames(execute, 'Account');
-    getClassDescendantNames(execute, 'Account');
+    await getClassHierarchy(execute, 'Account');
+    await getSiblingClassNames(execute, 'Account');
+    await getClassDescendantNames(execute, 'Account');
 
     for (const [code] of execute.mock.calls) {
       expect(code).toContain('JasperClassOrganizer_0');
@@ -385,16 +388,16 @@ describe('referencesToClassInDict', () => {
     }
   });
 
-  it('reports the environment each row was found in', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t2\n');
+  it('reports the environment each row was found in', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Globals\tArray\t0\tsize\taccessing\t2\n');
 
-    expect(referencesToClassInDict(execute, 'Array', 1, 2)[0].environmentId).toBe(2);
+    expect((await referencesToClassInDict(execute, 'Array', 1, 2))[0].environmentId).toBe(2);
   });
 
-  it('resolves the class through its dictionary rather than by bare name', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
+  it('resolves the class through its dictionary rather than by bare name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    referencesToClassInDict(execute, 'Account', 3);
+    await referencesToClassInDict(execute, 'Account', 3);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 3');
@@ -404,17 +407,17 @@ describe('referencesToClassInDict', () => {
     expect(code).not.toContain('objectNamed:');
   });
 
-  it('reports nothing when the dictionary does not bind the class', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
+  it('reports nothing when the dictionary does not bind the class', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    expect(referencesToClassInDict(execute, 'Missing', 3)).toEqual([]);
+    expect(await referencesToClassInDict(execute, 'Missing', 3)).toEqual([]);
   });
 });
 
 describe('literalSymbolReferences', () => {
-  it('intersects a source-substring pre-filter with literal-frame membership (data-literal uses only)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    literalSymbolReferences(execute, '#size');
+  it('intersects a source-substring pre-filter with literal-frame membership (data-literal uses only)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await literalSymbolReferences(execute, '#size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symLit := #size.');
     expect(code).toContain('referencesToLiteral: symLit');
@@ -426,14 +429,14 @@ describe('literalSymbolReferences', () => {
     expect(code).not.toContain('sendersOf:');
   });
 
-  it('scopes both organizers to the environment, not just the serialization', () => {
+  it('scopes both organizers to the environment, not just the serialization', async () => {
     // Two organizers in one doit, and a hardwired 0 in either would have collected
     // environment-0 methods while methodSerialization stamped every row with the
     // environment the caller asked for — rows labelled with an environment they did
     // not come from.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    literalSymbolReferences(execute, '#size', 2);
+    await literalSymbolReferences(execute, '#size', 2);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('ClassOrganizer newForEnvironment: 2');
@@ -443,9 +446,9 @@ describe('literalSymbolReferences', () => {
 });
 
 describe('stringLiteralReferences', () => {
-  it('filters source candidates to those holding the EXACT String literal (excludes symbols)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    stringLiteralReferences(execute, 'no such element', true);
+  it('filters source candidates to those holding the EXACT String literal (excludes symbols)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await stringLiteralReferences(execute, 'no such element', true);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('substringSearch:');
     expect(code).toContain('m literals detect:');
@@ -457,10 +460,10 @@ describe('stringLiteralReferences', () => {
     expect(code).not.toContain('includesString: needle');
   });
 
-  it('scopes the organizer to the environment, not just the serialization', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
+  it('scopes the organizer to the environment, not just the serialization', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    stringLiteralReferences(execute, 'no such element', true, 2);
+    await stringLiteralReferences(execute, 'no such element', true, 2);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('ClassOrganizer newForEnvironment: 2');
@@ -472,18 +475,18 @@ describe('stringLiteralReferences', () => {
 // Guards the Python-alias navigation fix: a class's home dictionary must be the
 // one that stores it under its own name, not merely any dict that references it.
 describe('methodSerialization home-dictionary resolution', () => {
-  it('only treats a dict as a class home when keyed by the class name', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    implementorsOf(execute, 'size');
+  it('only treats a dict as a class home when keyed by the class name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await implementorsOf(execute, 'size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('k = v name asSymbol');
   });
 });
 
 describe('hierarchyImplementorsOf', () => {
-  it('walks the full superclass chain for direction up', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up');
+  it('walks the full superclass chain for direction up', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('superclass');
     expect(code).toContain('[cur notNil] whileTrue:');
@@ -491,55 +494,55 @@ describe('hierarchyImplementorsOf', () => {
     expect(code).not.toContain('allSubclasses');
   });
 
-  it('walks all subclasses for direction down', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
+  it('walks all subclasses for direction down', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('allSubclasses do:');
     expect(code).toContain("compiledMethodAt: #'at:' environmentId: 0 otherwise: nil");
     expect(code).not.toContain('whileTrue:');
   });
 
-  it('targets the metaclass side when isMeta is true (up)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'up');
+  it('targets the metaclass side when isMeta is true (up)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'up');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('(class class) superclass');
   });
 
-  it('targets each subclass metaclass when isMeta is true (down)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'down');
+  it('targets each subclass metaclass when isMeta is true (down)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'down');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('tgt := sub class');
   });
 
-  it('uses the instance side (class / sub) when isMeta is false', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
+  it('uses the instance side (class / sub) when isMeta is false', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('tgt := sub.');
     expect(code).not.toContain('sub class');
   });
 
-  it('embeds the dictIndex and escapes class name and selector', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    hierarchyImplementorsOf(execute, 7, "Foo'Bar", "o'clock", false, 'up');
+  it('embeds the dictIndex and escapes class name and selector', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await hierarchyImplementorsOf(execute, 7, "Foo'Bar", "o'clock", false, 'up');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 7');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain("#'o''clock'");
   });
 
-  it('collects in the environment it was given, in both directions', () => {
+  it('collects in the environment it was given, in both directions', async () => {
     // `includesSelector:` and a bare `compiledMethodAt:` both answer for environment 0
     // whatever the caller asked, so an implementor compiled only into a higher
     // environment was invisible — and the caller's sweep over 0..maxEnvironment did N
     // full walks to re-collect the same environment-0 answer each time.
-    const execute = vi.fn<QueryExecutor>(() => '');
+    const execute = vi.fn<QueryExecutor>(async () => '');
 
-    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up', 2);
-    hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down', 2);
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up', 2);
+    await hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down', 2);
 
     for (const [code] of execute.mock.calls) {
       expect(code).toContain("compiledMethodAt: #'at:' environmentId: 2 otherwise: nil");
@@ -548,10 +551,10 @@ describe('hierarchyImplementorsOf', () => {
     }
   });
 
-  it('parses returned rows into MethodSearchResult', () => {
+  it('parses returned rows into MethodSearchResult', async () => {
     const raw = 'Globals\tObject\t0\tat:\taccessing\n';
-    const results = hierarchyImplementorsOf(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await hierarchyImplementorsOf(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Array',
       'at:',

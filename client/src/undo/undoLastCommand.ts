@@ -124,7 +124,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
 
     // A refactoring's record lives in the stone, so the client entry is only a pointer.
     // Verify it still points at something before opening a preview over nothing.
-    const status = checkRefactoringUndoAvailable(session);
+    const status = await checkRefactoringUndoAvailable(session);
     if (!status.available || status.sequence !== entry.sequence) {
       logInfo(`[undo] #${entry.id} no longer held by the stone; dropping it`);
       dropUndoEntry(session.id, entry.id);
@@ -134,7 +134,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     await undoLastRefactoringCommand(sessions);
     // The panel can be cancelled, and a partial undo leaves the record in place, so ask
     // the stone what actually happened rather than assume the entry is spent.
-    const after = checkRefactoringUndoAvailable(session);
+    const after = await checkRefactoringUndoAvailable(session);
     if (!after.available || after.sequence !== entry.sequence) popUndoEntry(session.id);
     return;
   }

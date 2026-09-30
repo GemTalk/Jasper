@@ -24,10 +24,10 @@ export interface ClassCategoryEntry {
 // also the cheaper of the two: measured at ~0.12µs per class, so adding it to
 // this existing per-class loop costs nothing noticeable even on a large
 // dictionary, and adds no round trip.
-export function getClassesWithCategory(
+export async function getClassesWithCategory(
   execute: QueryExecutor,
   dict: number | string,
-): ClassCategoryEntry[] {
+): Promise<ClassCategoryEntry[]> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -47,7 +47,7 @@ ws contents`;
   // is free text and conceivably could, so anchoring on the first two tabs would let
   // one category shift the flag and the name a field over. The last tab always ends
   // the flag, the one before it always ends the category.
-  return splitLines(execute(code)).map((line) => {
+  return splitLines(await execute(code)).map((line) => {
     const nameTab = line.lastIndexOf('\t');
     const flagTab = line.lastIndexOf('\t', nameTab - 1);
     return {

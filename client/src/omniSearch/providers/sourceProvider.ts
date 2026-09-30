@@ -37,7 +37,7 @@ export type SourceSearchRunner = (
   term: string,
   ignoreCase: boolean,
   mode: SourceScanMode,
-) => MethodSearchResult[];
+) => Promise<MethodSearchResult[]>;
 
 /** The chip's position, in terms of what the scan should do over a method body. */
 const SCAN_FOR: Record<OmniConfig['matchMode'], SourceScanMode> = {
@@ -52,11 +52,11 @@ export function createSourceProvider(
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.source,
-    search(query: string, cfg: OmniConfig): OmniResult[] {
+    async search(query: string, cfg: OmniConfig): Promise<OmniResult[]> {
       const term = query.trim();
       if (term.length < cfg.methodMinQueryLength) return [];
 
-      const rows = runSearch(term, !cfg.caseSensitive, SCAN_FOR[cfg.matchMode]);
+      const rows = await runSearch(term, !cfg.caseSensitive, SCAN_FOR[cfg.matchMode]);
       return methodRowsToResults(rows, sessionId, 'source').slice(0, cfg.maxResultsPerCategory);
     },
   };

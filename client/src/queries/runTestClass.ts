@@ -80,10 +80,10 @@ export function parseTestClassResults(data: string, className: string): TestRunR
   });
 }
 
-export function runTestClass(
+export async function runTestClass(
   execute: QueryExecutor,
   className: string,
   dictName?: string,
-): TestRunResult[] {
-  return parseTestClassResults(execute(runTestClassCode(className, dictName)), className);
+): Promise<TestRunResult[]> {
+  return parseTestClassResults(await execute(runTestClassCode(className, dictName)), className);
 }

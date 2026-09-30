@@ -55,7 +55,7 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
   });
 
   it('announces the apply when an undo WAS recorded', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
 
     notifyRefactoringApplied(session, 'Renamed.');
     await settle();
@@ -65,7 +65,7 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
 
   it('announces it just the same when NO undo was recorded', async () => {
     // A stone whose engine records no undo still recompiled methods, so the panel is still stale.
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(session, 'Renamed.');
     await settle();
@@ -74,7 +74,7 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
   });
 
   it('carries the session id, so only that session’s panels re-fetch', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
 
     notifyRefactoringApplied({ id: 42 } as ActiveSession, 'Renamed.');
     await settle();
@@ -83,7 +83,7 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
   });
 
   it('says nothing when there is no session to name', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(undefined, 'Renamed.');
     await settle();
@@ -97,7 +97,7 @@ describe('notifyRefactoringApplied — announcing the change to the UI', () => {
   it('does not fail the refactoring when nothing is listening', async () => {
     // No Explorer registered — the command is unknown and rejects. A redraw must never take the
     // refactoring down with it.
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
     vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error('command not found'));
 
     expect(() => notifyRefactoringApplied(session, 'Renamed.')).not.toThrow();
@@ -115,7 +115,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('offers Undo on the toast when the stone recorded one', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
 
     notifyRefactoringApplied(session, 'Renamed it.');
     await settle();
@@ -124,7 +124,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('runs the undo command when the button is pressed', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue('Undo' as never);
 
     notifyRefactoringApplied(session, 'Renamed it.');
@@ -134,7 +134,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('does nothing when the toast is dismissed', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
 
     notifyRefactoringApplied(session, 'Renamed it.');
@@ -144,7 +144,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('falls back to the quiet status-bar notice when nothing was recorded', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(session, 'Extracted #answer.');
     await settle();
@@ -154,7 +154,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('falls back to a plain toast for the refactorings that ask for one', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(session, 'Moved 2 methods.', 'toast');
     await settle();
@@ -164,7 +164,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('puts the refactoring on the undo stack, carrying the stone sequence', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
 
     notifyRefactoringApplied(session, 'Renamed it.');
     await settle();
@@ -179,7 +179,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('records nothing when the stone recorded nothing', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(session, 'Extracted #answer.');
     await settle();
@@ -191,7 +191,7 @@ describe('notifyRefactoringApplied', () => {
     // An engine installed before the undo work applies every refactoring and records none, so
     // the quiet notice is identical to the one a recorded-nothing refactoring gets — and the
     // user is left with a feature that silently never works (review of #507).
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false, false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false, false));
 
     notifyRefactoringApplied(session, 'Renamed it.', 'toast');
     await settle();
@@ -200,7 +200,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('stays quiet when the engine has undo and this refactoring recorded none', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     notifyRefactoringApplied(session, 'Extracted #answer.');
     await settle();
@@ -209,7 +209,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('returns while the toast is still unanswered', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
     // A toast nobody answers: showInformationMessage never settles.
     vi.mocked(vscode.window.showInformationMessage).mockReturnValue(new Promise(() => {}) as never);
 

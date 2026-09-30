@@ -16,14 +16,14 @@ import { QueryExecutor } from '../types';
 /** One discovered TestCase subclass: its name and whether it is abstract. */
 export type DiscoveredTestClass = { name: string; isAbstract: boolean };
 
-export function discoverAllTestClasses(exec: QueryExecutor): DiscoveredTestClass[] {
+export async function discoverAllTestClasses(exec: QueryExecutor): Promise<DiscoveredTestClass[]> {
   const code = `| classes ws |
 classes := ${DISCOVER_ALL_TEST_CLASSES}.
 ws := WriteStream on: Unicode7 new.
 classes do: [:c |
   ws nextPutAll: c name; tab; nextPutAll: c isAbstract printString; lf].
 ws contents encodeAsUTF8`;
-  return splitLines(exec(code)).map((line) => {
+  return splitLines(await exec(code)).map((line) => {
     const [name, isAbstract] = line.split('\t');
     return { name: name || '', isAbstract: isAbstract === 'true' };
   });

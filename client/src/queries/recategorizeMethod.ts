@@ -14,14 +14,14 @@ import { escapeString, receiver } from './util';
 // it is guarded. `categoryNames` answers SYMBOLS and is compared as such — comparing
 // `each asString` to a String literal raises "Unicode argument disallowed in String
 // comparison" on a stone in legacy string mode.
-export function recategorizeMethod(
+export async function recategorizeMethod(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   newCategory: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const recv = receiver(className, isMeta, dict);
   const category = escapeString(newCategory);
   const code = `| target |
@@ -30,5 +30,5 @@ target := ${recv}.
   ifFalse: [target addCategory: '${category}'].
 target moveMethod: #'${escapeString(selector)}' toCategory: '${category}'.
 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

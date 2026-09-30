@@ -27,7 +27,7 @@ describe('enhanced inspector install (integration)', () => {
     handle = testContext.session;
   });
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   const KEPT_DIFFERENT = '#JasperEnhancedInspectorKeptDifferent';
 
@@ -36,12 +36,13 @@ describe('enhanced inspector install (integration)', () => {
    * then compile `payloadSource` over it the way the installer does. Answers what `probe`
    * returns afterwards and whether the method was recorded as kept-though-different.
    */
-  function compileOverExisting(
+  async function compileOverExisting(
     existingCategory: string,
     existingSource: string,
     payloadSource: string,
-  ): { answer: string; recorded: boolean } {
-    const out = exec(`
+  ): Promise<{ answer: string; recorded: boolean }> {
+    const out = (
+      await exec(`
 | cls fi answer recorded |
 SessionTemps current removeKey: ${KEPT_DIFFERENT} ifAbsent: [nil].
 cls := Object subclass: 'JasperEnhancedInspectorRuleProbe'
@@ -56,20 +57,23 @@ answer := cls new probe asString.
 recorded := (SessionTemps current at: ${KEPT_DIFFERENT} ifAbsent: [#()])
 	includes: 'JasperEnhancedInspectorRuleProbe>>probe'.
 SessionTemps current removeKey: ${KEPT_DIFFERENT} ifAbsent: [nil].
-answer, ' ', recorded printString`).trim();
+answer, ' ', recorded printString`)
+    ).trim();
     const [answer, recorded] = out.split(' ');
     return { answer, recorded: recorded === 'true' };
   }
 
   // A base stone has its own STONFileReference; with the payload's dictionary last during
   // the file-in, these two class methods landed on that class instead of ours.
-  it("puts STONFileReference's class methods on the payload's own class", (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it("puts STONFileReference's class methods on the payload's own class", async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    const onOurs = exec(
-      '| ours | ours := GsEnhancedInspector at: #STONFileReference. ' +
-        '((ours class includesSelector: #fromSton:) ' +
-        'and: [ours class includesSelector: #stonName]) printString',
+    const onOurs = (
+      await exec(
+        '| ours | ours := GsEnhancedInspector at: #STONFileReference. ' +
+          '((ours class includesSelector: #fromSton:) ' +
+          'and: [ours class includesSelector: #stonName]) printString',
+      )
     ).trim();
 
     expect(onOurs).toBe('true');
@@ -77,31 +81,33 @@ answer, ' ', recorded printString`).trim();
 
   // The installer moves the dictionary to the front of SystemUser's symbol list for the
   // file-in; it must be back behind Globals, where it cannot shadow a kernel class.
-  it("leaves GsEnhancedInspector behind Globals in the installing user's symbol list", (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it("leaves GsEnhancedInspector behind Globals in the installing user's symbol list", async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    const behind = exec(
-      "| list names | list := (AllUsers userWithId: 'SystemUser') symbolList. " +
-        'names := (1 to: list size) collect: [:i | (list at: i) name]. ' +
-        '((names indexOf: #GsEnhancedInspector) > (names indexOf: #Globals)) printString',
+    const behind = (
+      await exec(
+        "| list names | list := (AllUsers userWithId: 'SystemUser') symbolList. " +
+          'names := (1 to: list size) collect: [:i | (list at: i) name]. ' +
+          '((names indexOf: #GsEnhancedInspector) > (names indexOf: #Globals)) printString',
+      )
     ).trim();
 
     expect(behind).toBe('true');
   });
 
-  it("keeps the stone's own method, and records it when the payload's source differs", (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it("keeps the stone's own method, and records it when the payload's source differs", async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    expect(compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#payload')).toEqual({
+    expect(await compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#payload')).toEqual({
       answer: 'stone',
       recorded: true,
     });
   });
 
-  it("keeps the stone's own method without recording it when the source matches", (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it("keeps the stone's own method without recording it when the source matches", async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    expect(compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#stone')).toEqual({
+    expect(await compileOverExisting('stone-own', 'probe ^#stone', 'probe ^#stone')).toEqual({
       answer: 'stone',
       recorded: false,
     });
@@ -109,11 +115,11 @@ answer, ' ', recorded printString`).trim();
 
   // A `*GToolkit…` method on a class the payload did not create is one a previous install
   // put there, so a re-install must replace it rather than keep the old copy.
-  it('replaces a method an earlier install put there', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it('replaces a method an earlier install put there', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
     expect(
-      compileOverExisting('*GToolkit-Probe', 'probe ^#earlierPayload', 'probe ^#payload'),
+      await compileOverExisting('*GToolkit-Probe', 'probe ^#earlierPayload', 'probe ^#payload'),
     ).toEqual({ answer: 'payload', recorded: false });
   });
 });

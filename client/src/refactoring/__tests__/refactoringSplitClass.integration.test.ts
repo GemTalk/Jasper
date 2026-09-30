@@ -51,12 +51,14 @@ describe('split class (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsSplitClassRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsSplitClassRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
   // A cohesive Contact whose address ivars (street/city/zip) and the methods that use them are a
@@ -67,66 +69,77 @@ describe('split class (integration)', () => {
   const COMPONENT_IVAR = 'scItAddress';
   const SUB = 'ScItVip';
 
-  const defineFixture = (): void => {
-    const def = (name: string, sup: string, ivars: string): void => {
-      q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    const def = async (name: string, sup: string, ivars: string): Promise<void> => {
+      await q.compileClassDefinition(
         session(),
         `${sup} subclass: '${name}' instVarNames: #(${ivars}) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
     };
-    def(SOURCE, 'Object', "'name' 'email' 'street' 'city' 'zip'");
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'name\n\t^name');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'email\n\t^email');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'street\n\t^street');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'street: aString\n\tstreet := aString');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'city\n\t^city');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'zip\n\t^zip');
-    q.compileMethod(
+    await def(SOURCE, 'Object', "'name' 'email' 'street' 'city' 'zip'");
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'name\n\t^name');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'email\n\t^email');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'street\n\t^street');
+    await q.compileMethod(
+      session(),
+      SOURCE,
+      false,
+      'accessing',
+      'street: aString\n\tstreet := aString',
+    );
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'city\n\t^city');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'zip\n\t^zip');
+    await q.compileMethod(
       session(),
       SOURCE,
       false,
       'printing',
       "fullAddress\n\t^street, ', ', city, ' ', zip",
     );
-    def(SUB, SOURCE, "'tier'");
-    q.compileMethod(session(), SUB, false, 'accessing', 'tier\n\t^tier');
-    q.compileMethod(session(), SUB, false, 'printing', 'vipLabel\n\t^name');
+    await def(SUB, SOURCE, "'tier'");
+    await q.compileMethod(session(), SUB, false, 'accessing', 'tier\n\t^tier');
+    await q.compileMethod(session(), SUB, false, 'printing', 'vipLabel\n\t^name');
   };
 
-  const superclassOf = (cls: string): string => exec(`${cls} superclass name asString`).trim();
-  const definesSelector = (cls: string, selector: string): boolean =>
-    exec(
-      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  const superclassOf = async (cls: string): Promise<string> =>
+    (await exec(`${cls} superclass name asString`)).trim();
+  const definesSelector = async (cls: string, selector: string): Promise<boolean> =>
+    (
+      await exec(
+        `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+      )
     ).trim() === 'true';
-  const ownInstVars = (cls: string): string[] => {
-    const raw = exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
+  const ownInstVars = async (cls: string): Promise<string[]> => {
+    const raw = await exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
     return [...raw.matchAll(/'([^']*)'/g)].map((m) => m[1]);
   };
-  const methodSourceOf = (cls: string, selector: string): string =>
-    exec(`(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) sourceString`);
+  const methodSourceOf = async (cls: string, selector: string): Promise<string> =>
+    await exec(
+      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) sourceString`,
+    );
 
-  it('reports split-class engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports split-class engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
   // Generous timeout: this files in the whole (growing) engine-tests.gs payload and runs a full
   // SUnit suite in-stone over the GCI transport, which takes several seconds on a cold stone.
-  it('runs the split-class GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the split-class GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('lists the source own instance variables as extract candidates', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const candidates = parseCandidates(await candidatesForSplitClass(asyncExec, SOURCE));
 
@@ -141,9 +154,9 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
   });
 
   it('reports the movable methods and no decline for a clean extract set', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeSplitClass(asyncExec, SOURCE, COMPONENT, ['street', 'city', 'zip']),
@@ -155,9 +168,9 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
   });
 
   it('moves the chosen ivars and their methods into a new component, delegating from the source', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `split-apply-${SOURCE}`;
     const start = parseStartPreview(
       await startSplitClassPreview(
@@ -176,23 +189,23 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
     expect(result.failed).toEqual([]);
     expect(result.committed).toBe(false);
     // The component carries the extracted ivars and the moved methods...
-    expect(ownInstVars(COMPONENT).sort()).toEqual(['city', 'street', 'zip']);
-    expect(definesSelector(COMPONENT, 'street')).toBe(true);
-    expect(definesSelector(COMPONENT, 'fullAddress')).toBe(true);
+    expect((await ownInstVars(COMPONENT)).sort()).toEqual(['city', 'street', 'zip']);
+    expect(await definesSelector(COMPONENT, 'street')).toBe(true);
+    expect(await definesSelector(COMPONENT, 'fullAddress')).toBe(true);
     // ...the source drops the extracted ivars and gains the component ivar...
-    const sourceIvars = ownInstVars(SOURCE);
+    const sourceIvars = await ownInstVars(SOURCE);
     expect(sourceIvars).not.toContain('street');
     expect(sourceIvars).toContain(COMPONENT_IVAR);
     expect(sourceIvars).toContain('name');
     // ...with a lazy accessor and a delegating stub per moved method...
-    expect(methodSourceOf(SOURCE, COMPONENT_IVAR)).toContain('ifNil:');
-    expect(methodSourceOf(SOURCE, 'street')).toContain(`self ${COMPONENT_IVAR}`);
+    expect(await methodSourceOf(SOURCE, COMPONENT_IVAR)).toContain('ifNil:');
+    expect(await methodSourceOf(SOURCE, 'street')).toContain(`self ${COMPONENT_IVAR}`);
   });
 
   it('preserves external behavior through the generated delegator', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `split-behavior-${SOURCE}`;
     parseStartPreview(
       await startSplitClassPreview(
@@ -206,7 +219,7 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
     );
     parseApplyResult(await applySplitClass(asyncExec, token));
 
-    const readBack = exec(
+    const readBack = await exec(
       `| c | c := ${SOURCE} new. c perform: #'street:' with: '1 Analytical Way'. c street`,
     );
 
@@ -214,9 +227,9 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
   });
 
   it('keeps the retained methods on the reversioned source and reparents the subtree', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `split-survive-${SOURCE}`;
     parseStartPreview(
       await startSplitClassPreview(
@@ -232,18 +245,24 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
 
     // A retained reader survives the reversion — `email` is named by no change set, so only the
     // copy-forward preserves it (the both-sides survival assertion).
-    expect(definesSelector(SOURCE, 'email')).toBe(true);
+    expect(await definesSelector(SOURCE, 'email')).toBe(true);
     // The subclass is reparented onto the new source version and keeps its own methods.
-    expect(superclassOf(SUB)).toBe(SOURCE);
-    expect(definesSelector(SUB, 'tier')).toBe(true);
-    expect(definesSelector(SUB, 'vipLabel')).toBe(true);
+    expect(await superclassOf(SUB)).toBe(SOURCE);
+    expect(await definesSelector(SUB, 'tier')).toBe(true);
+    expect(await definesSelector(SUB, 'vipLabel')).toBe(true);
   });
 
   it('declines a straddling method that also uses a retained instance variable', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
-    q.compileMethod(session(), SOURCE, false, 'computing', 'usesBoth\n\t^street size + name size');
+    await defineFixture();
+    await q.compileMethod(
+      session(),
+      SOURCE,
+      false,
+      'computing',
+      'usesBoth\n\t^street size + name size',
+    );
 
     const analysis = parseAnalysis(
       await analyzeSplitClass(asyncExec, SOURCE, COMPONENT, ['street', 'city', 'zip']),
@@ -253,9 +272,9 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
   });
 
   it('serves the preview across several byte-bounded pages that drain to the total', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `split-page-${SOURCE}`;
     const start = parseStartPreview(
       await startSplitClassPreview(
@@ -283,7 +302,7 @@ r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest)
   });
 
   it('reports an expired session for an unknown page or apply token', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const pageRaw = await pageSplitClassPreview(asyncExec, 'no-such-token', 1, 1000);
     const applyResult = parseApplyResult(await applySplitClass(asyncExec, 'no-such-token'));

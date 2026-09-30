@@ -45,7 +45,7 @@ export async function uninstallServerPlugin(
   const report = (message: string) => onProgress?.(message);
 
   for (const feature of [...PLUGIN_FEATURES].reverse()) {
-    if (!feature.probe(session)) {
+    if (!(await feature.probe(session))) {
       report(`${feature.label} is not installed — skipping.`);
       continue;
     }
@@ -59,7 +59,8 @@ export async function uninstallServerPlugin(
   // Verify the stone is actually clean. A feature whose removal reported success
   // but whose probe still answers true means the removal did not take (or did not
   // commit), which must fail here rather than downstream.
-  const remaining = PLUGIN_FEATURES.filter((f) => f.probe(session)).map((f) => f.label);
+  const remaining: string[] = [];
+  for (const f of PLUGIN_FEATURES) if (await f.probe(session)) remaining.push(f.label);
   if (remaining.length > 0) {
     throw new Error(`Still installed after uninstall: ${remaining.join('; ')}`);
   }

@@ -26,12 +26,14 @@ beforeEach(() => {
 });
 
 describe('beginClassCategoryEdit', () => {
-  it('records only the classes whose category actually changed', () => {
+  it('records only the classes whose category actually changed', async () => {
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old', B: 'Old', C: 'Untouched' }))
-      .mockReturnValueOnce(entries({ A: 'New', B: 'New', C: 'Untouched' }));
+      .mockResolvedValueOnce(entries({ A: 'Old', B: 'Old', C: 'Untouched' }))
+      .mockResolvedValueOnce(entries({ A: 'New', B: 'New', C: 'Untouched' }));
 
-    const entry = beginClassCategoryEdit(session, 3)?.commit('Rename class category Old to New');
+    const entry = await (
+      await beginClassCategoryEdit(session, 3)
+    )?.commit('Rename class category Old to New');
 
     expect(entry).toMatchObject({ kind: 'classCategoryEdit', dict: 3 });
     expect(entry?.kind === 'classCategoryEdit' && entry.changes).toEqual([
@@ -41,26 +43,28 @@ describe('beginClassCategoryEdit', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('records each class under its OWN former label, so a merge is reversible', () => {
+  it('records each class under its OWN former label, so a merge is reversible', async () => {
     // Renaming Old onto New merges into it. Putting back the NAME would drag the classes that
     // were already in New along with it; putting back each class's own label does not.
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old', B: 'New' }))
-      .mockReturnValueOnce(entries({ A: 'New', B: 'New' }));
+      .mockResolvedValueOnce(entries({ A: 'Old', B: 'New' }))
+      .mockResolvedValueOnce(entries({ A: 'New', B: 'New' }));
 
-    const entry = beginClassCategoryEdit(session, 3)?.commit('Rename class category Old to New');
+    const entry = await (
+      await beginClassCategoryEdit(session, 3)
+    )?.commit('Rename class category Old to New');
 
     expect(entry?.kind === 'classCategoryEdit' && entry.changes).toEqual([
       { className: 'A', before: 'Old', after: 'New' },
     ]);
   });
 
-  it('records a whole dash-segmented subtree, each class with its own label', () => {
+  it('records a whole dash-segmented subtree, each class with its own label', async () => {
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old', B: 'Old-Sub', C: 'Old-Sub-Deep' }))
-      .mockReturnValueOnce(entries({ A: 'New', B: 'New-Sub', C: 'New-Sub-Deep' }));
+      .mockResolvedValueOnce(entries({ A: 'Old', B: 'Old-Sub', C: 'Old-Sub-Deep' }))
+      .mockResolvedValueOnce(entries({ A: 'New', B: 'New-Sub', C: 'New-Sub-Deep' }));
 
-    const entry = beginClassCategoryEdit(session, 3)?.commit('Rename');
+    const entry = await (await beginClassCategoryEdit(session, 3))?.commit('Rename');
 
     expect(entry?.kind === 'classCategoryEdit' && entry.changes.map((c) => c.before)).toEqual([
       'Old',
@@ -69,53 +73,53 @@ describe('beginClassCategoryEdit', () => {
     ]);
   });
 
-  it('leaves out a class the rename SKIPPED, because it did not move', () => {
+  it('leaves out a class the rename SKIPPED, because it did not move', async () => {
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old', Stubborn: 'Old' }))
-      .mockReturnValueOnce(entries({ A: 'New', Stubborn: 'Old' }));
+      .mockResolvedValueOnce(entries({ A: 'Old', Stubborn: 'Old' }))
+      .mockResolvedValueOnce(entries({ A: 'New', Stubborn: 'Old' }));
 
-    const entry = beginClassCategoryEdit(session, 3)?.commit('Rename');
+    const entry = await (await beginClassCategoryEdit(session, 3))?.commit('Rename');
 
     expect(entry?.kind === 'classCategoryEdit' && entry.changes.map((c) => c.className)).toEqual([
       'A',
     ]);
   });
 
-  it('ignores a class that APPEARED since — it has no earlier label to go back to', () => {
+  it('ignores a class that APPEARED since — it has no earlier label to go back to', async () => {
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old' }))
-      .mockReturnValueOnce(entries({ A: 'New', Fresh: 'Somewhere' }));
+      .mockResolvedValueOnce(entries({ A: 'Old' }))
+      .mockResolvedValueOnce(entries({ A: 'New', Fresh: 'Somewhere' }));
 
-    const entry = beginClassCategoryEdit(session, 3)?.commit('Rename');
+    const entry = await (await beginClassCategoryEdit(session, 3))?.commit('Rename');
 
     expect(entry?.kind === 'classCategoryEdit' && entry.changes.map((c) => c.className)).toEqual([
       'A',
     ]);
   });
 
-  it('records nothing when no class changed category', () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'Same' }));
+  it('records nothing when no class changed category', async () => {
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'Same' }));
 
-    expect(beginClassCategoryEdit(session, 3)?.commit('Rename')).toBeUndefined();
+    expect(await (await beginClassCategoryEdit(session, 3))?.commit('Rename')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing — and does not throw — when the dictionary cannot be read', () => {
-    vi.mocked(getClassesWithCategory).mockImplementation(() => {
+  it('records nothing — and does not throw — when the dictionary cannot be read', async () => {
+    vi.mocked(getClassesWithCategory).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginClassCategoryEdit(session, 3)).toBeUndefined();
+    expect(await beginClassCategoryEdit(session, 3)).toBeUndefined();
   });
 
-  it('records nothing when the result cannot be read back', () => {
+  it('records nothing when the result cannot be read back', async () => {
     vi.mocked(getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Old' }))
+      .mockResolvedValueOnce(entries({ A: 'Old' }))
       .mockImplementationOnce(() => {
         throw new Error('session busy');
       });
 
-    expect(beginClassCategoryEdit(session, 3)?.commit('Rename')).toBeUndefined();
+    expect(await (await beginClassCategoryEdit(session, 3))?.commit('Rename')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 });

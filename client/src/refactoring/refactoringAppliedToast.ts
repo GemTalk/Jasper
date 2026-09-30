@@ -63,7 +63,7 @@ export function notifyRefactoringApplied(
     ).then(undefined, () => undefined);
   }
   void (async () => {
-    const status = checkRefactoringUndoAvailable(session);
+    const status = await checkRefactoringUndoAvailable(session);
     if (!status.available || !session) {
       logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);

@@ -87,6 +87,9 @@ export function applyInlineTemporary(
 }
 
 // Drop a finished preview from SessionTemps.
-export function clearInlineTemporaryPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsInlineTemporaryRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearInlineTemporaryPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsInlineTemporaryRefactoring clearToken: '${escapeString(token)}'`);
 }

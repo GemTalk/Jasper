@@ -35,7 +35,7 @@ describe('CommentBrowser', () => {
     dispose: ReturnType<typeof vi.fn>;
     onDidDispose: ReturnType<typeof vi.fn>;
   };
-  let hostMessageHandler: (msg: unknown) => void;
+  let hostMessageHandler: (msg: unknown) => Promise<void>;
 
   function resetPanels(): void {
     (CommentBrowser as unknown as { panels: Map<number, unknown> }).panels = new Map();
@@ -52,7 +52,7 @@ describe('CommentBrowser', () => {
         webview: {
           html: '',
           postMessage: vi.fn(),
-          onDidReceiveMessage: vi.fn((handler: (msg: unknown) => void) => {
+          onDidReceiveMessage: vi.fn((handler: (msg: unknown) => Promise<void>) => {
             hostMessageHandler = handler;
             return { dispose: () => {} };
           }),
@@ -65,11 +65,11 @@ describe('CommentBrowser', () => {
       return mockPanel as unknown as ReturnType<typeof window.createWebviewPanel>;
     });
 
-    vi.mocked(queries.getClassComment).mockReturnValue('the class comment');
+    vi.mocked(queries.getClassComment).mockResolvedValue('the class comment');
     // What the real query answers on success — the panel now checks it, because
     // setClassComment reports an unresolvable class by RETURNING a status string.
-    vi.mocked(queries.setClassComment).mockReturnValue('Comment set: Account');
-    vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
+    vi.mocked(queries.setClassComment).mockResolvedValue('Comment set: Account');
+    vi.mocked(queries.canClassBeWritten).mockResolvedValue(true);
     vi.mocked(window.showWarningMessage).mockResolvedValue(undefined);
   });
 
@@ -117,7 +117,7 @@ describe('CommentBrowser', () => {
 
       expect(mockPanel.webview.postMessage).not.toHaveBeenCalled();
 
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadComment',
@@ -137,13 +137,13 @@ describe('CommentBrowser', () => {
         'Account',
         exportManager as unknown as ExportManager,
       );
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
       vi.mocked(window.createWebviewPanel).mockClear();
     });
 
     it('reuses the panel and refills it with the newly selected class comment', async () => {
-      vi.mocked(queries.getClassComment).mockReturnValue('another comment');
+      vi.mocked(queries.getClassComment).mockResolvedValue('another comment');
 
       await CommentBrowser.showOrUpdate(
         session,
@@ -194,7 +194,7 @@ describe('CommentBrowser', () => {
 
   describe('read-only classes', () => {
     it('tells the webview the comment cannot be edited', async () => {
-      vi.mocked(queries.canClassBeWritten).mockReturnValue(false);
+      vi.mocked(queries.canClassBeWritten).mockResolvedValue(false);
 
       await CommentBrowser.showOrUpdate(
         session,
@@ -203,7 +203,7 @@ describe('CommentBrowser', () => {
         'Object',
         exportManager as unknown as ExportManager,
       );
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadComment', className: 'Object', canWrite: false }),
@@ -211,7 +211,7 @@ describe('CommentBrowser', () => {
     });
 
     it('treats the class as writable when the writability check fails', async () => {
-      vi.mocked(queries.canClassBeWritten).mockImplementation(() => {
+      vi.mocked(queries.canClassBeWritten).mockImplementation(async () => {
         throw new Error('busy');
       });
 
@@ -222,7 +222,7 @@ describe('CommentBrowser', () => {
         'Account',
         exportManager as unknown as ExportManager,
       );
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadComment', canWrite: true }),
@@ -239,9 +239,9 @@ describe('CommentBrowser', () => {
         'Account',
         exportManager as unknown as ExportManager,
       );
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
       // The user edits the comment for Account.
-      hostMessageHandler({ command: 'edited', text: 'work in progress' });
+      await hostMessageHandler({ command: 'edited', text: 'work in progress' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
@@ -264,7 +264,7 @@ describe('CommentBrowser', () => {
 
     it('saves the outgoing class edits when the user chooses Save, then loads the new class', async () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue('Save');
-      vi.mocked(queries.getClassComment).mockReturnValue('invoice comment');
+      vi.mocked(queries.getClassComment).mockResolvedValue('invoice comment');
 
       await CommentBrowser.showOrUpdate(
         session,
@@ -330,26 +330,26 @@ describe('CommentBrowser', () => {
         'Account',
         exportManager as unknown as ExportManager,
       );
-      hostMessageHandler({ command: 'ready' });
+      await hostMessageHandler({ command: 'ready' });
     });
 
-    it('writes the edited comment back to GemStone for the shown class', () => {
-      hostMessageHandler({ command: 'save', text: 'edited comment' });
+    it('writes the edited comment back to GemStone for the shown class', async () => {
+      await hostMessageHandler({ command: 'save', text: 'edited comment' });
 
       expect(queries.setClassComment).toHaveBeenCalledWith(session, 'Account', 'edited comment', 7);
     });
 
-    it('re-syncs the class mirror and confirms the save to the webview', () => {
-      hostMessageHandler({ command: 'save', text: 'edited comment' });
+    it('re-syncs the class mirror and confirms the save to the webview', async () => {
+      await hostMessageHandler({ command: 'save', text: 'edited comment' });
 
       expect(exportManager.syncClass).toHaveBeenCalledWith(session, 'UserGlobals', 'Account');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({ command: 'saved' });
     });
 
-    it('reports a save the stone refused, instead of confirming it', () => {
-      vi.mocked(queries.setClassComment).mockReturnValue('Class not found: Account');
+    it('reports a save the stone refused, instead of confirming it', async () => {
+      vi.mocked(queries.setClassComment).mockResolvedValue('Class not found: Account');
 
-      hostMessageHandler({ command: 'save', text: 'edited comment' });
+      await hostMessageHandler({ command: 'save', text: 'edited comment' });
 
       expect(window.showWarningMessage).toHaveBeenCalledWith(
         expect.stringContaining('was not saved: Class not found: Account'),
@@ -368,7 +368,7 @@ describe('CommentBrowser', () => {
         exportManager as unknown as ExportManager,
       );
 
-      hostMessageHandler({ command: 'save', text: 'invoice comment' });
+      await hostMessageHandler({ command: 'save', text: 'invoice comment' });
 
       expect(queries.setClassComment).toHaveBeenCalledWith(
         session,
@@ -378,12 +378,12 @@ describe('CommentBrowser', () => {
       );
     });
 
-    it('reports a failed save to the webview and does not confirm it', () => {
-      vi.mocked(queries.setClassComment).mockImplementation(() => {
+    it('reports a failed save to the webview and does not confirm it', async () => {
+      vi.mocked(queries.setClassComment).mockImplementation(async () => {
         throw new Error('read-only');
       });
 
-      hostMessageHandler({ command: 'save', text: 'edited comment' });
+      await hostMessageHandler({ command: 'save', text: 'edited comment' });
 
       expect(window.showErrorMessage).toHaveBeenCalled();
       expect(mockPanel.webview.postMessage).not.toHaveBeenCalledWith({ command: 'saved' });

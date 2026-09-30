@@ -3,6 +3,7 @@ import { GciLibrary, GciError } from './gciLibrary';
 import { OOP_NIL } from './gciConstants';
 import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes';
 import { logInfo, logWarning } from './gciLog';
+import { fetchString } from './stringFetch';
 import { createSessionGciLibrary } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
@@ -197,12 +198,12 @@ export class SessionManager {
 
   // Blocking login: GciTsLogin holds the calling thread until the handshake
   // completes, so a slow connect freezes the extension host. Prefer loginAsync
-  // for interactive connects; this stays for the synchronous callers (and is the
-  // fallback loginAsync uses on Windows / older libraries).
-  login(login: GemStoneLogin, libraryPath: string): ActiveSession {
+  // for interactive connects; this stays for callers that accept the blocking
+  // handshake (and is the fallback loginAsync uses on Windows / older libraries).
+  async login(login: GemStoneLogin, libraryPath: string): Promise<ActiveSession> {
     const { gci, stoneNrs, gemNrs } = this.prepareLogin(login, libraryPath);
     const handle = this.blockingLoginHandle(gci, stoneNrs, gemNrs, login);
-    return this.finalizeSession(gci, login, handle);
+    return await this.finalizeSession(gci, login, handle);
   }
 
   /**
@@ -230,7 +231,7 @@ export class SessionManager {
         ? await this.nonBlockingLoginHandle(gci, stoneNrs, gemNrs, login)
         : this.blockingLoginHandle(gci, stoneNrs, gemNrs, login);
 
-      return this.finalizeSession(gci, login, handle);
+      return await this.finalizeSession(gci, login, handle);
     } finally {
       this.pendingLogins--;
     }
@@ -335,7 +336,11 @@ export class SessionManager {
   // Shared post-login setup for both the blocking and non-blocking paths:
   // records the session, installs the Transcript sink, drops the fresh session's
   // spurious uncommitted state, and auto-selects a lone session.
-  private finalizeSession(gci: GciLibrary, login: GemStoneLogin, handle: unknown): ActiveSession {
+  private async finalizeSession(
+    gci: GciLibrary,
+    login: GemStoneLogin,
+    handle: unknown,
+  ): Promise<ActiveSession> {
     const { version } = gci.GciTsVersion();
 
     const session: ActiveSession = {
@@ -356,12 +361,12 @@ export class SessionManager {
     // Jade-style server-side Transcript sink: compiled into the session at
     // login, kept alive via SessionTemps, never committed. Non-fatal on
     // failure — the session simply has no Transcript display.
-    installTranscriptSink(session);
+    await installTranscriptSink(session);
 
     // Per-method history helper, installed the same way (SessionTemps, no commit,
     // no plugin) so method history works on a bare stone. Non-fatal on failure —
     // capture is soft-guarded, so the session simply records no history.
-    installMethodHistory(session);
+    await installMethodHistory(session);
 
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a
@@ -399,7 +404,7 @@ export class SessionManager {
     // describes the state the session is left in. A stone that hands out
     // manualBegin gets the gem's SigAbort servicing armed here too, which is the
     // whole reason this cannot wait for the user to switch modes by hand.
-    this.refreshTransactionState(session.id);
+    await this.refreshTransactionState(session.id);
 
     // Auto-select when this is the only session
     if (this.sessions.size === 1) {
@@ -566,15 +571,13 @@ export class SessionManager {
    * changing, so a failed arm is retried by the next read instead of never, and a
    * session armed once is not armed again.
    */
-  refreshTransactionState(id: number): void {
+  async refreshTransactionState(id: number): Promise<void> {
     const s = this.sessions.get(id);
     if (!s) return;
     try {
       const { result: inProgress } = s.gci.GciTsCallInProgress(s.handle);
       if (inProgress !== 0) return;
-      const { mode, inTransaction } = getTransactionState((code) =>
-        s.gci.executeAndFetchString(s.handle, code),
-      );
+      const { mode, inTransaction } = await getTransactionState((code) => fetchString(s, code));
       if (mode === undefined && inTransaction === undefined) return;
       // Each half is kept independently: a read that parses one and not the other
       // must not blank the half it did read, which is what the promise above says.
@@ -583,7 +586,7 @@ export class SessionManager {
       const changed = s.transactionMode !== nextMode || s.inTransaction !== nextInTransaction;
       s.transactionMode = nextMode;
       s.inTransaction = nextInTransaction;
-      if (nextMode === 'manualBegin' && !s.sigAbortArmed) this.armGemAutoServiceSigAbort(s);
+      if (nextMode === 'manualBegin' && !s.sigAbortArmed) await this.armGemAutoServiceSigAbort(s);
       if (changed) this._onDidChangeTransactionState.fire(id);
     } catch (e: unknown) {
       logInfo(
@@ -614,9 +617,9 @@ export class SessionManager {
    * armed after a switch back is inert, and disarming it would spend a round trip
    * to change nothing.
    */
-  private armGemAutoServiceSigAbort(s: ActiveSession): void {
+  private async armGemAutoServiceSigAbort(s: ActiveSession): Promise<void> {
     try {
-      setGemAutoServiceSigAbort((code) => s.gci.executeAndFetchString(s.handle, code), true);
+      await setGemAutoServiceSigAbort((code) => fetchString(s, code), true);
       s.sigAbortArmed = true;
     } catch (e: unknown) {
       logWarning(
@@ -645,14 +648,11 @@ export class SessionManager {
    * so the caller reports a switch that did not land instead of announcing the
    * old mode as though it were the new one. The abort may still have happened.
    */
-  setTransactionMode(id: number, mode: TransactionMode): void {
+  async setTransactionMode(id: number, mode: TransactionMode): Promise<void> {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
-    const reached = applyTransactionMode(
-      (code) => s.gci.executeAndFetchString(s.handle, code),
-      mode,
-    );
-    this.refreshTransactionState(id);
+    const reached = await applyTransactionMode((code) => fetchString(s, code), mode);
+    await this.refreshTransactionState(id);
     if (reached !== mode) {
       throw new Error(
         `the stone reports ${reached ?? 'an unrecognized mode'} after the switch, not ${mode}`,
@@ -660,31 +660,31 @@ export class SessionManager {
     }
   }
 
-  begin(id: number): { success: boolean; err: GciError } {
+  async begin(id: number): Promise<{ success: boolean; err: GciError }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
     const result = s.gci.GciTsBegin(s.handle);
-    this.refreshTransactionState(id);
+    await this.refreshTransactionState(id);
     return result;
   }
 
-  commit(id: number): { success: boolean; err: GciError } {
+  async commit(id: number): Promise<{ success: boolean; err: GciError }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
     const result = s.gci.GciTsCommit(s.handle);
     // Under manualBegin a commit leaves the session outside a transaction, so the
     // state has moved whether or not the commit itself succeeded.
-    this.refreshTransactionState(id);
+    await this.refreshTransactionState(id);
     return result;
   }
 
-  abort(id: number): { success: boolean; err: GciError } {
+  async abort(id: number): Promise<{ success: boolean; err: GciError }> {
     const s = this.sessions.get(id);
     if (!s) throw new Error('Session not found');
     const result = s.gci.GciTsAbort(s.handle);
     // Same as commit: under manualBegin this drops the session out of its
     // transaction, and nothing starts another one.
-    this.refreshTransactionState(id);
+    await this.refreshTransactionState(id);
     return result;
   }
 

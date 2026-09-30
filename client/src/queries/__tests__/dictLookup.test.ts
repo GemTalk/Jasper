@@ -38,10 +38,10 @@ describe('homeDictionaryNameExpr', () => {
 });
 
 describe('classExistsInDictionary (reuses classLookupExpr)', () => {
-  it('resolves the class within the dictionary and checks isBehavior — not a hand-rolled dict lookup', () => {
+  it('resolves the class within the dictionary and checks isBehavior — not a hand-rolled dict lookup', async () => {
     const exec = vi.fn().mockReturnValue('true');
 
-    expect(classExistsInDictionary(exec, 'Foo', 3)).toBe(true);
+    expect(await classExistsInDictionary(exec, 'Foo', 3)).toBe(true);
 
     const code = exec.mock.calls[0][0] as string;
     // Goes through the shared class-in-dictionary resolution…
@@ -51,8 +51,8 @@ describe('classExistsInDictionary (reuses classLookupExpr)', () => {
     expect(code).not.toContain('symbolList at: 3 ifAbsent:');
   });
 
-  it('is false when the class is absent (query returns false)', () => {
+  it('is false when the class is absent (query returns false)', async () => {
     const exec = vi.fn().mockReturnValue('false');
-    expect(classExistsInDictionary(exec, 'Foo', 'UserGlobals')).toBe(false);
+    expect(await classExistsInDictionary(exec, 'Foo', 'UserGlobals')).toBe(false);
   });
 });

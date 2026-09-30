@@ -157,7 +157,7 @@ describe('SmalltalkNotebookController', () => {
     const opts = vi.mocked(runNbCall).mock.lastCall![3] as NbRunOptions;
     gci.executeAndFetchString.mockClear();
 
-    opts.onAbandonedCollected!();
+    await opts.onAbandonedCollected!();
 
     const sent = gci.executeAndFetchString.mock.calls.map((c) => c[1] as string);
     expect(sent).toHaveLength(1);

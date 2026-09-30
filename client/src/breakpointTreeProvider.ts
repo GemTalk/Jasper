@@ -110,10 +110,10 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
           if (this.refreshTimer) clearTimeout(this.refreshTimer);
         },
       },
-      view.onDidChangeCheckboxState((e) => {
+      view.onDidChangeCheckboxState(async (e) => {
         for (const [node, state] of e.items) {
           if (node.kind !== 'breakpoint') continue;
-          this.breakpoints.setEnabledForStoneBreakpoint(
+          await this.breakpoints.setEnabledForStoneBreakpoint(
             node.bp,
             state === vscode.TreeItemCheckboxState.Checked,
           );
@@ -193,7 +193,7 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
     return item;
   }
 
-  getChildren(element?: BreakpointNode): BreakpointNode[] {
+  async getChildren(element?: BreakpointNode): Promise<BreakpointNode[]> {
     if (element?.kind === 'class') {
       return element.breakpoints.map((bp) => ({ kind: 'breakpoint' as const, bp }));
     }
@@ -206,7 +206,7 @@ export class BreakpointTreeProvider implements vscode.TreeDataProvider<Breakpoin
     }
 
     try {
-      this.lastFetch = queries.getAllBreakpoints(session);
+      this.lastFetch = await queries.getAllBreakpoints(session);
     } catch (e) {
       this.lastFetch = [];
       return [
@@ -285,7 +285,7 @@ export async function revealBreakpoint(
 
   let offsets: number[];
   try {
-    offsets = queries.getSourceOffsets(
+    offsets = await queries.getSourceOffsets(
       session,
       bp.className,
       bp.isMeta,

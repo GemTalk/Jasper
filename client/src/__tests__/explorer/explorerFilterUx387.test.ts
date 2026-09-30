@@ -77,8 +77,8 @@ function seedTwoCategories(ctl: ExplorerController): void {
 
 // Look categories up by name, not position: SESSION METHODS can still lead the list on a
 // class that has session methods, and pinning an index would couple these to that.
-function categoryNamed(ctl: ExplorerController, filter: string, name: string) {
-  const found = ctl.methodCategories(false, filter).find((c) => c.category === name);
+async function categoryNamed(ctl: ExplorerController, filter: string, name: string) {
+  const found = (await ctl.methodCategories(false, filter)).find((c) => c.category === name);
   if (!found) throw new Error(`filter "${filter}" did not keep category "${name}"`);
   return found;
 }
@@ -150,52 +150,54 @@ describe('The filter box does not claim Enter is required', () => {
 });
 
 describe('Method categories are filterable', () => {
-  it('keeps a category whose NAME matches, even when no selector inside it does', () => {
+  it('keeps a category whose NAME matches, even when no selector inside it does', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    const names = ctl.methodCategories(false, 'accessing').map((c) => c.category);
+    const names = (await ctl.methodCategories(false, 'accessing')).map((c) => c.category);
 
     expect(names).toContain('accessing');
     expect(names).not.toContain('printing');
   });
 
-  it('matches category names on a prefix and honours the * wildcard', () => {
+  it('matches category names on a prefix and honours the * wildcard', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    expect(ctl.methodCategories(false, 'acc').map((c) => c.category)).toContain('accessing');
-    expect(ctl.methodCategories(false, '*ing').map((c) => c.category)).toEqual(
+    expect((await ctl.methodCategories(false, 'acc')).map((c) => c.category)).toContain(
+      'accessing',
+    );
+    expect((await ctl.methodCategories(false, '*ing')).map((c) => c.category)).toEqual(
       expect.arrayContaining(['accessing', 'printing']),
     );
   });
 
-  it('shows ALL of a name-matched category’s methods, not an empty folder', () => {
+  it('shows ALL of a name-matched category’s methods, not an empty folder', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
     applyMethodFilter(ctl, 'accessing');
-    const category = categoryNamed(ctl, 'accessing', 'accessing');
+    const category = await categoryNamed(ctl, 'accessing', 'accessing');
 
-    const rows = ctl.methodProvider.getChildren(category) as MethodItem[];
+    const rows = (await ctl.methodProvider.getChildren(category)) as MethodItem[];
 
     expect(rows.map((r) => r.info.selector).sort()).toEqual(['name', 'name:', 'size']);
   });
 
-  it('still filters selectors inside a category matched only by its methods', () => {
+  it('still filters selectors inside a category matched only by its methods', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
     applyMethodFilter(ctl, 'printO');
-    const category = categoryNamed(ctl, 'printO', 'printing');
+    const category = await categoryNamed(ctl, 'printO', 'printing');
 
-    const rows = ctl.methodProvider.getChildren(category) as MethodItem[];
+    const rows = (await ctl.methodProvider.getChildren(category)) as MethodItem[];
     expect(rows.map((r) => r.info.selector)).toEqual(['printOn:']);
   });
 
-  it('keeps a category reachable by selector when the name does not match', () => {
+  it('keeps a category reachable by selector when the name does not match', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    const names = ctl.methodCategories(false, 'size').map((c) => c.category);
+    const names = (await ctl.methodCategories(false, 'size')).map((c) => c.category);
 
     expect(names).toContain('accessing');
     expect(names).not.toContain('printing');
@@ -211,11 +213,11 @@ describe('Method categories are filterable', () => {
     expect(ctl.methodCategoryMatchesFilter('printing', 'print')).toBe(true);
   });
 
-  it('leaves the unfiltered category list alone', () => {
+  it('leaves the unfiltered category list alone', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    const names = ctl.methodCategories(false).map((c) => c.category);
+    const names = (await ctl.methodCategories(false)).map((c) => c.category);
 
     expect(names).toContain('accessing');
     expect(names).toContain('printing');
@@ -223,62 +225,68 @@ describe('Method categories are filterable', () => {
 });
 
 describe('The flat view honours the same filter', () => {
-  it('keeps a category-name match when grouping is off, so toggling does not empty the pane', () => {
+  it('keeps a category-name match when grouping is off, so toggling does not empty the pane', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    const grouped = ctl.methodCategories(false, 'accessing').map((c) => c.category);
-    const flat = ctl.flatMethods(false, 'accessing').map((m) => m.info.selector);
+    const grouped = (await ctl.methodCategories(false, 'accessing')).map((c) => c.category);
+    const flat = (await ctl.flatMethods(false, 'accessing')).map((m) => m.info.selector);
 
     expect(grouped).toContain('accessing');
     // Same filter, other view mode: the accessing methods must still be listed.
     expect(flat.sort()).toEqual(['name', 'name:', 'size']);
   });
 
-  it('still narrows the flat list by selector', () => {
+  it('still narrows the flat list by selector', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    expect(ctl.flatMethods(false, 'printO').map((m) => m.info.selector)).toEqual(['printOn:']);
+    expect((await ctl.flatMethods(false, 'printO')).map((m) => m.info.selector)).toEqual([
+      'printOn:',
+    ]);
   });
 
-  it('does not let an ivar-token filter pull in a whole category in flat mode either', () => {
+  it('does not let an ivar-token filter pull in a whole category in flat mode either', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
     // No ivar-access map is seeded, so nothing legitimately matches reads:printing.
-    expect(ctl.flatMethods(false, 'reads:printing').map((m) => m.info.selector)).toEqual([]);
+    expect((await ctl.flatMethods(false, 'reads:printing')).map((m) => m.info.selector)).toEqual(
+      [],
+    );
   });
 });
 
 describe('The ALL METHODS pseudo-category is gone', () => {
-  it('does not render it, filtered or not', () => {
+  it('does not render it, filtered or not', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    expect(ctl.methodCategories(false).map((c) => c.category)).not.toContain(ALL_METHODS_CATEGORY);
-    expect(ctl.methodCategories(false, 'name').map((c) => c.category)).not.toContain(
+    expect((await ctl.methodCategories(false)).map((c) => c.category)).not.toContain(
+      ALL_METHODS_CATEGORY,
+    );
+    expect((await ctl.methodCategories(false, 'name')).map((c) => c.category)).not.toContain(
       ALL_METHODS_CATEGORY,
     );
   });
 
-  it('leaves a real category first, so switching classes needs no scrolling', () => {
+  it('leaves a real category first, so switching classes needs no scrolling', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    expect(ctl.methodCategories(false)[0].category).toBe('accessing');
+    expect((await ctl.methodCategories(false))[0].category).toBe('accessing');
   });
 
-  it('loses no methods — every selector is still reachable under its own category', () => {
+  it('loses no methods — every selector is still reachable under its own category', async () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
 
-    const reachable = ctl
-      .methodCategories(false)
-      .flatMap((c) =>
-        (ctl.methodProvider.getChildren(c) as MethodItem[]).map((r) => r.info.selector),
-      )
-      .sort();
+    const reachable: string[] = [];
+    for (const c of await ctl.methodCategories(false)) {
+      const rows = (await ctl.methodProvider.getChildren(c)) as MethodItem[];
+      reachable.push(...rows.map((r) => r.info.selector));
+    }
+    reachable.sort();
 
     // Exactly what the pseudo-category used to enumerate, written out rather than
     // read back from selectorsFor: comparing that call against itself would pass

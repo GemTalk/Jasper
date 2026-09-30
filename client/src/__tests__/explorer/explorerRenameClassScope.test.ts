@@ -41,12 +41,12 @@ function makeController(): ExplorerController {
 beforeEach(() => {
   vi.clearAllMocks();
   showEditor.mockResolvedValue(undefined); // cancel right after capturing the scope
-  vi.mocked(queries.isKernelClass).mockReturnValue(false);
+  vi.mocked(queries.isKernelClass).mockResolvedValue(false);
 });
 
 describe('rename-class "This dictionary" scope follows the class, not the Explorer selection', () => {
   it("offers the class's own dictionary even when a different dictionary is selected", async () => {
-    homeDictOf.mockReturnValueOnce('DictA');
+    homeDictOf.mockResolvedValueOnce('DictA');
     const ctl = makeController();
     ctl.state.dictName = 'DictB'; // the Explorer selection — the WRONG dictionary
     ctl.state.dictIndex = 12;
@@ -61,7 +61,7 @@ describe('rename-class "This dictionary" scope follows the class, not the Explor
   });
 
   it('omits the "This dictionary" option when the class is not bound under its own name', async () => {
-    homeDictOf.mockReturnValueOnce('');
+    homeDictOf.mockResolvedValueOnce('');
     const ctl = makeController();
     ctl.state.dictName = 'DictB';
 

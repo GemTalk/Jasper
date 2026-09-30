@@ -35,146 +35,146 @@ const contextCalls = (): unknown[][] =>
 beforeEach(() => {
   vi.clearAllMocks();
   SESSION = { id: 1 } as ActiveSession;
-  vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+  vi.mocked(queries.tonelCapability).mockResolvedValue({ available: true, missing: [] });
 });
 
 describe('refreshTonelAvailability', () => {
-  it('turns the commands on when the stone has the machinery', () => {
-    expect(refreshTonelAvailability(SESSION)).toBe(true);
+  it('turns the commands on when the stone has the machinery', async () => {
+    expect(await refreshTonelAvailability(SESSION)).toBe(true);
     expect(contextCalls()).toContainEqual(['setContext', TONEL_AVAILABLE_CONTEXT, true]);
   });
 
-  it('turns them off when it does not', () => {
-    vi.mocked(queries.tonelCapability).mockReturnValue({
+  it('turns them off when it does not', async () => {
+    vi.mocked(queries.tonelCapability).mockResolvedValue({
       available: false,
       missing: ['RwTonelParser class>>on:filePath:forReader:'],
     });
-    expect(refreshTonelAvailability(SESSION)).toBe(false);
+    expect(await refreshTonelAvailability(SESSION)).toBe(false);
     expect(contextCalls()).toContainEqual(['setContext', TONEL_AVAILABLE_CONTEXT, false]);
   });
 
-  it('turns them off when there is no session, without asking the stone', () => {
-    expect(refreshTonelAvailability(undefined)).toBe(false);
+  it('turns them off when there is no session, without asking the stone', async () => {
+    expect(await refreshTonelAvailability(undefined)).toBe(false);
     expect(queries.tonelCapability).not.toHaveBeenCalled();
     expect(contextCalls()).toContainEqual(['setContext', TONEL_AVAILABLE_CONTEXT, false]);
   });
 
-  it('turns them off when the probe itself fails, rather than throwing', () => {
+  it('turns them off when the probe itself fails, rather than throwing', async () => {
     // This runs on every session connect. A probe that raises — a busy session, a
     // login that half-succeeded — must not take the connect path down with it.
-    vi.mocked(queries.tonelCapability).mockImplementation(() => {
+    vi.mocked(queries.tonelCapability).mockImplementation(async () => {
       throw new Error('session is busy');
     });
-    expect(refreshTonelAvailability(SESSION)).toBe(false);
+    expect(await refreshTonelAvailability(SESSION)).toBe(false);
     expect(contextCalls()).toContainEqual(['setContext', TONEL_AVAILABLE_CONTEXT, false]);
   });
 
-  it('always sets the key, so a `when` clause is never left reading undefined', () => {
+  it('always sets the key, so a `when` clause is never left reading undefined', async () => {
     // Until it is set, the key is undefined, which a `!` clause reads as false —
     // fine by luck, not by design. Set it on every refresh, both ways.
-    refreshTonelAvailability(undefined);
-    refreshTonelAvailability(SESSION);
+    await refreshTonelAvailability(undefined);
+    await refreshTonelAvailability(SESSION);
     expect(contextCalls()).toHaveLength(2);
   });
 });
 
 describe('requireTonelAvailable', () => {
-  it('allows a command through on a stone that supports it', () => {
-    expect(requireTonelAvailable(SESSION)).toBe(true);
+  it('allows a command through on a stone that supports it', async () => {
+    expect(await requireTonelAvailable(SESSION)).toBe(true);
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
-  it('refuses when the machinery is absent', () => {
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['a', 'b'] });
-    expect(requireTonelAvailable(SESSION)).toBe(false);
+  it('refuses when the machinery is absent', async () => {
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: false, missing: ['a', 'b'] });
+    expect(await requireTonelAvailable(SESSION)).toBe(false);
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
   });
 
-  it('says what is needed rather than just refusing', () => {
+  it('says what is needed rather than just refusing', async () => {
     // The palette route is how a user reaches a hidden command, so the refusal is
     // the only explanation they get. "Nothing happened" is not one.
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['a'] });
-    requireTonelAvailable(SESSION);
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: false, missing: ['a'] });
+    await requireTonelAvailable(SESSION);
     const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
     expect(text).toMatch(/rowan3/i);
     expect(text).toMatch(/3\.7\.5/);
   });
 
-  it('names the capabilities that are actually missing', () => {
+  it('names the capabilities that are actually missing', async () => {
     // The probe answers `missing` specifically so a refusal can distinguish "Rowan
     // is not here at all" from "Rowan changed one selector under us" — only the
     // second is a bug worth filing, and they read identically without the names.
-    vi.mocked(queries.tonelCapability).mockReturnValue({
+    vi.mocked(queries.tonelCapability).mockResolvedValue({
       available: false,
       missing: ['Class>>_rwOptionsArray'],
     });
-    requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
     const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
     expect(text).toContain('Class>>_rwOptionsArray');
   });
 
-  it('caps the list on a stone where everything is absent', () => {
+  it('caps the list on a stone where everything is absent', async () => {
     // On a base extent every capability is missing; naming all of them makes the
     // warning unreadable and says nothing the first few do not.
-    vi.mocked(queries.tonelCapability).mockReturnValue({
+    vi.mocked(queries.tonelCapability).mockResolvedValue({
       available: false,
       missing: ['Cap1>>one', 'Cap2>>two', 'Cap3>>three', 'Cap4>>four', 'Cap5>>five'],
     });
-    requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
     const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
     expect(text).toContain('Cap1>>one, Cap2>>two, Cap3>>three');
     expect(text).toContain('2 more');
     expect(text).not.toContain('Cap4>>four');
   });
 
-  it('does not claim anything is missing when the probe itself failed', () => {
+  it('does not claim anything is missing when the probe itself failed', async () => {
     // A probe that raised answers no names; inventing "Missing: " there would be a
     // false diagnosis.
-    vi.mocked(queries.tonelCapability).mockImplementation(() => {
+    vi.mocked(queries.tonelCapability).mockImplementation(async () => {
       throw new Error('session busy');
     });
-    requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
     const text = String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]);
     expect(text).not.toContain('Missing:');
   });
 
-  it('refuses without a session', () => {
-    expect(requireTonelAvailable(undefined)).toBe(false);
+  it('refuses without a session', async () => {
+    expect(await requireTonelAvailable(undefined)).toBe(false);
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
   });
 });
 
 describe('the capability probe is not repeated needlessly', () => {
-  it('asks the stone once per session, not once per command', () => {
+  it('asks the stone once per session, not once per command', async () => {
     // The probe is a ten-way doit and the guard runs on every Tonel command —
     // once per FILE in a multi-file file-in.
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: true, missing: [] });
 
-    requireTonelAvailable(SESSION);
-    requireTonelAvailable(SESSION);
-    requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
+    await requireTonelAvailable(SESSION);
 
     expect(queries.tonelCapability).toHaveBeenCalledTimes(1);
   });
 
-  it('asks again after a refresh, which is when the answer could differ', () => {
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
-    requireTonelAvailable(SESSION);
-    refreshTonelAvailability(SESSION);
-    requireTonelAvailable(SESSION);
+  it('asks again after a refresh, which is when the answer could differ', async () => {
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: true, missing: [] });
+    await requireTonelAvailable(SESSION);
+    await refreshTonelAvailability(SESSION);
+    await requireTonelAvailable(SESSION);
 
     // Once for the first guard, once for the refresh itself; the guard after it
     // reuses the refresh's answer.
     expect(queries.tonelCapability).toHaveBeenCalledTimes(2);
   });
 
-  it('does not cache a probe that threw, so one busy moment is not permanent', () => {
-    vi.mocked(queries.tonelCapability).mockImplementationOnce(() => {
+  it('does not cache a probe that threw, so one busy moment is not permanent', async () => {
+    vi.mocked(queries.tonelCapability).mockImplementationOnce(async () => {
       throw new Error('session busy');
     });
-    expect(requireTonelAvailable(SESSION)).toBe(false);
+    expect(await requireTonelAvailable(SESSION)).toBe(false);
 
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
-    expect(requireTonelAvailable(SESSION)).toBe(true);
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: true, missing: [] });
+    expect(await requireTonelAvailable(SESSION)).toBe(true);
   });
 });

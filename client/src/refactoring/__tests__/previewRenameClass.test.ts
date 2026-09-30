@@ -95,10 +95,10 @@ describe('previewRenameClass queries', () => {
     expect(execute.mock.calls[0][1]).toContain("applyForToken: 'tok' deselected: #('3' '7')");
   });
 
-  it('builds a clear query that drops the token', () => {
+  it('builds a clear query that drops the token', async () => {
     const execute = vi.fn().mockReturnValue('ok');
 
-    clearRenameClassPreview(execute, 'tok');
+    await clearRenameClassPreview(execute, 'tok');
 
     expect(execute.mock.calls[0][0]).toContain("clearToken: 'tok'");
   });

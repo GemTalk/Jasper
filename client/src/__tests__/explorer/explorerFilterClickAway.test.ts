@@ -65,8 +65,8 @@ beforeEach(() => {
 
 describe('Explorer filter input: clicking a filtered row', () => {
   /** The rows the Dictionaries pane is currently showing (minus the filter chip). */
-  const rows = (ctl: ExplorerController): (string | undefined)[] =>
-    (ctl.dictProvider.getChildren() as { label?: string }[])
+  const rows = async (ctl: ExplorerController): Promise<(string | undefined)[]> =>
+    ((await ctl.dictProvider.getChildren()) as { label?: string }[])
       .filter((r) => !(r instanceof FilterChipItem))
       .map((r) => r.label);
 
@@ -76,12 +76,12 @@ describe('Explorer filter input: clicking a filtered row', () => {
     await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
-    expect(rows(ctl)).toEqual(['Globals']);
+    expect(await rows(ctl)).toEqual(['Globals']);
 
     box.__clickAway(); // the mouse-down on `Globals`, before the click resolves
 
     // The bug: this used to be back to the full list, so the click landed on `UserGlobals`.
-    expect(rows(ctl)).toEqual(['Globals']);
+    expect(await rows(ctl)).toEqual(['Globals']);
     expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 

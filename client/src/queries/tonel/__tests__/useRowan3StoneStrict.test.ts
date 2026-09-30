@@ -27,7 +27,7 @@ afterAll(() => {
 
 describe('useRowan3Stone — the machinery is absent', () => {
   beforeAll(() => {
-    vi.mocked(tonelCapability).mockReturnValue({ available: false, missing: ['Rw>>thing'] });
+    vi.mocked(tonelCapability).mockResolvedValue({ available: false, missing: ['Rw>>thing'] });
   });
   const gate = useRowan3Stone(executor);
 
@@ -53,7 +53,7 @@ describe('useRowan3Stone — the machinery is absent', () => {
 
 describe('useRowan3Stone — the machinery is present', () => {
   beforeAll(() => {
-    vi.mocked(tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(tonelCapability).mockResolvedValue({ available: true, missing: [] });
   });
   const gate = useRowan3Stone(executor);
 

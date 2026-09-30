@@ -71,8 +71,8 @@ function dispatchedCommand(): string | undefined {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(queries.renameTemporaryDeclineReason).mockResolvedValue('not a temporary');
-  vi.mocked(queries.getInstVarNames).mockReturnValue([]);
-  vi.mocked(queries.getVisibleClassVarNames).mockReturnValue([]);
+  vi.mocked(queries.getInstVarNames).mockResolvedValue([]);
+  vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue([]);
 });
 
 describe('unified rename dispatcher', () => {
@@ -108,7 +108,7 @@ describe('unified rename dispatcher', () => {
 
   it('renames an instance variable when the word is one (including inherited)', async () => {
     installEditor(onCount());
-    vi.mocked(queries.getInstVarNames).mockReturnValue(['count']); // inherited/own ivar
+    vi.mocked(queries.getInstVarNames).mockResolvedValue(['count']); // inherited/own ivar
 
     await renameAtCursorCommand(sessions, noSelector, onCount());
 
@@ -117,7 +117,7 @@ describe('unified rename dispatcher', () => {
 
   it('renames a class variable when the word is one', async () => {
     installEditor(onCount());
-    vi.mocked(queries.getVisibleClassVarNames).mockReturnValue(['count']);
+    vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue(['count']);
 
     await renameAtCursorCommand(sessions, noSelector, onCount());
 
@@ -127,7 +127,7 @@ describe('unified rename dispatcher', () => {
   it('prefers a temporary over an instance variable of the same name (shadowing)', async () => {
     installEditor(onCount());
     vi.mocked(queries.renameTemporaryDeclineReason).mockResolvedValue(''); // a temp named count
-    vi.mocked(queries.getInstVarNames).mockReturnValue(['count']); // an ivar also named count
+    vi.mocked(queries.getInstVarNames).mockResolvedValue(['count']); // an ivar also named count
 
     await renameAtCursorCommand(sessions, noSelector, onCount());
 
@@ -160,10 +160,10 @@ describe('unified rename dispatcher', () => {
 
   it('still renames a class variable when the instance-variable probe fails', async () => {
     installEditor(onCount());
-    vi.mocked(queries.getInstVarNames).mockImplementation(() => {
+    vi.mocked(queries.getInstVarNames).mockImplementation(async () => {
       throw new Error('GCI hiccup');
     });
-    vi.mocked(queries.getVisibleClassVarNames).mockReturnValue(['count']);
+    vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue(['count']);
 
     await renameAtCursorCommand(sessions, noSelector, onCount());
 
@@ -184,7 +184,7 @@ describe('unified rename dispatcher', () => {
 
   it('refuses rather than defaulting to Rename Class when a variable probe fails and nothing matched', async () => {
     installEditor(onCount());
-    vi.mocked(queries.getVisibleClassVarNames).mockImplementation(() => {
+    vi.mocked(queries.getVisibleClassVarNames).mockImplementation(async () => {
       throw new Error('GCI hiccup');
     });
 

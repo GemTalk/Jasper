@@ -106,7 +106,7 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   // Probe first so "nothing to undo" is a plain, immediate refusal rather than an
   // empty preview panel. This also re-publishes the context key, which is how a menu
   // item left stale by a reconnect corrects itself.
-  const status = checkRefactoringUndoAvailable(session);
+  const status = await checkRefactoringUndoAvailable(session);
   if (!status.available) {
     // Two different facts, and only one of them is the user's to fix: nothing has been
     // recorded yet, or this engine cannot record anything at all.
@@ -120,9 +120,9 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   }
 
   const token = `undo_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearUndoRefactoringPreview(session, token);
+      await queries.clearUndoRefactoringPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -137,13 +137,13 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
     void vscode.window.showErrorMessage(
       `Undo preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return;
   }
 
   if (start.total === 0) {
     refuse('There is nothing left to undo — the recorded refactoring changed nothing.');
-    safeClear();
+    await safeClear();
     return;
   }
 
@@ -154,7 +154,7 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
       ),
     apply: async (deselected) =>
       parseApplyResult(await queries.applyUndoRefactoring(session, token, deselected)),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) return;
 

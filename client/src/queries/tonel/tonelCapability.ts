@@ -140,7 +140,7 @@ function parse(capability: string): { global: string; isMeta: boolean; selector:
  * different problem from "this is a base extent", and a user staring at a
  * hidden menu deserves to be able to tell them apart.
  */
-export function tonelCapability(execute: QueryExecutor): TonelCapabilityResult {
+export async function tonelCapability(execute: QueryExecutor): Promise<TonelCapabilityResult> {
   // `canUnderstand:` on the metaclass answers whether the CLASS responds, which
   // is what a `Foo class>>bar` capability means; on the class itself it answers
   // whether its instances do.
@@ -162,7 +162,7 @@ ws contents`;
   // A blank line is not a missing capability: GCI string answers routinely carry
   // a trailing newline, and treating that as a name would hide the feature on a
   // perfectly good stone.
-  const missing = splitLines(execute(code))
+  const missing = splitLines(await execute(code))
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   return { available: missing.length === 0, missing };

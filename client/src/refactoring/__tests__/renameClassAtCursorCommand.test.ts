@@ -62,7 +62,7 @@ beforeEach(() => {
 describe('rename-class at cursor', () => {
   it('starts the class-rename flow for a token that resolves to a class', async () => {
     installEditor(onPath());
-    vi.mocked(queries.resolveClassReference).mockReturnValue({ className: 'Path', dictIndex: 2 });
+    vi.mocked(queries.resolveClassReference).mockResolvedValue({ className: 'Path', dictIndex: 2 });
     const beginRename = vi.fn(async () => undefined);
 
     await renameClassAtCursorCommand(sessions, beginRename, onPath());
@@ -72,7 +72,7 @@ describe('rename-class at cursor', () => {
 
   it('resolves across the whole symbol list when the class is not bound by name', async () => {
     installEditor(onPath());
-    vi.mocked(queries.resolveClassReference).mockReturnValue({ className: 'Path', dictIndex: 0 });
+    vi.mocked(queries.resolveClassReference).mockResolvedValue({ className: 'Path', dictIndex: 0 });
     const beginRename = vi.fn(async () => undefined);
 
     await renameClassAtCursorCommand(sessions, beginRename, onPath());
@@ -82,7 +82,7 @@ describe('rename-class at cursor', () => {
 
   it('declines a token that is not a class', async () => {
     installEditor(onPath());
-    vi.mocked(queries.resolveClassReference).mockReturnValue(undefined);
+    vi.mocked(queries.resolveClassReference).mockResolvedValue(undefined);
     const beginRename = vi.fn(async () => undefined);
 
     await renameClassAtCursorCommand(sessions, beginRename, onPath());

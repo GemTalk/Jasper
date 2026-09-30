@@ -161,18 +161,18 @@ export function parseConfigReport(raw: string): ConfigEntry[] {
   return entries;
 }
 
-function runReport(execute: QueryExecutor, code: string): ConfigEntry[] {
-  return parseConfigReport(execute(code));
+async function runReport(execute: QueryExecutor, code: string): Promise<ConfigEntry[]> {
+  return parseConfigReport(await execute(code));
 }
 
 /** The stone's current configuration, sorted by key. */
-export function stoneConfiguration(execute: QueryExecutor): ConfigEntry[] {
-  return runReport(execute, buildStoneReportCode());
+export async function stoneConfiguration(execute: QueryExecutor): Promise<ConfigEntry[]> {
+  return await runReport(execute, buildStoneReportCode());
 }
 
 /** The connected gem's current configuration, sorted by key. */
-export function gemConfiguration(execute: QueryExecutor): ConfigEntry[] {
-  return runReport(execute, buildGemReportCode());
+export async function gemConfiguration(execute: QueryExecutor): Promise<ConfigEntry[]> {
+  return await runReport(execute, buildGemReportCode());
 }
 
 /**
@@ -183,10 +183,10 @@ export function gemConfiguration(execute: QueryExecutor): ConfigEntry[] {
  * marking a stone parameter runtime-editable and letting the user find out on
  * Set. Answers false when the check itself cannot be made.
  */
-export function sessionIsSystemUser(execute: QueryExecutor): boolean {
+export async function sessionIsSystemUser(execute: QueryExecutor): Promise<boolean> {
   const code =
     "([System myUserProfile == (AllUsers userWithId: 'SystemUser')] on: Error do: [:e | false]) printString";
-  return execute(code).trim() === 'true';
+  return (await execute(code)).trim() === 'true';
 }
 
 // A key is only ever formed from the report's own keys, but it is still spliced
@@ -285,14 +285,14 @@ export interface SetConfigResult {
  * reason (a SecurityError for a stone key a DataCurator may not touch, a
  * "may not be changed after login" for a frozen gem key, and so on).
  */
-export function setConfiguration(
+export async function setConfiguration(
   execute: QueryExecutor,
   scope: ConfigScope,
   key: string,
   type: ConfigValueType,
   value: string,
-): SetConfigResult {
-  const result = execute(buildSetConfigCode(scope, key, type, value)).trim();
+): Promise<SetConfigResult> {
+  const result = (await execute(buildSetConfigCode(scope, key, type, value))).trim();
   if (result === 'OK') return { ok: true };
   const message = result.startsWith(ERROR_SENTINEL)
     ? result.slice(ERROR_SENTINEL.length).trim()

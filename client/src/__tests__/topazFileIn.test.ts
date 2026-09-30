@@ -148,7 +148,7 @@ describe('fileInClass', () => {
     (queries.compileMethod as ReturnType<typeof vi.fn>).mockReturnValue(1000n);
   });
 
-  it('compiles class definition from doit block', () => {
+  it('compiles class definition from doit block', async () => {
     const text = `run
 Object subclass: 'MyClass'
   instVarNames: #()
@@ -158,7 +158,7 @@ Object subclass: 'MyClass'
 true
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledClassDef).toBe(true);
@@ -168,14 +168,14 @@ true
     );
   });
 
-  it('compiles instance methods with correct category', () => {
+  it('compiles instance methods with correct category', async () => {
     const text = `category: 'accessing'
 method: MyClass
 name
   ^ name
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(1);
@@ -189,7 +189,7 @@ name
     );
   });
 
-  it("compiles into Bob''s methods, un-doubling the quote as topaz wrote it", () => {
+  it("compiles into Bob''s methods, un-doubling the quote as topaz wrote it", async () => {
     const text = `category: 'Bob''s methods'
 method: MyClass
 name
@@ -197,7 +197,7 @@ name
 %`;
     const session = createMockSession();
 
-    fileInClass(session, text);
+    await fileInClass(session, text);
 
     expect(queries.compileMethod).toHaveBeenCalledWith(
       session,
@@ -209,14 +209,14 @@ name
     );
   });
 
-  it('compiles class methods with isMeta=true', () => {
+  it('compiles class methods with isMeta=true', async () => {
     const text = `category: 'creation'
 classmethod: MyClass
 new
   ^ super new initialize
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(1);
@@ -230,7 +230,7 @@ new
     );
   });
 
-  it('tracks category changes across multiple method groups', () => {
+  it('tracks category changes across multiple method groups', async () => {
     const text = `category: 'accessing'
 method: MyClass
 name
@@ -242,7 +242,7 @@ printOn: aStream
   aStream nextPutAll: name
 %`;
     const session = createMockSession();
-    fileInClass(session, text);
+    await fileInClass(session, text);
 
     const mockCompile = queries.compileMethod as ReturnType<typeof vi.fn>;
     expect(mockCompile).toHaveBeenCalledTimes(2);
@@ -252,13 +252,13 @@ printOn: aStream
     expect(mockCompile.mock.calls[1][3]).toBe('printing');
   });
 
-  it('uses default category when none specified', () => {
+  it('uses default category when none specified', async () => {
     const text = `method: MyClass
 foo
   ^ 42
 %`;
     const session = createMockSession();
-    fileInClass(session, text);
+    await fileInClass(session, text);
 
     expect(queries.compileMethod).toHaveBeenCalledWith(
       session,
@@ -270,7 +270,7 @@ foo
     );
   });
 
-  it('returns errors with line numbers on compilation failure', () => {
+  it('returns errors with line numbers on compilation failure', async () => {
     const mockCompile = queries.compileMethod as ReturnType<typeof vi.fn>;
     mockCompile.mockImplementation(() => {
       throw new BrowserQueryError('Syntax error', 1001);
@@ -282,7 +282,7 @@ badMethod
   ^ 1 +
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
@@ -291,7 +291,7 @@ badMethod
     expect(result.errors[0].className).toBe('MyClass');
   });
 
-  it('continues compiling after a method fails (partial success)', () => {
+  it('continues compiling after a method fails (partial success)', async () => {
     const mockCompile = queries.compileMethod as ReturnType<typeof vi.fn>;
     mockCompile.mockImplementationOnce(() => {
       throw new BrowserQueryError('Error in first', 1001);
@@ -308,55 +308,55 @@ good
   ^ 42
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(result.compiledMethods).toBe(1);
   });
 
-  it('records error when method region has no class name', () => {
+  it('records error when method region has no class name', async () => {
     // Unusual but possible if someone edits the method: line
     const text = `method:
 foo
   ^ 42
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].message).toContain('missing class name');
   });
 
-  it('handles empty file gracefully', () => {
+  it('handles empty file gracefully', async () => {
     const session = createMockSession();
-    const result = fileInClass(session, '');
+    const result = await fileInClass(session, '');
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(0);
     expect(result.compiledClassDef).toBe(false);
   });
 
-  it('ignores non-class-definition doit blocks', () => {
+  it('ignores non-class-definition doit blocks', async () => {
     const text = `run
 true
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledClassDef).toBe(false);
     expect(queries.compileClassDefinition).not.toHaveBeenCalled();
   });
 
-  it('passes environmentId to compileMethod', () => {
+  it('passes environmentId to compileMethod', async () => {
     const text = `method: MyClass
 foo
   ^ 42
 %`;
     const session = createMockSession();
-    fileInClass(session, text, 2);
+    await fileInClass(session, text, 2);
 
     expect(queries.compileMethod).toHaveBeenCalledWith(
       session,
@@ -368,7 +368,7 @@ foo
     );
   });
 
-  it('compiles a complete class with definition and methods', () => {
+  it('compiles a complete class with definition and methods', async () => {
     const text = `run
 Object subclass: 'MyClass'
   instVarNames: #(name)
@@ -392,7 +392,7 @@ name: aString
   name := aString
 %`;
     const session = createMockSession();
-    const result = fileInClass(session, text);
+    const result = await fileInClass(session, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledClassDef).toBe(true);
@@ -465,27 +465,27 @@ describe('fileInChangedRegions', () => {
     (queries.deleteMethod as ReturnType<typeof vi.fn>).mockImplementation(() => {});
   });
 
-  it('falls back to full fileInClass when oldContent is undefined', () => {
+  it('falls back to full fileInClass when oldContent is undefined', async () => {
     const text = `method: MyClass
 foo
   ^ 42
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, undefined, text);
+    const result = await fileInChangedRegions(session, undefined, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(1);
     expect(queries.compileMethod).toHaveBeenCalledTimes(1);
   });
 
-  it('skips compilation when nothing changed', () => {
+  it('skips compilation when nothing changed', async () => {
     const text = `category: 'accessing'
 method: MyClass
 name
   ^ name
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, text, text);
+    const result = await fileInChangedRegions(session, text, text);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(0);
@@ -493,7 +493,7 @@ name
     expect(queries.compileMethod).not.toHaveBeenCalled();
   });
 
-  it('only compiles the changed method', () => {
+  it('only compiles the changed method', async () => {
     const oldText = `category: 'accessing'
 method: MyClass
 name
@@ -513,7 +513,7 @@ age
   ^ age
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, oldText, newText);
+    const result = await fileInChangedRegions(session, oldText, newText);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(1);
@@ -528,7 +528,7 @@ age
     );
   });
 
-  it('compiles method when category changes', () => {
+  it('compiles method when category changes', async () => {
     const oldText = `category: 'accessing'
 method: MyClass
 name
@@ -540,7 +540,7 @@ name
   ^ name
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, oldText, newText);
+    const result = await fileInChangedRegions(session, oldText, newText);
 
     expect(result.success).toBe(true);
     expect(result.compiledMethods).toBe(1);
@@ -554,7 +554,7 @@ name
     );
   });
 
-  it('deletes methods removed from file when no errors', () => {
+  it('deletes methods removed from file when no errors', async () => {
     const oldText = `category: 'accessing'
 method: MyClass
 name
@@ -570,14 +570,14 @@ name
   ^ name
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, oldText, newText);
+    const result = await fileInChangedRegions(session, oldText, newText);
 
     expect(result.success).toBe(true);
     expect(result.deletedMethods).toBe(1);
     expect(queries.deleteMethod).toHaveBeenCalledWith(session, 'MyClass', false, 'age');
   });
 
-  it('does not delete methods when there are compilation errors', () => {
+  it('does not delete methods when there are compilation errors', async () => {
     (queries.compileMethod as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new BrowserQueryError('Syntax error', 1001);
     });
@@ -598,14 +598,14 @@ name
   ^ 1 +
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, oldText, newText);
+    const result = await fileInChangedRegions(session, oldText, newText);
 
     expect(result.success).toBe(false);
     expect(result.deletedMethods).toBe(0);
     expect(queries.deleteMethod).not.toHaveBeenCalled();
   });
 
-  it('compiles new class definition when changed', () => {
+  it('compiles new class definition when changed', async () => {
     const oldText = `run
 Object subclass: 'MyClass'
   instVarNames: #()
@@ -615,14 +615,14 @@ Object subclass: 'MyClass'
   instVarNames: #(name)
 %`;
     const session = createMockSession();
-    const result = fileInChangedRegions(session, oldText, newText);
+    const result = await fileInChangedRegions(session, oldText, newText);
 
     expect(result.success).toBe(true);
     expect(result.compiledClassDef).toBe(true);
     expect(queries.compileClassDefinition).toHaveBeenCalledTimes(1);
   });
 
-  it('skips class definition when unchanged', () => {
+  it('skips class definition when unchanged', async () => {
     const classDef = `run
 Object subclass: 'MyClass'
   instVarNames: #()
@@ -638,7 +638,7 @@ foo
   ^ 2
 %`;
     const session = createMockSession();
-    fileInChangedRegions(session, oldText, newText);
+    await fileInChangedRegions(session, oldText, newText);
 
     expect(queries.compileClassDefinition).not.toHaveBeenCalled();
   });

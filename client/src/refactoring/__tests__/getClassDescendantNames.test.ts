@@ -2,20 +2,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { getClassDescendantNames } from '../queries/getClassDescendantNames';
 
 describe('getClassDescendantNames', () => {
-  it('scopes the class lookup through the dictionary index', () => {
+  it('scopes the class lookup through the dictionary index', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    getClassDescendantNames(exec, 'Mid', 2);
+    await getClassDescendantNames(exec, 'Mid', 2);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("(System myUserProfile symbolList at: 2) at: #'Mid'");
     expect(code).toContain('subclassesOf:');
   });
 
-  it('resolves each descendant to its binding dictionary by object identity', () => {
+  it('resolves each descendant to its binding dictionary by object identity', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    getClassDescendantNames(exec, 'Mid');
+    await getClassDescendantNames(exec, 'Mid');
 
     // An IdentityDictionary keyed on the class OBJECT (not its name) is what makes a
     // shadowed subclass name resolve to its own dictionary rather than the first match.
@@ -24,14 +24,14 @@ describe('getClassDescendantNames', () => {
     expect(code).toContain('isBehavior');
   });
 
-  it('parses each descendant with its parent and binding dictionary', () => {
+  it('parses each descendant with its parent and binding dictionary', async () => {
     const exec = vi
       .fn()
       .mockReturnValue(
         'LeafA\tMid\t1\tUserGlobals\nLeafB\tMid\t3\tOther\nGrand\tLeafA\t1\tUserGlobals\n',
       );
 
-    const result = getClassDescendantNames(exec, 'Mid');
+    const result = await getClassDescendantNames(exec, 'Mid');
 
     expect(result).toEqual([
       { className: 'LeafA', parentName: 'Mid', dictIndex: 1, dictName: 'UserGlobals' },
@@ -40,24 +40,24 @@ describe('getClassDescendantNames', () => {
     ]);
   });
 
-  it('reports dictIndex 0 / empty dictName for a descendant bound in no dictionary', () => {
+  it('reports dictIndex 0 / empty dictName for a descendant bound in no dictionary', async () => {
     const exec = vi.fn().mockReturnValue('Unbound\tMid\t0\t\n');
 
-    expect(getClassDescendantNames(exec, 'Mid')).toEqual([
+    expect(await getClassDescendantNames(exec, 'Mid')).toEqual([
       { className: 'Unbound', parentName: 'Mid', dictIndex: 0, dictName: '' },
     ]);
   });
 
-  it('returns an empty list for a class with no descendants', () => {
+  it('returns an empty list for a class with no descendants', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    expect(getClassDescendantNames(exec, 'Leaf')).toEqual([]);
+    expect(await getClassDescendantNames(exec, 'Leaf')).toEqual([]);
   });
 
-  it('tolerates missing trailing fields', () => {
+  it('tolerates missing trailing fields', async () => {
     const exec = vi.fn().mockReturnValue('Orphan\n');
 
-    expect(getClassDescendantNames(exec, 'Root')).toEqual([
+    expect(await getClassDescendantNames(exec, 'Root')).toEqual([
       { className: 'Orphan', parentName: '', dictIndex: 0, dictName: '' },
     ]);
   });

@@ -115,7 +115,7 @@ export async function uninstallEnhancedInspectorSupport(
   onProgress('Removing enhanced inspector support…', 60);
   await yieldToEventLoop();
   try {
-    executeFetchString(session, REMOVAL_SNIPPET);
+    await executeFetchString(session, REMOVAL_SNIPPET);
   } catch (e: unknown) {
     safeAbort(session);
     return {
@@ -141,7 +141,7 @@ export async function uninstallEnhancedInspectorSupport(
 
   onProgress('Verifying…', 20);
   await yieldToEventLoop();
-  const stillPresent = isEnhancedInspectorInstalled(session);
+  const stillPresent = await isEnhancedInspectorInstalled(session);
   return {
     success: !stillPresent,
     committed: true,

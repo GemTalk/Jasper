@@ -8,10 +8,10 @@ import { addClassVariable } from '../queries/addClassVariable';
  */
 
 describe('add-class-variable query', () => {
-  it('adds the class variable via addClassVarName: on the dict-resolved class', () => {
+  it('adds the class variable via addClassVarName: on the dict-resolved class', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    const result = addClassVariable(exec, 'Foo', 'Registry', 3);
+    const result = await addClassVariable(exec, 'Foo', 'Registry', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("addClassVarName: 'Registry'");
@@ -19,16 +19,16 @@ describe('add-class-variable query', () => {
     expect(result).toBe('ok');
   });
 
-  it('answers no-class when the class cannot be resolved', () => {
+  it('answers no-class when the class cannot be resolved', async () => {
     const exec = vi.fn().mockReturnValue('no-class');
 
-    expect(addClassVariable(exec, 'Missing', 'Registry')).toBe('no-class');
+    expect(await addClassVariable(exec, 'Missing', 'Registry')).toBe('no-class');
   });
 
-  it("escapes a quote in the variable name so the statement can't be broken out of", () => {
+  it("escapes a quote in the variable name so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    addClassVariable(exec, 'Foo', "b'r", 3);
+    await addClassVariable(exec, 'Foo', "b'r", 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("addClassVarName: 'b''r'");

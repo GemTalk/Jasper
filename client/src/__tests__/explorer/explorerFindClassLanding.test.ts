@@ -92,14 +92,14 @@ function openedUris(): string[] {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetConfig();
-  vi.mocked(getAllClassNames).mockReturnValue(SHADOWED);
+  vi.mocked(getAllClassNames).mockResolvedValue(SHADOWED);
   // Both Account classes carry the same category, so the pane cascade behaves
   // identically whichever one is landed on — the dictionary is the only thing
   // that distinguishes them, which is what these tests are about.
-  vi.mocked(getClassesWithCategory).mockReturnValue([
+  vi.mocked(getClassesWithCategory).mockResolvedValue([
     { className: 'Account', category: 'Finance', hasComment: false },
   ]);
-  vi.mocked(getClassEnvironments).mockReturnValue([
+  vi.mocked(getClassEnvironments).mockResolvedValue([
     { isMeta: false, envId: 0, category: 'accessing', selectors: ['balance'] },
   ]);
   vi.mocked(vscode.window.showWarningMessage).mockReset();
@@ -129,7 +129,7 @@ describe('findClass with a dictionary and a method', () => {
   it.each(Object.entries(dictionaryMisses))(
     'warns and falls back to another dictionary when the one it was given %s',
     async (_case, missing) => {
-      vi.mocked(getAllClassNames).mockReturnValue([
+      vi.mocked(getAllClassNames).mockResolvedValue([
         ...SHADOWED,
         { className: 'Invoice', dictName: 'Finance', dictIndex: 6 },
       ]);
@@ -174,7 +174,7 @@ describe('findClass with a dictionary and a method', () => {
   });
 
   it('warns instead of opening when the class does not implement the method', async () => {
-    vi.mocked(getClassEnvironments).mockReturnValue([]); // no selectors on either side
+    vi.mocked(getClassEnvironments).mockResolvedValue([]); // no selectors on either side
     const ctl = makeController();
 
     await ctl.findClass('Account', SESSION_ID, 'Legacy', { selector: 'balance', isMeta: false });
@@ -190,7 +190,7 @@ describe('findClass with a dictionary and a method', () => {
     // revealClass warns and leaves state untouched when a query fails; reading
     // the method list then would read the PREVIOUS class's selectors and open a
     // method of whatever the panes were showing before.
-    vi.mocked(getClassEnvironments).mockImplementation(() => {
+    vi.mocked(getClassEnvironments).mockImplementation(async () => {
       throw new Error('class not resolvable in that dictionary');
     });
     const ctl = makeController();

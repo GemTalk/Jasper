@@ -74,15 +74,15 @@ describe('GemStoneCompletionProvider', () => {
     mockGetAllClassNames.mockReset();
     mockGetInstVarNames.mockReset();
     mockGetAllSelectors.mockReset();
-    mockGetAllClassNames.mockReturnValue([]);
-    mockGetInstVarNames.mockReturnValue([]);
-    mockGetAllSelectors.mockReturnValue([]);
+    mockGetAllClassNames.mockResolvedValue([]);
+    mockGetInstVarNames.mockResolvedValue([]);
+    mockGetAllSelectors.mockResolvedValue([]);
   });
 
   describe('with no session', () => {
-    it('returns empty when no session selected', () => {
+    it('returns empty when no session selected', async () => {
       const provider = new GemStoneCompletionProvider(makeSessionManager(false));
-      const result = provider.provideCompletionItems(
+      const result = await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
       );
       expect(result).toEqual([]);
@@ -90,13 +90,13 @@ describe('GemStoneCompletionProvider', () => {
   });
 
   describe('class name completions', () => {
-    it('returns class names from getAllClassNames', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('returns class names from getAllClassNames', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
         { dictIndex: 1, dictName: 'Globals', className: 'String' },
       ]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       const classItems = result.filter((i) => i.kind === CompletionItemKind.Class);
       expect(classItems).toHaveLength(2);
@@ -105,13 +105,13 @@ describe('GemStoneCompletionProvider', () => {
       expect(classItems[1].label).toBe('String');
     });
 
-    it('deduplicates class names across dictionaries', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('deduplicates class names across dictionaries', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
         { dictIndex: 2, dictName: 'UserGlobals', className: 'Array' },
       ]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       const classItems = result.filter((i) => i.kind === CompletionItemKind.Class);
       expect(classItems).toHaveLength(1);
@@ -119,12 +119,12 @@ describe('GemStoneCompletionProvider', () => {
       expect(classItems[0].detail).toBe('Globals');
     });
 
-    it('provides class names for file:// documents', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('provides class names for file:// documents', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       expect(result).toHaveLength(1);
       expect(result[0].kind).toBe(CompletionItemKind.Class);
@@ -132,11 +132,11 @@ describe('GemStoneCompletionProvider', () => {
   });
 
   describe('instance variable completions', () => {
-    it('returns inst vars for gemstone:// documents', () => {
-      mockGetAllClassNames.mockReturnValue([]);
-      mockGetInstVarNames.mockReturnValue(['name', 'age', 'email']);
+    it('returns inst vars for gemstone:// documents', async () => {
+      mockGetAllClassNames.mockResolvedValue([]);
+      mockGetInstVarNames.mockResolvedValue(['name', 'age', 'email']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(
+      const result = await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/Person/instance/accessing/name'),
       );
 
@@ -148,10 +148,10 @@ describe('GemStoneCompletionProvider', () => {
       expect(fieldItems[2].label).toBe('email');
     });
 
-    it('does not provide inst vars for file:// documents', () => {
-      mockGetInstVarNames.mockReturnValue(['name']);
+    it('does not provide inst vars for file:// documents', async () => {
+      mockGetInstVarNames.mockResolvedValue(['name']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       const fieldItems = result.filter((i) => i.kind === CompletionItemKind.Field);
       expect(fieldItems).toHaveLength(0);
@@ -160,11 +160,11 @@ describe('GemStoneCompletionProvider', () => {
   });
 
   describe('selector completions', () => {
-    it('returns selectors for gemstone:// documents', () => {
-      mockGetAllClassNames.mockReturnValue([]);
-      mockGetAllSelectors.mockReturnValue(['size', 'at:', 'at:put:']);
+    it('returns selectors for gemstone:// documents', async () => {
+      mockGetAllClassNames.mockResolvedValue([]);
+      mockGetAllSelectors.mockResolvedValue(['size', 'at:', 'at:put:']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(
+      const result = await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
       );
 
@@ -175,10 +175,10 @@ describe('GemStoneCompletionProvider', () => {
       expect(methodItems[2].label).toBe('at:put:');
     });
 
-    it('does not provide selectors for file:// documents', () => {
-      mockGetAllSelectors.mockReturnValue(['size']);
+    it('does not provide selectors for file:// documents', async () => {
+      mockGetAllSelectors.mockResolvedValue(['size']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       const methodItems = result.filter((i) => i.kind === CompletionItemKind.Method);
       expect(methodItems).toHaveLength(0);
@@ -187,63 +187,63 @@ describe('GemStoneCompletionProvider', () => {
   });
 
   describe('caching', () => {
-    it('caches class names across calls', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('caches class names across calls', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      provider.provideCompletionItems(makeDocument('file:///test.tpz'));
-      provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
     });
 
-    it('caches inst vars and selectors per class', () => {
-      mockGetInstVarNames.mockReturnValue(['x']);
-      mockGetAllSelectors.mockReturnValue(['size']);
+    it('caches inst vars and selectors per class', async () => {
+      mockGetInstVarNames.mockResolvedValue(['x']);
+      mockGetAllSelectors.mockResolvedValue(['size']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
       const doc = makeDocument('gemstone://1/Globals/Array/instance/accessing/size');
-      provider.provideCompletionItems(doc);
-      provider.provideCompletionItems(doc);
+      await provider.provideCompletionItems(doc);
+      await provider.provideCompletionItems(doc);
 
       expect(mockGetInstVarNames).toHaveBeenCalledTimes(1);
       expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
     });
 
-    it('invalidateCache forces re-query', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('invalidateCache forces re-query', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
       provider.invalidateCache();
-      provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       expect(mockGetAllClassNames).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('error handling', () => {
-    it('returns empty when getAllClassNames throws', () => {
+    it('returns empty when getAllClassNames throws', async () => {
       mockGetAllClassNames.mockImplementation(() => {
         throw new Error('GCI error');
       });
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(makeDocument('file:///test.tpz'));
+      const result = await provider.provideCompletionItems(makeDocument('file:///test.tpz'));
 
       expect(result).toEqual([]);
     });
 
-    it('returns class names when getInstVarNames throws', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('returns class names when getInstVarNames throws', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       mockGetInstVarNames.mockImplementation(() => {
         throw new Error('GCI error');
       });
-      mockGetAllSelectors.mockReturnValue(['size']);
+      mockGetAllSelectors.mockResolvedValue(['size']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(
+      const result = await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
       );
 
@@ -255,16 +255,16 @@ describe('GemStoneCompletionProvider', () => {
       expect(methodItems).toHaveLength(1);
     });
 
-    it('returns class names when getAllSelectors throws', () => {
-      mockGetAllClassNames.mockReturnValue([
+    it('returns class names when getAllSelectors throws', async () => {
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
-      mockGetInstVarNames.mockReturnValue(['x']);
+      mockGetInstVarNames.mockResolvedValue(['x']);
       mockGetAllSelectors.mockImplementation(() => {
         throw new Error('GCI error');
       });
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      const result = provider.provideCompletionItems(
+      const result = await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/Array/instance/accessing/size'),
       );
 
@@ -278,33 +278,33 @@ describe('GemStoneCompletionProvider', () => {
   });
 
   describe('URI parsing', () => {
-    it('extracts class name from gemstone:// URI', () => {
-      mockGetAllClassNames.mockReturnValue([]);
-      mockGetInstVarNames.mockReturnValue(['x']);
+    it('extracts class name from gemstone:// URI', async () => {
+      mockGetAllClassNames.mockResolvedValue([]);
+      mockGetInstVarNames.mockResolvedValue(['x']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      provider.provideCompletionItems(
+      await provider.provideCompletionItems(
         makeDocument('gemstone://1/Globals/MyClass/instance/accessing/foo'),
       );
 
       expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'MyClass');
     });
 
-    it('decodes percent-encoded class names', () => {
-      mockGetAllClassNames.mockReturnValue([]);
-      mockGetInstVarNames.mockReturnValue([]);
+    it('decodes percent-encoded class names', async () => {
+      mockGetAllClassNames.mockResolvedValue([]);
+      mockGetInstVarNames.mockResolvedValue([]);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      provider.provideCompletionItems(
+      await provider.provideCompletionItems(
         makeDocument('gemstone://1/My%20Dict/My%20Class/instance/cat/sel'),
       );
 
       expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'My Class');
     });
 
-    it('handles definition URIs without class context methods', () => {
-      mockGetAllClassNames.mockReturnValue([]);
-      mockGetInstVarNames.mockReturnValue(['x']);
+    it('handles definition URIs without class context methods', async () => {
+      mockGetAllClassNames.mockResolvedValue([]);
+      mockGetInstVarNames.mockResolvedValue(['x']);
       const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-      provider.provideCompletionItems(makeDocument('gemstone://1/Globals/Array/definition'));
+      await provider.provideCompletionItems(makeDocument('gemstone://1/Globals/Array/definition'));
 
       // Should still extract "Array" as class name
       expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'Array');
@@ -323,41 +323,41 @@ describe('when the cached answers stop being true', () => {
   // them: without this, query calls accumulate across tests and the counts below are
   // whatever ran before them.
   beforeEach(() => {
-    mockGetAllClassNames.mockReset().mockReturnValue([]);
-    mockGetInstVarNames.mockReset().mockReturnValue([]);
-    mockGetAllSelectors.mockReset().mockReturnValue([]);
+    mockGetAllClassNames.mockReset().mockResolvedValue([]);
+    mockGetInstVarNames.mockReset().mockResolvedValue([]);
+    mockGetAllSelectors.mockReset().mockResolvedValue([]);
   });
 
   const doc = () => makeDocument('gemstone://1/Globals/Array/instance/accessing/size');
 
-  function primed(selectedId = 1) {
+  async function primed(selectedId = 1) {
     const sessions = makeSessions(true, selectedId);
     const provider = new GemStoneCompletionProvider(sessions.manager);
-    mockGetAllSelectors.mockReturnValue(['size']);
-    mockGetInstVarNames.mockReturnValue(['contents']);
-    mockGetAllClassNames.mockReturnValue([
+    mockGetAllSelectors.mockResolvedValue(['size']);
+    mockGetInstVarNames.mockResolvedValue(['contents']);
+    mockGetAllClassNames.mockResolvedValue([
       { className: 'Array', dictName: 'Globals', dictIndex: 1 },
     ]);
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
     // Everything is cached now, so a second request must not reach the stone at all.
     mockGetAllSelectors.mockClear();
     mockGetInstVarNames.mockClear();
     mockGetAllClassNames.mockClear();
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
     expect(mockGetAllClassNames).not.toHaveBeenCalled();
     return { provider, sessions };
   }
 
-  it('caches, so the assertions below are about invalidation and not about misses', () => {
-    primed();
+  it('caches, so the assertions below are about invalidation and not about misses', async () => {
+    await primed();
   });
 
-  it('refetches one class after a compile, without dropping the class list', () => {
-    const { provider } = primed();
+  it('refetches one class after a compile, without dropping the class list', async () => {
+    const { provider } = await primed();
 
     provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/instance/x/y'));
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     // The compiled class is re-read…
     expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
@@ -366,11 +366,11 @@ describe('when the cached answers stop being true', () => {
     expect(mockGetAllClassNames).not.toHaveBeenCalled();
   });
 
-  it('also drops the class list when a class DEFINITION was compiled', () => {
-    const { provider } = primed();
+  it('also drops the class list when a class DEFINITION was compiled', async () => {
+    const { provider } = await primed();
 
     provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/definition'), true);
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     // A definition compile can introduce a name the list has never seen.
     expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
@@ -380,31 +380,31 @@ describe('when the cached answers stop being true', () => {
   // whose entry goes: with two sessions open the compile can land on the one that is NOT
   // selected, and clearing the selected session's entry instead would leave the stale
   // entry sitting in the cache behind a cache that had visibly been cleared.
-  it("drops the compiled session's class, not the selected session's", () => {
-    const { provider } = primed(2);
+  it("drops the compiled session's class, not the selected session's", async () => {
+    const { provider } = await primed(2);
 
     provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Array/instance/x/y'));
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     // Session 2's Array was never stale, so it is still served from the cache.
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
     expect(mockGetInstVarNames).not.toHaveBeenCalled();
   });
 
-  it('leaves another class alone when one class is compiled', () => {
-    const { provider } = primed();
+  it('leaves another class alone when one class is compiled', async () => {
+    const { provider } = await primed();
 
     provider.invalidateForCompiledUri(Uri.parse('gemstone://1/Globals/Other/instance/x/y'));
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });
 
-  it('clears everything when the selected session changes', () => {
-    const { provider, sessions } = primed();
+  it('clears everything when the selected session changes', async () => {
+    const { provider, sessions } = await primed();
 
     sessions.fireSelectionChanged();
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
     expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
@@ -412,11 +412,11 @@ describe('when the cached answers stop being true', () => {
 
   // Also the only bound on how much these maps hold: there is no LRU and no TTL, so a
   // long session otherwise accumulated a selector array per class ever browsed.
-  it('clears everything when a session is removed', () => {
-    const { provider, sessions } = primed();
+  it('clears everything when a session is removed', async () => {
+    const { provider, sessions } = await primed();
 
     sessions.fireSessionRemoved();
-    provider.provideCompletionItems(doc());
+    await provider.provideCompletionItems(doc());
 
     expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
     expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
@@ -433,9 +433,9 @@ describe('warming a class ahead of the first request', () => {
   // them: without this, query calls accumulate across tests and the counts below are
   // whatever ran before them.
   beforeEach(() => {
-    mockGetAllClassNames.mockReset().mockReturnValue([]);
-    mockGetInstVarNames.mockReset().mockReturnValue([]);
-    mockGetAllSelectors.mockReset().mockReturnValue([]);
+    mockGetAllClassNames.mockReset().mockResolvedValue([]);
+    mockGetInstVarNames.mockReset().mockResolvedValue([]);
+    mockGetAllSelectors.mockReset().mockResolvedValue([]);
   });
 
   beforeEach(() => {
@@ -461,36 +461,38 @@ describe('warming a class ahead of the first request', () => {
     expect(mockGetInstVarNames).not.toHaveBeenCalled();
   });
 
-  it('fetches once the selection settles', () => {
+  it('fetches once the selection settles', async () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
     provider.primeClass(1, 'Array');
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
 
     expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.anything(), 'Array');
     expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.anything(), 'Array');
   });
 
-  it('fetches only the class landed on when several are clicked through', () => {
+  it('fetches only the class landed on when several are clicked through', async () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
     provider.primeClass(1, 'First');
     provider.primeClass(1, 'Second');
     provider.primeClass(1, 'Third');
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
 
     expect(mockGetAllSelectors).toHaveBeenCalledTimes(1);
     expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.anything(), 'Third');
   });
 
-  it('makes the first real request free, which is the point', () => {
+  it('makes the first real request free, which is the point', async () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
-    mockGetAllSelectors.mockReturnValue(['size']);
+    mockGetAllSelectors.mockResolvedValue(['size']);
 
     provider.primeClass(1, 'Array');
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
     mockGetAllSelectors.mockClear();
-    provider.provideCompletionItems(makeDocument('gemstone://1/Globals/Array/instance/a/size'));
+    await provider.provideCompletionItems(
+      makeDocument('gemstone://1/Globals/Array/instance/a/size'),
+    );
 
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });
@@ -498,33 +500,33 @@ describe('warming a class ahead of the first request', () => {
   // The prime is a quarter-second behind the gesture, so the selection can have moved
   // to another session by the time it fires. It warms the session the class was
   // selected in, which is the one whose completions the user is about to ask for.
-  it('warms the session it was handed, not whichever is selected when it fires', () => {
+  it('warms the session it was handed, not whichever is selected when it fires', async () => {
     const sessions = makeSessions(true, 1);
     const provider = new GemStoneCompletionProvider(sessions.manager);
 
     provider.primeClass(7, 'Array');
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
 
     expect(mockGetAllSelectors).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 'Array');
     expect(mockGetInstVarNames).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), 'Array');
   });
 
-  it('does nothing for a session that went away while the prime waited', () => {
+  it('does nothing for a session that went away while the prime waited', async () => {
     const sessions = makeSessions(false);
     const provider = new GemStoneCompletionProvider(sessions.manager);
 
     provider.primeClass(7, 'Array');
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
 
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });
 
-  it('drops a prime that has not fired yet when disposed', () => {
+  it('drops a prime that has not fired yet when disposed', async () => {
     const provider = new GemStoneCompletionProvider(makeSessionManager(true));
 
     provider.primeClass(1, 'Array');
     provider.dispose();
-    vi.runAllTimers();
+    await vi.runAllTimersAsync();
 
     expect(mockGetAllSelectors).not.toHaveBeenCalled();
   });

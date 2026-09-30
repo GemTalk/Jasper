@@ -12,10 +12,10 @@ import { recategorizeMethod } from '../queries/recategorizeMethod';
  */
 
 describe('recategorize-method query', () => {
-  it('creates the category first, then moves the method into it', () => {
+  it('creates the category first, then moves the method into it', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    const result = recategorizeMethod(exec, 'Foo', false, 'bar', 'tests', 3);
+    const result = await recategorizeMethod(exec, 'Foo', false, 'bar', 'tests', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("addCategory: 'tests'");
@@ -26,30 +26,30 @@ describe('recategorize-method query', () => {
     expect(result).toBe('ok');
   });
 
-  it('compares category names as SYMBOLS', () => {
+  it('compares category names as SYMBOLS', async () => {
     // `each asString = 'tests'` raises "Unicode argument disallowed in String comparison"
     // on a stone in legacy string mode.
     const exec = vi.fn().mockReturnValue('ok');
 
-    recategorizeMethod(exec, 'Foo', false, 'bar', 'tests', 3);
+    await recategorizeMethod(exec, 'Foo', false, 'bar', 'tests', 3);
 
     expect(exec.mock.calls[0][0] as string).not.toContain('asString =');
   });
 
-  it('targets the class side when isMeta is set', () => {
+  it('targets the class side when isMeta is set', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    recategorizeMethod(exec, 'Foo', true, 'make', 'building', 3);
+    await recategorizeMethod(exec, 'Foo', true, 'make', 'building', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('class');
     expect(code).toContain('symbolList at: 3'); // dict-scoped lookup
   });
 
-  it("escapes quotes in the category and the selector so the statement can't be broken out of", () => {
+  it("escapes quotes in the category and the selector so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    recategorizeMethod(exec, 'Foo', false, "b'r", "te'sts", 3);
+    await recategorizeMethod(exec, 'Foo', false, "b'r", "te'sts", 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("addCategory: 'te''sts'");

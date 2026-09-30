@@ -11,7 +11,7 @@ import { compiledMethodExpr } from './util';
  * (there is no separate enable primitive — `GsNMethod class >>
  * enableBreakInClass:selector:stepPoint:` just sends `setBreakAtStepPoint:`).
  */
-export function disableBreakAtStepPoint(
+export async function disableBreakAtStepPoint(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
@@ -19,8 +19,8 @@ export function disableBreakAtStepPoint(
   stepPoint: number,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   const code = `${method} disableBreakAtStepPoint: ${stepPoint}. 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

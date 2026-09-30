@@ -36,14 +36,14 @@ h isNil
 // `dict` (a 1-based SymbolList index, or a name) scopes the class lookup, exactly as
 // compileMethod does — without it a shadowed class name resolves to the first match in
 // the symbol list, which may not be the class whose history the user asked to see.
-export function getMethodHistory(
+export async function getMethodHistory(
   execute: QueryExecutor,
   className: string,
   selector: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
-  return execute(
+): Promise<string> {
+  return await execute(
     withHelper(
       `h forClass: (${classLookupExpr(className, dict)}) named: '${escapeString(
         className,
@@ -55,14 +55,14 @@ export function getMethodHistory(
 // Forget all recorded versions of one method. Does NOT commit (the user commits).
 // Returns the raw JSON result ({"removed":bool,...} or {"error":..}). `dict` scopes the
 // class lookup as in getMethodHistory, so forgetting targets the class being viewed.
-export function removeMethodHistory(
+export async function removeMethodHistory(
   execute: QueryExecutor,
   className: string,
   selector: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
-  return execute(
+): Promise<string> {
+  return await execute(
     withHelper(
       `h removeHistoryForClass: (${classLookupExpr(className, dict)}) named: '${escapeString(
         className,

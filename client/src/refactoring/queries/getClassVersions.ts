@@ -17,10 +17,10 @@ export interface ClassVersionInfo {
 // and total is the history size. The GemStone Explorer uses this to make
 // recompiled/reshaped class versions visible at a glance. Accepts a dictionary by
 // 1-based index (canonical for Jasper) or by name.
-export function getClassVersions(
+export async function getClassVersions(
   execute: QueryExecutor,
   dict: number | string,
-): Map<string, ClassVersionInfo> {
+): Promise<Map<string, ClassVersionInfo>> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -34,7 +34,7 @@ dict keysAndValuesDo: [:k :v |
       ws nextPutAll: k; tab; print: (hist indexOf: v); tab; print: hist size; lf]]].
 ws contents`;
   const map = new Map<string, ClassVersionInfo>();
-  for (const line of splitLines(execute(code))) {
+  for (const line of splitLines(await execute(code))) {
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const current = parseInt(parts[1], 10);

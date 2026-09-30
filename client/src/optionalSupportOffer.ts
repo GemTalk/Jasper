@@ -62,7 +62,7 @@ export interface ServerSupportFeature {
   /** Live presence check against the session, distinct from the cached
    *  `isMissing` flag — used where a fresh answer matters (e.g. test gating)
    *  rather than the availability latch set at connect time. */
-  probe(session: ActiveSession): boolean;
+  probe(session: ActiveSession): Promise<boolean>;
   /** Install once (interactive = may prompt for the SystemUser password). */
   install(
     base: ActiveSession,

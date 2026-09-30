@@ -68,13 +68,13 @@ function makeProvider(registry: RowanRepoRegistry, session: ActiveSession | null
   return new RowanTreeProvider(registry, { getSession: () => session });
 }
 
-function sectionChildren(
+async function sectionChildren(
   provider: RowanTreeProvider,
   section: 'repositories' | 'loaded' | 'changes',
 ) {
-  const roots = provider.getChildren() as RowanSectionItem[];
+  const roots = (await provider.getChildren()) as RowanSectionItem[];
   const target = roots.find((r) => r.section === section)!;
-  return provider.getChildren(target);
+  return await provider.getChildren(target);
 }
 
 describe('RowanTreeProvider', () => {
@@ -93,32 +93,32 @@ describe('RowanTreeProvider', () => {
     getGemCacheKBMock.mockReturnValue(2000000);
   });
 
-  it('shows Repositories, Loaded Projects, and Changes sections at the root', () => {
+  it('shows Repositories, Loaded Projects, and Changes sections at the root', async () => {
     const provider = makeProvider(registry, fakeSession);
 
-    const roots = provider.getChildren() as RowanSectionItem[];
+    const roots = (await provider.getChildren()) as RowanSectionItem[];
 
     expect(roots.map((r) => r.label)).toEqual(['Repositories', 'Loaded Projects', 'Changes']);
   });
 
-  it('yields no rows on a bare start so the welcome content (with its Add button) shows', () => {
+  it('yields no rows on a bare start so the welcome content (with its Add button) shows', async () => {
     const provider = makeProvider(registry, null);
 
-    expect(provider.getChildren()).toEqual([]);
+    expect(await provider.getChildren()).toEqual([]);
   });
 
   it('keeps the sections once anything exists to show', async () => {
     await registry.add({ name: 'repo', path: path.join(os.tmpdir(), 'rowan-somewhere') });
     const provider = makeProvider(registry, null);
 
-    expect(provider.getChildren()).toHaveLength(3);
+    expect(await provider.getChildren()).toHaveLength(3);
   });
 
   describe('repositories section', () => {
-    it('offers a plain add-repository placeholder when connected with nothing tracked', () => {
+    it('offers a plain add-repository placeholder when connected with nothing tracked', async () => {
       const provider = makeProvider(registry, fakeSession);
 
-      const children = sectionChildren(provider, 'repositories');
+      const children = await sectionChildren(provider, 'repositories');
 
       expect(children).toHaveLength(1);
       const item = children[0] as RowanMessageItem;
@@ -131,7 +131,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'my-repo', path: makeRepoDir(true) });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item).toBeInstanceOf(RowanRepoItem);
       expect(item.label).toBe('my-repo');
@@ -139,7 +139,7 @@ describe('RowanTreeProvider', () => {
       expect(item.contextValue).toBe('rowanRepo');
     });
 
-    it('shows the open workspace project as a workspace repo, even when untracked', () => {
+    it('shows the open workspace project as a workspace repo, even when untracked', async () => {
       const root = makeRepoDir(true, 'WsApp');
       fs.writeFileSync(
         path.join(root, 'rowan', 'project.ston'),
@@ -148,7 +148,7 @@ describe('RowanTreeProvider', () => {
       __setWorkspaceFolders([root]);
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.contextValue).toBe('rowanRepoWorkspace');
       expect(item.description).toContain('workspace');
@@ -163,7 +163,7 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.contextValue).toBe('rowanRepoGit');
     });
@@ -176,7 +176,7 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.contextValue).toBe('rowanRepoNoSpecGit');
     });
@@ -189,7 +189,7 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.description).toBe('Seaside · loaded');
     });
@@ -198,7 +198,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'no-spec', path: makeRepoDir(false) });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.description).toBe('no load spec found');
       expect(item.contextValue).toBe('rowanRepoNoSpec');
@@ -208,7 +208,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'gone', path: path.join(os.tmpdir(), 'rowan-gone-missing') });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.description).toBe('missing on disk');
       expect(item.contextValue).toBe('rowanRepoMissing');
@@ -219,7 +219,7 @@ describe('RowanTreeProvider', () => {
       getGemCacheKBMock.mockReturnValue(50000);
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.underProvisionedMinKB).toBe(500000);
       expect((item.iconPath as { id: string }).id).toBe('warning');
@@ -231,7 +231,7 @@ describe('RowanTreeProvider', () => {
       getGemCacheKBMock.mockReturnValue(2000000);
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.underProvisionedMinKB).toBeUndefined();
     });
@@ -240,7 +240,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'seaside', path: makeRepoDir(true, 'Seaside', 500000) });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'repositories') as RowanRepoItem[];
+      const [item] = (await sectionChildren(provider, 'repositories')) as RowanRepoItem[];
 
       expect(item.underProvisionedMinKB).toBeUndefined();
       expect(getGemCacheKBMock).not.toHaveBeenCalled();
@@ -251,7 +251,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'alpha', path: makeRepoDir(true) });
       const provider = makeProvider(registry, null);
 
-      const labels = (sectionChildren(provider, 'repositories') as RowanRepoItem[]).map(
+      const labels = ((await sectionChildren(provider, 'repositories')) as RowanRepoItem[]).map(
         (i) => i.label,
       );
 
@@ -271,7 +271,7 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'outside', path: makeRepoDir(true) });
       const provider = makeProvider(registry, null);
 
-      const labels = (sectionChildren(provider, 'repositories') as RowanRepoItem[]).map(
+      const labels = ((await sectionChildren(provider, 'repositories')) as RowanRepoItem[]).map(
         (i) => i.label,
       );
 
@@ -284,23 +284,23 @@ describe('RowanTreeProvider', () => {
       await registry.add({ name: 'repo', path: path.join(os.tmpdir(), 'rowan-somewhere') });
       const provider = makeProvider(registry, null);
 
-      const [item] = sectionChildren(provider, 'loaded') as RowanMessageItem[];
+      const [item] = (await sectionChildren(provider, 'loaded')) as RowanMessageItem[];
 
       expect(item.kind).toBe('rowanNoSession');
       expect(listRowanProjectsMock).not.toHaveBeenCalled();
     });
 
-    it('reports when the connected image has no Rowan', () => {
+    it('reports when the connected image has no Rowan', async () => {
       listRowanProjectsMock.mockReturnValue({ available: false, projects: [] });
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'loaded') as RowanMessageItem[];
+      const [item] = (await sectionChildren(provider, 'loaded')) as RowanMessageItem[];
 
       expect(item.kind).toBe('rowanNoRowan');
       expect(item.label).toBe('Rowan is not installed in this image');
     });
 
-    it('decorates modified projects the way the git view does', () => {
+    it('decorates modified projects the way the git view does', async () => {
       listRowanProjectsMock.mockReturnValue({
         available: true,
         projects: [
@@ -310,7 +310,7 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, fakeSession);
 
-      const items = sectionChildren(provider, 'loaded') as RowanLoadedProjectItem[];
+      const items = (await sectionChildren(provider, 'loaded')) as RowanLoadedProjectItem[];
 
       expect(items.map((i) => i.label)).toEqual(['Seaside', 'STON']);
       expect(items[0].resourceUri?.query).toBe('state=M');
@@ -318,7 +318,7 @@ describe('RowanTreeProvider', () => {
       expect(items[0].contextValue).toBe('rowanLoadedProject');
     });
 
-    it('collects built-in projects under a collapsed group after the user projects', () => {
+    it('collects built-in projects under a collapsed group after the user projects', async () => {
       listRowanProjectsMock.mockReturnValue({
         available: true,
         projects: [
@@ -329,24 +329,24 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, fakeSession);
 
-      const items = sectionChildren(provider, 'loaded');
+      const items = await sectionChildren(provider, 'loaded');
 
       expect((items[0] as RowanLoadedProjectItem).label).toBe('Seaside');
       const group = items[1];
       expect(group).toBeInstanceOf(RowanBuiltinGroupItem);
       expect(group.description).toBe('2');
-      const builtins = provider.getChildren(group) as RowanLoadedProjectItem[];
+      const builtins = (await provider.getChildren(group)) as RowanLoadedProjectItem[];
       expect(builtins.map((b) => b.label)).toEqual(['Cypress', 'Rowan']);
       expect(builtins[0].contextValue).toBe('rowanLoadedProjectBuiltin');
     });
 
-    it('surfaces a query failure instead of an empty section', () => {
+    it('surfaces a query failure instead of an empty section', async () => {
       listRowanProjectsMock.mockImplementation(() => {
         throw new Error('session busy');
       });
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'loaded') as RowanMessageItem[];
+      const [item] = (await sectionChildren(provider, 'loaded')) as RowanMessageItem[];
 
       expect(item.kind).toBe('rowanSectionError');
       expect(item.label).toContain('session busy');
@@ -360,18 +360,18 @@ describe('RowanTreeProvider', () => {
       });
       const provider = makeProvider(registry, fakeSession);
 
-      sectionChildren(provider, 'repositories');
-      sectionChildren(provider, 'loaded');
+      await sectionChildren(provider, 'repositories');
+      await sectionChildren(provider, 'loaded');
 
       expect(listRowanProjectsMock).toHaveBeenCalledTimes(1);
     });
 
-    it('re-queries after a refresh', () => {
+    it('re-queries after a refresh', async () => {
       const provider = makeProvider(registry, fakeSession);
-      sectionChildren(provider, 'loaded');
+      await sectionChildren(provider, 'loaded');
 
       provider.refresh();
-      sectionChildren(provider, 'loaded');
+      await sectionChildren(provider, 'loaded');
 
       expect(listRowanProjectsMock).toHaveBeenCalledTimes(2);
     });
@@ -388,10 +388,10 @@ describe('RowanTreeProvider', () => {
       });
     });
 
-    it('lists an expandable node per user project — built-ins are not drift targets', () => {
+    it('lists an expandable node per user project — built-ins are not drift targets', async () => {
       const provider = makeProvider(registry, fakeSession);
 
-      const items = sectionChildren(provider, 'changes') as RowanChangesProjectItem[];
+      const items = (await sectionChildren(provider, 'changes')) as RowanChangesProjectItem[];
 
       expect(items).toHaveLength(1);
       expect(items[0]).toBeInstanceOf(RowanChangesProjectItem);
@@ -399,7 +399,7 @@ describe('RowanTreeProvider', () => {
       expect(diffRowanProjectMock).not.toHaveBeenCalled();
     });
 
-    it('diffs a project when its node is expanded', () => {
+    it('diffs a project when its node is expanded', async () => {
       diffRowanProjectMock.mockReturnValue({
         ok: true,
         error: '',
@@ -413,9 +413,12 @@ describe('RowanTreeProvider', () => {
         ],
       });
       const provider = makeProvider(registry, fakeSession);
-      const [projectNode] = sectionChildren(provider, 'changes') as RowanChangesProjectItem[];
+      const [projectNode] = (await sectionChildren(
+        provider,
+        'changes',
+      )) as RowanChangesProjectItem[];
 
-      const rows = provider.getChildren(projectNode) as RowanChangeItem[];
+      const rows = (await provider.getChildren(projectNode)) as RowanChangeItem[];
 
       expect(rows.map((r) => r.label)).toEqual(['HelloJasper', 'WAEncoder class>>initializeTable']);
       expect(rows.map((r) => r.description)).toEqual(['Seaside-Component', 'Seaside-Core']);
@@ -423,42 +426,51 @@ describe('RowanTreeProvider', () => {
       expect(rows.map((r) => r.resourceUri?.query)).toEqual(['state=A', 'state=M']);
     });
 
-    it('reports a clean project instead of showing nothing', () => {
+    it('reports a clean project instead of showing nothing', async () => {
       const provider = makeProvider(registry, fakeSession);
-      const [projectNode] = sectionChildren(provider, 'changes') as RowanChangesProjectItem[];
+      const [projectNode] = (await sectionChildren(
+        provider,
+        'changes',
+      )) as RowanChangesProjectItem[];
 
-      const [row] = provider.getChildren(projectNode) as RowanMessageItem[];
+      const [row] = (await provider.getChildren(projectNode)) as RowanMessageItem[];
 
       expect(row.kind).toBe('rowanClean');
       expect(row.label).toBe('No differences with disk');
     });
 
-    it('surfaces a diff failure on the project node', () => {
+    it('surfaces a diff failure on the project node', async () => {
       diffRowanProjectMock.mockReturnValue({ ok: false, error: 'no repo root', operations: [] });
       const provider = makeProvider(registry, fakeSession);
-      const [projectNode] = sectionChildren(provider, 'changes') as RowanChangesProjectItem[];
+      const [projectNode] = (await sectionChildren(
+        provider,
+        'changes',
+      )) as RowanChangesProjectItem[];
 
-      const [row] = provider.getChildren(projectNode) as RowanMessageItem[];
+      const [row] = (await provider.getChildren(projectNode)) as RowanMessageItem[];
 
       expect(row.kind).toBe('rowanSectionError');
       expect(row.label).toContain('no repo root');
     });
 
-    it('diffs a project once per refresh cycle', () => {
+    it('diffs a project once per refresh cycle', async () => {
       const provider = makeProvider(registry, fakeSession);
-      const [projectNode] = sectionChildren(provider, 'changes') as RowanChangesProjectItem[];
+      const [projectNode] = (await sectionChildren(
+        provider,
+        'changes',
+      )) as RowanChangesProjectItem[];
 
-      provider.getChildren(projectNode);
-      provider.getChildren(projectNode);
+      await provider.getChildren(projectNode);
+      await provider.getChildren(projectNode);
 
       expect(diffRowanProjectMock).toHaveBeenCalledTimes(1);
     });
 
-    it('reports when the connected image has no Rowan', () => {
+    it('reports when the connected image has no Rowan', async () => {
       listRowanProjectsMock.mockReturnValue({ available: false, projects: [] });
       const provider = makeProvider(registry, fakeSession);
 
-      const [item] = sectionChildren(provider, 'changes') as RowanMessageItem[];
+      const [item] = (await sectionChildren(provider, 'changes')) as RowanMessageItem[];
 
       expect(item.kind).toBe('rowanNoRowan');
     });

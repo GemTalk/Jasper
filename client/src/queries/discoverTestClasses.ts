@@ -36,7 +36,7 @@ function parseDictIndex(raw: string | undefined): number | undefined {
   return Number.isInteger(n) && n >= 1 ? n : undefined;
 }
 
-export function discoverTestClasses(execute: QueryExecutor): TestClassInfo[] {
+export async function discoverTestClasses(execute: QueryExecutor): Promise<TestClassInfo[]> {
   // Walk the symbol list by index rather than with `do:` so each class carries
   // the 1-based index of the dictionary it was found in. `(classDict includesKey:)`
   // keeps the first dictionary that defines a class — the same one bare-name
@@ -59,7 +59,7 @@ classDict keysAndValuesDo: [:cls :dictInfo |
     nextPutAll: cls testSelectors size printString; tab;
     nextPutAll: (dictInfo at: 2) printString; lf].
 ws contents`;
-  const data = execute(code);
+  const data = await execute(code);
   return splitLines(data).map((line) => {
     const [dictName, className, count, dictIndex] = line.split('\t');
     return {

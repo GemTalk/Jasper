@@ -2,6 +2,7 @@ import type { GciError } from './gciLibrary';
 import type { ActiveSession } from './sessionManager';
 import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { logError, logInfo } from './gciLog';
+import { fetchString } from './stringFetch';
 
 /**
  * Jade-style server-side Transcript sink.
@@ -271,9 +272,9 @@ function smalltalkString(text: string): string {
  * non-fatal — the session works exactly as before, just without transcript
  * display — so a user lacking compile privileges still gets a session.
  */
-export function installTranscriptSink(session: ActiveSession): boolean {
+export async function installTranscriptSink(session: ActiveSession): Promise<boolean> {
   try {
-    const result = session.gci.executeAndFetchString(session.handle, TRANSCRIPT_SINK_INSTALL_CODE);
+    const result = await fetchString(session, TRANSCRIPT_SINK_INSTALL_CODE);
 
     logInfo(`[Session ${session.id}] Transcript sink ${result}`);
     return true;
@@ -292,8 +293,11 @@ export function installTranscriptSink(session: ActiveSession): boolean {
  * the call's process by it. Returns any buffered residue, so it is displayed
  * the moment the execute starts. Empty string when no sink is installed.
  */
-export function startClientForwarderMode(session: ActiveSession, source: string): string {
-  return runFetchString(session, startClientForwarderModeCode(source));
+export async function startClientForwarderMode(
+  session: ActiveSession,
+  source: string,
+): Promise<string> {
+  return await runFetchString(session, startClientForwarderModeCode(source));
 }
 
 /**
@@ -303,18 +307,18 @@ export function startClientForwarderMode(session: ActiveSession, source: string)
  * the call has been collected (see the module doc). Failure is logged, never
  * thrown.
  */
-export function endClientForwarderMode(session: ActiveSession): string {
-  return runFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);
+export async function endClientForwarderMode(session: ActiveSession): Promise<string> {
+  return await runFetchString(session, END_CLIENT_FORWARDER_MODE_CODE);
 }
 
 /** Drain buffered transcript output (queries, MCP, debugger-step paths). */
-export function drainTranscript(session: ActiveSession): string {
-  return runFetchString(session, DRAIN_CODE);
+export async function drainTranscript(session: ActiveSession): Promise<string> {
+  return await runFetchString(session, DRAIN_CODE);
 }
 
-function runFetchString(session: ActiveSession, code: string): string {
+async function runFetchString(session: ActiveSession, code: string): Promise<string> {
   try {
-    return session.gci.executeAndFetchString(session.handle, code);
+    return await fetchString(session, code);
   } catch (e) {
     logError(
       session.id,

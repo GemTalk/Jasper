@@ -17,7 +17,7 @@ import { checkRefactoringSupportAvailable } from '../browserQueries';
 
 /** Re-probe the session and cache `rbSupportAvailable` on it. Returns the
  *  freshly-probed value. */
-export function refreshRefactoringSupportAvailable(session: ActiveSession): boolean {
-  session.rbSupportAvailable = checkRefactoringSupportAvailable(session);
+export async function refreshRefactoringSupportAvailable(session: ActiveSession): Promise<boolean> {
+  session.rbSupportAvailable = await checkRefactoringSupportAvailable(session);
   return session.rbSupportAvailable;
 }

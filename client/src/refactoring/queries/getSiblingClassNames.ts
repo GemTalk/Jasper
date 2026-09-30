@@ -16,11 +16,11 @@ import { classLookupExpr } from '../../queries/util';
 // ClassOrganizer scans the symbol list and can report a class the parent's own `subclasses` does
 // not track (a stale version, a class reachable by a different route), so rather than assume the
 // two agree we only offer names the engine's own lookup is guaranteed to find.
-export function getSiblingClassNames(
+export async function getSiblingClassNames(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string[] {
+): Promise<string[]> {
   const code = `| cls sup tracked out |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
@@ -32,7 +32,7 @@ out := WriteStream on: String new.
   (c == cls or: [(tracked detect: [:t | t == c] ifNone: [nil]) isNil])
     ifFalse: [out nextPutAll: c name asString; lf]].
 out contents`;
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: string[] = [];
   for (const line of raw.split('\n')) {
     if (line.length > 0) results.push(line);

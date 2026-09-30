@@ -42,11 +42,11 @@ export const MAX_RUN_CLASSES = 100;
 //
 // Single round-trip by design: iteration happens in Smalltalk so an N-class
 // invocation is one GCI call, not N.
-export function runFailingTests(
+export async function runFailingTests(
   execute: QueryExecutor,
   classNames?: string[],
   classNamePattern?: string,
-): TestRunResult[] {
+): Promise<TestRunResult[]> {
   let classesExpr: string;
   if (classNames && classNames.length > 0) {
     classesExpr = buildExplicitClassList(classNames);
@@ -113,7 +113,7 @@ classes do: [:cls |
       nextPutAll: 'error'; tab;
       nextPutAll: (captureMessage value: e); lf]].
 ws contents encodeAsUTF8`;
-  const data = execute(code);
+  const data = await execute(code);
   return splitLines(data).map((line) => {
     const parts = line.split('\t');
     return {

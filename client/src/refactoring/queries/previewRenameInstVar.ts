@@ -20,14 +20,14 @@ import { classLookupExpr, escapeString } from '../../queries/util';
 //
 // `dict` (a 1-based SymbolList index or name) scopes the class lookup so the same
 // class name in two dictionaries resolves to the intended class.
-export function startRenameInstVarPreview(
+export async function startRenameInstVarPreview(
   execute: QueryExecutor,
   className: string,
   oldName: string,
   newName: string,
   token: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
@@ -35,7 +35,7 @@ cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
   class: cls
   renameInstVar: '${escapeString(oldName)}'
   to: '${escapeString(newName)}') startPreviewToken: '${escapeString(token)}'`;
-  return execute(code);
+  return await execute(code);
 }
 
 // Apply a started preview server-side, WITHOUT committing: the engine re-versions
@@ -46,19 +46,24 @@ cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
 // deliberately NOT carried forward, i.e. it is deleted; that is the only way a
 // method disappears. The class-definition edit cannot be deselected (the panel
 // renders it checked and disabled), so it is never in this list.
-export function applyRenameInstVar(
+export async function applyRenameInstVar(
   execute: QueryExecutor,
   token: string,
   deselectedIds: string[],
-): string {
+): Promise<string> {
   const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
   const code =
     `GsRenameInstanceVariableRefactoring applyForToken: '${escapeString(token)}' ` +
     `deselected: #(${ids})`;
-  return execute(code);
+  return await execute(code);
 }
 
 // Drop a finished preview from SessionTemps.
-export function clearRenameInstVarPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsRenameInstanceVariableRefactoring clearToken: '${escapeString(token)}'. 'ok'`);
+export async function clearRenameInstVarPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(
+    `GsRenameInstanceVariableRefactoring clearToken: '${escapeString(token)}'. 'ok'`,
+  );
 }

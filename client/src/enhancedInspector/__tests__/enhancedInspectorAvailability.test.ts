@@ -27,39 +27,39 @@ function createMockSession(executeFetchData = '', stoneVersion = '3.7.5'): Activ
 }
 
 describe('checkEnhancedInspectorAvailable', () => {
-  it('returns true when stone returns "true"', () => {
+  it('returns true when stone returns "true"', async () => {
     const session = createMockSession('true');
-    expect(queries.checkEnhancedInspectorAvailable(session)).toBe(true);
+    expect(await queries.checkEnhancedInspectorAvailable(session)).toBe(true);
   });
 
-  it('returns true when response has trailing whitespace', () => {
+  it('returns true when response has trailing whitespace', async () => {
     const session = createMockSession('true\n');
-    expect(queries.checkEnhancedInspectorAvailable(session)).toBe(true);
+    expect(await queries.checkEnhancedInspectorAvailable(session)).toBe(true);
   });
 
-  it('returns false when stone returns "false"', () => {
+  it('returns false when stone returns "false"', async () => {
     const session = createMockSession('false');
-    expect(queries.checkEnhancedInspectorAvailable(session)).toBe(false);
+    expect(await queries.checkEnhancedInspectorAvailable(session)).toBe(false);
   });
 
-  it('returns false when stone returns an unexpected string', () => {
+  it('returns false when stone returns an unexpected string', async () => {
     const session = createMockSession('maybe');
-    expect(queries.checkEnhancedInspectorAvailable(session)).toBe(false);
+    expect(await queries.checkEnhancedInspectorAvailable(session)).toBe(false);
   });
 
-  it('returns false when GCI returns an error', () => {
+  it('returns false when GCI returns an error', async () => {
     const session = createMockSession('');
     (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error('GCI error');
     });
 
-    expect(queries.checkEnhancedInspectorAvailable(session)).toBe(false);
+    expect(await queries.checkEnhancedInspectorAvailable(session)).toBe(false);
   });
 
-  it('emitted Smalltalk references GtRemotePhlowViewedObject', () => {
+  it('emitted Smalltalk references GtRemotePhlowViewedObject', async () => {
     const session = createMockSession('true');
 
-    queries.checkEnhancedInspectorAvailable(session);
+    await queries.checkEnhancedInspectorAvailable(session);
 
     const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
     const code = mockExec.mock.calls[0][1] as string;
@@ -74,10 +74,10 @@ describe('refreshEnhancedInspectorAvailable', () => {
 
   it.each(SUPPORTED_VERSIONS)(
     'marks support available on a supported %s stone that has the classes',
-    (version) => {
+    async (version) => {
       const session = createMockSession('true', version);
 
-      expect(refreshEnhancedInspectorAvailable(session)).toBe(true);
+      expect(await refreshEnhancedInspectorAvailable(session)).toBe(true);
       expect(session.enhancedInspectorAvailable).toBe(true);
     },
   );
@@ -87,18 +87,18 @@ describe('refreshEnhancedInspectorAvailable', () => {
 
   it.each(UNSUPPORTED_VERSIONS)(
     'reports unavailable on a %s stone even when the classes are present',
-    (version) => {
+    async (version) => {
       const session = createMockSession('true', version);
 
-      expect(refreshEnhancedInspectorAvailable(session)).toBe(false);
+      expect(await refreshEnhancedInspectorAvailable(session)).toBe(false);
       expect(session.enhancedInspectorAvailable).toBe(false);
     },
   );
 
-  it.each(UNSUPPORTED_VERSIONS)('does not probe a %s stone at all', (version) => {
+  it.each(UNSUPPORTED_VERSIONS)('does not probe a %s stone at all', async (version) => {
     const session = createMockSession('true', version);
 
-    refreshEnhancedInspectorAvailable(session);
+    await refreshEnhancedInspectorAvailable(session);
 
     expect(session.gci.executeAndFetchString).not.toHaveBeenCalled();
   });

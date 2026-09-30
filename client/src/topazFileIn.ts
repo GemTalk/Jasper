@@ -197,11 +197,11 @@ export interface FileInResult {
  * Parse a Topaz file-out and compile each piece (class definition + methods)
  * back into GemStone. Returns per-method error details for diagnostics.
  */
-export function fileInClass(
+export async function fileInClass(
   session: ActiveSession,
   fileContent: string,
   environmentId: number = 0,
-): FileInResult {
+): Promise<FileInResult> {
   const regions = parseTopazDocument(fileContent);
   const errors: FileInError[] = [];
   let compiledMethods = 0;
@@ -222,7 +222,7 @@ export function fileInClass(
       // Check if this is a class definition (contains subclass:)
       if (region.text.includes('subclass:')) {
         try {
-          queries.compileClassDefinition(session, region.text);
+          await queries.compileClassDefinition(session, region.text);
           compiledClassDef = true;
         } catch (e: unknown) {
           const msg = e instanceof BrowserQueryError ? e.message : String(e);
@@ -249,7 +249,7 @@ export function fileInClass(
       const selector = region.text.split('\n')[0]?.trim();
 
       try {
-        queries.compileMethod(
+        await queries.compileMethod(
           session,
           className,
           isMeta,
@@ -566,14 +566,14 @@ export function parseFileStructure(content: string): ParsedFile {
  * and delete methods that were removed. Falls back to full `fileInClass`
  * when no old content is available.
  */
-export function fileInChangedRegions(
+export async function fileInChangedRegions(
   session: ActiveSession,
   oldContent: string | undefined,
   newContent: string,
   environmentId: number = 0,
-): FileInResult {
+): Promise<FileInResult> {
   if (oldContent === undefined) {
-    return fileInClass(session, newContent, environmentId);
+    return await fileInClass(session, newContent, environmentId);
   }
 
   const oldFile = parseFileStructure(oldContent);
@@ -588,7 +588,7 @@ export function fileInChangedRegions(
   if (newFile.classDef) {
     if (oldFile.classDef?.text !== newFile.classDef.text) {
       try {
-        queries.compileClassDefinition(session, newFile.classDef.text);
+        await queries.compileClassDefinition(session, newFile.classDef.text);
         compiledClassDef = true;
       } catch (e: unknown) {
         const msg = e instanceof BrowserQueryError ? e.message : String(e);
@@ -612,7 +612,7 @@ export function fileInChangedRegions(
 
     if (!oldMethod || oldMethod.text !== m.text || oldMethod.category !== m.category) {
       try {
-        queries.compileMethod(
+        await queries.compileMethod(
           session,
           m.key.className,
           m.key.isMeta,
@@ -638,7 +638,7 @@ export function fileInChangedRegions(
     for (const [keyStr, oldMethod] of oldMethodMap) {
       if (!newMethodKeys.has(keyStr)) {
         try {
-          queries.deleteMethod(
+          await queries.deleteMethod(
             session,
             oldMethod.key.className,
             oldMethod.key.isMeta,

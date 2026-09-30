@@ -42,66 +42,69 @@ describe('move method (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const SOURCE = 'XMMItSource';
   const TARGET = 'XMMItTarget';
 
-  const includesSelector = (cls: string, sel: string, meta = false): boolean =>
-    exec(`(${cls}${meta ? ' class' : ''} includesSelector: #${sel}) printString`).trim() === 'true';
+  const includesSelector = async (cls: string, sel: string, meta = false): Promise<boolean> =>
+    (await exec(`(${cls}${meta ? ' class' : ''} includesSelector: #${sel}) printString`)).trim() ===
+    'true';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${SOURCE}' instVarNames: #('balance') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${TARGET}' instVarNames: #('balance') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'pure\n\t^ 40 + 2');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'greet\n\t^ 7');
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'callsSuper\n\t^ super hash');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'pure\n\t^ 40 + 2');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'greet\n\t^ 7');
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'callsSuper\n\t^ super hash');
   };
 
-  it('reports move-method engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports move-method engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the move-method GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the move-method GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pre-flights a move, counting the movable selectors and skipping the rest', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeMoveMethod(
@@ -111,7 +114,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
         false,
         TARGET,
         false,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -123,9 +126,9 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
   });
 
   it('relocates a method to another class and removes it from the source', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `xmmit-move-${SOURCE}`;
 
     const start = parseStartPreview(
@@ -138,7 +141,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
         false,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(2);
@@ -148,14 +151,14 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 
-    expect(includesSelector(TARGET, 'pure')).toBe(true);
-    expect(includesSelector(SOURCE, 'pure')).toBe(false);
+    expect(await includesSelector(TARGET, 'pure')).toBe(true);
+    expect(await includesSelector(SOURCE, 'pure')).toBe(false);
   });
 
   it('moves the movable methods and leaves a non-movable one behind', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `xmmit-multi-${SOURCE}`;
 
     const start = parseStartPreview(
@@ -168,7 +171,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
         false,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.movableCount).toBe(2);
@@ -177,16 +180,16 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(4);
 
-    expect(includesSelector(TARGET, 'pure')).toBe(true);
-    expect(includesSelector(TARGET, 'greet')).toBe(true);
-    expect(includesSelector(SOURCE, 'callsSuper')).toBe(true);
-    expect(includesSelector(TARGET, 'callsSuper')).toBe(false);
+    expect(await includesSelector(TARGET, 'pure')).toBe(true);
+    expect(await includesSelector(TARGET, 'greet')).toBe(true);
+    expect(await includesSelector(SOURCE, 'callsSuper')).toBe(true);
+    expect(await includesSelector(TARGET, 'callsSuper')).toBe(false);
   });
 
   it('stages nothing when every selected method is non-movable', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `xmmit-none-${SOURCE}`;
 
     const start = parseStartPreview(
@@ -199,7 +202,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
         false,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -211,14 +214,14 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(result.applied).toBe(0);
     expect(result.failed).toEqual([]);
 
-    expect(includesSelector(SOURCE, 'callsSuper')).toBe(true);
-    expect(includesSelector(TARGET, 'callsSuper')).toBe(false);
+    expect(await includesSelector(SOURCE, 'callsSuper')).toBe(true);
+    expect(await includesSelector(TARGET, 'callsSuper')).toBe(false);
   });
 
   it('flips an instance method to the class side of its own class', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `xmmit-flip-${SOURCE}`;
 
     const start = parseStartPreview(
@@ -231,7 +234,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
         true,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.movableCount).toBe(1);
@@ -239,7 +242,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     const result = parseApplyResult(await applyMoveMethod(asyncExec, token, [], 'test undo'));
     expect(result.applied).toBe(2);
 
-    expect(includesSelector(SOURCE, 'pure', true)).toBe(true);
-    expect(includesSelector(SOURCE, 'pure', false)).toBe(false);
+    expect(await includesSelector(SOURCE, 'pure', true)).toBe(true);
+    expect(await includesSelector(SOURCE, 'pure', false)).toBe(false);
   });
 });

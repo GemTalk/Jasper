@@ -85,7 +85,7 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   let rowanAvailable = false;
   const tmpDirs: string[] = [];
@@ -95,11 +95,11 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
   // the harness then keeps managing -- per-test transaction, and logout at the
   // end. That per-test abort is also what rolls the probe project back, so
   // nothing is left committed on the stone.
-  beforeAll(() => {
+  beforeAll(async () => {
     logout();
     login({ user: 'SystemUser' });
 
-    rowanAvailable = listRowanProjects(exec).available;
+    rowanAvailable = (await listRowanProjects(exec)).available;
   });
 
   afterAll(() => {
@@ -108,7 +108,7 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
 
   it(
     'round-trips a created project to a byte-identical on-disk copy',
-    (ctx) => {
+    async (ctx) => {
       // No Rowan in this image (e.g. the bare-extent test stone) → skip visibly
       // rather than passing vacuously.
       if (!rowanAvailable) ctx.skip();
@@ -120,24 +120,26 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
       const targetA = path.join(dirA, PROJECT);
       const targetC = path.join(dirC, PROJECT);
 
-      expect(exec(createCode(home)).trim()).toBe('ok');
+      expect((await exec(createCode(home))).trim()).toBe('ok');
 
-      const a = exportRowanProject(exec, PROJECT, targetA);
+      const a = await exportRowanProject(exec, PROJECT, targetA);
       expect(a.success, `${a.detail}`).toBe(true);
 
-      expect(exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`).trim()).toBe(
-        'ok',
-      );
-      expect(listRowanProjects(exec).projects.some((p) => p.name === PROJECT)).toBe(false);
+      expect(
+        (await exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`)).trim(),
+      ).toBe('ok');
+      expect((await listRowanProjects(exec)).projects.some((p) => p.name === PROJECT)).toBe(false);
 
       expect(
-        exec(
-          `(Rowan projectFromUrl: 'file:${targetA}/rowan/specs/${PROJECT}.ston' projectsHome: '${targetA}') load. 'ok'`,
+        (
+          await exec(
+            `(Rowan projectFromUrl: 'file:${targetA}/rowan/specs/${PROJECT}.ston' projectsHome: '${targetA}') load. 'ok'`,
+          )
         ).trim(),
       ).toBe('ok');
-      expect(listRowanProjects(exec).projects.some((p) => p.name === PROJECT)).toBe(true);
+      expect((await listRowanProjects(exec)).projects.some((p) => p.name === PROJECT)).toBe(true);
 
-      const c = exportRowanProject(exec, PROJECT, targetC);
+      const c = await exportRowanProject(exec, PROJECT, targetC);
       expect(c.success, `${c.detail}`).toBe(true);
 
       const treeA = readTree(targetA);

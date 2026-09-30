@@ -84,10 +84,10 @@ describe('push-method query builders', () => {
       expect(code).toContain("deselected: #('5' '7')");
     });
 
-    it('clears the preview session by token', () => {
+    it('clears the preview session by token', async () => {
       const exec = vi.fn().mockReturnValue('ok');
 
-      const out = clearPushMethodPreview(exec, 'down', 'tok4');
+      const out = await clearPushMethodPreview(exec, 'down', 'tok4');
 
       expect(out).toBe('ok');
       expect(exec).toHaveBeenCalledWith(

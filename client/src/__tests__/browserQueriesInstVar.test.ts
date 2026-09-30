@@ -101,8 +101,8 @@ describe('browserQueries instance-variable wrappers', () => {
     expect(result).toBe('APPLY');
   });
 
-  it('clearInstVarPreview delegates with the token', () => {
-    const result = clearInstVarPreview(session, 'tok');
+  it('clearInstVarPreview delegates with the token', async () => {
+    const result = await clearInstVarPreview(session, 'tok');
 
     expect(shared.clearInstVarPreview).toHaveBeenCalledWith(expect.any(Function), 'tok');
     expect(result).toBe('ok');

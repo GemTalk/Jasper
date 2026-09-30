@@ -18,11 +18,11 @@ import { escapeString, dictLookupExpr } from './util';
 // name collisions.
 //
 // `dict` accepts a 1-based symbol-list index or the current dictionary name.
-export function renameDictionary(
+export async function renameDictionary(
   execute: QueryExecutor,
   dict: number | string,
   newName: string,
-): string {
+): Promise<string> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| sl d newSym oldKey |
 sl := System myUserProfile symbolList.
@@ -38,5 +38,5 @@ oldKey := d keyAtValue: d ifAbsent: [nil].
 d name: newSym.
 (oldKey notNil and: [oldKey ~~ newSym]) ifTrue: [d removeKey: oldKey ifAbsent: []].
 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

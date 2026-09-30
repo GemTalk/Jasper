@@ -9,79 +9,79 @@ import { getAllSelectors } from '../getAllSelectors';
 import { getSourceOffsets } from '../getSourceOffsets';
 
 describe('getDictionaryNames', () => {
-  it('parses newline-separated names', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Globals\nUserGlobals\n');
-    expect(getDictionaryNames(execute)).toEqual(['Globals', 'UserGlobals']);
+  it('parses newline-separated names', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Globals\nUserGlobals\n');
+    expect(await getDictionaryNames(execute)).toEqual(['Globals', 'UserGlobals']);
   });
 
-  it('returns [] for empty output', () => {
-    expect(getDictionaryNames(vi.fn<QueryExecutor>(() => ''))).toEqual([]);
+  it('returns [] for empty output', async () => {
+    expect(await getDictionaryNames(vi.fn<QueryExecutor>(async () => ''))).toEqual([]);
   });
 });
 
 describe('getClassNames', () => {
-  it('sorts class names alphabetically', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Zebra\nApple\nMango\n');
-    expect(getClassNames(execute, 1)).toEqual(['Apple', 'Mango', 'Zebra']);
+  it('sorts class names alphabetically', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Zebra\nApple\nMango\n');
+    expect(await getClassNames(execute, 1)).toEqual(['Apple', 'Mango', 'Zebra']);
   });
 
-  it('embeds dictIndex in the Smalltalk code when given a number', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassNames(execute, 7);
+  it('embeds dictIndex in the Smalltalk code when given a number', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassNames(execute, 7);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 7');
   });
 
-  it('uses objectNamed: when given a dictionary name', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Array\n');
-    getClassNames(execute, 'Globals');
+  it('uses objectNamed: when given a dictionary name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Array\n');
+    await getClassNames(execute, 'Globals');
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Globals'");
   });
 
-  it('escapes single quotes in dictionary names', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassNames(execute, "it's");
+  it('escapes single quotes in dictionary names', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassNames(execute, "it's");
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'it''s'");
   });
 
-  it('returns [] for unknown dictionary names (Smalltalk returns empty)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    expect(getClassNames(execute, 'NoSuchDict')).toEqual([]);
+  it('returns [] for unknown dictionary names (Smalltalk returns empty)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    expect(await getClassNames(execute, 'NoSuchDict')).toEqual([]);
   });
 });
 
 describe('getDictionaryClassFileOutOrder', () => {
-  it('orders shallower classes before deeper ones', () => {
-    const execute = vi.fn<QueryExecutor>(() => '2\tAnimal\n3\tDog\n1\tObject\n');
-    expect(getDictionaryClassFileOutOrder(execute, 1)).toEqual(['Object', 'Animal', 'Dog']);
+  it('orders shallower classes before deeper ones', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '2\tAnimal\n3\tDog\n1\tObject\n');
+    expect(await getDictionaryClassFileOutOrder(execute, 1)).toEqual(['Object', 'Animal', 'Dog']);
   });
 
-  it('breaks depth ties alphabetically', () => {
-    const execute = vi.fn<QueryExecutor>(() => '2\tZebra\n2\tApple\n2\tMango\n');
-    expect(getDictionaryClassFileOutOrder(execute, 1)).toEqual(['Apple', 'Mango', 'Zebra']);
+  it('breaks depth ties alphabetically', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '2\tZebra\n2\tApple\n2\tMango\n');
+    expect(await getDictionaryClassFileOutOrder(execute, 1)).toEqual(['Apple', 'Mango', 'Zebra']);
   });
 
-  it('walks the superclass chain to compute depth', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getDictionaryClassFileOutOrder(execute, 1);
+  it('walks the superclass chain to compute depth', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getDictionaryClassFileOutOrder(execute, 1);
     expect(execute.mock.calls[0][0]).toContain('sc := sc superclass');
   });
 
-  it('embeds dictIndex in the Smalltalk code when given a number', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getDictionaryClassFileOutOrder(execute, 7);
+  it('embeds dictIndex in the Smalltalk code when given a number', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getDictionaryClassFileOutOrder(execute, 7);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 7');
   });
 
-  it('uses objectNamed: when given a dictionary name', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getDictionaryClassFileOutOrder(execute, 'Globals');
+  it('uses objectNamed: when given a dictionary name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getDictionaryClassFileOutOrder(execute, 'Globals');
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Globals'");
   });
 
-  it('returns [] for an unknown dictionary', () => {
+  it('returns [] for an unknown dictionary', async () => {
     expect(
-      getDictionaryClassFileOutOrder(
-        vi.fn<QueryExecutor>(() => ''),
+      await getDictionaryClassFileOutOrder(
+        vi.fn<QueryExecutor>(async () => ''),
         'NoSuchDict',
       ),
     ).toEqual([]);
@@ -89,52 +89,52 @@ describe('getDictionaryClassFileOutOrder', () => {
 });
 
 describe('getMethodCategories', () => {
-  it('uses "<class>" receiver for instance side', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'accessing\nprinting\n');
-    expect(getMethodCategories(execute, 'Array', false)).toEqual(['accessing', 'printing']);
+  it('uses "<class>" receiver for instance side', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'accessing\nprinting\n');
+    expect(await getMethodCategories(execute, 'Array', false)).toEqual(['accessing', 'printing']);
     expect(execute.mock.calls[0][0]).toContain('Array categoryNames');
   });
 
-  it('uses "<class> class" receiver for class side', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodCategories(execute, 'Array', true);
+  it('uses "<class> class" receiver for class side', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodCategories(execute, 'Array', true);
     expect(execute.mock.calls[0][0]).toContain('Array class categoryNames');
   });
 });
 
 describe('getInstVarNames', () => {
-  it('parses allInstVarNames output, resolving the class through the symbol list', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'name\nsize\n');
-    expect(getInstVarNames(execute, 'Foo')).toEqual(['name', 'size']);
+  it('parses allInstVarNames output, resolving the class through the symbol list', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'name\nsize\n');
+    expect(await getInstVarNames(execute, 'Foo')).toEqual(['name', 'size']);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('allInstVarNames');
     expect(code).toContain("objectNamed: #'Foo'"); // dict-scoped/escaped lookup, not a bareword
   });
 
-  it('scopes the lookup to a given SymbolList index', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getInstVarNames(execute, 'Foo', 3);
+  it('scopes the lookup to a given SymbolList index', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getInstVarNames(execute, 'Foo', 3);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 3');
   });
 });
 
 describe('getAllSelectors', () => {
-  it('parses allSelectors sorted output', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'at:\nsize\n');
-    expect(getAllSelectors(execute, 'Foo')).toEqual(['at:', 'size']);
+  it('parses allSelectors sorted output', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'at:\nsize\n');
+    expect(await getAllSelectors(execute, 'Foo')).toEqual(['at:', 'size']);
     expect(execute.mock.calls[0][0]).toContain('Foo allSelectors asSortedCollection');
   });
 });
 
 describe('getSourceOffsets', () => {
-  it('parses integer offsets from lines', () => {
-    const execute = vi.fn<QueryExecutor>(() => '1\n5\n12\n');
-    expect(getSourceOffsets(execute, 'Array', false, 'size')).toEqual([1, 5, 12]);
+  it('parses integer offsets from lines', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '1\n5\n12\n');
+    expect(await getSourceOffsets(execute, 'Array', false, 'size')).toEqual([1, 5, 12]);
   });
 
-  it('passes environmentId to compiledMethodAt:', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getSourceOffsets(execute, 'Array', false, 'size', 2);
+  it('passes environmentId to compiledMethodAt:', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getSourceOffsets(execute, 'Array', false, 'size', 2);
     expect(execute.mock.calls[0][0]).toContain('environmentId: 2');
   });
 });

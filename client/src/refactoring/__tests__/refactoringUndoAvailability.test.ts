@@ -35,10 +35,10 @@ beforeEach(() => {
 });
 
 describe('checkRefactoringUndoAvailable', () => {
-  it('reads the stone answer through, and logs it', () => {
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(available);
+  it('reads the stone answer through, and logs it', async () => {
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue(available);
 
-    expect(checkRefactoringUndoAvailable(session)).toMatchObject({
+    expect(await checkRefactoringUndoAvailable(session)).toMatchObject({
       available: true,
       label: 'Rename #total to #sum',
       sequence: 4,
@@ -46,26 +46,26 @@ describe('checkRefactoringUndoAvailable', () => {
     expect(vi.mocked(logInfo).mock.calls[0][0]).toContain('"available":true');
   });
 
-  it('reports nothing to undo when the stone says so', () => {
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
+  it('reports nothing to undo when the stone says so', async () => {
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue('{"available":false}');
 
-    expect(checkRefactoringUndoAvailable(session).available).toBe(false);
+    expect((await checkRefactoringUndoAvailable(session)).available).toBe(false);
   });
 
-  it('reports nothing to undo when the probe throws, and says why in the log', () => {
+  it('reports nothing to undo when the probe throws, and says why in the log', async () => {
     // A session that is busy, gone, or has an engine predating undo. The refactoring itself
     // succeeded, so this must not surface as an error to the user.
-    vi.mocked(queries.refactoringUndoStatus).mockImplementation(() => {
+    vi.mocked(queries.refactoringUndoStatus).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(() => checkRefactoringUndoAvailable(session)).not.toThrow();
-    expect(checkRefactoringUndoAvailable(session).available).toBe(false);
+    await expect(checkRefactoringUndoAvailable(session)).resolves.not.toThrow();
+    expect((await checkRefactoringUndoAvailable(session)).available).toBe(false);
     expect(vi.mocked(logInfo).mock.calls[0][0]).toContain('session busy');
   });
 
-  it('reports nothing to undo without asking when there is no session', () => {
-    expect(checkRefactoringUndoAvailable(undefined).available).toBe(false);
+  it('reports nothing to undo without asking when there is no session', async () => {
+    expect((await checkRefactoringUndoAvailable(undefined)).available).toBe(false);
     expect(queries.refactoringUndoStatus).not.toHaveBeenCalled();
   });
 });

@@ -155,19 +155,20 @@ describe('Explorer filter input: accept vs cancel', () => {
   // the mechanism, the rendered rows are the behaviour the user sees.
   it('puts the unfiltered rows back on the pane when the user presses Escape', async () => {
     const ctl = makeController();
-    const rows = () => (ctl.dictProvider.getChildren() as { label?: string }[]).map((r) => r.label);
-    const before = rows();
+    const rows = async () =>
+      ((await ctl.dictProvider.getChildren()) as { label?: string }[]).map((r) => r.label);
+    const before = await rows();
     expect(before).toEqual(expect.arrayContaining(['UserGlobals', 'Globals']));
 
     await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
     // The pane really did narrow, so the restore below is proving something.
-    expect(rows()).not.toEqual(before);
+    expect(await rows()).not.toEqual(before);
 
     box.__hide(); // Escape
 
-    expect(rows()).toEqual(before);
+    expect(await rows()).toEqual(before);
   });
 
   // Regression for the review finding: the restore used to write the pre-edit value back
@@ -189,7 +190,7 @@ describe('Explorer filter input: accept vs cancel', () => {
     second.__type('Us');
 
     // Someone else takes ownership of this pane's filter while the box is still open.
-    ctl.clearFilter(DICTS);
+    await ctl.clearFilter(DICTS);
     expect(currentFilter(ctl, DICTS)).toBeUndefined();
 
     second.__hide(); // Escape

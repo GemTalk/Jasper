@@ -103,6 +103,9 @@ export function applyExtractMethod(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearExtractMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsExtractMethodRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearExtractMethodPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsExtractMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

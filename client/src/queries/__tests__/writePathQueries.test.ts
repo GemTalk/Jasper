@@ -21,9 +21,9 @@ import { clearBreakAtStepPoint } from '../clearBreakAtStepPoint';
 import { clearAllBreaks } from '../clearAllBreaks';
 
 describe('compileMethod', () => {
-  it('uses Behavior>>compileMethod:dictionaries:category:environmentId:', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Compiled: Array >> foo');
-    compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
+  it('uses Behavior>>compileMethod:dictionaries:category:environmentId:', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Compiled: Array >> foo');
+    await compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('compileMethod:');
     expect(code).toContain("category: 'accessing'");
@@ -31,9 +31,9 @@ describe('compileMethod', () => {
     expect(code).toContain('environmentId: 0');
   });
 
-  it('brackets the compile with the method-history helper, resolved from SessionTemps', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Compiled: Array >> foo');
-    compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
+  it('brackets the compile with the method-history helper, resolved from SessionTemps', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Compiled: Array >> foo');
+    await compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
     const code = execute.mock.calls[0][0];
     // The helper lives in SessionTemps (installed at login, no plugin) — resolving
     // it there, not as a bareword, keeps the compile valid when it is absent, and
@@ -43,44 +43,44 @@ describe('compileMethod', () => {
     expect(code).toContain('afterCompileIn:');
   });
 
-  it('leaves the capture out of nothing — the helper is a no-op guard, not required', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Compiled: Array >> foo');
-    compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
+  it('leaves the capture out of nothing — the helper is a no-op guard, not required', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Compiled: Array >> foo');
+    await compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
     const code = execute.mock.calls[0][0];
     // Guarded with ifNotNil: so a session without the helper still compiles normally.
     expect(code).toContain('ifNotNil:');
   });
 
-  it("uses target = 'base class' for class-side compiles", () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    compileMethod(execute, 'Array', true, 'creation', 'new\n  ^ super new');
+  it("uses target = 'base class' for class-side compiles", async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await compileMethod(execute, 'Array', true, 'creation', 'new\n  ^ super new');
     expect(execute.mock.calls[0][0]).toContain('target := base class');
   });
 
-  it("uses target = 'base' for instance-side compiles", () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    compileMethod(execute, 'Array', false, 'acc', 'foo');
+  it("uses target = 'base' for instance-side compiles", async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await compileMethod(execute, 'Array', false, 'acc', 'foo');
     expect(execute.mock.calls[0][0]).toContain('target := base');
     expect(execute.mock.calls[0][0]).not.toContain('target := base class');
   });
 
-  it('scopes lookup to a dictionary when dict is provided', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    compileMethod(execute, 'Foo', false, 'cat', 'x', 0, 'UserGlobals');
+  it('scopes lookup to a dictionary when dict is provided', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await compileMethod(execute, 'Foo', false, 'cat', 'x', 0, 'UserGlobals');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'UserGlobals'");
     expect(code).toContain("at: #'Foo' ifAbsent: [nil]");
   });
 
-  it('returns "Class not found" guard when the class lookup yields nil', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    compileMethod(execute, 'Nope', false, 'cat', 'x');
+  it('returns "Class not found" guard when the class lookup yields nil', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await compileMethod(execute, 'Nope', false, 'cat', 'x');
     expect(execute.mock.calls[0][0]).toContain("base ifNil: [^ 'Class not found: Nope']");
   });
 
-  it('escapes single quotes in class name, category, and source', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    compileMethod(execute, "Foo'", true, "cat's", "foo\n  ^ 'hi'");
+  it('escapes single quotes in class name, category, and source', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await compileMethod(execute, "Foo'", true, "cat's", "foo\n  ^ 'hi'");
     const code = execute.mock.calls[0][0];
     expect(code).toContain("#'Foo'''"); // className in Smalltalk symbol
     expect(code).toContain("category: 'cat''s'");
@@ -89,45 +89,45 @@ describe('compileMethod', () => {
 });
 
 describe('compileClassDefinition', () => {
-  it('answers the class name as a String, since the result must be a byte object', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Foo');
-    const result = compileClassDefinition(execute, "Object subclass: 'Foo'");
+  it('answers the class name as a String, since the result must be a byte object', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Foo');
+    const result = await compileClassDefinition(execute, "Object subclass: 'Foo'");
     expect(result).toBe('Foo');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("(Object subclass: 'Foo')");
     expect(code.trimEnd().endsWith('cls name')).toBe(true);
   });
 
-  it('drops the cached ClassOrganizer in the same doit, since the class set changed', () => {
+  it('drops the cached ClassOrganizer in the same doit, since the class set changed', async () => {
     // A reused organizer captured its class list when it was built, so it cannot
     // see a class added afterwards. Clearing here rather than from the caller keeps
     // the invalidation attached to the mutation.
-    const execute = vi.fn<QueryExecutor>(() => 'Foo');
-    compileClassDefinition(execute, "Object subclass: 'Foo'");
+    const execute = vi.fn<QueryExecutor>(async () => 'Foo');
+    await compileClassDefinition(execute, "Object subclass: 'Foo'");
     expect(execute.mock.calls[0][0]).toContain('JasperClassOrganizer_');
     expect(execute).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('setClassComment', () => {
-  it('sets comment and returns a confirmation', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Comment set: Foo');
-    expect(setClassComment(execute, 'Foo', 'hi')).toBe('Comment set: Foo');
+  it('sets comment and returns a confirmation', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Comment set: Foo');
+    expect(await setClassComment(execute, 'Foo', 'hi')).toBe('Comment set: Foo');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("cls comment: 'hi'");
   });
 
-  it('escapes quotes in class name and comment', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    setClassComment(execute, "Foo'", "it's a comment");
+  it('escapes quotes in class name and comment', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await setClassComment(execute, "Foo'", "it's a comment");
     const code = execute.mock.calls[0][0];
     expect(code).toContain("#'Foo'''");
     expect(code).toContain("comment: 'it''s a comment'");
   });
 
-  it('scopes lookup when dict is provided', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    setClassComment(execute, 'Foo', 'x', 2);
+  it('scopes lookup when dict is provided', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await setClassComment(execute, 'Foo', 'x', 2);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 2');
   });
 
@@ -136,10 +136,10 @@ describe('setClassComment', () => {
    * comment back to nothing leaves the class as it was found — `comment` answers
    * GemStone's synthesised placeholder again, and a file-out shows no comment.
    */
-  it('removes the comment key when the comment is empty', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Comment set: Foo');
+  it('removes the comment key when the comment is empty', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Comment set: Foo');
 
-    expect(setClassComment(execute, 'Foo', '')).toBe('Comment set: Foo');
+    expect(await setClassComment(execute, 'Foo', '')).toBe('Comment set: Foo');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('_extraDictRemoveKey: #comment');
@@ -148,73 +148,73 @@ describe('setClassComment', () => {
 
   // insert-final-newline can leave one behind after the text is deleted, and a
   // comment of pure whitespace is no more a comment than none.
-  it('treats a whitespace-only comment as empty', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    setClassComment(execute, 'Foo', '\n  \t');
+  it('treats a whitespace-only comment as empty', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await setClassComment(execute, 'Foo', '\n  \t');
     expect(execute.mock.calls[0][0]).toContain('_extraDictRemoveKey: #comment');
   });
 
   // `_extraDictRemoveKey:` is a private accessor; storing nil under the key reads
   // back identically to an absent one, so the removal has somewhere to fall back to.
-  it('falls back to storing nil if the key cannot be removed', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    setClassComment(execute, 'Foo', '');
+  it('falls back to storing nil if the key cannot be removed', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await setClassComment(execute, 'Foo', '');
     expect(execute.mock.calls[0][0]).toContain('_extraDictAt: #comment put: nil');
   });
 });
 
 describe('deleteMethod', () => {
-  it('removes the selector and returns confirmation', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Deleted: Array >> size');
-    expect(deleteMethod(execute, 'Array', false, 'size')).toBe('Deleted: Array >> size');
+  it('removes the selector and returns confirmation', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Deleted: Array >> size');
+    expect(await deleteMethod(execute, 'Array', false, 'size')).toBe('Deleted: Array >> size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("target removeSelector: #'size'");
   });
 
-  it('returns "Selector not found" when the selector is missing', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    deleteMethod(execute, 'Array', false, 'missing');
+  it('returns "Selector not found" when the selector is missing', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await deleteMethod(execute, 'Array', false, 'missing');
     expect(execute.mock.calls[0][0]).toContain('includesSelector:');
     expect(execute.mock.calls[0][0]).toContain("'Selector not found: '");
   });
 
-  it('uses base class for class-side deletes', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    deleteMethod(execute, 'Array', true, 'new');
+  it('uses base class for class-side deletes', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await deleteMethod(execute, 'Array', true, 'new');
     expect(execute.mock.calls[0][0]).toContain('target := base class');
   });
 });
 
 describe('recategorizeMethod', () => {
-  it('sends moveMethod:toCategory: with escaped args', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    recategorizeMethod(execute, 'Array', false, 'size', "it's new");
+  it('sends moveMethod:toCategory: with escaped args', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await recategorizeMethod(execute, 'Array', false, 'size', "it's new");
     const code = execute.mock.calls[0][0];
     expect(code).toContain("moveMethod: #'size'");
     expect(code).toContain("toCategory: 'it''s new'");
   });
 
-  it('scopes the receiver to a SymbolList index when a dict is given', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    recategorizeMethod(execute, 'object', false, 'size', 'cat', 1);
+  it('scopes the receiver to a SymbolList index when a dict is given', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await recategorizeMethod(execute, 'object', false, 'size', 'cat', 1);
     const code = execute.mock.calls[0][0];
     expect(code).toContain("(System myUserProfile symbolList at: 1) at: #'object' ifAbsent: [nil]");
   });
 });
 
 describe('renameCategory', () => {
-  it('sends renameCategory:to: with escaped args', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    renameCategory(execute, 'Array', false, 'old', 'new');
+  it('sends renameCategory:to: with escaped args', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await renameCategory(execute, 'Array', false, 'old', 'new');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("renameCategory: 'old' to: 'new'");
   });
 });
 
 describe('removeCategory', () => {
-  it('removes the category only once it is known to be empty', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing');
+  it('removes the category only once it is known to be empty', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing');
     const code = execute.mock.calls[0][0];
     // GemStone's removeCategory: takes every method in the category with it, so the
     // emptiness test has to sit in the SAME doit as the removal — a check on the
@@ -229,13 +229,13 @@ describe('removeCategory', () => {
     );
   });
 
-  it('sweeps every environment the Methods pane does, not just environment 0', () => {
+  it('sweeps every environment the Methods pane does, not just environment 0', async () => {
     // `includesCategory:`, `selectorsIn:` and `removeCategory:` are env-0 shorthands,
     // while the row the user clicked was built by getClassEnvironments iterating
     // `_unifiedCategorys: env` over `0 to: maxEnv`. Reading fewer environments than
     // the pane made the guard narrower than the thing it backstops.
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing', 1, 3);
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing', 1, 3);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('envs := 3.');
     expect(code).toContain('0 to: envs do:');
@@ -245,9 +245,9 @@ describe('removeCategory', () => {
     expect(code).not.toMatch(/removeCategory: '[^']*'\./);
   });
 
-  it('counts methods across environments before refusing', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing', 1, 2);
+  it('counts methods across environments before refusing', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing', 1, 2);
     const code = execute.mock.calls[0][0];
     // One running total over the whole sweep — a per-environment test would let a
     // category empty in environment 0 be removed with a method still in environment 1.
@@ -255,43 +255,43 @@ describe('removeCategory', () => {
     expect(code).toContain("'has-methods:', count printString");
   });
 
-  it('sweeps environment 0 alone when no higher environment is configured', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing');
+  it('sweeps environment 0 alone when no higher environment is configured', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing');
     expect(execute.mock.calls[0][0]).toContain('envs := 0.');
   });
 
-  it('reports no-category only when NO environment in range has it', () => {
+  it('reports no-category only when NO environment in range has it', async () => {
     // A category that exists only in a non-zero environment still has a row on
     // screen; telling the user the class "no longer has" it would be false.
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing', 1, 1);
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing', 1, 1);
     expect(execute.mock.calls[0][0]).toMatch(/found isEmpty\s*\n\s*ifTrue: \['no-category'\]/);
   });
 
-  it('addresses the metaclass for the class side', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', true, 'printing', 1);
+  it('addresses the metaclass for the class side', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', true, 'printing', 1);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 1');
     expect(code).toContain(' class.');
   });
 
-  it('escapes a quote in the category name', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, "it's odd");
+  it('escapes a quote in the category name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, "it's odd");
     const code = execute.mock.calls[0][0];
     expect(code).toContain("Symbol _existingWithAll: 'it''s odd'");
     expect(code).toContain("recv removeCategory: 'it''s odd' environmentId: env");
   });
 
-  it('reports the removal only once the category is actually gone', () => {
+  it('reports the removal only once the category is actually gone', async () => {
     // removeCategory:environmentId: runs a write-privilege check that answers nil
     // rather than raising if it ever declines quietly, so having SENT it is not
     // evidence — and with several environments in play, one that kept the category
     // is enough to make the whole removal a failure.
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    removeCategory(execute, 'Array', false, 'accessing', 1, 1);
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await removeCategory(execute, 'Array', false, 'accessing', 1, 1);
     const code = execute.mock.calls[0][0];
     expect(code).toMatch(
       /found detect: \[:env \| \(\(recv _unifiedCategorys: env\) at: cat otherwise: nil\) notNil\]/,
@@ -299,9 +299,9 @@ describe('removeCategory', () => {
     expect(code).toMatch(/ifTrue: \['ok'\]\s*\n\s*ifFalse: \['not-removed'\]/);
   });
 
-  it('answers no-class rather than raising when the class does not resolve', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'no-class');
-    removeCategory(execute, 'Array', false, 'accessing', 1);
+  it('answers no-class rather than raising when the class does not resolve', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'no-class');
+    await removeCategory(execute, 'Array', false, 'accessing', 1);
     expect(execute.mock.calls[0][0]).toContain("recv isNil\n  ifTrue: ['no-class']");
   });
 
@@ -355,48 +355,48 @@ describe('removeCategory', () => {
 });
 
 describe('deleteClass', () => {
-  it('scopes to a dict by index when given a number', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Deleted class: Foo');
-    expect(deleteClass(execute, 1, 'Foo')).toBe('Deleted class: Foo');
+  it('scopes to a dict by index when given a number', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Deleted class: Foo');
+    expect(await deleteClass(execute, 1, 'Foo')).toBe('Deleted class: Foo');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 1');
     expect(code).toContain("removeKey: #'Foo' ifAbsent: [nil]");
   });
 
-  it('scopes to a dict by name when given a string', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    deleteClass(execute, 'UserGlobals', 'Foo');
+  it('scopes to a dict by name when given a string', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await deleteClass(execute, 'UserGlobals', 'Foo');
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'UserGlobals'");
   });
 
-  it('returns "Class not found" when the dict lacks the key', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    deleteClass(execute, 1, 'Foo');
+  it('returns "Class not found" when the dict lacks the key', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await deleteClass(execute, 1, 'Foo');
     expect(execute.mock.calls[0][0]).toContain("'Class not found: Foo'");
   });
 });
 
 describe('moveClass', () => {
-  it('moves a class between dicts and reports', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Moved class: Foo');
-    expect(moveClass(execute, 1, 2, 'Foo')).toBe('Moved class: Foo');
+  it('moves a class between dicts and reports', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Moved class: Foo');
+    expect(await moveClass(execute, 1, 2, 'Foo')).toBe('Moved class: Foo');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 1');
     expect(code).toContain('symbolList at: 2');
     expect(code).toContain('destDict at:');
   });
 
-  it('returns "Class not found in source" if src dict lacks the key', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    moveClass(execute, 1, 2, 'Foo');
+  it('returns "Class not found in source" if src dict lacks the key', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await moveClass(execute, 1, 2, 'Foo');
     expect(execute.mock.calls[0][0]).toContain('Class not found in source dictionary');
   });
 });
 
 describe('addDictionary', () => {
-  it('creates a new SymbolDictionary and appends it to the symbolList', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Added dictionary: MyDict');
-    expect(addDictionary(execute, 'MyDict')).toBe('Added dictionary: MyDict');
+  it('creates a new SymbolDictionary and appends it to the symbolList', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Added dictionary: MyDict');
+    expect(await addDictionary(execute, 'MyDict')).toBe('Added dictionary: MyDict');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('SymbolDictionary new');
     expect(code).toContain("dict name: #'MyDict'");
@@ -405,37 +405,37 @@ describe('addDictionary', () => {
 });
 
 describe('removeDictionary', () => {
-  it('removes by index when given a number', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Removed dictionary: X');
-    expect(removeDictionary(execute, 3)).toBe('Removed dictionary: X');
+  it('removes by index when given a number', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Removed dictionary: X');
+    expect(await removeDictionary(execute, 3)).toBe('Removed dictionary: X');
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 3');
   });
 
-  it('removes by name when given a string', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    removeDictionary(execute, 'MyDict');
+  it('removes by name when given a string', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await removeDictionary(execute, 'MyDict');
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'MyDict'");
   });
 
-  it('returns "Dictionary not found" when lookup yields nil', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    removeDictionary(execute, 'Bogus');
+  it('returns "Dictionary not found" when lookup yields nil', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await removeDictionary(execute, 'Bogus');
     expect(execute.mock.calls[0][0]).toContain("'Dictionary not found'");
   });
 });
 
 describe('moveDictionaryUp / moveDictionaryDown', () => {
-  it('moveDictionaryUp swaps with the previous slot', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    moveDictionaryUp(execute, 3);
+  it('moveDictionaryUp swaps with the previous slot', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await moveDictionaryUp(execute, 3);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('3 > 1 ifTrue:');
     expect(code).toContain('sl at: 3 - 1');
   });
 
-  it('moveDictionaryDown swaps with the next slot', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    moveDictionaryDown(execute, 1);
+  it('moveDictionaryDown swaps with the next slot', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await moveDictionaryDown(execute, 1);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('1 < sl size ifTrue:');
     expect(code).toContain('sl at: 1 + 1');
@@ -443,65 +443,65 @@ describe('moveDictionaryUp / moveDictionaryDown', () => {
 });
 
 describe('breakpoint ops', () => {
-  it('setBreakAtStepPoint composes the setBreakAtStepPoint: send', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    setBreakAtStepPoint(execute, 'Array', false, 'size', 3);
+  it('setBreakAtStepPoint composes the setBreakAtStepPoint: send', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await setBreakAtStepPoint(execute, 'Array', false, 'size', 3);
     const code = execute.mock.calls[0][0];
     expect(code).toContain("compiledMethodAt: #'size'");
     expect(code).toContain('setBreakAtStepPoint: 3');
   });
 
-  it('clearBreakAtStepPoint composes the clearBreakAtStepPoint: send', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    clearBreakAtStepPoint(execute, 'Array', false, 'size', 3);
+  it('clearBreakAtStepPoint composes the clearBreakAtStepPoint: send', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await clearBreakAtStepPoint(execute, 'Array', false, 'size', 3);
     expect(execute.mock.calls[0][0]).toContain('clearBreakAtStepPoint: 3');
   });
 
-  it('clearAllBreaks composes the clearAllBreaks send', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    clearAllBreaks(execute, 'Array', false, 'size');
+  it('clearAllBreaks composes the clearAllBreaks send', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await clearAllBreaks(execute, 'Array', false, 'size');
     expect(execute.mock.calls[0][0]).toContain('clearAllBreaks');
   });
 
-  it('handles class-side breakpoints via the "Class class" receiver', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'ok');
-    setBreakAtStepPoint(execute, 'Array', true, 'new', 2);
+  it('handles class-side breakpoints via the "Class class" receiver', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'ok');
+    await setBreakAtStepPoint(execute, 'Array', true, 'new', 2);
     expect(execute.mock.calls[0][0]).toContain('Array class compiledMethodAt:');
   });
 });
 
 describe('recategorizeClass', () => {
-  it('sets the class category via Class>>category:', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Recategorized: Array');
-    recategorizeClass(execute, 'Array', 'Collections');
+  it('sets the class category via Class>>category:', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Recategorized: Array');
+    await recategorizeClass(execute, 'Array', 'Collections');
     expect(execute.mock.calls[0][0]).toContain("cls category: 'Collections'");
   });
 
-  it('guards against a missing class', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    recategorizeClass(execute, 'Nope', 'Cat');
+  it('guards against a missing class', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await recategorizeClass(execute, 'Nope', 'Cat');
     expect(execute.mock.calls[0][0]).toContain("cls ifNil: [^ 'Class not found: Nope']");
   });
 
-  it('escapes the class name and category', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    recategorizeClass(execute, "Fo'o", "Ca't");
+  it('escapes the class name and category', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await recategorizeClass(execute, "Fo'o", "Ca't");
     const code = execute.mock.calls[0][0];
     expect(code).toContain("#'Fo''o'");
     expect(code).toContain("category: 'Ca''t'");
   });
 
-  it('scopes the lookup to a dictionary index when given', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    recategorizeClass(execute, 'Array', 'Cat', 2);
+  it('scopes the lookup to a dictionary index when given', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await recategorizeClass(execute, 'Array', 'Cat', 2);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 2');
   });
 });
 
 describe('copyMethodToClass', () => {
-  it('reads the source method and category and compiles it into the target', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Copied: Set >> name');
-    copyMethodToClass(execute, 'Array', 'Set', false, 'name');
+  it('reads the source method and category and compiles it into the target', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Copied: Set >> name');
+    await copyMethodToClass(execute, 'Array', 'Set', false, 'name');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("compiledMethodAt: #'name'");
     expect(code).toContain("categoryOfSelector: #'name'");
@@ -509,25 +509,25 @@ describe('copyMethodToClass', () => {
     expect(code).toContain('category: (category ifNil:');
   });
 
-  it('guards against missing source and target classes', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    copyMethodToClass(execute, 'Src', 'Dst', false, 'sel');
+  it('guards against missing source and target classes', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await copyMethodToClass(execute, 'Src', 'Dst', false, 'sel');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("^ 'Source class not found: Src'");
     expect(code).toContain("^ 'Target class not found: Dst'");
   });
 
-  it('copies class-side methods via the "Class class" receiver on both sides', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    copyMethodToClass(execute, 'Array', 'Set', true, 'new');
+  it('copies class-side methods via the "Class class" receiver on both sides', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await copyMethodToClass(execute, 'Array', 'Set', true, 'new');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('srcRecv := src class');
     expect(code).toContain('tgtRecv := target class');
   });
 
-  it('reads from the given environment when non-zero', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    copyMethodToClass(execute, 'Array', 'Set', false, 'name', 1);
+  it('reads from the given environment when non-zero', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await copyMethodToClass(execute, 'Array', 'Set', false, 'name', 1);
     const code = execute.mock.calls[0][0];
     expect(code).toContain("compiledMethodAt: #'name' environmentId: 1");
     expect(code).toContain('environmentId: 1');

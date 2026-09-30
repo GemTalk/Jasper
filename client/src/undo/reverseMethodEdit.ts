@@ -41,7 +41,7 @@ export async function reverseMethodEdit(
 
   let now;
   try {
-    now = captureMethodSlots(execute, entry.slots);
+    now = await captureMethodSlots(execute, entry.slots);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the current state of ${entry.label} ` +
@@ -70,7 +70,7 @@ export async function reverseMethodEdit(
 
   let results;
   try {
-    results = applyMethodSlotOps(execute, ops);
+    results = await applyMethodSlotOps(execute, ops);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: ${e instanceof Error ? e.message : String(e)}`,

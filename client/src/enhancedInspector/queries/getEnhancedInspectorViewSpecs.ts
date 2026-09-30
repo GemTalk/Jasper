@@ -23,27 +23,33 @@ export interface EnhancedInspectorViewSpec {
   }>;
 }
 
-function enhancedInspectorExecute(execute: QueryExecutor, code: string): string | null {
+async function enhancedInspectorExecute(
+  execute: QueryExecutor,
+  code: string,
+): Promise<string | null> {
   const wrapped = `[${code}] on: AbstractException do: [:e | 'EIError:', e messageText asString]`;
   try {
-    const result = execute(wrapped);
+    const result = await execute(wrapped);
     return result.startsWith('EIError:') ? null : result;
   } catch {
     return null;
   }
 }
 
-function resolveForwardViewSpec(
+async function resolveForwardViewSpec(
   execute: QueryExecutor,
   oop: bigint,
   forwardSelector: string,
-): Pick<EnhancedInspectorViewSpec, 'resolvedViewName' | 'resolvedColumnSpecifications'> | null {
+): Promise<Pick<
+  EnhancedInspectorViewSpec,
+  'resolvedViewName' | 'resolvedColumnSpecifications'
+> | null> {
   if (!isValidSelector(forwardSelector)) return null;
   const code = `| viewed ds specDict |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(forwardSelector)}') phlowDataSource.
 STONJSON toString: ds retrieveViewSpecificationForForwarding`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result) return null;
   try {
     const spec = JSON.parse(result);
@@ -56,21 +62,21 @@ STONJSON toString: ds retrieveViewSpecificationForForwarding`;
   }
 }
 
-export function getEnhancedInspectorViewSpecs(
+export async function getEnhancedInspectorViewSpecs(
   execute: QueryExecutor,
   oop: bigint,
-): EnhancedInspectorViewSpec[] | null {
+): Promise<EnhancedInspectorViewSpec[] | null> {
   const code = `| viewed |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
 STONJSON toString: (viewed getInspectorSpecificationData at: 'views')`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result) return null;
   try {
     const specs = JSON.parse(result) as EnhancedInspectorViewSpec[];
     specs.sort((a, b) => a.priority - b.priority);
     for (const spec of specs) {
       if (spec.viewName === 'GtPhlowForwardViewSpecification') {
-        const resolved = resolveForwardViewSpec(execute, oop, spec.methodSelector);
+        const resolved = await resolveForwardViewSpec(execute, oop, spec.methodSelector);
         if (resolved) {
           spec.resolvedViewName = resolved.resolvedViewName;
           spec.resolvedColumnSpecifications = resolved.resolvedColumnSpecifications;
@@ -83,11 +89,11 @@ STONJSON toString: (viewed getInspectorSpecificationData at: 'views')`;
   }
 }
 
-export function fetchEnhancedInspectorPrintTabData(
+export async function fetchEnhancedInspectorPrintTabData(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
-): { data: string | null; truncated: boolean } {
+): Promise<{ data: string | null; truncated: boolean }> {
   if (!isValidSelector(methodSelector)) return { data: null, truncated: false };
   const code = `| viewed obj ds textData s |
 obj := Object _objectForOop: ${oop}.
@@ -98,7 +104,7 @@ s := WriteStream on: String new.
 obj printOn: s.
 textData at: 'truncated' put: (s position > (textData at: 'string') size).
 STONJSON toString: textData`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   let truncated = false;
   if (result) {
     try {
@@ -110,25 +116,25 @@ STONJSON toString: textData`;
   return { data: result, truncated };
 }
 
-export function fetchEnhancedInspectorTextData(
+export async function fetchEnhancedInspectorTextData(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(methodSelector)) return null;
   const code = `| viewed ds |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}') phlowDataSource.
 STONJSON toString: ds getText`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
-export function fetchEnhancedInspectorForwardRowOop(
+export async function fetchEnhancedInspectorForwardRowOop(
   execute: QueryExecutor,
   itemOop: bigint,
   forwardSelector: string,
   nodeId: number,
-): bigint | null {
+): Promise<bigint | null> {
   if (!isValidSelector(forwardSelector)) return null;
   const code = `| viewed ds forwardDs item |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${itemOop}).
@@ -137,7 +143,7 @@ ds retrieveViewSpecificationForForwarding.
 forwardDs := ds retrieveForwardTargetDataSource.
 item := forwardDs retrieveSentItemAt: ${nodeId}.
 [item asOop printString] on: Error do: [:e | '']`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result || result.trim() === '') return null;
   try {
     return BigInt(result.trim());
@@ -146,12 +152,12 @@ item := forwardDs retrieveSentItemAt: ${nodeId}.
   }
 }
 
-export function fetchEnhancedInspectorRowOop(
+export async function fetchEnhancedInspectorRowOop(
   execute: QueryExecutor,
   itemOop: bigint,
   methodSelector: string,
   nodeId: number,
-): bigint | null {
+): Promise<bigint | null> {
   if (!isValidSelector(methodSelector)) return null;
   // Drill into the view's *sent* item — the result of GtPhlow's send block —
   // not the raw `node targetObject`. For collection views the send is identity,
@@ -166,7 +172,7 @@ ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}
 ds retrieveItems: 1 fromIndex: ${nodeId}.
 item := ds retrieveSentItemAt: ${nodeId}.
 [item asOop printString] on: Error do: [:e | '']`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result || result.trim() === '') return null;
   try {
     return BigInt(result.trim());
@@ -175,35 +181,35 @@ item := ds retrieveSentItemAt: ${nodeId}.
   }
 }
 
-export function fetchEnhancedInspectorListTotal(
+export async function fetchEnhancedInspectorListTotal(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
-): number | null {
+): Promise<number | null> {
   if (!isValidSelector(methodSelector)) return null;
   const code = `| viewed ds |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}') phlowDataSource.
 ds retrieveTotalItemsCount printString`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result) return null;
   const n = parseInt(result.trim(), 10);
   return isNaN(n) ? null : n;
 }
 
-export function fetchEnhancedInspectorTreeChildren(
+export async function fetchEnhancedInspectorTreeChildren(
   execute: QueryExecutor,
   itemOop: bigint,
   methodSelector: string,
   path: number[],
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(methodSelector)) return null;
   const stPath = '{' + path.join('. ') + '}';
   const code = `| viewed ds |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${itemOop}).
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}') phlowDataSource.
 STONJSON toString: (ds retrieveChildrenForNodeAtPath: ${stPath})`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
 /**
@@ -214,12 +220,12 @@ STONJSON toString: (ds retrieveChildrenForNodeAtPath: ${stPath})`;
  * dictionary browses to the same place from all three. An '' dictName means no
  * dictionary in the user's symbol list holds the class.
  */
-export function fetchMethodBrowseLocation(
+export async function fetchMethodBrowseLocation(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
   isClassSide: boolean,
-): { dictName: string; className: string; category: string } | null {
+): Promise<{ dictName: string; className: string; category: string } | null> {
   if (!isValidSelector(methodSelector)) return null;
   const methodCls = isClassSide ? 'baseCls class' : 'baseCls';
   const code = `| obj baseCls dictName category |
@@ -232,7 +238,7 @@ STONJSON toString: (Dictionary new
   at: 'className' put: baseCls name;
   at: 'category' put: category;
   yourself)`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result) return null;
   try {
     return JSON.parse(result);
@@ -241,21 +247,21 @@ STONJSON toString: (Dictionary new
   }
 }
 
-export function fetchMethodSource(
+export async function fetchMethodSource(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
   isClassSide: boolean,
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(methodSelector)) return null;
   const recv = isClassSide
     ? `(Object _objectForOop: ${oop}) class theNonMetaClass class`
     : `(Object _objectForOop: ${oop}) class theNonMetaClass`;
   const code = `${recv} sourceCodeAt: #'${escapeString(methodSelector)}'`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
-export function fetchObjectMeta(execute: QueryExecutor, oop: bigint): string | null {
+export async function fetchObjectMeta(execute: QueryExecutor, oop: bigint): Promise<string | null> {
   const code = `| obj baseCls |
 obj := Object _objectForOop: ${oop}.
 baseCls := obj class theNonMetaClass.
@@ -268,16 +274,16 @@ STONJSON toString: (Dictionary new
   at: 'methodSelectors' put: baseCls selectors asSortedCollection asArray;
   at: 'classMethodSelectors' put: baseCls class selectors asSortedCollection asArray;
   yourself)`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
-export function fetchEnhancedInspectorListData(
+export async function fetchEnhancedInspectorListData(
   execute: QueryExecutor,
   oop: bigint,
   methodSelector: string,
   fromIndex: number,
   count: number,
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(methodSelector)) return null;
   if (!Number.isInteger(fromIndex) || fromIndex < 1) return null;
   if (!Number.isInteger(count) || count < 1) return null;
@@ -285,16 +291,16 @@ export function fetchEnhancedInspectorListData(
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
 ds := (viewed viewSpecificationsBySelector at: #'${escapeString(methodSelector)}') phlowDataSource.
 STONJSON toString: (ds retrieveItems: ${count} fromIndex: ${fromIndex})`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
-export function fetchEnhancedInspectorForwardListData(
+export async function fetchEnhancedInspectorForwardListData(
   execute: QueryExecutor,
   oop: bigint,
   forwardSelector: string,
   fromIndex: number,
   count: number,
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(forwardSelector)) return null;
   if (!Number.isInteger(fromIndex) || fromIndex < 1) return null;
   if (!Number.isInteger(count) || count < 1) return null;
@@ -304,14 +310,14 @@ ds := (viewed viewSpecificationsBySelector at: #'${escapeString(forwardSelector)
 ds retrieveViewSpecificationForForwarding.
 forwardDs := ds retrieveForwardTargetDataSource.
 STONJSON toString: (forwardDs retrieveItems: ${count} fromIndex: ${fromIndex})`;
-  return enhancedInspectorExecute(execute, code);
+  return await enhancedInspectorExecute(execute, code);
 }
 
-export function fetchEnhancedInspectorForwardListTotal(
+export async function fetchEnhancedInspectorForwardListTotal(
   execute: QueryExecutor,
   oop: bigint,
   forwardSelector: string,
-): number | null {
+): Promise<number | null> {
   if (!isValidSelector(forwardSelector)) return null;
   const code = `| viewed ds forwardDs |
 viewed := GtRemotePhlowViewedObject new initializeWith: (Object _objectForOop: ${oop}).
@@ -319,7 +325,7 @@ ds := (viewed viewSpecificationsBySelector at: #'${escapeString(forwardSelector)
 ds retrieveViewSpecificationForForwarding.
 forwardDs := ds retrieveForwardTargetDataSource.
 forwardDs retrieveTotalItemsCount printString`;
-  const result = enhancedInspectorExecute(execute, code);
+  const result = await enhancedInspectorExecute(execute, code);
   if (!result) return null;
   const n = parseInt(result.trim(), 10);
   return isNaN(n) ? null : n;

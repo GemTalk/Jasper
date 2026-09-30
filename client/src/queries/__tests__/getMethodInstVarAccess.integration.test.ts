@@ -25,27 +25,28 @@ describe('getMethodInstVarAccess (integration)', () => {
 
   // A transient fixture (rolled back by the harness's abort) with one method per
   // access shape. Selector spellings are unique to the fixture.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #( count name ) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    const m = (src: string): void => {
-      q.compileMethod(session(), CLS, false, 'accessing', src);
+    const m = async (src: string): Promise<void> => {
+      await q.compileMethod(session(), CLS, false, 'accessing', src);
     };
-    m('ivaCount\n\t^count'); // reads count
-    m('ivaSetCount: aValue\n\tcount := aValue'); // writes count
-    m('ivaBump\n\tcount := count + 1'); // reads + writes count
-    m("ivaGreeting\n\t^'hi'"); // touches no ivar
+    await m('ivaCount\n\t^count'); // reads count
+    await m('ivaSetCount: aValue\n\tcount := aValue'); // writes count
+    await m('ivaBump\n\tcount := count + 1'); // reads + writes count
+    await m("ivaGreeting\n\t^'hi'"); // touches no ivar
   };
 
-  const dictIndex = (): number => q.getDictionaryNames(session()).indexOf('UserGlobals') + 1;
+  const dictIndex = async (): Promise<number> =>
+    (await q.getDictionaryNames(session())).indexOf('UserGlobals') + 1;
 
-  it('reports each method reader / writer / both / neither', () => {
-    defineFixture();
+  it('reports each method reader / writer / both / neither', async () => {
+    await defineFixture();
 
-    const rows = q.getMethodInstVarAccess(session(), dictIndex(), CLS, 0);
+    const rows = await q.getMethodInstVarAccess(session(), await dictIndex(), CLS, 0);
     const by = (selector: string) => rows.find((r) => !r.isMeta && r.selector === selector);
 
     expect(by('ivaCount')).toMatchObject({ reads: ['count'], writes: [] });

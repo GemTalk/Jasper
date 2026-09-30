@@ -6,17 +6,19 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // delegates to the three separate mocks so every test keeps setting up its
 // method the same way, one fact at a time.
 vi.mock('../browserQueries', () => {
-  const getMethodSource = vi.fn(() => '');
-  const getSourceOffsets = vi.fn((): number[] => []);
-  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  const getMethodSource = vi.fn(async () => '');
+  const getSourceOffsets = vi.fn(async (): Promise<number[]> => []);
+  const getStepPointSelectorRanges = vi.fn(async (): Promise<unknown[]> => []);
   return {
     getMethodSource,
     getSourceOffsets,
     getStepPointSelectorRanges,
-    getStepPointBundle: vi.fn((...args: unknown[]) => ({
-      source: (getMethodSource as (...a: unknown[]) => string)(...args),
-      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
-      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    getStepPointBundle: vi.fn(async (...args: unknown[]) => ({
+      source: await (getMethodSource as (...a: unknown[]) => Promise<string>)(...args),
+      offsets: await (getSourceOffsets as (...a: unknown[]) => Promise<number[]>)(...args),
+      selectors: await (getStepPointSelectorRanges as (...a: unknown[]) => Promise<unknown[]>)(
+        ...args,
+      ),
     })),
   };
 });
@@ -79,101 +81,101 @@ function hoverText(hover: import('vscode').Hover | null): string {
 
 describe('StepPointHoverProvider', () => {
   beforeEach(() => {
-    mockGetMethodSource.mockReset().mockReturnValue(SOURCE);
+    mockGetMethodSource.mockReset().mockResolvedValue(SOURCE);
     // step points 1 and 2, at 0-based 9 ('self') and 14 ('total')
-    mockGetSourceOffsets.mockReset().mockReturnValue([10, 15]);
-    mockGetRanges.mockReset().mockReturnValue([
+    mockGetSourceOffsets.mockReset().mockResolvedValue([10, 15]);
+    mockGetRanges.mockReset().mockResolvedValue([
       { stepPoint: 1, selectorOffset: 9, selectorLength: 4, selectorText: 'self' },
       { stepPoint: 2, selectorOffset: 14, selectorLength: 5, selectorText: 'total' },
     ]);
   });
 
-  it('reports the step point under the pointer', () => {
+  it('reports the step point under the pointer', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
     // character 6 on line 1 => offset 14 => 'total' => step point 2
-    const hover = provider.provideHover(makeDocument(), pos(1, 6));
+    const hover = await provider.provideHover(makeDocument(), pos(1, 6));
     expect(hoverText(hover)).toContain('Step point 2');
   });
 
-  it('reports how many step points the method has', () => {
+  it('reports how many step points the method has', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    const hover = provider.provideHover(makeDocument(), pos(1, 1));
+    const hover = await provider.provideHover(makeDocument(), pos(1, 1));
     expect(hoverText(hover)).toContain('of 2');
   });
 
-  it('highlights the step point’s own token, so the reach is visible', () => {
+  it('highlights the step point’s own token, so the reach is visible', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    const hover = provider.provideHover(makeDocument(), pos(1, 6));
+    const hover = await provider.provideHover(makeDocument(), pos(1, 6));
     // 'total' spans offsets 14..19, i.e. characters 6..11 of line 1.
     expect(hover?.range?.start).toMatchObject({ line: 1, character: 6 });
     expect(hover?.range?.end).toMatchObject({ line: 1, character: 11 });
   });
 
-  it('offers to set a breakpoint when there is none', () => {
+  it('offers to set a breakpoint when there is none', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    const text = hoverText(await provider.provideHover(makeDocument(), pos(1, 6)));
     expect(text).toContain('gemstone.breakpoints.toggleAtStepPoint');
     expect(text).not.toContain('disableAtStepPoint');
   });
 
-  it('offers clear and disable for an enabled breakpoint', () => {
+  it('offers clear and disable for an enabled breakpoint', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: true }]),
     );
-    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    const text = hoverText(await provider.provideHover(makeDocument(), pos(1, 6)));
     expect(text).toContain('Breakpoint set');
     expect(text).toContain('gemstone.breakpoints.clearAtStepPoint');
     expect(text).toContain('gemstone.breakpoints.disableAtStepPoint');
   });
 
-  it('offers enable for a disabled breakpoint', () => {
+  it('offers enable for a disabled breakpoint', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager([{ stepPoint: 2, offset: 14, line: 2, enabled: false }]),
     );
-    const text = hoverText(provider.provideHover(makeDocument(), pos(1, 6)));
+    const text = hoverText(await provider.provideHover(makeDocument(), pos(1, 6)));
     expect(text).toContain('disabled');
     expect(text).toContain('gemstone.breakpoints.enableAtStepPoint');
   });
 
-  it('says nothing when the pointer is not on a step point token', () => {
+  it('says nothing when the pointer is not on a step point token', async () => {
     // Character 0 of line 1 is '^', which carries no selector range here — and
     // the caret rule would otherwise fall forward and misreport a step point.
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    expect(provider.provideHover(makeDocument(), pos(1, 0))).toBeNull();
+    expect(await provider.provideHover(makeDocument(), pos(1, 0))).toBeNull();
   });
 
-  it('says nothing for a non-gemstone document', () => {
+  it('says nothing for a non-gemstone document', async () => {
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    expect(provider.provideHover(makeDocument('file:///a.st'), pos(1, 6))).toBeNull();
+    expect(await provider.provideHover(makeDocument('file:///a.st'), pos(1, 6))).toBeNull();
   });
 
-  it('says nothing for a method with no step points', () => {
-    mockGetSourceOffsets.mockReturnValue([]);
-    mockGetRanges.mockReturnValue([]);
+  it('says nothing for a method with no step points', async () => {
+    mockGetSourceOffsets.mockResolvedValue([]);
+    mockGetRanges.mockResolvedValue([]);
     const provider = new StepPointHoverProvider(
       new StepPointModel(makeSessionManager()),
       makeManager(),
     );
-    expect(provider.provideHover(makeDocument(), pos(1, 6))).toBeNull();
+    expect(await provider.provideHover(makeDocument(), pos(1, 6))).toBeNull();
   });
 });

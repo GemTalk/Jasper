@@ -48,12 +48,12 @@ function stashKeysOf(entries: UndoEntry[]): string[] {
  * it says the whole record is gone, which is also the only chance to let go of a key issued
  * by a capture whose edit then failed before anything committed it.
  */
-function releaseFor(
+async function releaseFor(
   sessions: SessionManager,
   sessionId: number,
   entries: UndoEntry[],
   reason: UndoReleaseReason,
-): void {
+): Promise<void> {
   const keys = reason === 'cleared' ? takeIssuedStashKeys(sessionId) : stashKeysOf(entries);
   if (keys.length === 0) return;
   if (reason !== 'cleared') forgetStashKeys(sessionId, keys);
@@ -64,7 +64,7 @@ function releaseFor(
   if (!session) return;
 
   try {
-    releaseStashKeys(defaultQueryExecutorUsing(session), keys);
+    await releaseStashKeys(defaultQueryExecutorUsing(session), keys);
     logInfo(`[undo] released ${keys.length} stashed object(s) (${reason})`);
   } catch (e: unknown) {
     logInfo(
@@ -77,8 +77,8 @@ function releaseFor(
 /** Start releasing stashed objects as entries leave the stack. Answers a disposable. */
 export function registerStashRelease(sessions: SessionManager): vscode.Disposable {
   return new vscode.Disposable(
-    onUndoEntriesReleased((sessionId, entries, reason) =>
-      releaseFor(sessions, sessionId, entries, reason),
+    onUndoEntriesReleased(
+      (sessionId, entries, reason) => void releaseFor(sessions, sessionId, entries, reason),
     ),
   );
 }

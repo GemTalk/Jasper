@@ -14,42 +14,42 @@ const row = (className: string, isMeta: boolean, selector: string): string =>
   `UserGlobals\t${className}\t${isMeta ? '1' : '0'}\t${selector}\taccessing\n`;
 
 describe('class-variable reference scan', () => {
-  it('looks the variable up as a binding on the class that declares it', () => {
+  it('looks the variable up as a binding on the class that declares it', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
+    await methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('classVarNames');
     expect(code).toContain('_classVars associationAt:');
   });
 
-  it('matches the binding by identity rather than by name', () => {
+  it('matches the binding by identity rather than by name', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
+    await methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('literals');
     expect(code).toContain('== assoc');
   });
 
-  it('scans the instance and the class side of the whole subtree', () => {
+  it('scans the instance and the class side of the whole subtree', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
+    await methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('allSubclasses');
     expect(code).toContain('each class');
   });
 
-  it('reads the reported methods into browsable results, keeping their side', () => {
+  it('reads the reported methods into browsable results, keeping their side', async () => {
     const exec = vi
       .fn()
       .mockReturnValue(row('Account', false, 'record') + row('Account', true, 'reset'));
 
-    const results = methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
+    const results = await methodsAccessingClassVar(exec, 'Account', 'Registry', 3);
 
     expect(results).toEqual([
       {
@@ -71,29 +71,29 @@ describe('class-variable reference scan', () => {
     ]);
   });
 
-  it('enumerates the selectors of the environment it was asked about', () => {
+  it('enumerates the selectors of the environment it was asked about', async () => {
     // `selectors` lists environment 0 only, so a method that exists solely in another
     // environment was never offered to the accessed-variables test and the variable looked
     // unused — a delete would then go through without asking.
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingClassVar(exec, 'Account', 'Registry', 3, 2);
+    await methodsAccessingClassVar(exec, 'Account', 'Registry', 3, 2);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('selectorsForEnvironment: 2');
     expect(code).not.toMatch(/\bselectors do:/);
   });
 
-  it('reports nothing when the variable is not declared anywhere in the chain', () => {
+  it('reports nothing when the variable is not declared anywhere in the chain', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    expect(methodsAccessingClassVar(exec, 'Account', 'NotAVariable', 3)).toEqual([]);
+    expect(await methodsAccessingClassVar(exec, 'Account', 'NotAVariable', 3)).toEqual([]);
   });
 
-  it("escapes a quote in the variable name so the statement can't be broken out of", () => {
+  it("escapes a quote in the variable name so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingClassVar(exec, 'Account', "b'r", 3);
+    await methodsAccessingClassVar(exec, 'Account', "b'r", 3);
 
     expect(exec.mock.calls[0][0]).toContain("'b''r'");
   });

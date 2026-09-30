@@ -5,10 +5,12 @@ import { escapeString } from '../../queries/util';
 // symbol list (any dictionary). Used to reject a rename-class target that would
 // collide with an existing class or other global BEFORE previewing, so the user
 // can pick another name.
-export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
+export async function globalNameInUse(execute: QueryExecutor, name: string): Promise<boolean> {
   return (
-    execute(
-      `(System myUserProfile symbolList objectNamed: #'${escapeString(name)}') notNil printString`,
+    (
+      await execute(
+        `(System myUserProfile symbolList objectNamed: #'${escapeString(name)}') notNil printString`,
+      )
     ).trim() === 'true'
   );
 }

@@ -38,20 +38,20 @@ describe('tonel file out churn (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const rowan3 = useRowan3Stone(() => exec);
 
   // Deliberately not a trivial class: two sides, two protocols, instance and
   // class variables, a comment, and selectors spread across the alphabet so an
   // insertion lands in the MIDDLE of the sorted run rather than at an end, where
   // an ordering bug would be invisible.
-  const defineClass = (): void => {
-    q.compileClassDefinition(
+  const defineClass = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLASS}' instVarNames: #('size' 'colour' 'label') ` +
         `classVars: #('Registry') classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
     );
-    q.setClassComment(session(), CLASS, 'A throwaway class for the Tonel churn tests.');
+    await q.setClassComment(session(), CLASS, 'A throwaway class for the Tonel churn tests.');
     for (const [category, source] of [
       ['accessing', 'colour ^colour'],
       ['accessing', 'colour: aValue colour := aValue'],
@@ -62,19 +62,19 @@ describe('tonel file out churn (integration)', () => {
       ['comparing', '= other ^other size = size'],
       ['private', '_reset size := nil. colour := nil'],
     ] as const) {
-      q.compileMethod(session(), CLASS, false, category, source);
+      await q.compileMethod(session(), CLASS, false, category, source);
     }
     for (const [category, source] of [
       ['instance creation', 'make ^self new'],
       ['instance creation', 'named: aName ^self new label: aName; yourself'],
       ['accessing', 'registry ^Registry'],
     ] as const) {
-      q.compileMethod(session(), CLASS, true, category, source);
+      await q.compileMethod(session(), CLASS, true, category, source);
     }
   };
 
-  const fileOut = (): string => {
-    const tonel = fileOutClassTonel(exec, CLASS);
+  const fileOut = async (): Promise<string> => {
+    const tonel = await fileOutClassTonel(exec, CLASS);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
     // Every file-out in this suite, before and after each mutation: a change that
     // started doubling methods would otherwise show up only as a large diff, and
@@ -109,36 +109,36 @@ describe('tonel file out churn (integration)', () => {
   };
 
   /** File out, run `change`, file out again. */
-  const around = (change: () => void): { before: string; after: string } => {
-    defineClass();
-    const before = fileOut();
-    change();
-    return { before, after: fileOut() };
+  const around = async (change: () => unknown): Promise<{ before: string; after: string }> => {
+    await defineClass();
+    const before = await fileOut();
+    await change();
+    return { before, after: await fileOut() };
   };
 
-  it('shows no diff at all when nothing changes', (ctx) => {
+  it('shows no diff at all when nothing changes', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    const { before, after } = around(() => {});
+    const { before, after } = await around(() => {});
     expect(diffLines(before, after)).toEqual([]);
   });
 
-  it('shows no diff when a method is recompiled with identical source', (ctx) => {
+  it('shows no diff when a method is recompiled with identical source', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Recompiling replaces the compiled method object. If anything about the
     // file-out depended on compilation order or identity rather than on source,
     // this is where it would show.
-    const { before, after } = around(() => {
-      q.compileMethod(session(), CLASS, false, 'accessing', 'label ^label');
+    const { before, after } = await around(async () => {
+      await q.compileMethod(session(), CLASS, false, 'accessing', 'label ^label');
     });
     expect(diffLines(before, after)).toEqual([]);
   });
 
-  it('adds only the new method when one is added in the middle of the order', (ctx) => {
+  it('adds only the new method when one is added in the middle of the order', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // `middle` sorts between `label` and `printOn:` — an insertion with existing
     // methods on both sides of it.
-    const { before, after } = around(() => {
-      q.compileMethod(session(), CLASS, false, 'accessing', 'middle ^42');
+    const { before, after } = await around(async () => {
+      await q.compileMethod(session(), CLASS, false, 'accessing', 'middle ^42');
     });
     const changes = meaningful(diffLines(before, after));
     expect(removedLines(changes)).toEqual([]);
@@ -155,10 +155,10 @@ describe('tonel file out churn (integration)', () => {
     );
   });
 
-  it('removes only the deleted method', (ctx) => {
+  it('removes only the deleted method', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    const { before, after } = around(() => {
-      q.deleteMethod(session(), CLASS, false, 'label');
+    const { before, after } = await around(async () => {
+      await q.deleteMethod(session(), CLASS, false, 'label');
     });
     const changes = meaningful(diffLines(before, after));
     expect(addedLines(changes)).toEqual([]);
@@ -167,23 +167,23 @@ describe('tonel file out churn (integration)', () => {
     );
   });
 
-  it("changes only the body when a method's source changes", (ctx) => {
+  it("changes only the body when a method's source changes", async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    const { before, after } = around(() => {
-      q.compileMethod(session(), CLASS, false, 'accessing', 'label ^label ifNil: [ 0 ]');
+    const { before, after } = await around(async () => {
+      await q.compileMethod(session(), CLASS, false, 'accessing', 'label ^label ifNil: [ 0 ]');
     });
     const changes = meaningful(diffLines(before, after));
     expect(removedLines(changes)).toEqual([`${CLASS} >> label [ ^label`]);
     expect(addedLines(changes)).toEqual([`${CLASS} >> label [ ^label ifNil: [ 0 ]`]);
   });
 
-  it("changes only the pragma when a method's category changes, and does not reorder", (ctx) => {
+  it("changes only the pragma when a method's category changes, and does not reorder", async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Methods sort by SELECTOR, so a protocol change must move nothing. If the
     // writer ever sorted by category too, a developer tidying protocols would
     // rewrite the whole file.
-    const { before, after } = around(() => {
-      q.recategorizeMethod(session(), CLASS, false, 'label', 'printing');
+    const { before, after } = await around(async () => {
+      await q.recategorizeMethod(session(), CLASS, false, 'label', 'printing');
     });
     const changes = meaningful(diffLines(before, after));
     expect(removedLines(changes)).toEqual(["{ #category : 'accessing' }"]);
@@ -191,7 +191,7 @@ describe('tonel file out churn (integration)', () => {
     expect(declarationSequenceOf(after)).toEqual(declarationSequenceOf(before));
   });
 
-  it('changes only the header when an instance variable is added', (ctx) => {
+  it('changes only the header when an instance variable is added', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Methods coming across to the new class version is the DEFAULT case for
     // this feature's users, not a special one: Jasper's class-changing commands
@@ -206,8 +206,8 @@ describe('tonel file out churn (integration)', () => {
     // old version keeps its methods, the name binds to the new one, class history
     // holds both. That is not a path a developer takes, and it is noted only so
     // nobody re-derives it and mistakes it for what users see.)
-    const { before, after } = around(() => {
-      exec(
+    const { before, after } = await around(async () => {
+      await exec(
         `| old new sl |
 sl := System myUserProfile symbolList.
 old := sl objectNamed: #'${CLASS}'.
@@ -233,7 +233,7 @@ old class selectors do: [:sel |
     expect(declarationSequenceOf(after)).toEqual(declarationSequenceOf(before));
   });
 
-  it('does not export a method compiled into a non-zero environment', (ctx) => {
+  it('does not export a method compiled into a non-zero environment', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // A method compiled into environment 1 is invisible to `selectors`, so it
     // never reaches the file — verified on a rowan3 stone, where a class with one
@@ -244,8 +244,8 @@ old class selectors do: [:sel |
     // contains. Pinned here so the agreement is deliberate rather than accidental:
     // if `selectors` ever started reporting other environments, a Tonel file would
     // silently gain methods and every file would churn at once.
-    const { before, after } = around(() => {
-      exec(
+    const { before, after } = await around(async () => {
+      await exec(
         `| c | c := System myUserProfile symbolList objectNamed: #'${CLASS}'. ` +
           `c compileMethod: 'hiddenInEnvOne ^1' ` +
           `dictionaries: System myUserProfile symbolList category: 'accessing' environmentId: 1. ` +
@@ -257,12 +257,12 @@ old class selectors do: [:sel |
     expect(after).not.toContain('hiddenInEnvOne');
   });
 
-  it('keeps the class side and instance side apart when a class method is added', (ctx) => {
+  it('keeps the class side and instance side apart when a class method is added', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Class-side methods are written as their own run, before the instance side.
     // A new one must land in that run, not among the instance methods.
-    const { before, after } = around(() => {
-      q.compileMethod(session(), CLASS, true, 'instance creation', 'blank ^self new');
+    const { before, after } = await around(async () => {
+      await q.compileMethod(session(), CLASS, true, 'instance creation', 'blank ^self new');
     });
     const changes = meaningful(diffLines(before, after));
     expect(removedLines(changes)).toEqual([]);

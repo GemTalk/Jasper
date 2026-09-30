@@ -34,11 +34,11 @@ export interface GrailStubReflection {
   methods: GrailStubMethod[]; // own selectors, both sides
 }
 
-export function getGrailStubReflection(
+export async function getGrailStubReflection(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): GrailStubReflection {
+): Promise<GrailStubReflection> {
   // Output is line-oriented and tab-delimited, with the (possibly multi-line)
   // class comment last after a sentinel so its newlines don't confuse parsing:
   //   SUPER\t<superclassName>
@@ -65,7 +65,7 @@ cls instVarNames do: [:iv |
 ws nextPutAll: '===COMMENT==='; lf.
 ws nextPutAll: (cls comment ifNil: ['']).
 ws contents`;
-  return parseGrailStubReflection(execute(code));
+  return parseGrailStubReflection(await execute(code));
 }
 
 export function parseGrailStubReflection(raw: string): GrailStubReflection {

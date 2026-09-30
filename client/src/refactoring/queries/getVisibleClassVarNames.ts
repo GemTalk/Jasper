@@ -10,11 +10,11 @@ import { classLookupExpr, splitLines } from '../../queries/util';
 //
 // The class is resolved through `dict` (a 1-based SymbolList index, canonical for
 // Jasper, or a name) via classLookupExpr; an unbound name yields an empty list.
-export function getVisibleClassVarNames(
+export async function getVisibleClassVarNames(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string[] {
+): Promise<string[]> {
   const code = `| ws cls chain |
 cls := ${classLookupExpr(className, dict)}.
 ws := WriteStream on: String new.
@@ -23,5 +23,5 @@ chain do: [:c |
   c classVarNames do: [:each |
     ws nextPutAll: each asString; lf]].
 ws contents`;
-  return splitLines(execute(code));
+  return splitLines(await execute(code));
 }

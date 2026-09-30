@@ -31,7 +31,7 @@ import type { ActiveSession } from '../../sessionManager';
 describe('file in (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
-  let withTransientSession: (callback: (transientSession: unknown) => void) => void;
+  let withTransientSession: (callback: (transientSession: unknown) => unknown) => Promise<void>;
   useIntegrationTest((testContext) => {
     gci = testContext.gciLibrary;
     handle = testContext.session;
@@ -39,7 +39,7 @@ describe('file in (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-filein-'));
   afterAll(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
@@ -50,89 +50,88 @@ describe('file in (integration)', () => {
     return file;
   };
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const WIDGET = 'JasperFileInWidget';
 
-  const classExists = (name: string): boolean =>
-    exec(`(UserGlobals includesKey: #'${name}') printString`).trim() === 'true';
+  const classExists = async (name: string): Promise<boolean> =>
+    (await exec(`(UserGlobals includesKey: #'${name}') printString`)).trim() === 'true';
 
-  const selectorsOf = (name: string, isMeta: boolean): string[] =>
-    q
-      .getClassEnvironments(session(), userIndex(), name, 0)
+  const selectorsOf = async (name: string, isMeta: boolean): Promise<string[]> =>
+    (await q.getClassEnvironments(session(), await userIndex(), name, 0))
       .filter((l) => l.isMeta === isMeta)
       .flatMap((l) => l.selectors)
       .sort();
 
-  const categoryOfMethod = (name: string, selector: string): string | undefined =>
-    q
-      .getClassEnvironments(session(), userIndex(), name, 0)
-      .find((l) => !l.isMeta && l.selectors.includes(selector))?.category;
+  const categoryOfMethod = async (name: string, selector: string): Promise<string | undefined> =>
+    (await q.getClassEnvironments(session(), await userIndex(), name, 0)).find(
+      (l) => !l.isMeta && l.selectors.includes(selector),
+    )?.category;
 
   /** The standard fixture: one instance method and one class method, categorised. */
-  const defineWidget = (): void => {
-    q.compileClassDefinition(
+  const defineWidget = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${WIDGET}' instVarNames: #('size') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^size');
-    q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+    await q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^size');
+    await q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
   };
 
   describe('round trip', () => {
-    it('rebuilds a deleted class from the file it was filed out to', () => {
-      defineWidget();
-      const text = composeFileOut(q.fileOutHeader(session()), [
-        q.fileOutClass(session(), WIDGET, userIndex()),
+    it('rebuilds a deleted class from the file it was filed out to', async () => {
+      await defineWidget();
+      const text = composeFileOut(await q.fileOutHeader(session()), [
+        await q.fileOutClass(session(), WIDGET, await userIndex()),
       ]);
       const file = write(`${WIDGET}.gs`, text);
 
-      q.deleteClass(session(), userIndex(), WIDGET);
-      expect(classExists(WIDGET)).toBe(false);
+      await q.deleteClass(session(), await userIndex(), WIDGET);
+      expect(await classExists(WIDGET)).toBe(false);
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.errors).toEqual([]);
-      expect(classExists(WIDGET)).toBe(true);
-      expect(selectorsOf(WIDGET, false)).toContain('size');
-      expect(selectorsOf(WIDGET, true)).toContain('make');
+      expect(await classExists(WIDGET)).toBe(true);
+      expect(await selectorsOf(WIDGET, false)).toContain('size');
+      expect(await selectorsOf(WIDGET, true)).toContain('make');
     });
 
-    it('puts each method back in the category it was filed out of', () => {
-      defineWidget();
+    it('puts each method back in the category it was filed out of', async () => {
+      await defineWidget();
       const file = write(
         `${WIDGET}-cat.gs`,
-        composeFileOut(q.fileOutHeader(session()), [
-          q.fileOutClass(session(), WIDGET, userIndex()),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutClass(session(), WIDGET, await userIndex()),
         ]),
       );
-      q.deleteClass(session(), userIndex(), WIDGET);
+      await q.deleteClass(session(), await userIndex(), WIDGET);
 
-      fileInFile(session(), file);
+      await fileInFile(session(), file);
 
-      expect(categoryOfMethod(WIDGET, 'size')).toBe('accessing');
+      expect(await categoryOfMethod(WIDGET, 'size')).toBe('accessing');
     });
 
-    it("skips nothing it does not understand in GemStone's own file-out", () => {
-      defineWidget();
+    it("skips nothing it does not understand in GemStone's own file-out", async () => {
+      await defineWidget();
       const file = write(
         `${WIDGET}-skip.gs`,
-        composeFileOut(q.fileOutHeader(session()), [
-          q.fileOutClass(session(), WIDGET, userIndex()),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutClass(session(), WIDGET, await userIndex()),
         ]),
       );
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       // Every directive GemStone writes is one the parser handles or knowingly
       // ignores; a new one showing up here means the file-in is dropping something.
@@ -142,10 +141,10 @@ describe('file in (integration)', () => {
       expect(outcome.ignored).toEqual([]);
     });
 
-    it('understands every directive a whole-dictionary file-out writes', () => {
-      defineWidget();
+    it('understands every directive a whole-dictionary file-out writes', async () => {
+      await defineWidget();
 
-      const steps = parseTopazScript(q.fileOutDictionary(session(), userIndex()));
+      const steps = parseTopazScript(await q.fileOutDictionary(session(), await userIndex()));
 
       // The dictionary file-out comes from a different GemStone entry point than the
       // class one, so it gets its own check that nothing in it goes unread.
@@ -154,35 +153,36 @@ describe('file in (integration)', () => {
       expect(steps.some((s) => s.kind === 'method')).toBe(true);
     });
 
-    it('files a method-only file-out back in without touching the class definition', () => {
-      defineWidget();
+    it('files a method-only file-out back in without touching the class definition', async () => {
+      await defineWidget();
       const file = write(
         `${WIDGET}-method.gs`,
-        composeFileOut(q.fileOutHeader(session()), [
-          q.fileOutMethod(session(), WIDGET, false, 'size', userIndex()),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutMethod(session(), WIDGET, false, 'size', await userIndex()),
         ]),
       );
       // Change the method in the image, so filing the old one back in is observable.
-      q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^0');
-      expect(q.getMethodSource(session(), WIDGET, false, 'size')).toContain('^0');
+      await q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^0');
+      expect(await q.getMethodSource(session(), WIDGET, false, 'size')).toContain('^0');
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.errors).toEqual([]);
       expect(outcome.executed).toBe(0);
       expect(outcome.compiled).toBe(1);
-      expect(q.getMethodSource(session(), WIDGET, false, 'size')).toContain('^size');
+      expect(await q.getMethodSource(session(), WIDGET, false, 'size')).toContain('^size');
     });
   });
 
   describe('which session it lands in', () => {
     const TARGETED = 'JasperFileInTargeted';
 
-    const existsIn = (target: ActiveSession, name: string): boolean =>
-      q.executeFetchString(target, `(UserGlobals includesKey: #'${name}') printString`).trim() ===
-      'true';
+    const existsIn = async (target: ActiveSession, name: string): Promise<boolean> =>
+      (
+        await q.executeFetchString(target, `(UserGlobals includesKey: #'${name}') printString`)
+      ).trim() === 'true';
 
-    it('files into the session it was handed, and into no other', () => {
+    it('files into the session it was handed, and into no other', async () => {
       const file = write(
         'targeted.gs',
         [
@@ -193,23 +193,23 @@ describe('file in (integration)', () => {
         ].join('\n'),
       );
 
-      withTransientSession((other) => {
+      await withTransientSession(async (other) => {
         const second = { id: 2, gci, handle: other } as unknown as ActiveSession;
 
-        const outcome = fileInFile(second, file);
+        const outcome = await fileInFile(second, file);
 
         expect(outcome.errors).toEqual([]);
         // The class is in the session the file-in was handed...
-        expect(existsIn(second, TARGETED)).toBe(true);
+        expect(await existsIn(second, TARGETED)).toBe(true);
         // ...and not in the other one that is logged in at the same moment. A
         // file-in commits nothing, so an uncommitted class cannot cross sessions —
         // which makes this the sharpest available proof that the work went where it
         // was addressed rather than to whichever session happened to be active.
-        expect(existsIn(session(), TARGETED)).toBe(false);
+        expect(await existsIn(session(), TARGETED)).toBe(false);
       });
     });
 
-    it('leaves nothing behind in a session it was not addressed to', () => {
+    it('leaves nothing behind in a session it was not addressed to', async () => {
       const file = write(
         'targeted-back.gs',
         [
@@ -221,12 +221,12 @@ describe('file in (integration)', () => {
       );
 
       // The mirror image: file into THIS session, and the second one cannot see it.
-      fileInFile(session(), file);
+      await fileInFile(session(), file);
 
-      expect(existsIn(session(), `${TARGETED}Back`)).toBe(true);
-      withTransientSession((other) => {
+      expect(await existsIn(session(), `${TARGETED}Back`)).toBe(true);
+      await withTransientSession(async (other) => {
         const second = { id: 2, gci, handle: other } as unknown as ActiveSession;
-        expect(existsIn(second, `${TARGETED}Back`)).toBe(false);
+        expect(await existsIn(second, `${TARGETED}Back`)).toBe(false);
       });
     });
   });
@@ -236,35 +236,42 @@ describe('file in (integration)', () => {
 
     /** A dictionary of our own, holding a class and its subclass, one of whose
      *  methods refers to the other. Transient: the harness aborts after the test. */
-    const defineZoo = (): void => {
-      exec(
+    const defineZoo = async (): Promise<void> => {
+      await exec(
         `| d | d := System myUserProfile symbolList objectNamed: #'${ZOO}'. ` +
           `d isNil ifTrue: [d := SymbolDictionary new name: #'${ZOO}'; yourself. ` +
           `System myUserProfile insertDictionary: d at: 1]. 'ok'`,
       );
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: 'JasperZooAnimal' instVarNames: #() classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: ${ZOO}`,
       );
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `JasperZooAnimal subclass: 'JasperZooDog' instVarNames: #() classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: ${ZOO}`,
       );
       // Refers forward to its own subclass, so the file has to define both classes
       // before it compiles any method.
-      q.compileMethod(session(), 'JasperZooAnimal', false, 'accessing', 'pal ^JasperZooDog new');
+      await q.compileMethod(
+        session(),
+        'JasperZooAnimal',
+        false,
+        'accessing',
+        'pal ^JasperZooDog new',
+      );
     };
 
-    const zooExists = (): boolean =>
-      exec(`(System myUserProfile symbolList objectNamed: #'${ZOO}') notNil printString`).trim() ===
-      'true';
+    const zooExists = async (): Promise<boolean> =>
+      (
+        await exec(`(System myUserProfile symbolList objectNamed: #'${ZOO}') notNil printString`)
+      ).trim() === 'true';
 
-    it('files out a preamble that creates the dictionary, because GemStone does not', () => {
-      defineZoo();
+    it('files out a preamble that creates the dictionary, because GemStone does not', async () => {
+      await defineZoo();
 
-      const text = q.fileOutDictionary(session(), ZOO);
+      const text = await q.fileOutDictionary(session(), ZOO);
 
       // Every class definition says `inDictionary: <name>`, a bare global — without
       // this the first chunk fails on an undefined symbol and takes the file with it.
@@ -273,51 +280,57 @@ describe('file in (integration)', () => {
       expect(text).toContain('System myUserProfile insertDictionary: dict at: 1');
     });
 
-    it('rebuilds the dictionary and its classes on a stone that has neither', () => {
-      defineZoo();
+    it('rebuilds the dictionary and its classes on a stone that has neither', async () => {
+      await defineZoo();
       const file = write(
         `${ZOO}.gs`,
-        composeFileOut(q.fileOutHeader(session()), [q.fileOutDictionary(session(), ZOO)]),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutDictionary(session(), ZOO),
+        ]),
       );
 
       // Take the whole dictionary away — this is the state a colleague's stone is in.
-      q.removeDictionary(session(), ZOO);
-      expect(zooExists()).toBe(false);
+      await q.removeDictionary(session(), ZOO);
+      expect(await zooExists()).toBe(false);
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.errors).toEqual([]);
-      expect(zooExists()).toBe(true);
+      expect(await zooExists()).toBe(true);
       expect(
-        exec(
-          `((System myUserProfile symbolList objectNamed: #'${ZOO}') ` +
-            `includesKey: #'JasperZooDog') printString`,
+        (
+          await exec(
+            `((System myUserProfile symbolList objectNamed: #'${ZOO}') ` +
+              `includesKey: #'JasperZooDog') printString`,
+          )
         ).trim(),
       ).toBe('true');
       // The forward-referring method compiled, which it only can if both class
       // definitions were read before any method was.
-      expect(q.getMethodSource(session(), 'JasperZooAnimal', false, 'pal')).toContain(
+      expect(await q.getMethodSource(session(), 'JasperZooAnimal', false, 'pal')).toContain(
         'JasperZooDog',
       );
     });
 
-    it('leaves an existing dictionary where it is rather than making a second one', () => {
-      defineZoo();
-      const before = exec(`System myUserProfile symbolList size printString`).trim();
+    it('leaves an existing dictionary where it is rather than making a second one', async () => {
+      await defineZoo();
+      const before = (await exec(`System myUserProfile symbolList size printString`)).trim();
       const file = write(
         `${ZOO}-again.gs`,
-        composeFileOut(q.fileOutHeader(session()), [q.fileOutDictionary(session(), ZOO)]),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutDictionary(session(), ZOO),
+        ]),
       );
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.errors).toEqual([]);
-      expect(exec('System myUserProfile symbolList size printString').trim()).toBe(before);
+      expect((await exec('System myUserProfile symbolList size printString')).trim()).toBe(before);
     });
   });
 
   describe('a topaz script', () => {
-    it('runs its chunks, skips its topaz commands, and stops at exit', () => {
+    it('runs its chunks, skips its topaz commands, and stops at exit', async () => {
       const file = write(
         'script.tpz',
         [
@@ -341,13 +354,15 @@ describe('file in (integration)', () => {
         ].join('\n'),
       );
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       // The chunk ends in a non-local return, which is ordinary in a hand-written
       // script and would otherwise make the doit answer a non-String and fail.
       expect(outcome.errors).toEqual([]);
       expect(outcome.executed).toBe(1);
-      expect(exec(`(UserGlobals at: #'${WIDGET}Note' ifAbsent: ['?'])`)).toBe('made by a script');
+      expect(await exec(`(UserGlobals at: #'${WIDGET}Note' ifAbsent: ['?'])`)).toBe(
+        'made by a script',
+      );
 
       // Topaz's own commands are recognised, not misread as code...
       expect(outcome.skipped).toEqual([]);
@@ -355,46 +370,46 @@ describe('file in (integration)', () => {
       expect(outcome.askedToCommit).toBe(true);
       // ...and nothing past `exit` runs.
       expect(outcome.stopped).toBe(true);
-      expect(classExists(`${WIDGET}NotReached`)).toBe(false);
+      expect(await classExists(`${WIDGET}NotReached`)).toBe(false);
     });
 
-    it('does not commit, however plainly the script asked to', () => {
+    it('does not commit, however plainly the script asked to', async () => {
       const file = write(
         'commits.tpz',
         ['run', `UserGlobals at: #${WIDGET}Uncommitted put: 1.`, '%', 'commit'].join('\n'),
       );
 
-      fileInFile(session(), file);
+      await fileInFile(session(), file);
 
       // The harness aborts after every test, so a real commit here would survive into
       // the next one — this asserts the intent at the point it is decided.
-      expect(exec('System needsCommit printString')).toBe('true');
+      expect(await exec('System needsCommit printString')).toBe('true');
     });
   });
 
   describe('following input', () => {
-    it('files in the files a loader names, resolved beside it', () => {
-      defineWidget();
+    it('files in the files a loader names, resolved beside it', async () => {
+      await defineWidget();
       write(
         'part.gs',
-        composeFileOut(q.fileOutHeader(session()), [
-          q.fileOutClass(session(), WIDGET, userIndex()),
+        composeFileOut(await q.fileOutHeader(session()), [
+          await q.fileOutClass(session(), WIDGET, await userIndex()),
         ]),
       );
       const loader = write('loader.gs', 'fileformat utf8\n\ninput part.gs\n');
-      q.deleteClass(session(), userIndex(), WIDGET);
+      await q.deleteClass(session(), await userIndex(), WIDGET);
 
-      const outcome = fileInFile(session(), loader);
+      const outcome = await fileInFile(session(), loader);
 
       expect(outcome.errors).toEqual([]);
       expect(outcome.files).toBe(2);
-      expect(classExists(WIDGET)).toBe(true);
+      expect(await classExists(WIDGET)).toBe(true);
     });
   });
 
   describe('reporting failure', () => {
-    it('names the method GemStone refused, and files the rest in anyway', () => {
-      defineWidget();
+    it('names the method GemStone refused, and files the rest in anyway', async () => {
+      await defineWidget();
       const file = write(
         'broken.gs',
         [
@@ -410,19 +425,19 @@ describe('file in (integration)', () => {
         ].join('\n'),
       );
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.compiled).toBe(1);
       expect(outcome.errors).toHaveLength(1);
       expect(outcome.errors[0].message).toContain(`${WIDGET}>>bad`);
-      expect(selectorsOf(WIDGET, false)).toContain('good');
-      expect(selectorsOf(WIDGET, false)).not.toContain('bad');
+      expect(await selectorsOf(WIDGET, false)).toContain('good');
+      expect(await selectorsOf(WIDGET, false)).not.toContain('bad');
     });
 
-    it('reports a chunk GemStone raised on, against its line', () => {
+    it('reports a chunk GemStone raised on, against its line', async () => {
       const file = write('raises.gs', ['doit', 'nil noSuchMessageAtAll', '%'].join('\n'));
 
-      const outcome = fileInFile(session(), file);
+      const outcome = await fileInFile(session(), file);
 
       expect(outcome.executed).toBe(0);
       expect(outcome.errors).toHaveLength(1);
@@ -431,38 +446,38 @@ describe('file in (integration)', () => {
   });
 
   describe('removeAllMethods', () => {
-    it('clears the instance side but leaves the class side alone', () => {
-      defineWidget();
+    it('clears the instance side but leaves the class side alone', async () => {
+      await defineWidget();
 
-      q.removeAllMethods(session(), WIDGET, false);
+      await q.removeAllMethods(session(), WIDGET, false);
 
-      expect(selectorsOf(WIDGET, false)).toEqual([]);
-      expect(selectorsOf(WIDGET, true)).toContain('make');
+      expect(await selectorsOf(WIDGET, false)).toEqual([]);
+      expect(await selectorsOf(WIDGET, true)).toContain('make');
     });
 
-    it('clears the class side through the metaclass', () => {
-      defineWidget();
+    it('clears the class side through the metaclass', async () => {
+      await defineWidget();
 
-      q.removeAllMethods(session(), WIDGET, true);
+      await q.removeAllMethods(session(), WIDGET, true);
 
-      expect(selectorsOf(WIDGET, true)).toEqual([]);
-      expect(selectorsOf(WIDGET, false)).toContain('size');
+      expect(await selectorsOf(WIDGET, true)).toEqual([]);
+      expect(await selectorsOf(WIDGET, false)).toContain('size');
     });
 
-    it('fails loudly on a name no class answers to', () => {
-      expect(() => q.removeAllMethods(session(), 'JasperFileInNoSuchClass', false)).toThrow(
+    it('fails loudly on a name no class answers to', async () => {
+      await expect(q.removeAllMethods(session(), 'JasperFileInNoSuchClass', false)).rejects.toThrow(
         /Class not found/,
       );
     });
   });
 
   describe('fileInChunk', () => {
-    it('runs a chunk with its own temporaries', () => {
-      expect(q.fileInChunk(session(), '| d | d := IdentityBag new. d add: 1. d')).toBe('ok');
+    it('runs a chunk with its own temporaries', async () => {
+      expect(await q.fileInChunk(session(), '| d | d := IdentityBag new. d add: 1. d')).toBe('ok');
     });
 
-    it("lets GemStone's error through instead of folding it into a string", () => {
-      expect(() => q.fileInChunk(session(), 'nil noSuchMessageAtAll')).toThrow();
+    it("lets GemStone's error through instead of folding it into a string", async () => {
+      await expect(q.fileInChunk(session(), 'nil noSuchMessageAtAll')).rejects.toThrow();
     });
   });
 });

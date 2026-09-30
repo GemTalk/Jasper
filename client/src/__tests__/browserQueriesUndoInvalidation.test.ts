@@ -101,8 +101,8 @@ describe('class-reshaping applies forget the recorded undo', () => {
     expect(forgotten()).toBe(true);
   });
 
-  it('rename instance variable (the synchronous one)', () => {
-    applyRenameInstVar(session, 'tok', []);
+  it('rename instance variable (the synchronous one)', async () => {
+    await applyRenameInstVar(session, 'tok', []);
     expect(forgotten()).toBe(true);
   });
 

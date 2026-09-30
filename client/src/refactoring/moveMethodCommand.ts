@@ -98,9 +98,9 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
   }
 
   const token = `mvm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearMoveMethodPreview(session, token);
+      await queries.clearMoveMethodPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -125,18 +125,18 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
     void vscode.window.showErrorMessage(
       `Move preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return undefined;
   }
   if (start.total === 0) {
     refuse('Nothing to move.');
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
@@ -155,7 +155,7 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
             : `Move ${selectors.length} methods to ${targetLabel}`,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) return undefined;
 

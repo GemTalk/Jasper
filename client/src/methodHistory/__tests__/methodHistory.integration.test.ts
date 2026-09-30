@@ -31,32 +31,32 @@ describe('method history (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   const CLS = 'JMHItFixture';
   // The fixture carries an instance variable so tests can exercise methods that
   // reference it — the case that must parse in the class's own context when seeding.
-  const defineClass = (): void => {
-    q.compileClassDefinition(
+  const defineClass = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #(count) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
   };
 
-  it('installs its helper on a bare stone', () => {
-    expect(installMethodHistory(session())).toBe(true);
+  it('installs its helper on a bare stone', async () => {
+    expect(await installMethodHistory(session())).toBe(true);
     // A second install is idempotent (already-installed short-circuit), not an error.
-    expect(installMethodHistory(session())).toBe(true);
+    expect(await installMethodHistory(session())).toBe(true);
   });
 
-  it('records a timestamped version on each Jasper compile, newest first', () => {
-    installMethodHistory(session());
-    defineClass();
+  it('records a timestamped version on each Jasper compile, newest first', async () => {
+    await installMethodHistory(session());
+    await defineClass();
 
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
-    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+    const versions = parseMethodHistory(await q.getMethodHistory(session(), CLS, 'answer', false));
 
     expect(versions.length).toBeGreaterThanOrEqual(2);
     expect(versions[0].isCurrent).toBe(true);
@@ -65,21 +65,21 @@ describe('method history (integration)', () => {
     expect(versions[0].userId).not.toBe('');
   });
 
-  it('seeds the pre-existing source as the first version when a method is first edited', () => {
-    installMethodHistory(session());
-    defineClass();
+  it('seeds the pre-existing source as the first version when a method is first edited', async () => {
+    await installMethodHistory(session());
+    await defineClass();
     // Compile the original WITHOUT the capture path (direct kernel compile), so it
     // stands in for a method that predates any Jasper edit. It references the
     // instance variable `count` — the seed's selector-parse must resolve that in the
     // class's own context, or the original would be silently dropped on first edit.
-    exec(
+    await exec(
       `(System myUserProfile symbolList objectNamed: #'${CLS}') ` +
         "compileMethod: 'answer\n\t^ count' dictionaries: System myUserProfile symbolList " +
         "category: 'accessing' environmentId: 0. true printString",
     );
 
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ count + 1');
-    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ count + 1');
+    const versions = parseMethodHistory(await q.getMethodHistory(session(), CLS, 'answer', false));
 
     const sources = versions.map((v) => v.source);
     // The seeded original (^ count) AND the edit (^ count + 1) are both present.
@@ -88,25 +88,25 @@ describe('method history (integration)', () => {
     expect(versions[0].source).toContain('^ count + 1');
   });
 
-  it('does not record an identical recompile twice', () => {
-    installMethodHistory(session());
-    defineClass();
+  it('does not record an identical recompile twice', async () => {
+    await installMethodHistory(session());
+    await defineClass();
 
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
-    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    const versions = parseMethodHistory(await q.getMethodHistory(session(), CLS, 'answer', false));
 
     expect(versions.filter((v) => !v.notInHistory)).toHaveLength(1);
   });
 
-  it('forgets a method’s history on request', () => {
-    installMethodHistory(session());
-    defineClass();
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+  it('forgets a method’s history on request', async () => {
+    await installMethodHistory(session());
+    await defineClass();
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
 
-    q.removeMethodHistory(session(), CLS, 'answer', false);
-    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    await q.removeMethodHistory(session(), CLS, 'answer', false);
+    const versions = parseMethodHistory(await q.getMethodHistory(session(), CLS, 'answer', false));
 
     // Only the synthetic current version (the installed method) remains.
     expect(versions.every((v) => v.notInHistory)).toBe(true);
@@ -127,8 +127,8 @@ describe('method history (integration)', () => {
     const SHADOW = 'JMHItShadow';
     const OTHER_DICT = 'JMHItOtherDict';
 
-    const defineClassIn = (dictExpr: string, className: string): void => {
-      exec(
+    const defineClassIn = async (dictExpr: string, className: string): Promise<void> => {
+      await exec(
         `| d | d := ${dictExpr}. (Object subclass: '${className}' instVarNames: #() ` +
           'classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: d ' +
           'options: #()) name printString',
@@ -137,28 +137,46 @@ describe('method history (integration)', () => {
 
     /** UserGlobals' class first, then a new dictionary inserted at index 1 holding a
      *  second class of the same name. Answers nothing; both are addressed by dict. */
-    const defineShadowPair = (): void => {
-      defineClassIn('UserGlobals', SHADOW);
-      exec(
+    const defineShadowPair = async (): Promise<void> => {
+      await defineClassIn('UserGlobals', SHADOW);
+      await exec(
         `| d | d := SymbolDictionary new. d name: #'${OTHER_DICT}'. ` +
           'System myUserProfile insertDictionary: d at: 1. true printString',
       );
-      defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
+      await defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
     };
 
-    it('keeps each class’s versions in its own history entry', () => {
-      installMethodHistory(session());
-      defineShadowPair();
+    it('keeps each class’s versions in its own history entry', async () => {
+      await installMethodHistory(session());
+      await defineShadowPair();
 
       // Two edits on the UserGlobals class, one on the shadowing class.
-      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 1', 0, 'UserGlobals');
-      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 2', 0, 'UserGlobals');
-      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
+      await q.compileMethod(
+        session(),
+        SHADOW,
+        false,
+        'accessing',
+        'answer\n\t^ 1',
+        0,
+        'UserGlobals',
+      );
+      await q.compileMethod(
+        session(),
+        SHADOW,
+        false,
+        'accessing',
+        'answer\n\t^ 2',
+        0,
+        'UserGlobals',
+      );
+      await q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
 
       const inUserGlobals = parseMethodHistory(
-        q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
+        await q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
       );
-      const inOther = parseMethodHistory(q.getMethodHistory(session(), SHADOW, 'answer', false, 1));
+      const inOther = parseMethodHistory(
+        await q.getMethodHistory(session(), SHADOW, 'answer', false, 1),
+      );
 
       // Neither history contains the other's source: the key separated them.
       expect(inUserGlobals.map((v) => v.source).join('\n')).toContain('^ 2');
@@ -167,18 +185,28 @@ describe('method history (integration)', () => {
       expect(inOther.map((v) => v.source).join('\n')).not.toContain('^ 2');
     });
 
-    it('forgets only the dictionary-scoped class’s history', () => {
-      installMethodHistory(session());
-      defineShadowPair();
-      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 1', 0, 'UserGlobals');
-      q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
+    it('forgets only the dictionary-scoped class’s history', async () => {
+      await installMethodHistory(session());
+      await defineShadowPair();
+      await q.compileMethod(
+        session(),
+        SHADOW,
+        false,
+        'accessing',
+        'answer\n\t^ 1',
+        0,
+        'UserGlobals',
+      );
+      await q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
 
-      q.removeMethodHistory(session(), SHADOW, 'answer', false, 1);
+      await q.removeMethodHistory(session(), SHADOW, 'answer', false, 1);
 
       // The shadowing class's history is gone; the UserGlobals one is untouched.
-      const inOther = parseMethodHistory(q.getMethodHistory(session(), SHADOW, 'answer', false, 1));
+      const inOther = parseMethodHistory(
+        await q.getMethodHistory(session(), SHADOW, 'answer', false, 1),
+      );
       const inUserGlobals = parseMethodHistory(
-        q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
+        await q.getMethodHistory(session(), SHADOW, 'answer', false, 'UserGlobals'),
       );
       expect(inOther.filter((v) => !v.isCurrent)).toHaveLength(0);
       expect(inUserGlobals.map((v) => v.source).join('\n')).toContain('^ 1');
@@ -189,12 +217,12 @@ describe('method history (integration)', () => {
   // developer outside the stone's timezone misreads it — invisibly, because the digits
   // are unchanged. asStringISO8601 is present on 3.6.2 and 3.7.5; this pins that the
   // engine actually emits the offset rather than a bare wall clock.
-  it('records timestamps carrying the stone’s UTC offset', () => {
-    installMethodHistory(session());
-    defineClass();
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+  it('records timestamps carrying the stone’s UTC offset', async () => {
+    await installMethodHistory(session());
+    await defineClass();
+    await q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
 
-    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+    const versions = parseMethodHistory(await q.getMethodHistory(session(), CLS, 'answer', false));
     const stamp = versions.find((v) => v.timeStamp)?.timeStamp ?? '';
 
     expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})$/);

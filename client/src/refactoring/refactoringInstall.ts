@@ -101,8 +101,8 @@ export type ProgressReporter = (message: string, increment: number) => void;
  * stone reached by this session. Delegates to the same probe the availability
  * latch uses, so "installed" and "available" never diverge.
  */
-export function isRefactoringSupportInstalled(session: ActiveSession): boolean {
-  return checkRefactoringSupportAvailable(session);
+export async function isRefactoringSupportInstalled(session: ActiveSession): Promise<boolean> {
+  return await checkRefactoringSupportAvailable(session);
 }
 
 /**
@@ -130,7 +130,10 @@ export async function installRefactoringSupport(
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
-  const unreadable = REFACTORING_PAYLOAD_FILES.filter((f) => !gemCanRead(session, serverPath(f)));
+  const unreadable: string[] = [];
+  for (const f of REFACTORING_PAYLOAD_FILES) {
+    if (!(await gemCanRead(session, serverPath(f)))) unreadable.push(f);
+  }
   if (unreadable.length > 0) {
     return {
       success: false,

@@ -11,19 +11,19 @@ import { getClassComment } from '../getClassComment';
  * saving writes it in as a genuine comment.
  */
 describe('getStoredClassComment', () => {
-  it('reads the extra-dict key, not the synthesising accessor', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'A widget.');
+  it('reads the extra-dict key, not the synthesising accessor', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'A widget.');
 
-    expect(getStoredClassComment(execute, 'Widget')).toBe('A widget.');
+    expect(await getStoredClassComment(execute, 'Widget')).toBe('A widget.');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('_extraDictAt: #comment');
     expect(code).not.toContain('cls comment');
   });
 
-  it('answers empty for a class with no comment of its own', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    expect(getStoredClassComment(execute, 'Widget')).toBe('');
+  it('answers empty for a class with no comment of its own', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    expect(await getStoredClassComment(execute, 'Widget')).toBe('');
     // The doit itself answers '' for a nil key and for a class it cannot resolve,
     // rather than letting either reach the editor.
     const code = execute.mock.calls[0][0];
@@ -31,17 +31,17 @@ describe('getStoredClassComment', () => {
     expect(code).toContain("c ifNil: [^ '']");
   });
 
-  it('scopes the lookup to a dictionary', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getStoredClassComment(execute, 'Widget', 2);
+  it('scopes the lookup to a dictionary', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getStoredClassComment(execute, 'Widget', 2);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 2');
   });
 
   // The hover and the System Browser's Comment panel deliberately still show the
   // synthesised text, where the rendered hierarchy is worth reading.
-  it('is not what getClassComment asks', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassComment(execute, 'Widget', 2);
+  it('is not what getClassComment asks', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassComment(execute, 'Widget', 2);
     expect(execute.mock.calls[0][0]).toContain('cls comment');
     expect(execute.mock.calls[0][0]).not.toContain('_extraDictAt:');
   });

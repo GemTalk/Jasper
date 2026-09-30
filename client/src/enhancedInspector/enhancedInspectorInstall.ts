@@ -316,9 +316,9 @@ export type ProgressReporter = (message: string, increment: number) => void;
  * live — the dedicated `GsEnhancedInspector` dictionary (current builds) or a
  * legacy `Published`/`Globals` placement (older builds).
  */
-export function isEnhancedInspectorInstalled(session: ActiveSession): boolean {
+export async function isEnhancedInspectorInstalled(session: ActiveSession): Promise<boolean> {
   try {
-    const result = executeFetchString(
+    const result = await executeFetchString(
       session,
       '[(GtRemotePhlowViewedObject notNil ' +
         'and: [Object includesSelector: #gtViewsInCurrentContext]) printString] ' +
@@ -358,7 +358,10 @@ export async function installEnhancedInspectorSupport(
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
-  const unreadable = ENHANCED_INSPECTOR_FILES.filter((f) => !gemCanRead(session, serverPath(f)));
+  const unreadable: string[] = [];
+  for (const f of ENHANCED_INSPECTOR_FILES) {
+    if (!(await gemCanRead(session, serverPath(f)))) unreadable.push(f);
+  }
   if (unreadable.length > 0) {
     return {
       success: false,
@@ -380,7 +383,7 @@ export async function installEnhancedInspectorSupport(
   onProgress('Preparing the GsEnhancedInspector dictionary…', stepIncrement);
   await yieldToEventLoop();
   try {
-    executeFetchString(session, PREPARE_DICTIONARY_SNIPPET);
+    await executeFetchString(session, PREPARE_DICTIONARY_SNIPPET);
   } catch (e: unknown) {
     safeAbort(session);
     return {
@@ -394,7 +397,7 @@ export async function installEnhancedInspectorSupport(
   }
 
   try {
-    executeFetchString(session, PREPARE_FILE_IN_SNIPPET);
+    await executeFetchString(session, PREPARE_FILE_IN_SNIPPET);
   } catch (e: unknown) {
     safeAbort(session);
     return {
@@ -412,7 +415,7 @@ export async function installEnhancedInspectorSupport(
     onProgress(`Filing in ${file}…`, stepIncrement);
     await yieldToEventLoop();
     try {
-      executeFetchString(
+      await executeFetchString(
         session,
         // #serverUtf8File (not fromServerPath:) because the payload contains
         // UTF-8 test data (e.g. GtWireEncodingExamples' 'čtyři'). The plain
@@ -446,7 +449,7 @@ export async function installEnhancedInspectorSupport(
   await yieldToEventLoop();
   let keptDifferent: string[];
   try {
-    keptDifferent = executeFetchString(session, RESTORE_ORDER_SNIPPET)
+    keptDifferent = (await executeFetchString(session, RESTORE_ORDER_SNIPPET))
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
@@ -474,7 +477,7 @@ export async function installEnhancedInspectorSupport(
     };
   }
 
-  const verified = isEnhancedInspectorInstalled(session);
+  const verified = await isEnhancedInspectorInstalled(session);
   return {
     success: verified,
     committed: true,

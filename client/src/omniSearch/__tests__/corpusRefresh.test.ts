@@ -22,11 +22,11 @@ function classCorpus(initial: string[]) {
   let loads = 0;
   const provider = createClassesProvider(
     1,
-    () => {
+    async () => {
       loads++;
       return [...stone].map(entry);
     },
-    (name) => (stone.has(name) ? [entry(name)] : []),
+    async (name) => (stone.has(name) ? [entry(name)] : []),
   );
   return {
     provider,
@@ -45,12 +45,12 @@ function fakeMethods(): OmniProvider {
 }
 
 describe('classes provider corpus refresh', () => {
-  it('folds a newly compiled class into search without re-enumerating the whole image', () => {
+  it('folds a newly compiled class into search without re-enumerating the whole image', async () => {
     const corpus = classCorpus(['Foo']);
-    void corpus.provider.prime?.({ isCancelled: false });
+    await corpus.provider.prime?.({ isCancelled: false });
 
     corpus.compile('Bar');
-    const changed = corpus.provider.applyChange?.(
+    const changed = await corpus.provider.applyChange?.(
       { kind: 'class', className: 'Bar' },
       {
         isCancelled: false,
@@ -58,15 +58,15 @@ describe('classes provider corpus refresh', () => {
     );
 
     expect(changed).toBe(true);
-    expect(corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(1);
+    expect(await corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(1);
     expect(corpus.loadCount()).toBe(1);
   });
 
-  it('reports no change when a class is merely redefined', () => {
+  it('reports no change when a class is merely redefined', async () => {
     const corpus = classCorpus(['Foo']);
-    void corpus.provider.prime?.({ isCancelled: false });
+    await corpus.provider.prime?.({ isCancelled: false });
 
-    const changed = corpus.provider.applyChange?.(
+    const changed = await corpus.provider.applyChange?.(
       { kind: 'class', className: 'Foo' },
       {
         isCancelled: false,
@@ -78,12 +78,12 @@ describe('classes provider corpus refresh', () => {
 
   // Produced in the real app by Explorer → Remove Class, which fires `onClassRemoved` once per class
   // in the deleted subtree (PR #443 review). The re-fetch comes back empty and the entry drops.
-  it('drops a removed class on the next fold', () => {
+  it('drops a removed class on the next fold', async () => {
     const corpus = classCorpus(['Foo', 'Bar']);
-    void corpus.provider.prime?.({ isCancelled: false });
+    await corpus.provider.prime?.({ isCancelled: false });
 
     corpus.remove('Bar');
-    const changed = corpus.provider.applyChange?.(
+    const changed = await corpus.provider.applyChange?.(
       { kind: 'class', className: 'Bar' },
       {
         isCancelled: false,
@@ -91,17 +91,17 @@ describe('classes provider corpus refresh', () => {
     );
 
     expect(changed).toBe(true);
-    expect(corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(0);
+    expect(await corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(0);
   });
 
-  it('reprime reloads the current corpus from scratch', () => {
+  it('reprime reloads the current corpus from scratch', async () => {
     const corpus = classCorpus(['Foo']);
-    void corpus.provider.prime?.({ isCancelled: false });
+    await corpus.provider.prime?.({ isCancelled: false });
 
     corpus.compile('Bar');
-    void corpus.provider.reprime?.({ isCancelled: false });
+    await corpus.provider.reprime?.({ isCancelled: false });
 
-    expect(corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(1);
+    expect(await corpus.provider.search('Ba', cfg(), { isCancelled: false })).toHaveLength(1);
     expect(corpus.loadCount()).toBe(2);
   });
 });
@@ -110,7 +110,7 @@ describe('classes provider corpus refresh', () => {
 function categoryCorpus(initial: string[]) {
   let bank = [...initial];
   let scans = 0;
-  const provider = createCategoriesProvider(1, () => {
+  const provider = createCategoriesProvider(1, async () => {
     scans++;
     return bank.map((category): ClassCategoryNameEntry => ({
       category,
@@ -126,32 +126,32 @@ function categoryCorpus(initial: string[]) {
 }
 
 describe('categories provider corpus refresh', () => {
-  it('scans lazily on first use and caches until invalidated', () => {
+  it('scans lazily on first use and caches until invalidated', async () => {
     const corpus = categoryCorpus(['Kernel-Objects']);
 
-    void corpus.provider.search('Ker', cfg(), { isCancelled: false });
-    void corpus.provider.search('Ker', cfg(), { isCancelled: false });
+    await corpus.provider.search('Ker', cfg(), { isCancelled: false });
+    await corpus.provider.search('Ker', cfg(), { isCancelled: false });
 
     expect(corpus.scanCount()).toBe(1);
   });
 
-  it('re-scans after reprime so a new category appears', () => {
+  it('re-scans after reprime so a new category appears', async () => {
     const corpus = categoryCorpus(['Kernel-Objects']);
-    void corpus.provider.search('Eric', cfg(), { isCancelled: false });
+    await corpus.provider.search('Eric', cfg(), { isCancelled: false });
 
     corpus.add('Eric-Model');
-    void corpus.provider.reprime?.({ isCancelled: false });
+    await corpus.provider.reprime?.({ isCancelled: false });
 
-    expect(corpus.provider.search('Eric', cfg(), { isCancelled: false })).toHaveLength(1);
+    expect(await corpus.provider.search('Eric', cfg(), { isCancelled: false })).toHaveLength(1);
     expect(corpus.scanCount()).toBe(2);
   });
 
-  it('re-scans on the next search after a class compile invalidates the cache', () => {
+  it('re-scans on the next search after a class compile invalidates the cache', async () => {
     const corpus = categoryCorpus(['Kernel-Objects']);
-    void corpus.provider.search('Eric', cfg(), { isCancelled: false });
+    await corpus.provider.search('Eric', cfg(), { isCancelled: false });
 
     corpus.add('Eric-Model');
-    const changed = corpus.provider.applyChange?.(
+    const changed = await corpus.provider.applyChange?.(
       { kind: 'class', className: 'EricThing' },
       {
         isCancelled: false,
@@ -159,7 +159,7 @@ describe('categories provider corpus refresh', () => {
     );
 
     expect(changed).toBe(false);
-    expect(corpus.provider.search('Eric', cfg(), { isCancelled: false })).toHaveLength(1);
+    expect(await corpus.provider.search('Eric', cfg(), { isCancelled: false })).toHaveLength(1);
   });
 });
 

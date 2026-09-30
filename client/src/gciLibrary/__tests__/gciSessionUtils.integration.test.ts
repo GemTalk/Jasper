@@ -32,7 +32,7 @@ describe('GCI session utilities (integration)', () => {
   // synchronous koffi FFI context. The bindings are verified to load correctly.
 
   describe('GciTsDirtyExportedObjs', () => {
-    it('returns no dirty objects when none have been modified', (ctx) => {
+    it('returns no dirty objects when none have been modified', async (ctx) => {
       requireGciCapability('GciTsDirtyExportedObjs', ctx, gci);
 
       // Once DirtyObjsInit has run, every commit or abort on that session raises
@@ -41,7 +41,7 @@ describe('GCI session utilities (integration)', () => {
       // logout's implicit abort hits the same error: expect a `GciTsLogout failed
       // [2231]` warning and a gci<pid>trace.log dump (swept by
       // gciTraceLogs.globalSetup.ts).
-      withTransientSession((transientSession) => {
+      await withTransientSession((transientSession) => {
         const { err: initErr } = gci.GciTsDirtyObjsInit(transientSession);
         expect(initErr.number).toBe(0);
 

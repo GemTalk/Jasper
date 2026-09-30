@@ -91,12 +91,12 @@ export function resetStashKeys(): void {
  * slot unbound, or one whose doit failed part-way) is the normal case, not an error, and a
  * release must never be the thing that raises.
  */
-export function releaseStashKeys(execute: QueryExecutor, keys: string[]): void {
+export async function releaseStashKeys(execute: QueryExecutor, keys: string[]): Promise<void> {
   if (keys.length === 0) return;
   const removals = keys
     .map((key) => `st removeKey: #'${escapeString(key)}' ifAbsent: [nil].`)
     .join('\n');
-  execute(`| st |
+  await execute(`| st |
 st := SessionTemps current.
 ${removals}
 'released'`);
@@ -110,11 +110,11 @@ ${removals}
  * the reversal binds back. Pass nulls when reading the live state at undo time, which must
  * not pin anything further.
  */
-export function captureClassSlots(
+export async function captureClassSlots(
   execute: QueryExecutor,
   slots: ClassSlot[],
   stashKeys: (string | null)[] = [],
-): ClassSlotState[] {
+): Promise<ClassSlotState[]> {
   if (slots.length === 0) return [];
   const captures = slots
     .map((slot, i) => {
@@ -141,7 +141,7 @@ ws := WriteStream on: String new.
 ${captures}
 ws contents`;
 
-  return parseClassCapture(execute(code), slots.length);
+  return parseClassCapture(await execute(code), slots.length);
 }
 
 /** Decode one class capture. Exported for tests. */
@@ -175,7 +175,10 @@ export interface ClassSlotOpResult {
  *
  * Nothing commits — the same rule every other Jasper edit follows.
  */
-export function applyClassSlotOps(execute: QueryExecutor, ops: ClassSlotOp[]): ClassSlotOpResult[] {
+export async function applyClassSlotOps(
+  execute: QueryExecutor,
+  ops: ClassSlotOp[],
+): Promise<ClassSlotOpResult[]> {
   if (ops.length === 0) return [];
   const bodies = ops
     .map((op) => {
@@ -217,7 +220,7 @@ ${SMALLTALK_ESCAPER}
 ${bodies}
 ws contents`;
 
-  return parseClassApply(execute(code), ops);
+  return parseClassApply(await execute(code), ops);
 }
 
 /** Decode one class apply result. Exported for tests. */

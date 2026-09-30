@@ -14,10 +14,10 @@ import { evalPython, evalPythonInScope, resetPythonScope, compilePython } from '
 import { getGrailStubReflection, parseGrailStubReflection } from '../grailStubReflection';
 
 describe('getDictionaryEntries', () => {
-  it('parses class (1) and global (0) rows', () => {
+  it('parses class (1) and global (0) rows', async () => {
     const raw = '1\taccessing\tArray\n0\t\tMyVar\n';
-    const results = getDictionaryEntries(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getDictionaryEntries(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
     );
     expect(results).toEqual([
@@ -26,10 +26,10 @@ describe('getDictionaryEntries', () => {
     ]);
   });
 
-  it('skips entries whose name is empty', () => {
+  it('skips entries whose name is empty', async () => {
     const raw = '1\taccessing\t\n1\taccessing\tFoo\n';
-    const results = getDictionaryEntries(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getDictionaryEntries(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
     );
     expect(results).toHaveLength(1);
@@ -38,19 +38,19 @@ describe('getDictionaryEntries', () => {
 });
 
 describe('getGlobalsForDictionary', () => {
-  it('preserves tabs inside the value field', () => {
+  it('preserves tabs inside the value field', async () => {
     const raw = 'X\tArray\tvalue\twith\ttabs\n';
-    const results = getGlobalsForDictionary(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getGlobalsForDictionary(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
     );
     expect(results[0].value).toBe('value\twith\ttabs');
   });
 
-  it('skips lines without at least two tabs', () => {
+  it('skips lines without at least two tabs', async () => {
     const raw = 'bogus\noneTab\tonly\nok\tArray\tvalue\n';
-    const results = getGlobalsForDictionary(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getGlobalsForDictionary(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
     );
     expect(results).toHaveLength(1);
@@ -59,40 +59,40 @@ describe('getGlobalsForDictionary', () => {
 });
 
 describe('getAllClassNames', () => {
-  it('parses dictIndex/dictName/className rows', () => {
+  it('parses dictIndex/dictName/className rows', async () => {
     const raw = '1\tGlobals\tArray\n2\tUserGlobals\tMyClass\n';
-    const results = getAllClassNames(vi.fn<QueryExecutor>(() => raw));
+    const results = await getAllClassNames(vi.fn<QueryExecutor>(async () => raw));
     expect(results).toEqual([
       { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       { dictIndex: 2, dictName: 'UserGlobals', className: 'MyClass' },
     ]);
   });
 
-  it('does not de-duplicate by object identity, so aliases of one class each appear', () => {
+  it('does not de-duplicate by object identity, so aliases of one class each appear', async () => {
     // The same class object registered under two different dictionary/key pairs
     // (Python>object and Globals>Object both resolve to Object) must yield two
     // rows — one per registration.
     const raw = '1\tPython\tobject\n9\tGlobals\tObject\n';
-    const results = getAllClassNames(vi.fn<QueryExecutor>(() => raw));
+    const results = await getAllClassNames(vi.fn<QueryExecutor>(async () => raw));
     expect(results).toEqual([
       { dictIndex: 1, dictName: 'Python', className: 'object' },
       { dictIndex: 9, dictName: 'Globals', className: 'Object' },
     ]);
   });
 
-  it('lists two keys aliased to one class within the same dictionary', () => {
+  it('lists two keys aliased to one class within the same dictionary', async () => {
     // Globals>Float and Globals>FloatD are the same class object under two keys.
     const raw = '9\tGlobals\tFloat\n9\tGlobals\tFloatD\n';
-    const results = getAllClassNames(vi.fn<QueryExecutor>(() => raw));
+    const results = await getAllClassNames(vi.fn<QueryExecutor>(async () => raw));
     expect(results).toEqual([
       { dictIndex: 9, dictName: 'Globals', className: 'Float' },
       { dictIndex: 9, dictName: 'Globals', className: 'FloatD' },
     ]);
   });
 
-  it('emits a query that lists every (dictionary, key) pair without an identity filter', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getAllClassNames(execute);
+  it('emits a query that lists every (dictionary, key) pair without an identity filter', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getAllClassNames(execute);
     const code = execute.mock.calls[0][0];
     expect(code).not.toContain('IdentitySet');
     expect(code).not.toContain('seen');
@@ -100,12 +100,12 @@ describe('getAllClassNames', () => {
 });
 
 describe('getClassEnvironments', () => {
-  it('detects class side via " class" suffix on receiver name', () => {
+  it('detects class side via " class" suffix on receiver name', async () => {
     // Each selector token carries a fixed 2-digit leading flag byte (00..15).
     const raw =
       'Array class\t0\tinstance creation\t00new\t00with:\n' + 'Array\t0\taccessing\t00size\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Array',
       0,
@@ -120,11 +120,11 @@ describe('getClassEnvironments', () => {
     expect(results[1].isMeta).toBe(false);
   });
 
-  it('parses the per-selector override bitmask and strips its prefix', () => {
+  it('parses the per-selector override bitmask and strips its prefix', async () => {
     // 1 = overrides super (▲), 2 = overridden in subclass (▼), 3 = both.
     const raw = 'Array\t0\taccessing\t01at:\t02size\t03printOn:\t00name\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Array',
       0,
@@ -134,10 +134,10 @@ describe('getClassEnvironments', () => {
     expect(results[0].sessionMethodBits).toEqual({});
   });
 
-  it('omits zero-bit (neither overrides nor overridden) selectors from the map', () => {
+  it('omits zero-bit (neither overrides nor overridden) selectors from the map', async () => {
     const raw = 'Array\t0\taccessing\t00a\t00b\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Array',
       0,
@@ -146,10 +146,10 @@ describe('getClassEnvironments', () => {
     expect(results[0].methodOverrideBits).toEqual({});
   });
 
-  it('records override bits on the class side too', () => {
+  it('records override bits on the class side too', async () => {
     const raw = 'Array class\t0\tinstance creation\t03new\t01basicNew\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Array',
       0,
@@ -158,12 +158,12 @@ describe('getClassEnvironments', () => {
     expect(results[0].methodOverrideBits).toEqual({ new: 3, basicNew: 1 });
   });
 
-  it('parses the session-method flag: bit 4 = extension, bit 8 = override', () => {
+  it('parses the session-method flag: bit 4 = extension, bit 8 = override', async () => {
     // 04 = session extension (transient only), 12 = session override (4+8,
     // also in persistent dict). 00 = ordinary persistent method.
     const raw = 'Object\t0\t*mypkg\t04sessionExt\t12isVowel\t00hash\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Object',
       0,
@@ -173,12 +173,12 @@ describe('getClassEnvironments', () => {
     expect(results[0].methodOverrideBits).toEqual({});
   });
 
-  it('records session and override bits independently when they co-occur', () => {
+  it('records session and override bits independently when they co-occur', async () => {
     // 05 = overrides super (1) + session extension (4); a session method may
     // also shadow a superclass impl. Both maps must carry their own bits.
     const raw = 'Object\t0\t*mypkg\t05foo\t14bar\n';
-    const results = getClassEnvironments(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassEnvironments(
+      vi.fn<QueryExecutor>(async () => raw),
       1,
       'Object',
       0,
@@ -189,30 +189,30 @@ describe('getClassEnvironments', () => {
     expect(results[0].sessionMethodBits).toEqual({ foo: 1, bar: 2 });
   });
 
-  it('emits the session-detection primitives (transient/persistent dicts, at:otherwise:)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassEnvironments(execute, 1, 'Object', 0);
+  it('emits the session-detection primitives (transient/persistent dicts, at:otherwise:)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassEnvironments(execute, 1, 'Object', 0);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('transientMethodDictForEnv:');
     expect(code).toContain('persistentMethodDictForEnv:');
     expect(code).toContain('at: each otherwise: nil'); // NOT includesKey: on the transient dict
   });
 
-  it('embeds dictIndex, escaped class name, and maxEnv', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassEnvironments(execute, 3, "Foo'Bar", 2);
+  it('embeds dictIndex, escaped class name, and maxEnv', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassEnvironments(execute, 3, "Foo'Bar", 2);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 3');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain('envs := 2');
   });
 
-  it('detects overrides via the full chain, not the immediate neighbour', () => {
+  it('detects overrides via the full chain, not the immediate neighbour', async () => {
     // Locks in the chain-walking primitives so a regression to a single-level
     // check (or back to lookupSelector:) is caught here. The actual depth of
     // detection is exercised by a live-GCI smoke test, not this unit test.
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getClassEnvironments(execute, 1, 'Array', 0);
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getClassEnvironments(execute, 1, 'Array', 0);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('whichClassIncludesSelector:'); // walks all ancestors
     expect(code).toContain('allSubclasses'); // walks all descendants
@@ -221,30 +221,30 @@ describe('getClassEnvironments', () => {
 });
 
 describe('getBaseMethodSource', () => {
-  it('reads the persistent (base) method, not the merged/session view', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'isVowel\n  ^ base');
-    getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
+  it('reads the persistent (base) method, not the merged/session view', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'isVowel\n  ^ base');
+    await getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
     const code = execute.mock.calls[0][0];
     expect(code).toContain('persistentMethodDictForEnv: 0');
     expect(code).toContain("at: #'isVowel' otherwise: nil");
     expect(code).not.toContain('compiledMethodAt:'); // that would return the override
   });
 
-  it('targets the metaclass for a class-side selector', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', true, 'foo', 0);
+  it('targets the metaclass for a class-side selector', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getBaseMethodSource(execute, 'Character', true, 'foo', 0);
     expect(execute.mock.calls[0][0]).toContain('Character class');
   });
 
-  it('threads a non-zero environment id into the persistent lookup', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', false, 'foo', 2);
+  it('threads a non-zero environment id into the persistent lookup', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getBaseMethodSource(execute, 'Character', false, 'foo', 2);
     expect(execute.mock.calls[0][0]).toContain('persistentMethodDictForEnv: 2');
   });
 
-  it('emits ASCII-only source (3.6.x miscompiles non-ASCII: ComStrmSetCursor)', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
+  it('emits ASCII-only source (3.6.x miscompiles non-ASCII: ComStrmSetCursor)', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
 
     const code = execute.mock.calls[0][0];
     // eslint-disable-next-line no-control-regex -- \x00-\x7F is the intentional ASCII range, not a stray control char
@@ -254,10 +254,10 @@ describe('getBaseMethodSource', () => {
 });
 
 describe('getClassHierarchy', () => {
-  it('preserves superclass/self/subclass order from Smalltalk', () => {
+  it('preserves superclass/self/subclass order from Smalltalk', async () => {
     const raw = 'Globals\tObject\tsuperclass\nGlobals\tArray\tself\nGlobals\tFoo\tsubclass\n';
-    const results = getClassHierarchy(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getClassHierarchy(
+      vi.fn<QueryExecutor>(async () => raw),
       'Array',
     );
     expect(results.map((r) => r.kind)).toEqual(['superclass', 'self', 'subclass']);
@@ -271,9 +271,9 @@ describe('getClassHierarchy', () => {
   // putting Object at the deepest indent (the screenshot in the bug
   // report). Pin `do:` in / `reverseDo:` out so the regression can't
   // sneak back.
-  it('iterates superclasses with do: (root-first), not reverseDo:', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    getClassHierarchy(exec, 'String');
+  it('iterates superclasses with do: (root-first), not reverseDo:', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await getClassHierarchy(exec, 'String');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('supers do: [:each |');
     expect(code).not.toContain('supers reverseDo:');
@@ -281,10 +281,10 @@ describe('getClassHierarchy', () => {
 });
 
 describe('getMethodList', () => {
-  it('parses instance (0) and class (1) rows', () => {
+  it('parses instance (0) and class (1) rows', async () => {
     const raw = '0\taccessing\tsize\n1\tinstance creation\tnew\n';
-    const results = getMethodList(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getMethodList(
+      vi.fn<QueryExecutor>(async () => raw),
       'Array',
     );
     expect(results).toEqual([
@@ -293,9 +293,9 @@ describe('getMethodList', () => {
     ]);
   });
 
-  it('skips lines with fewer than 3 tab-separated fields', () => {
-    const results = getMethodList(
-      vi.fn<QueryExecutor>(() => 'incomplete\tonly\n0\tcat\tsel\n'),
+  it('skips lines with fewer than 3 tab-separated fields', async () => {
+    const results = await getMethodList(
+      vi.fn<QueryExecutor>(async () => 'incomplete\tonly\n0\tcat\tsel\n'),
       'Array',
     );
     expect(results).toHaveLength(1);
@@ -303,10 +303,10 @@ describe('getMethodList', () => {
 });
 
 describe('getStepPointSelectorRanges', () => {
-  it('parses step point info with 0-based selectorOffset', () => {
+  it('parses step point info with 0-based selectorOffset', async () => {
     const raw = '1\t0\t3\tfoo\n2\t5\t4\tbar:\n';
-    const results = getStepPointSelectorRanges(
-      vi.fn<QueryExecutor>(() => raw),
+    const results = await getStepPointSelectorRanges(
+      vi.fn<QueryExecutor>(async () => raw),
       'X',
       false,
       'y',
@@ -319,10 +319,10 @@ describe('getStepPointSelectorRanges', () => {
 });
 
 describe('runFailingTests', () => {
-  it('parses class\\tselector\\tstatus\\tmessage rows into TestRunResult[]', () => {
+  it('parses class\\tselector\\tstatus\\tmessage rows into TestRunResult[]', async () => {
     const raw =
       'MyTest\ttestBad\tfailed\texpected 1 got 2\nOther\ttestBoom\terror\tdivision by zero\n';
-    const results = runFailingTests(vi.fn<QueryExecutor>(() => raw));
+    const results = await runFailingTests(vi.fn<QueryExecutor>(async () => raw));
     expect(results).toEqual([
       {
         className: 'MyTest',
@@ -345,9 +345,9 @@ describe('runFailingTests', () => {
   // user's symbolList for TestCase subclasses (excluding TestCase itself);
   // the explicit-list-only `objectNamed:` and `reject:` constructs must NOT
   // appear, otherwise the path got swapped.
-  it('uses the discover-all path when no classNames are given', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('uses the discover-all path when no classNames are given', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toContain('symbolList');
     expect(code).toContain('isSubclassOf: TestCase');
@@ -359,24 +359,24 @@ describe('runFailingTests', () => {
   // With names → explicit-list path. Each name is resolved separately so a
   // single typo doesn't blow up the whole run; missing names get filtered
   // out before the suite executes.
-  it('uses the explicit-list path when classNames are given, building the list at runtime', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec, ['ArrayTest', 'StringTest']);
+  it('uses the explicit-list path when classNames are given, building the list at runtime', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec, ['ArrayTest', 'StringTest']);
     const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ArrayTest'");
     expect(code).toContain("objectNamed: #'StringTest'");
     expect(code).toContain('reject: [:c | c isNil]');
   });
 
-  it('escapes single quotes in classNames', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec, ["it's"]);
+  it('escapes single quotes in classNames', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec, ["it's"]);
     const code = exec.mock.calls[0][0];
     expect(code).toContain("#'it''s'");
   });
 
-  it('returns [] when nothing failed', () => {
-    expect(runFailingTests(vi.fn<QueryExecutor>(() => ''))).toEqual([]);
+  it('returns [] when nothing failed', async () => {
+    expect(await runFailingTests(vi.fn<QueryExecutor>(async () => ''))).toEqual([]);
   });
 
   // Bug guard: probe of GemStone's SUnit revealed that `result failures` and
@@ -385,9 +385,9 @@ describe('runFailingTests', () => {
   // would silently DNU on real failures. The query must use direct
   // accessors (`each class name` / `each selector`), same as the passed
   // branch already does.
-  it('does not send #testCase to failure/error wrappers', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('does not send #testCase to failure/error wrappers', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).not.toMatch(/testCase\s+class\s+name/);
     expect(code).not.toMatch(/testCase\s+selector/);
@@ -398,9 +398,9 @@ describe('runFailingTests', () => {
   // applies to the captured `<exceptionClass>: <messageText>` string from
   // the per-failure re-run (round-2 messageText capture) rather than the
   // old SUnit-debug-recipe printString. Lock the constant in.
-  it('caps each captured message at 1024 chars to stay under MAX_RESULT', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('caps each captured message at 1024 chars to stay under MAX_RESULT', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toContain('s size min: 1024');
   });
@@ -412,9 +412,9 @@ describe('runFailingTests', () => {
   // not a byte-count cap. Without that ordering, multi-byte codepoints in
   // a captured messageText would let the per-message footprint exceed the
   // 1024-char budget that keeps total output under MAX_RESULT.
-  it('clips each captured message via copyFrom:to: before the boundary encode', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('clips each captured message via copyFrom:to: before the boundary encode', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
 
     // Full slice form must be present — the cap is a substring, not just a size calc.
@@ -433,9 +433,9 @@ describe('runFailingTests', () => {
   // declarations substituted into `classes := <expr>`, which is a Smalltalk
   // syntax error. The block wrap closes around the temps so the expression
   // is a valid value-producing form.
-  it('wraps DISCOVER_ALL in a block so its temps do not collide with the outer assignment', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('wraps DISCOVER_ALL in a block so its temps do not collide with the outer assignment', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toMatch(/classes := \[\| sl seen list \|/);
     expect(code).toContain('] value');
@@ -444,9 +444,9 @@ describe('runFailingTests', () => {
   // Round-2 enhancement: the message column should carry exception class
   // + actual messageText (captured by re-running each failing test with
   // its own AbstractException handler), not the SUnit debug recipe.
-  it('captures exception class and messageText per failing test via re-run', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('captures exception class and messageText per failing test via re-run', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     expect(code).toContain('t setUp');
@@ -462,9 +462,9 @@ describe('runFailingTests', () => {
   // produce the transfer-protocol bytes GCI hands back. Pins the boundary
   // call so neither earlier failure mode (Unicode16 leak via `, ` widen,
   // or Utf8 buffer-growth `at:put:`) can recur.
-  it('builds the output as an internal String, encodeAsUTF8 at the boundary', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('builds the output as an internal String, encodeAsUTF8 at the boundary', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toContain('WriteStream on: Unicode7 new');
     expect(code).toMatch(/ws contents encodeAsUTF8/);
@@ -480,9 +480,9 @@ describe('runFailingTests', () => {
   // literal Strings with `$*` / `$?` Characters. matchPattern: is the
   // public primitive on CharacterCollection — works without SUnit
   // loaded, unlike the SUnit-only `sunitMatch:` previously used.
-  it('uses matchPattern: with a parsed Array when classNamePattern is given', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec, undefined, 'Bytes*TestCase');
+  it('uses matchPattern: with a parsed Array when classNamePattern is given', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec, undefined, 'Bytes*TestCase');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('isSubclassOf: TestCase');
     // The exact parsed form — pinning the literal Array source guards
@@ -494,9 +494,9 @@ describe('runFailingTests', () => {
     expect(code).not.toContain('sunitMatch:');
   });
 
-  it('explicit classNames wins over classNamePattern (precedence)', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec, ['ArrayTest'], 'Bytes*TestCase');
+  it('explicit classNames wins over classNamePattern (precedence)', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec, ['ArrayTest'], 'Bytes*TestCase');
     const code = exec.mock.calls[0][0];
     // classNames path runs (no pattern matching in the snippet).
     expect(code).toContain("objectNamed: #'ArrayTest'");
@@ -508,9 +508,9 @@ describe('runFailingTests', () => {
   // the discovery list runs every leaf test twice. Skipping abstracts in
   // discover-all keeps coverage (leaves' suites pull inherited tests
   // once) without the duplicate output.
-  it('skips abstract TestCase classes in the no-args discovery walk', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    runFailingTests(exec);
+  it('skips abstract TestCase classes in the no-args discovery walk', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await runFailingTests(exec);
     const code = exec.mock.calls[0][0];
     expect(code).toContain('v isAbstract not');
   });
@@ -546,15 +546,15 @@ describe('describeTestFailure', () => {
   // The parser is line-prefixed key/value — unknown keys must be silently
   // ignored so a future Smalltalk-side addition (extra fields, GS-version
   // specific extras) doesn't crash callers.
-  it('parses TestFailure-shaped output into structured details', () => {
+  it('parses TestFailure-shaped output into structured details', async () => {
     const raw =
       'status: failed\n' +
       'exceptionClass: TestFailure\n' +
       'errorNumber: 2751\n' +
       'messageText: Assertion failed\n' +
       'description: TestFailure: Assertion failed\n';
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => raw),
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => raw),
       'ArrayTest',
       'testBad',
     );
@@ -567,7 +567,7 @@ describe('describeTestFailure', () => {
     });
   });
 
-  it('parses MessageNotUnderstood output, including mnuReceiver and mnuSelector', () => {
+  it('parses MessageNotUnderstood output, including mnuReceiver and mnuSelector', async () => {
     const raw =
       'status: error\n' +
       'exceptionClass: MessageNotUnderstood\n' +
@@ -576,8 +576,8 @@ describe('describeTestFailure', () => {
       'description: a Object class does not understand #foo\n' +
       'mnuReceiver: Object\n' +
       'mnuSelector: foo\n';
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => raw),
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => raw),
       'ArrayTest',
       'testErrors',
     );
@@ -587,9 +587,9 @@ describe('describeTestFailure', () => {
     expect(result.mnuSelector).toBe('foo');
   });
 
-  it('parses passed status with no other fields', () => {
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => 'status: passed\n'),
+  it('parses passed status with no other fields', async () => {
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => 'status: passed\n'),
       'X',
       'y',
     );
@@ -600,10 +600,10 @@ describe('describeTestFailure', () => {
 
   // Unknown keys must not throw — required so we can extend the snippet
   // server-side without coordinating client updates.
-  it('ignores unknown keys', () => {
+  it('ignores unknown keys', async () => {
     const raw = 'status: failed\nfutureField: whatever\nexceptionClass: TestFailure\n';
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => raw),
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => raw),
       'X',
       'y',
     );
@@ -614,18 +614,18 @@ describe('describeTestFailure', () => {
   // The Smalltalk side has to use AbstractException — the GS hierarchy
   // means MessageNotUnderstood escapes past Exception in some session
   // contexts. Lock this in so a future "simplification" doesn't regress.
-  it('uses AbstractException for the live exception capture', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
-    describeTestFailure(exec, 'ArrayTest', 'testGood');
+  it('uses AbstractException for the live exception capture', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'status: passed\n');
+    await describeTestFailure(exec, 'ArrayTest', 'testGood');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     expect(code).not.toMatch(/on: Exception\b/);
   });
 
   // Bypass SUnit's swallow-the-exception runner.
-  it('runs setUp / perform / tearDown manually rather than going through TestCase>>run', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
-    describeTestFailure(exec, 'ArrayTest', 'testGood');
+  it('runs setUp / perform / tearDown manually rather than going through TestCase>>run', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'status: passed\n');
+    await describeTestFailure(exec, 'ArrayTest', 'testGood');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('tc setUp');
     expect(code).toContain('tc perform:');
@@ -633,9 +633,9 @@ describe('describeTestFailure', () => {
     expect(code).not.toMatch(/tc run\b/);
   });
 
-  it('escapes single quotes in className and selector', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
-    describeTestFailure(exec, "Foo'Bar", "test'X");
+  it('escapes single quotes in className and selector', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'status: passed\n');
+    await describeTestFailure(exec, "Foo'Bar", "test'X");
     const code = exec.mock.calls[0][0];
     expect(code).toContain("Foo''Bar");
     expect(code).toContain("test''X");
@@ -644,9 +644,9 @@ describe('describeTestFailure', () => {
   // Stack capture path: the gem-level config GemExceptionSignalCapturesStack
   // controls whether AbstractException's gsStack is populated at signal time.
   // Without toggling it on, stackReport returns nil even on a live exception.
-  it('toggles GemExceptionSignalCapturesStack around the run and restores after', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
-    describeTestFailure(exec, 'ArrayTest', 'testGood');
+  it('toggles GemExceptionSignalCapturesStack around the run and restores after', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'status: passed\n');
+    await describeTestFailure(exec, 'ArrayTest', 'testGood');
     const code = exec.mock.calls[0][0];
 
     // Saved before, set true during, restored in ensure: after.
@@ -659,7 +659,7 @@ describe('describeTestFailure', () => {
   // The sentinel keeps multi-line stack content separate from the
   // line-prefixed key/value section. Without it, frame newlines would split
   // into bogus key/value pairs and the parser would lose the stack.
-  it('parses stackReport that follows the sentinel as one verbatim block', () => {
+  it('parses stackReport that follows the sentinel as one verbatim block', async () => {
     const raw =
       'status: failed\n' +
       'exceptionClass: TestFailure\n' +
@@ -670,8 +670,8 @@ describe('describeTestFailure', () => {
       'TestFailure (AbstractException) >> signal: @3 line 7  [GsNMethod 3523841]\n' +
       'TestFailure class (AbstractException class) >> signal: @3 line 4  [GsNMethod 3803137]\n' +
       'JasperProbeTest >> testFails @3 line 1  [GsNMethod 1236251649]\n';
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => raw),
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => raw),
       'X',
       'y',
     );
@@ -683,10 +683,10 @@ describe('describeTestFailure', () => {
     expect((result.stackReport || '').split('\n').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('omits stackReport when the sentinel is absent (e.g. config rejected)', () => {
+  it('omits stackReport when the sentinel is absent (e.g. config rejected)', async () => {
     const raw = 'status: failed\nexceptionClass: TestFailure\nmessageText: Assertion failed\n';
-    const result = describeTestFailure(
-      vi.fn<QueryExecutor>(() => raw),
+    const result = await describeTestFailure(
+      vi.fn<QueryExecutor>(async () => raw),
       'X',
       'y',
     );
@@ -697,9 +697,9 @@ describe('describeTestFailure', () => {
   // realistic trace under MAX_RESULT (256KB) while leaving plenty of
   // room for the scalar fields. Lock it in so a future bump doesn't
   // accidentally produce truncated output that's hard to diagnose.
-  it('caps stackReport at 16384 chars', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
-    describeTestFailure(exec, 'X', 'y');
+  it('caps stackReport at 16384 chars', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'status: passed\n');
+    await describeTestFailure(exec, 'X', 'y');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('size min: 16384');
   });
@@ -711,17 +711,17 @@ describe('python (Grail) queries', () => {
   // be a *compile-time* failure of our query source — there'd be no
   // runtime exception to catch. Resolving via objectNamed: makes the
   // dispatcher's absence a runtime nil check we can branch on.
-  it('uses objectNamed: ModuleAst rather than a direct class reference', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('uses objectNamed: ModuleAst rather than a direct class reference', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ModuleAst'");
     expect(code).toContain('dispatcher isNil');
   });
 
-  it('emits a graceful "Grail not detected" hint as the nil-branch result', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('emits a graceful "Grail not detected" hint as the nil-branch result', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('Grail (GemStone-Python) not detected');
     expect(code).toContain('class ModuleAst not found');
@@ -730,17 +730,17 @@ describe('python (Grail) queries', () => {
   // The dispatcher is reused across both tools — they should produce
   // identical detection scaffolding, only differing in the Grail
   // expression that runs in the ifFalse branch.
-  it('eval_python uses ModuleAst evaluateSource: (returns the printed result)', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'print(1+2)');
+  it('eval_python uses ModuleAst evaluateSource: (returns the printed result)', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'print(1+2)');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher evaluateSource: src');
     expect(code).toContain('printString');
   });
 
-  it('compile_python uses (ModuleAst parseSource: src) smalltalkSource', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    compilePython(exec, 'x = 1');
+  it('compile_python uses (ModuleAst parseSource: src) smalltalkSource', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await compilePython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher parseSource: src');
     expect(code).toContain('smalltalkSource');
@@ -748,9 +748,9 @@ describe('python (Grail) queries', () => {
 
   // Python source frequently contains single-quoted string literals — the
   // standard Smalltalk doubling rule must apply or the query won't parse.
-  it('escapes single quotes in Python source', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, "x = 'hello'");
+  it('escapes single quotes in Python source', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, "x = 'hello'");
     const code = exec.mock.calls[0][0];
     expect(code).toContain("''hello''");
   });
@@ -761,9 +761,9 @@ describe('python (Grail) queries', () => {
   // with very little stack room, so it just returns a fixed string literal.
   // It's nested *inside* the AbstractException wrapper so the cheap handler
   // intercepts before the rich-error path can fail under low stack.
-  it('wraps the Grail call in an inner on: AlmostOutOfStack do:', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('wraps the Grail call in an inner on: AlmostOutOfStack do:', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AlmostOutOfStack');
     expect(code).toContain("'Error: AlmostOutOfStack");
@@ -777,9 +777,9 @@ describe('python (Grail) queries', () => {
   // Errors from Grail's compile/runtime path (SyntaxError, NameError, etc.)
   // are caught and reported inline as "Error: <class> — <messageText>" so
   // the agent gets a usable diagnostic, not a dropped tool call.
-  it('wraps the Grail call in on: AbstractException do:', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('wraps the Grail call in on: AbstractException do:', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     // Build internally with the natural String class (which widens
@@ -796,9 +796,9 @@ describe('python (Grail) queries', () => {
   // via `, ` concatenation, which widened the result to Unicode16 when
   // messageText was Unicode16 — GCI's Utf8 fetch then forwarded UTF-16LE
   // bytes raw and the agent saw `"E r r o r :   M ..."`.
-  it('does not build the error string via , concatenation (UTF-16 leak guard)', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('does not build the error string via , concatenation (UTF-16 leak guard)', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).not.toMatch(/'Error: ' , e class name/);
   });
@@ -808,9 +808,9 @@ describe('python (Grail) queries', () => {
   // growing the buffer triggers at:put: which Utf8 rejects with
   // rtErrShouldNotImplement. Every error case failed with
   // "Receiver: anUtf8(). Selector: #'at:put:'".
-  it('does not write through a Utf8 stream (Utf8 immutability guard)', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('does not write through a Utf8 stream (Utf8 immutability guard)', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).not.toContain('WriteStream on: Utf8 new');
   });
@@ -820,17 +820,17 @@ describe('python (Grail) queries', () => {
   // treated an internal storage detail as if it were a transfer-encoding
   // problem. The right answer is `encodeAsUTF8` at the boundary; this test pins
   // the absence of the regressed approach.
-  it('does not use per-char ASCII gating with `?` substitution', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPython(exec, 'x = 1');
+  it('does not use per-char ASCII gating with `?` substitution', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPython(exec, 'x = 1');
     const code = exec.mock.calls[0][0];
     expect(code).not.toContain('asInteger < 128');
     expect(code).not.toContain('ifFalse: [$?]');
   });
 
-  it('returns the executor result verbatim — no parsing on the JS side', () => {
-    const result = evalPython(
-      vi.fn<QueryExecutor>(() => '3'),
+  it('returns the executor result verbatim — no parsing on the JS side', async () => {
+    const result = await evalPython(
+      vi.fn<QueryExecutor>(async () => '3'),
       '1 + 2',
     );
     expect(result).toBe('3');
@@ -846,10 +846,10 @@ describe('python (Grail) queries', () => {
   // two-character sequence `\` + `n` (which Smalltalk would not interpret
   // as a newline — the Python source would then be received as one line and
   // SyntaxError every time).
-  it('embeds multi-line Python source verbatim, with real newlines inside the literal', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
+  it('embeds multi-line Python source verbatim, with real newlines inside the literal', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
     const source = 'def f(n):\n    return n * 2\nf(5)';
-    evalPython(exec, source);
+    await evalPython(exec, source);
     const code = exec.mock.calls[0][0];
 
     // The full multi-line body appears inside the Smalltalk string literal
@@ -868,9 +868,9 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   // user-defined globals across calls that pass the *same* SymbolDictionary.
   // The dictionary lives in SessionTemps keyed by scopeId so successive GCI
   // executes (notebook cells) reuse it.
-  it('evaluates through evaluateSource:usingModuleScope: with a persistent scope', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPythonInScope(exec, 'x = 1', 'file:///nb/a.ipynb');
+  it('evaluates through evaluateSource:usingModuleScope: with a persistent scope', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPythonInScope(exec, 'x = 1', 'file:///nb/a.ipynb');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher evaluateSource: src usingModuleScope: scope');
     expect(code).toContain("SessionTemps current at: #'__vscGrailScopes'");
@@ -880,9 +880,9 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   // Scoped eval must keep the same protection scaffolding as one-shot eval:
   // Grail-absence hint, cheap AlmostOutOfStack handler innermost, rich
   // AbstractException handler outermost, UTF-8 transcoding at the boundary.
-  it('keeps the detection, stack-guard, and encoding scaffolding', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPythonInScope(exec, 'x = 1', 'nb');
+  it('keeps the detection, stack-guard, and encoding scaffolding', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPythonInScope(exec, 'x = 1', 'nb');
     const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ModuleAst'");
     expect(code).toContain('Grail (GemStone-Python) not detected');
@@ -895,17 +895,17 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   // scopeId is interpolated into a Smalltalk string literal — the same
   // single-quote doubling rule as the Python source applies (a notebook URI
   // can contain quotes via its path).
-  it('escapes single quotes in both source and scopeId', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    evalPythonInScope(exec, "x = 'hi'", "file:///o'brien/nb.ipynb");
+  it('escapes single quotes in both source and scopeId', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await evalPythonInScope(exec, "x = 'hi'", "file:///o'brien/nb.ipynb");
     const code = exec.mock.calls[0][0];
     expect(code).toContain("''hi''");
     expect(code).toContain("o''brien");
   });
 
-  it('returns the executor result verbatim — no parsing on the JS side', () => {
-    const result = evalPythonInScope(
-      vi.fn<QueryExecutor>(() => '3'),
+  it('returns the executor result verbatim — no parsing on the JS side', async () => {
+    const result = await evalPythonInScope(
+      vi.fn<QueryExecutor>(async () => '3'),
       'x + 2',
       'nb',
     );
@@ -914,9 +914,9 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
 
   // Reset works without Grail: the scope registry is plain GemStone
   // (Dictionary / SymbolDictionary), so no ModuleAst lookup belongs here.
-  it('resetPythonScope removes only the given scope and needs no dispatcher', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    resetPythonScope(exec, 'file:///nb/a.ipynb');
+  it('resetPythonScope removes only the given scope and needs no dispatcher', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await resetPythonScope(exec, 'file:///nb/a.ipynb');
     const code = exec.mock.calls[0][0];
     expect(code).toContain("removeKey: 'file:///nb/a.ipynb' ifAbsent: []");
     expect(code).toContain("SessionTemps current at: #'__vscGrailScopes'");
@@ -924,9 +924,9 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
     expect(code).toContain('encodeAsUTF8');
   });
 
-  it('resetPythonScope escapes single quotes in scopeId', () => {
-    const exec = vi.fn<QueryExecutor>(() => '');
-    resetPythonScope(exec, "o'brien");
+  it('resetPythonScope escapes single quotes in scopeId', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => '');
+    await resetPythonScope(exec, "o'brien");
     const code = exec.mock.calls[0][0];
     expect(code).toContain("removeKey: 'o''brien'");
   });
@@ -983,10 +983,10 @@ describe('getGrailStubReflection', () => {
     expect(result.comment).toBe('');
   });
 
-  it('scopes the class lookup to a dictionary index when given', () => {
-    const exec = vi.fn<QueryExecutor>(() => 'MISSING');
+  it('scopes the class lookup to a dictionary index when given', async () => {
+    const exec = vi.fn<QueryExecutor>(async () => 'MISSING');
 
-    getGrailStubReflection(exec, 'Account', 5);
+    await getGrailStubReflection(exec, 'Account', 5);
 
     const code = exec.mock.calls[0][0];
     expect(code).toContain('symbolList at: 5');

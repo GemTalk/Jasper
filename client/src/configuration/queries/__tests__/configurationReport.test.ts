@@ -258,65 +258,80 @@ describe('configValuesMatch', () => {
 });
 
 describe('stoneConfiguration / gemConfiguration', () => {
-  it('runs the report code and parses the result', () => {
-    const execute = vi.fn(() => 'StnMaxSessions\tSmallInteger\t10\n');
-    expect(stoneConfiguration(execute)).toHaveLength(1);
+  it('runs the report code and parses the result', async () => {
+    const execute = vi.fn(async () => 'StnMaxSessions\tSmallInteger\t10\n');
+    expect(await stoneConfiguration(execute)).toHaveLength(1);
     expect(execute).toHaveBeenCalledWith(buildStoneReportCode());
 
-    execute.mockReturnValue('GemFreePageIdsCache\tSmallInteger\t200\n');
-    expect(gemConfiguration(execute)).toEqual([
+    execute.mockResolvedValue('GemFreePageIdsCache\tSmallInteger\t200\n');
+    expect(await gemConfiguration(execute)).toEqual([
       { key: 'GemFreePageIdsCache', value: '200', type: 'integer', settable: true },
     ]);
   });
 });
 
 describe('sessionIsSystemUser', () => {
-  it('is true only when the profile check answers true', () => {
-    expect(sessionIsSystemUser(() => 'true')).toBe(true);
-    expect(sessionIsSystemUser(() => 'false')).toBe(false);
-    expect(sessionIsSystemUser(() => ' true \n')).toBe(true);
+  it('is true only when the profile check answers true', async () => {
+    expect(await sessionIsSystemUser(async () => 'true')).toBe(true);
+    expect(await sessionIsSystemUser(async () => 'false')).toBe(false);
+    expect(await sessionIsSystemUser(async () => ' true \n')).toBe(true);
   });
 
-  it('asks whether the session profile is SystemUser', () => {
-    const execute = vi.fn((_code: string) => 'false');
-    sessionIsSystemUser(execute);
+  it('asks whether the session profile is SystemUser', async () => {
+    const execute = vi.fn(async (_code: string) => 'false');
+    await sessionIsSystemUser(execute);
     expect(execute.mock.calls[0][0]).toContain("userWithId: 'SystemUser'");
   });
 });
 
 describe('setConfiguration', () => {
-  it('reports success when the stone answers OK', () => {
-    const execute = vi.fn(() => 'OK');
-    expect(setConfiguration(execute, 'gem', 'GemFreePageIdsCache', 'integer', '200')).toEqual({
-      ok: true,
-    });
+  it('reports success when the stone answers OK', async () => {
+    const execute = vi.fn(async () => 'OK');
+    expect(await setConfiguration(execute, 'gem', 'GemFreePageIdsCache', 'integer', '200')).toEqual(
+      {
+        ok: true,
+      },
+    );
   });
 
-  it("relays the stone's own words when it refuses", () => {
+  it("relays the stone's own words when it refuses", async () => {
     const execute = vi.fn(
-      () => 'GS-ERROR: a SecurityError occurred (error 2213), ... only be performed by SystemUser.',
+      async () =>
+        'GS-ERROR: a SecurityError occurred (error 2213), ... only be performed by SystemUser.',
     );
-    const result = setConfiguration(execute, 'stone', 'StnGemTimeout', 'integer', '0');
+    const result = await setConfiguration(execute, 'stone', 'StnGemTimeout', 'integer', '0');
     expect(result.ok).toBe(false);
     expect(result.message).toContain('SystemUser');
     expect(result.message?.startsWith('GS-ERROR:')).toBe(false);
   });
 
-  it('does not reach the gem with an invalid value', () => {
-    const execute = vi.fn(() => 'OK');
-    expect(() => setConfiguration(execute, 'gem', 'GemFreePageIdsCache', 'integer', 'NaN')).toThrow(
-      ConfigValueError,
-    );
+  it('does not reach the gem with an invalid value', async () => {
+    const execute = vi.fn(async () => 'OK');
+    await expect(
+      setConfiguration(execute, 'gem', 'GemFreePageIdsCache', 'integer', 'NaN'),
+    ).rejects.toThrow(ConfigValueError);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('relays a bare (non-sentinel) failure message verbatim', () => {
-    const result = setConfiguration(() => 'weird', 'gem', 'GemFreePageIdsCache', 'integer', '1');
+  it('relays a bare (non-sentinel) failure message verbatim', async () => {
+    const result = await setConfiguration(
+      async () => 'weird',
+      'gem',
+      'GemFreePageIdsCache',
+      'integer',
+      '1',
+    );
     expect(result).toEqual({ ok: false, message: 'weird' });
   });
 
-  it('falls back to a default message when the stone answers nothing', () => {
-    const result = setConfiguration(() => '', 'gem', 'GemFreePageIdsCache', 'integer', '1');
+  it('falls back to a default message when the stone answers nothing', async () => {
+    const result = await setConfiguration(
+      async () => '',
+      'gem',
+      'GemFreePageIdsCache',
+      'integer',
+      '1',
+    );
     expect(result).toEqual({ ok: false, message: 'The configuration value could not be set.' });
   });
 });

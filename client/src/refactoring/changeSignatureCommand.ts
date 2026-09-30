@@ -123,9 +123,9 @@ export async function beginChangeSignature(
   // A client-generated token keys this preview's server-side state for paging and
   // the eventual apply.
   const token = `csig_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearChangeSignaturePreview(session, token);
+      await queries.clearChangeSignaturePreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -153,7 +153,7 @@ export async function beginChangeSignature(
     void vscode.window.showErrorMessage(
       `Change-signature preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return false;
   }
 
@@ -161,16 +161,16 @@ export async function beginChangeSignature(
   // or the change isn't behaviour-preserving (e.g. removing a used parameter).
   if (start.outOfScope.collision) {
     refuse(start.outOfScope.collision);
-    safeClear();
+    await safeClear();
     return false;
   }
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return false;
   }
   if (start.total === 0) {
-    safeClear();
+    await safeClear();
     void vscode.window.showInformationMessage(
       `No implementors or senders of '${oldSelector}' were found in the chosen scope; ` +
         'nothing to change.',
@@ -192,7 +192,7 @@ export async function beginChangeSignature(
           `Change signature #${oldSelector} to #${newSelector}`,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) return false; // cancelled/closed
 

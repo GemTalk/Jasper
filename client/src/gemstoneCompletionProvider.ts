@@ -102,17 +102,19 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
    */
   primeClass(sessionId: number, className: string): void {
     if (this.primeTimer) clearTimeout(this.primeTimer);
-    this.primeTimer = setTimeout(() => {
-      this.primeTimer = undefined;
-      // Gone in the meantime (logged out, session closed) — nothing to warm, and the
-      // caches for it were cleared by onDidRemoveSession anyway.
-      const session = this.sessionManager.getSession(sessionId);
-      if (!session) return;
-      // Straight through the same getters the provider uses, so a primed entry is
-      // byte-for-byte what a request would have cached and can never disagree with it.
-      this.getInstVarItems(session, className);
-      this.getSelectorItems(session, className);
-    }, PRIME_DEBOUNCE_MS);
+    this.primeTimer = setTimeout(() => void this.primeNow(sessionId, className), PRIME_DEBOUNCE_MS);
+  }
+
+  private async primeNow(sessionId: number, className: string): Promise<void> {
+    this.primeTimer = undefined;
+    // Gone in the meantime (logged out, session closed) — nothing to warm, and the
+    // caches for it were cleared by onDidRemoveSession anyway.
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+    // Straight through the same getters the provider uses, so a primed entry is
+    // byte-for-byte what a request would have cached and can never disagree with it.
+    await this.getInstVarItems(session, className);
+    await this.getSelectorItems(session, className);
   }
 
   /** Cancels a prime still waiting out its debounce. */
@@ -121,18 +123,18 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     this.primeTimer = undefined;
   }
 
-  provideCompletionItems(document: vscode.TextDocument): vscode.CompletionItem[] {
+  async provideCompletionItems(document: vscode.TextDocument): Promise<vscode.CompletionItem[]> {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return [];
 
     const items: vscode.CompletionItem[] = [];
 
-    items.push(...this.getClassNameItems(session));
+    items.push(...(await this.getClassNameItems(session)));
 
     const className = this.extractClassName(document.uri);
     if (className) {
-      items.push(...this.getInstVarItems(session, className));
-      items.push(...this.getSelectorItems(session, className));
+      items.push(...(await this.getInstVarItems(session, className)));
+      items.push(...(await this.getSelectorItems(session, className)));
     }
 
     return items;
@@ -146,12 +148,12 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     return decodeURIComponent(parts[1]);
   }
 
-  private getClassNameItems(session: ActiveSession): vscode.CompletionItem[] {
+  private async getClassNameItems(session: ActiveSession): Promise<vscode.CompletionItem[]> {
     const cached = this.classNameCache.get(session.handle);
     if (cached) return cached;
 
     try {
-      const entries = queries.getAllClassNames(session);
+      const entries = await queries.getAllClassNames(session);
       const seen = new Set<string>();
       const items: vscode.CompletionItem[] = [];
       for (const e of entries) {
@@ -168,13 +170,16 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     }
   }
 
-  private getInstVarItems(session: ActiveSession, className: string): vscode.CompletionItem[] {
+  private async getInstVarItems(
+    session: ActiveSession,
+    className: string,
+  ): Promise<vscode.CompletionItem[]> {
     const key = `${session.id}:${className}`;
     const cached = this.instVarCache.get(key);
     if (cached) return cached;
 
     try {
-      const names = queries.getInstVarNames(session, className);
+      const names = await queries.getInstVarNames(session, className);
       const items = names.map((name) => {
         const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Field);
         item.detail = `${className} inst var`;
@@ -187,13 +192,16 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
     }
   }
 
-  private getSelectorItems(session: ActiveSession, className: string): vscode.CompletionItem[] {
+  private async getSelectorItems(
+    session: ActiveSession,
+    className: string,
+  ): Promise<vscode.CompletionItem[]> {
     const key = `${session.id}:${className}`;
     const cached = this.selectorCache.get(key);
     if (cached) return cached;
 
     try {
-      const selectors = queries.getAllSelectors(session, className);
+      const selectors = await queries.getAllSelectors(session, className);
       const items = selectors.map(
         (sel) => new vscode.CompletionItem(sel, vscode.CompletionItemKind.Method),
       );

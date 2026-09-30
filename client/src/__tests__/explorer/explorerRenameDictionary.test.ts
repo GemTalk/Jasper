@@ -40,7 +40,7 @@ function makeController(session: ActiveSession | undefined) {
   // selectDict / refreshRetainingSelection fan out into many queries against a live
   // session, and the tab sweep touches the tab API; stub them so the success path can
   // be asserted without that machinery.
-  const selectDict = vi.spyOn(ctl, 'selectDict').mockImplementation(() => {});
+  const selectDict = vi.spyOn(ctl, 'selectDict').mockImplementation(async () => {});
   const refreshRetaining = vi.spyOn(ctl, 'refreshRetainingSelection').mockResolvedValue(undefined);
   const closeStaleTabs = vi
     .spyOn(
@@ -56,7 +56,7 @@ describe('ExplorerController.renameDictionary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUndoStacks();
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'MyDict', index: 3 });
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'MyDict', index: 3 });
   });
 
   it('does nothing when there is no selected session', async () => {
@@ -95,7 +95,7 @@ describe('ExplorerController.renameDictionary', () => {
     const { ctl, refresh } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockImplementation(() => {
+    vi.mocked(queries.renameDictionary).mockImplementation(async () => {
       throw new Error('boom');
     });
     await ctl.renameDictionary(NODE);
@@ -108,7 +108,7 @@ describe('ExplorerController.renameDictionary', () => {
     const { ctl, refresh, selectDict } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Globals');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockReturnValue(
+    vi.mocked(queries.renameDictionary).mockResolvedValue(
       'Cannot rename a system dictionary (Globals, Published, or UserGlobals)',
     );
     await ctl.renameDictionary(NODE);
@@ -123,7 +123,7 @@ describe('ExplorerController.renameDictionary', () => {
     const { ctl, refresh, selectDict, closeStaleTabs } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockReturnValue('ok');
+    vi.mocked(queries.renameDictionary).mockResolvedValue('ok');
     await ctl.renameDictionary(NODE);
     expect(queries.renameDictionary).toHaveBeenCalledWith(expect.anything(), 3, 'NewDict');
     // Stale editor tabs for the old name are swept (MED-1).
@@ -143,7 +143,7 @@ describe('ExplorerController.renameDictionary', () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockReturnValue('ok');
+    vi.mocked(queries.renameDictionary).mockResolvedValue('ok');
 
     await ctl.renameDictionary(NODE);
 
@@ -162,7 +162,7 @@ describe('ExplorerController.renameDictionary', () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Globals');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockReturnValue(
+    vi.mocked(queries.renameDictionary).mockResolvedValue(
       'Cannot rename a system dictionary (Globals, Published, or UserGlobals)',
     );
 
@@ -178,7 +178,7 @@ describe('ExplorerController.renameDictionary', () => {
     ctl.state.dictName = 'MyDict';
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
-    vi.mocked(queries.renameDictionary).mockReturnValue('ok');
+    vi.mocked(queries.renameDictionary).mockResolvedValue('ok');
 
     await ctl.renameDictionary(NODE);
 

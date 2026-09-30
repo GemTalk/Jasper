@@ -3,9 +3,9 @@ import { getMethodSource } from '../getMethodSource';
 import { QueryExecutor } from '../types';
 
 describe('shared getMethodSource', () => {
-  it('composes instance-side code without environmentId clause when env is 0', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'printOn: aStream');
-    const result = getMethodSource(execute, 'Array', false, 'printOn:');
+  it('composes instance-side code without environmentId clause when env is 0', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'printOn: aStream');
+    const result = await getMethodSource(execute, 'Array', false, 'printOn:');
 
     const [code] = execute.mock.calls[0];
     expect(code).toContain("symbolList objectNamed: #'Array'");
@@ -15,25 +15,25 @@ describe('shared getMethodSource', () => {
     expect(result).toBe('printOn: aStream');
   });
 
-  it('composes class-side code via "<Class> class" receiver', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'new ^super new');
-    getMethodSource(execute, 'Array', true, 'new');
+  it('composes class-side code via "<Class> class" receiver', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'new ^super new');
+    await getMethodSource(execute, 'Array', true, 'new');
 
     expect(execute.mock.calls[0][0]).toContain("cls class compiledMethodAt: #'new'");
   });
 
-  it('includes environmentId clause when non-zero', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'Array', false, 'size', 2);
+  it('includes environmentId clause when non-zero', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'Array', false, 'size', 2);
 
     expect(execute.mock.calls[0][0]).toContain(
       "compiledMethodAt: #'size' environmentId: 2 otherwise: nil",
     );
   });
 
-  it('escapes single quotes in selectors', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'Array', false, "o'clock");
+  it('escapes single quotes in selectors', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'Array', false, "o'clock");
 
     expect(execute.mock.calls[0][0]).toContain("compiledMethodAt: #'o''clock'");
   });
@@ -44,9 +44,9 @@ describe('shared getMethodSource', () => {
    * session removing it. Unguarded, `compiledMethodAt:` went to the nil the
    * lookup answered and raised into the GCI log with nothing in the UI to say so.
    */
-  it('answers nothing rather than sending to a class that is gone', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'Ghost', false, 'balance', 0, 1);
+  it('answers nothing rather than sending to a class that is gone', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'Ghost', false, 'balance', 0, 1);
 
     const [code] = execute.mock.calls[0];
     expect(code).toContain("cls ifNil: [^ '']");
@@ -59,18 +59,18 @@ describe('shared getMethodSource', () => {
    * which the guard cannot catch, because there is nothing to run. Caught by
    * browserQueries.integration.test.ts against a real stone.
    */
-  it('resolves an unscoped class through the symbol list, not as a bare name', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'Ghost', false, 'balance');
+  it('resolves an unscoped class through the symbol list, not as a bare name', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'Ghost', false, 'balance');
 
     const [code] = execute.mock.calls[0];
     expect(code).toContain("symbolList objectNamed: #'Ghost'");
     expect(code).toContain("cls ifNil: [^ '']");
   });
 
-  it('answers nothing for a class that no longer implements the selector', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'Account', false, 'gone');
+  it('answers nothing for a class that no longer implements the selector', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'Account', false, 'gone');
 
     const [code] = execute.mock.calls[0];
     // `otherwise: nil` rather than a raise, then a nil check before sourceString.
@@ -78,23 +78,23 @@ describe('shared getMethodSource', () => {
     expect(code).toContain("m ifNil: [^ '']");
   });
 
-  it('propagates the executor return value unchanged', () => {
-    const execute = vi.fn(() => 'abc\n\ndef');
-    expect(getMethodSource(execute, 'X', false, 'y')).toBe('abc\n\ndef');
+  it('propagates the executor return value unchanged', async () => {
+    const execute = vi.fn(async () => 'abc\n\ndef');
+    expect(await getMethodSource(execute, 'X', false, 'y')).toBe('abc\n\ndef');
   });
 
-  it('scopes the receiver to a SymbolList index when a dict is given', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'object', false, 'printString', 0, 1);
+  it('scopes the receiver to a SymbolList index when a dict is given', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'object', false, 'printString', 0, 1);
 
     const [code] = execute.mock.calls[0];
     expect(code).toContain("(System myUserProfile symbolList at: 1) at: #'object' ifAbsent: [nil]");
     expect(code).toContain("compiledMethodAt: #'printString'");
   });
 
-  it('scopes the class-side receiver to a SymbolList index', () => {
-    const execute = vi.fn<QueryExecutor>(() => '');
-    getMethodSource(execute, 'object', true, 'new', 0, 1);
+  it('scopes the class-side receiver to a SymbolList index', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => '');
+    await getMethodSource(execute, 'object', true, 'new', 0, 1);
     const [code] = execute.mock.calls[0];
     expect(code).toContain("(System myUserProfile symbolList at: 1) at: #'object' ifAbsent: [nil]");
     expect(code).toContain('cls class compiledMethodAt:');

@@ -86,9 +86,9 @@ describe('previewExtractTemporary query builders', () => {
     expect(s.code).toContain('deselected: #()');
   });
 
-  it('clearExtractTemporaryPreview drops the token', () => {
+  it('clearExtractTemporaryPreview drops the token', async () => {
     let captured = '';
-    clearExtractTemporaryPreview((code) => {
+    await clearExtractTemporaryPreview(async (code) => {
       captured = code;
       return '';
     }, 'tok');

@@ -15,32 +15,32 @@ import {
  */
 
 describe('captureDictionary', () => {
-  it('compares dictionary names as SYMBOLS', () => {
+  it('compares dictionary names as SYMBOLS', async () => {
     // `each name asString = 'Foo'` raises "Unicode argument disallowed in String comparison"
     // on a stone in legacy string mode.
     const exec = vi.fn().mockReturnValue('0');
 
-    captureDictionary(exec, 'Reports');
+    await captureDictionary(exec, 'Reports');
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("each name == #'Reports'");
     expect(code).not.toContain('asString =');
   });
 
-  it('asks for the stash only when a key is given', () => {
+  it('asks for the stash only when a key is given', async () => {
     const exec = vi.fn().mockReturnValue('0');
 
-    captureDictionary(exec, 'Reports');
+    await captureDictionary(exec, 'Reports');
     expect(exec.mock.calls[0][0] as string).not.toContain('SessionTemps');
 
-    captureDictionary(exec, 'Reports', 'k1');
+    await captureDictionary(exec, 'Reports', 'k1');
     expect(exec.mock.calls[1][0] as string).toContain("SessionTemps current at: #'k1' put: d");
   });
 
-  it("escapes a quote in the name so the statement can't be broken out of", () => {
+  it("escapes a quote in the name so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('0');
 
-    captureDictionary(exec, "Re'ports", "k'1");
+    await captureDictionary(exec, "Re'ports", "k'1");
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("#'Re''ports'");
@@ -80,78 +80,78 @@ describe('parseDictionaryCapture', () => {
 });
 
 describe('reinsertDictionary', () => {
-  it('refuses rather than listing the same dictionary twice', () => {
+  it('refuses rather than listing the same dictionary twice', async () => {
     const exec = vi.fn().mockReturnValue('that dictionary is already on the symbol list');
 
-    const result = reinsertDictionary(exec, 'k1', 2);
+    const result = await reinsertDictionary(exec, 'k1', 2);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('anySatisfy: [:each | each == d]');
     expect(result).toContain('already on the symbol list');
   });
 
-  it('clamps the position into a list that has since got shorter', () => {
+  it('clamps the position into a list that has since got shorter', async () => {
     // `insertDictionary:at:` raises an OffsetError past the end rather than appending.
     const exec = vi.fn().mockReturnValue('ok');
 
-    reinsertDictionary(exec, 'k1', 9);
+    await reinsertDictionary(exec, 'k1', 9);
 
     expect(exec.mock.calls[0][0] as string).toContain('pos := 9 min: sl size + 1');
   });
 
-  it('never asks for a position below 1', () => {
+  it('never asks for a position below 1', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    reinsertDictionary(exec, 'k1', 0);
+    await reinsertDictionary(exec, 'k1', 0);
     expect(exec.mock.calls[0][0] as string).toContain('pos := 1 min:');
 
-    reinsertDictionary(exec, 'k1', -4);
+    await reinsertDictionary(exec, 'k1', -4);
     expect(exec.mock.calls[1][0] as string).toContain('pos := 1 min:');
   });
 
-  it('answers null only for ok, and the reason otherwise', () => {
-    expect(reinsertDictionary(vi.fn().mockReturnValue('ok\n'), 'k1', 2)).toBeNull();
-    expect(reinsertDictionary(vi.fn().mockReturnValue('some failure'), 'k1', 2)).toBe(
+  it('answers null only for ok, and the reason otherwise', async () => {
+    expect(await reinsertDictionary(vi.fn().mockReturnValue('ok\n'), 'k1', 2)).toBeNull();
+    expect(await reinsertDictionary(vi.fn().mockReturnValue('some failure'), 'k1', 2)).toBe(
       'some failure',
     );
   });
 });
 
 describe('dictionaryEntryCount', () => {
-  it('discounts the self-referential entry, so a fresh dictionary reads as empty', () => {
+  it('discounts the self-referential entry, so a fresh dictionary reads as empty', async () => {
     // A SymbolDictionary holds its own name by identity (`#Name -> theDict`), so a
     // genuinely empty one reports a size of ONE.
     const exec = vi.fn().mockReturnValue('1');
 
-    dictionaryEntryCount(exec, 'Reports');
+    await dictionaryEntryCount(exec, 'Reports');
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('keyAtValue: d');
     expect(code).toContain('d size - selfEntry');
   });
 
-  it('does not name a temporary `self`, which is a reserved word', () => {
+  it('does not name a temporary `self`, which is a reserved word', async () => {
     const exec = vi.fn().mockReturnValue('0');
 
-    dictionaryEntryCount(exec, 'Reports');
+    await dictionaryEntryCount(exec, 'Reports');
 
     expect(exec.mock.calls[0][0] as string).not.toMatch(/\|[^|]*\bself\b[^|]*\|/);
   });
 
-  it('reads the count', () => {
-    expect(dictionaryEntryCount(vi.fn().mockReturnValue(' 3 \n'), 'Reports')).toBe(3);
+  it('reads the count', async () => {
+    expect(await dictionaryEntryCount(vi.fn().mockReturnValue(' 3 \n'), 'Reports')).toBe(3);
   });
 
-  it('reads a negative or unreadable answer as empty rather than warning about nonsense', () => {
-    expect(dictionaryEntryCount(vi.fn().mockReturnValue('nonsense'), 'Reports')).toBe(0);
-    expect(dictionaryEntryCount(vi.fn().mockReturnValue('-2'), 'Reports')).toBe(0);
-    expect(dictionaryEntryCount(vi.fn().mockReturnValue(''), 'Reports')).toBe(0);
+  it('reads a negative or unreadable answer as empty rather than warning about nonsense', async () => {
+    expect(await dictionaryEntryCount(vi.fn().mockReturnValue('nonsense'), 'Reports')).toBe(0);
+    expect(await dictionaryEntryCount(vi.fn().mockReturnValue('-2'), 'Reports')).toBe(0);
+    expect(await dictionaryEntryCount(vi.fn().mockReturnValue(''), 'Reports')).toBe(0);
   });
 
-  it('compares dictionary names as SYMBOLS, and escapes them', () => {
+  it('compares dictionary names as SYMBOLS, and escapes them', async () => {
     const exec = vi.fn().mockReturnValue('0');
 
-    dictionaryEntryCount(exec, "Re'ports");
+    await dictionaryEntryCount(exec, "Re'ports");
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("each name == #'Re''ports'");

@@ -15,7 +15,11 @@ export async function generateAndSaveGrailStub(
   dictName: string,
   dictIndex?: number,
 ): Promise<void> {
-  const reflection = queries.getGrailStubReflection(session, className, dictIndex ?? dictName);
+  const reflection = await queries.getGrailStubReflection(
+    session,
+    className,
+    dictIndex ?? dictName,
+  );
   if (!reflection.found) {
     void vscode.window.showWarningMessage(`Can't reflect on class ${className}.`);
     return;
