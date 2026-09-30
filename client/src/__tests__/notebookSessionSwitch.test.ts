@@ -90,8 +90,8 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
     ranIn = [];
   });
 
-  function login(user: string): ActiveSession {
-    return manager.login({ ...DEFAULT_LOGIN, gs_user: user, label: user }, '/mock/lib');
+  async function login(user: string): Promise<ActiveSession> {
+    return await manager.login({ ...DEFAULT_LOGIN, gs_user: user, label: user }, '/mock/lib');
   }
 
   // The default kernel — the one Open Notebook selects — built the way the real
@@ -128,13 +128,13 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   }
 
   it('offers the sessions logged in after the notebook opened, and runs the cell in the one picked', async () => {
-    const first = login('DataCurator');
+    const first = await login('DataCurator');
     const kernel = openNotebookKernel();
     await runCell(kernel);
     expect(ranIn.at(-1)).toBe(first);
 
-    const second = login('SystemUser');
-    const third = login('Carl');
+    const second = await login('SystemUser');
+    const third = await login('Carl');
 
     const offered = await switchSessionTo(second);
     expect(offered.map((i) => i.session)).toEqual(expect.arrayContaining([first, second, third]));
@@ -152,8 +152,8 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   });
 
   it('switches back to an earlier session and runs there', async () => {
-    const first = login('DataCurator');
-    const second = login('SystemUser');
+    const first = await login('DataCurator');
+    const second = await login('SystemUser');
     const kernel = openNotebookKernel();
 
     await switchSessionTo(first);
@@ -166,9 +166,9 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   });
 
   it('stops offering a session once it logs out', async () => {
-    const first = login('DataCurator');
-    const second = login('SystemUser');
-    const third = login('Carl');
+    const first = await login('DataCurator');
+    const second = await login('SystemUser');
+    const third = await login('Carl');
     manager.logout(second.id);
 
     const offered = await switchSessionTo(third);
@@ -178,8 +178,8 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   });
 
   it('with only one session left, keeps it without asking', async () => {
-    const first = login('DataCurator');
-    const second = login('SystemUser');
+    const first = await login('DataCurator');
+    const second = await login('SystemUser');
     manager.logout(second.id);
 
     await chooseActiveSession(manager);
@@ -193,9 +193,9 @@ describe('Switch Session in a notebook, with sessions logged in along the way', 
   });
 
   it('leaves a notebook pinned to one session where it is when the active session switches', async () => {
-    const first = login('DataCurator');
+    const first = await login('DataCurator');
     new SessionKernels(manager, [smalltalkSessionKernel]);
-    const second = login('SystemUser');
+    const second = await login('SystemUser');
     sentTo.length = 0;
 
     await switchSessionTo(second);

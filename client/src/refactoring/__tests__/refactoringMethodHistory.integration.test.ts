@@ -196,7 +196,7 @@ describe('method history across a refactoring (integration)', () => {
   describe('rename instance variable', () => {
     it('records the rewritten body of the method that read the variable', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const before = recorded('readsIvar').length;
@@ -210,7 +210,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('keeps the pre-refactoring source available to go back to', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameIvar(`rmhit-ivar-back-${CLS}`);
@@ -222,7 +222,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('does not stamp a version onto every method the re-version carried across', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const before = recorded('untouched').length;
@@ -237,7 +237,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('still opens the history of a method it carried across untouched', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameIvar(`rmhit-ivar-open-${CLS}`);
@@ -266,7 +266,7 @@ describe('method history across a refactoring (integration)', () => {
   describe('the kind of string each compile path installs', () => {
     it('is a string class on both sides of a refactoring, whichever the stone uses', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const handEdited = sourceKind('caller');
@@ -281,7 +281,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('does not decide whether the history can be read', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       // `local` goes through the engine, `caller` does not, so on a stone where the two paths
@@ -299,7 +299,7 @@ describe('method history across a refactoring (integration)', () => {
   describe('opening the history of a method a refactoring recompiled', () => {
     it('does not raise for a sender a rename method rewrote', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameMovePoint(`rmhit-open-sender-${CLS}`);
@@ -309,7 +309,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('does not raise for the implementor a rename method moved', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameMovePoint(`rmhit-open-impl-${CLS}`);
@@ -319,7 +319,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('does not raise for a method a rename temporary rewrote', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameLocalTemp(`rmhit-open-temp-${CLS}`);
@@ -329,7 +329,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('does not raise for a method the refactoring did NOT touch', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameLocalTemp(`rmhit-open-untouched-${CLS}`);
@@ -345,7 +345,7 @@ describe('method history across a refactoring (integration)', () => {
   describe('rename method', () => {
     it('records the rewritten body of a sender it recompiled', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const before = recorded('caller').length;
@@ -359,7 +359,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('keeps the pre-refactoring source of that sender available to go back to', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameMovePoint(`rmhit-back-${CLS}`);
@@ -371,7 +371,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('flags the version it just compiled as the current one', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameMovePoint(`rmhit-current-${CLS}`);
@@ -392,7 +392,7 @@ describe('method history across a refactoring (integration)', () => {
      */
     it('leaves the old selector’s history readable, so a regretted rename can be restored', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
       // A second hand edit, so the old selector has a history worth recovering.
       q.compileMethod(session(), CLS, false, 'moving', 'caller\n\t^self movePointX: 3 y: 4');
@@ -413,7 +413,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('records the renamed implementor under its new selector', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameMovePoint(`rmhit-impl-${CLS}`);
@@ -425,7 +425,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('leaves the history of a method it did not recompile alone', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const before = recorded('local').length;
@@ -439,7 +439,7 @@ describe('method history across a refactoring (integration)', () => {
   describe('rename temporary', () => {
     it('records the rewritten body of the one method it recompiled', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       const before = recorded('local').length;
@@ -453,7 +453,7 @@ describe('method history across a refactoring (integration)', () => {
 
     it('keeps the pre-refactoring source available to go back to', async (ctx) => {
       requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-      installMethodHistory(session());
+      await installMethodHistory(session());
       defineFixture();
 
       await renameLocalTemp(`rmhit-temp-back-${CLS}`);

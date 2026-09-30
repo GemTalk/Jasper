@@ -7,6 +7,7 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
 } from './gciConstants';
 import { logInfo, logError } from './gciLog';
+import { fetchString } from './stringFetch';
 import { runNbCall, NbRunOptions } from './nbRunner';
 import {
   DUMP_PAYLOAD_TEMPS,
@@ -72,9 +73,9 @@ function intToOop(session: ActiveSession, n: number): bigint {
   return result;
 }
 
-function executeAndFetchString(session: ActiveSession, code: string): string {
+async function executeAndFetchString(session: ActiveSession, code: string): Promise<string> {
   try {
-    return session.gci.executeAndFetchString(session.handle, code);
+    return await fetchString(session, code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logError(session.id, msg);
@@ -219,7 +220,11 @@ export function getStackDepth(session: ActiveSession, gsProcess: bigint): number
  * and gets real values — but a probe written in topaz against the live stack will
  * see nil `self` in every frame and look like a bug that isn't there.
  */
-export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: number): FrameInfo {
+export async function getFrameInfo(
+  session: ActiveSession,
+  gsProcess: bigint,
+  level: number,
+): Promise<FrameInfo> {
   const levelOop = intToOop(session, level);
   const arrayOop = gciPerform(session, gsProcess, '_frameContentsAt:', [levelOop]);
 
@@ -250,7 +255,7 @@ export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: n
   let selfOop = frameSelfOop;
   let selfIsUnavailable = false;
   if (selfOop === OOP_NIL && isBlockFrame) {
-    selfOop = findHomeFrameSelf(session, gsProcess, level);
+    selfOop = await findHomeFrameSelf(session, gsProcess, level);
     selfIsUnavailable = selfOop === OOP_NIL;
   } else if (selfOop === OOP_NIL) {
     selfOop = receiverOop; // defensive: a frame the kernel left slot 8 empty on
@@ -309,9 +314,13 @@ export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: n
  * nothing more exact to use — and for a block that mentions `self`, slot 8
  * already answered exactly and this never runs.
  */
-function findHomeFrameSelf(session: ActiveSession, gsProcess: bigint, level: number): bigint {
+async function findHomeFrameSelf(
+  session: ActiveSession,
+  gsProcess: bigint,
+  level: number,
+): Promise<bigint> {
   try {
-    const oopString = executeAndFetchString(
+    const oopString = await executeAndFetchString(
       session,
       `| proc fetch arr homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
@@ -361,10 +370,10 @@ export function getMethodBlockInfo(session: ActiveSession, methodOop: bigint): M
  * same-named class in another dictionary, which the source pane then opened and
  * offered to edit. '' when no slot binds it under its own name.
  */
-export function getMethodUriInfo(
+export async function getMethodUriInfo(
   session: ActiveSession,
   methodOop: bigint,
-): MethodUriInfo | undefined {
+): Promise<MethodUriInfo | undefined> {
   try {
     const code = `| method class baseClass dictName category |
 method := Object _objectForOop: ${methodOop}.
@@ -378,7 +387,7 @@ dictName, (String with: Character tab),
   category, (String with: Character tab),
   method selector asString`;
 
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
 
     const parts = data.split('\t');
     if (parts.length < 5) return undefined;
@@ -434,11 +443,11 @@ export interface ClassHomeInfo {
  * implementation shadowing a superclass override). Returns [] on any failure so
  * callers degrade gracefully.
  */
-export function getReceiverClassChain(
+export async function getReceiverClassChain(
   session: ActiveSession,
   receiverOop: bigint,
   selector: string,
-): ClassHomeInfo[] {
+): Promise<ClassHomeInfo[]> {
   try {
     // selector is a method selector (no quotes), but guard the quote anyway.
     const sel = selector.replace(/'/g, "''");
@@ -458,7 +467,7 @@ rows := OrderedCollection new.
   cls := cls superclass ].
 rows inject: '' into: [:acc :r | acc isEmpty ifTrue: [r] ifFalse: [acc, (String with: Character lf), r]]`;
 
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
 
     return data
       .split('\n')
@@ -507,11 +516,11 @@ export interface BrowseTarget {
  * selector can't be found anywhere in the chain or on any failure, so the caller
  * degrades to a clear message rather than opening a misleading browser.
  */
-export function getBrowseTarget(
+export async function getBrowseTarget(
   session: ActiveSession,
   receiverOop: bigint,
   selector: string,
-): BrowseTarget | undefined {
+): Promise<BrowseTarget | undefined> {
   try {
     const sel = selector.replace(/'/g, "''");
     const code = `| rcvr cls sel def base dn |
@@ -530,7 +539,7 @@ def isNil ifTrue: [ '' ] ifFalse: [
     dn, (String with: Character tab),
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
 
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
 
     if (data.length === 0) return undefined; // selector not found in the chain
 
@@ -576,10 +585,10 @@ export interface DnuInfo {
  * One Smalltalk round-trip (mirrors getMethodUriInfo's execute-and-split shape);
  * returns undefined on any failure so callers degrade to "no Create button".
  */
-export function getDoesNotUnderstandInfo(
+export async function getDoesNotUnderstandInfo(
   session: ActiveSession,
   gsProcess: bigint,
-): DnuInfo | undefined {
+): Promise<DnuInfo | undefined> {
   try {
     // Walk all frames for the doesNotUnderstand:/_doesNotUnderstand:… machinery
     // (selectors containing 'doesNotUnderstand'). `dnuTop` is the `doesNotUnderstand:`
@@ -613,7 +622,7 @@ dnuTop isNil
       sel asString, (String with: Character tab),
       (descr at: 2) size printString ]`;
 
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
     if (data === '') return undefined; // not parked on a doesNotUnderstand:
 
     const parts = data.split('\t');
@@ -748,13 +757,13 @@ export function fetchPrintString(
  * internal printString size cap.  printString uses a LimitedWriteStream
  * internally; calling printOn: directly with a plain WriteStream has no limit.
  */
-export function fetchFullPrintString(session: ActiveSession, oop: bigint): string {
+export async function fetchFullPrintString(session: ActiveSession, oop: bigint): Promise<string> {
   try {
     const code = `| s |
 s := WriteStream on: String new.
 (Object _objectForOop: ${oop}) printOn: s.
 s contents`;
-    return executeAndFetchString(session, code);
+    return await executeAndFetchString(session, code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return `<error: ${msg}>`;
@@ -818,7 +827,10 @@ export function parseStackDump(data: string): StackDumpRow[] {
  * Best-effort: a frame the server can't introspect contributes no rows; a failed
  * fetch returns [] (the dump then shows headings without variables).
  */
-export function fetchStackDump(session: ActiveSession, gsProcess: bigint): StackDumpRow[] {
+export async function fetchStackDump(
+  session: ActiveSession,
+  gsProcess: bigint,
+): Promise<StackDumpRow[]> {
   // self of each row is built server-side; names/printStrings are escaped (\\ \t
   // \n \r) so the tab/newline framing is safe, and printStrings are capped so one
   // huge object can't blow the payload. `_frameContentsAt:` layout matches
@@ -868,7 +880,7 @@ ${FRAME_SELF_SMALLTALK}
 out contents`;
 
   try {
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
     return parseStackDump(data);
   } catch {
     return [];
@@ -948,11 +960,11 @@ export function parseFrameVars(data: string): FrameVarRow[] {
  * the enclosing `on: Error do: []` swallows it, and the payload ends after the
  * instVars with every argument and temporary silently missing.
  */
-export function fetchFrameVariables(
+export async function fetchFrameVariables(
   session: ActiveSession,
   gsProcess: bigint,
   serverLevel: number,
-): FrameVarRow[] {
+): Promise<FrameVarRow[]> {
   const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row arr slf names depth hArr hNames homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
@@ -999,7 +1011,7 @@ ${FRAME_SELF_SMALLTALK}
 out contents`;
 
   try {
-    const data = executeAndFetchString(session, code);
+    const data = await executeAndFetchString(session, code);
     return parseFrameVars(data);
   } catch {
     return [];
@@ -1409,13 +1421,16 @@ export function trimStackToLevelNb(
  * GemStone 3.7.x — and it performed a *selector*, not an expression, so it
  * raised a NameError trying to intern the source as a Symbol.)
  */
-export function evaluateInFrame(
+export async function evaluateInFrame(
   session: ActiveSession,
   gsProcess: bigint,
   expression: string,
   level: number,
-): string {
-  return getObjectPrintString(session, evaluateInFrameToOop(session, gsProcess, expression, level));
+): Promise<string> {
+  return getObjectPrintString(
+    session,
+    await evaluateInFrameToOop(session, gsProcess, expression, level),
+  );
 }
 
 /**
@@ -1434,33 +1449,29 @@ export function evaluateInFrame(
  * expression string) is still blocking, but cheap; only the evaluation itself —
  * the part that can run away — is non-blocking.
  */
-export function evaluateInFrameNb(
+export async function evaluateInFrameNb(
   session: ActiveSession,
   gsProcess: bigint,
   expression: string,
   level: number,
   opts: NbRunOptions = {},
 ): Promise<string> {
-  // Not an `async` function, so a throw from the frame setup would escape the
-  // caller's promise chain instead of rejecting it.
-  let context: FrameEvalContext;
-  try {
-    context = getFrameEvalContext(session, gsProcess, level);
-  } catch (e: unknown) {
-    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
-  }
-  const { selfOop, selfIsUnavailable, names, oops } = context;
+  const { selfOop, selfIsUnavailable, names, oops } = await getFrameEvalContext(
+    session,
+    gsProcess,
+    level,
+  );
 
   const { result: exprOop, err: strErr } = session.gci.GciTsNewString(session.handle, expression);
   if (strErr.number !== 0) {
-    return Promise.reject(new Error(strErr.message || 'Cannot create expression string'));
+    throw new Error(strErr.message || 'Cannot create expression string');
   }
 
   const symbolListOop = buildFrameSymbolList(session, names, oops) ?? sessionSymbolListOop(session);
   const selector = 'evaluateInContext:symbolList:';
   const args = [selfOop, symbolListOop];
 
-  return runNbCall(
+  return await runNbCall(
     session,
     () => session.gci.GciTsNbPerform(session.handle, exprOop, OOP_ILLEGAL, selector, args, 0, 0),
     () => {
@@ -1500,15 +1511,15 @@ function withSelfUnavailableNote(message: string, selfIsUnavailable: boolean): s
   );
 }
 
-export function evaluateInFrameToOop(
+export async function evaluateInFrameToOop(
   session: ActiveSession,
   gsProcess: bigint,
   expression: string,
   level: number,
-): bigint {
+): Promise<bigint> {
   // The frame's `self` — the home receiver in a block frame — becomes `self` for
   // the evaluation.
-  const { selfOop, selfIsUnavailable, names, oops } = getFrameEvalContext(
+  const { selfOop, selfIsUnavailable, names, oops } = await getFrameEvalContext(
     session,
     gsProcess,
     level,
@@ -1578,11 +1589,11 @@ export interface FrameEvalContext {
  * — which would fail the whole doit and make every evaluation in the frame
  * report itself unreadable. `beginsWith:` has no such restriction.
  */
-export function getFrameEvalContext(
+export async function getFrameEvalContext(
   session: ActiveSession,
   gsProcess: bigint,
   level: number,
-): FrameEvalContext {
+): Promise<FrameEvalContext> {
   const code = `| proc lvl depth out tab arr fetch hArr slf emit homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 lvl := ${level}.
@@ -1615,7 +1626,7 @@ out contents`;
 
   let data: string;
   try {
-    data = executeAndFetchString(session, code);
+    data = await executeAndFetchString(session, code);
   } catch (e: unknown) {
     throw new Error(frameUnreadable(level, e instanceof Error ? e.message : String(e)), {
       cause: e,

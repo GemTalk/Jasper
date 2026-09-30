@@ -5477,7 +5477,7 @@ export function activate(context: vscode.ExtensionContext) {
           const libraryPath = storage.getGciLibraryPath(harvested.version);
           if (libraryPath) {
             try {
-              const s = sessionManager.login(harvested, libraryPath);
+              const s = await sessionManager.login(harvested, libraryPath);
               refreshEnhancedInspectorAvailable(s);
             } catch {
               /* user reconnects manually */

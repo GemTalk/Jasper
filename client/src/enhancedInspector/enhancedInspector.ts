@@ -181,7 +181,7 @@ export class EnhancedInspector {
     return { title, className, specs, meta };
   }
 
-  private handleMessage(msg: InspectorMessage): void {
+  private async handleMessage(msg: InspectorMessage): Promise<void> {
     switch (msg.command) {
       case 'ready': {
         const payload = this.buildColumnPayload(this.currentOop);
@@ -312,7 +312,7 @@ export class EnhancedInspector {
       }
 
       case 'fetchFullPrintString': {
-        const fullText = debug.fetchFullPrintString(this.session, BigInt(msg.oop));
+        const fullText = await debug.fetchFullPrintString(this.session, BigInt(msg.oop));
         const data = JSON.stringify({ string: fullText, stylerSpecification: null });
         this.panel.webview.postMessage({
           command: 'fullPrintString',

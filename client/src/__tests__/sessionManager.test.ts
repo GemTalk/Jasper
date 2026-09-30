@@ -188,13 +188,13 @@ describe('SessionManager', () => {
     manager = new SessionManager();
   });
 
-  it('allows a first login', () => {
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+  it('allows a first login', async () => {
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
     expect(session.id).toBe(1);
   });
 
-  it('installs the server-side Transcript sink at login', () => {
-    manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+  it('installs the server-side Transcript sink at login', async () => {
+    await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     const installCall = executeAndFetchStringMock.mock.calls.find(
       (c) => typeof c[1] === 'string' && c[1].includes('JasperTranscriptSink'),
@@ -203,26 +203,26 @@ describe('SessionManager', () => {
     expect(installCall![1]).toContain('TranscriptStream_SessionStream');
   });
 
-  it('still logs in when the Transcript sink install fails', () => {
+  it('still logs in when the Transcript sink install fails', async () => {
     executeAndFetchStringMock.mockImplementationOnce(() => {
       throw GciLibraryError.withMessage('no compile privilege');
     });
 
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     expect(session.id).toBe(1);
   });
 
-  it('aborts the fresh session after login to drop the spurious session-method-policy write', () => {
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+  it('aborts the fresh session after login to drop the spurious session-method-policy write', async () => {
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     expect(gciTsAbort).toHaveBeenCalledWith(session.handle);
   });
 
-  it('still completes login when the post-login abort fails', () => {
+  it('still completes login when the post-login abort fails', async () => {
     gciTsAbort.mockReturnValueOnce({ success: false, err: { number: 1, message: 'boom' } });
 
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     expect(session.id).toBe(1);
   });
@@ -233,10 +233,10 @@ describe('SessionManager', () => {
         (c) => typeof c[1] === 'string' && c[1].includes('#GemAutoServiceSigAbort'),
       );
 
-    it('is read rather than assumed', () => {
+    it('is read rather than assumed', async () => {
       transactionStateAnswer = 'manualBegin false';
 
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
       expect(session.transactionMode).toBe('manualBegin');
       expect(session.inTransaction).toBe(false);
@@ -247,23 +247,23 @@ describe('SessionManager', () => {
     // record the stone will come asking for. Waiting for the user to switch modes
     // by hand would leave it to be force-aborted (3031) with every cache
     // reinitialized, which is the very thing this feature promises it is not.
-    it('arms the gem’s own SigAbort servicing when that mode is manualBegin', () => {
+    it('arms the gem’s own SigAbort servicing when that mode is manualBegin', async () => {
       transactionStateAnswer = 'manualBegin false';
 
-      manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
       expect(armCall()![1]).toContain('#GemAutoServiceSigAbort put: true');
     });
 
-    it('does not arm it for the autoBegin session almost everyone gets', () => {
+    it('does not arm it for the autoBegin session almost everyone gets', async () => {
       // autoBegin is never outside a transaction, so the stone never signals it —
       // and a round trip that can only be a no-op is one not to spend at login.
-      manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
       expect(armCall()).toBeUndefined();
     });
 
-    it('still logs in when the arming fails', () => {
+    it('still logs in when the arming fails', async () => {
       transactionStateAnswer = 'manualBegin false';
       executeAndFetchStringMock.mockImplementation((..._args: unknown[]) => {
         if (typeof _args[1] === 'string' && _args[1].includes('#GemAutoServiceSigAbort')) {
@@ -274,7 +274,7 @@ describe('SessionManager', () => {
           : 'installed';
       });
 
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
       expect(session.id).toBe(1);
       expect(session.transactionMode).toBe('manualBegin');
@@ -289,7 +289,7 @@ describe('SessionManager', () => {
 
     // One failed attempt must not leave the session unarmed for the rest of its
     // life, open to the very force-abort (3031) arming exists to prevent.
-    it('retries on the next read after a failed attempt, and marks success', () => {
+    it('retries on the next read after a failed attempt, and marks success', async () => {
       transactionStateAnswer = 'manualBegin false';
       let failArm = true;
       executeAndFetchStringMock.mockImplementation((...args: unknown[]) => {
@@ -298,7 +298,7 @@ describe('SessionManager', () => {
         }
         return stoneAnswer(...args);
       });
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       expect(session.sigAbortArmed).toBeUndefined();
 
       failArm = false;
@@ -308,8 +308,8 @@ describe('SessionManager', () => {
     });
 
     // The option is never disarmed, so a session armed once stays armed.
-    it('does not arm again after a manualBegin → autoBegin → manualBegin round trip', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('does not arm again after a manualBegin → autoBegin → manualBegin round trip', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
       manager.setTransactionMode(session.id, 'manualBegin');
       transactionStateAnswer = 'autoBegin true';
@@ -320,9 +320,9 @@ describe('SessionManager', () => {
       expect(armCalls()).toBe(1);
     });
 
-    it('does not arm again on every read while the session stays in manualBegin', () => {
+    it('does not arm again on every read while the session stays in manualBegin', async () => {
       transactionStateAnswer = 'manualBegin false';
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       manager.refreshTransactionState(session.id);
       manager.refreshTransactionState(session.id);
 
@@ -331,8 +331,8 @@ describe('SessionManager', () => {
   });
 
   describe('switching the transaction mode', () => {
-    it('sends the doit queries/transactionMode owns, and re-reads what the stone reached', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('sends the doit queries/transactionMode owns, and re-reads what the stone reached', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
 
       manager.setTransactionMode(session.id, 'manualBegin');
@@ -345,8 +345,8 @@ describe('SessionManager', () => {
       expect(session.inTransaction).toBe(false);
     });
 
-    it('arms the gem’s SigAbort servicing on the way into manualBegin', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('arms the gem’s SigAbort servicing on the way into manualBegin', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
 
       manager.setTransactionMode(session.id, 'manualBegin');
@@ -360,8 +360,8 @@ describe('SessionManager', () => {
 
     // A switch the stone did not carry out must not be announced as done: the
     // caller shows an error instead of a toast naming the old mode.
-    it('throws when the stone reports a different mode afterwards, having re-read it', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('throws when the stone reports a different mode afterwards, having re-read it', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       switchAnswer = 'autoBegin';
 
       expect(() => manager.setTransactionMode(session.id, 'manualBegin')).toThrow(
@@ -370,8 +370,8 @@ describe('SessionManager', () => {
       expect(session.transactionMode).toBe('autoBegin');
     });
 
-    it('announces the change so every surface that draws it redraws together', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('announces the change so every surface that draws it redraws together', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       const seen: number[] = [];
       manager.onDidChangeTransactionState((id) => seen.push(id));
       transactionStateAnswer = 'manualBegin false';
@@ -389,21 +389,24 @@ describe('SessionManager', () => {
       ['begin', (m, id) => m.begin(id), true],
       ['commit', (m, id) => m.commit(id), false],
       ['abort', (m, id) => m.abort(id), false],
-    ])('re-reads the state after %s, so the row stops describing the old one', (_n, act, after) => {
-      transactionStateAnswer = `manualBegin ${!after}`;
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
-      const seen: number[] = [];
-      manager.onDidChangeTransactionState((id) => seen.push(id));
-      transactionStateAnswer = `manualBegin ${after}`;
+    ])(
+      're-reads the state after %s, so the row stops describing the old one',
+      async (_n, act, after) => {
+        transactionStateAnswer = `manualBegin ${!after}`;
+        const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+        const seen: number[] = [];
+        manager.onDidChangeTransactionState((id) => seen.push(id));
+        transactionStateAnswer = `manualBegin ${after}`;
 
-      act(manager, session.id);
+        act(manager, session.id);
 
-      expect(session.inTransaction).toBe(after);
-      expect(seen).toEqual([session.id]);
-    });
+        expect(session.inTransaction).toBe(after);
+        expect(seen).toEqual([session.id]);
+      },
+    );
 
-    it('says nothing when the state did not actually move', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    it('says nothing when the state did not actually move', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       const seen: number[] = [];
       manager.onDidChangeTransactionState((id) => seen.push(id));
 
@@ -414,66 +417,70 @@ describe('SessionManager', () => {
     });
   });
 
-  it('still completes login when the post-login abort throws', () => {
+  it('still completes login when the post-login abort throws', async () => {
     gciTsAbort.mockImplementationOnce(() => {
       throw new Error('gci down');
     });
 
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
 
     expect(session.id).toBe(1);
   });
 
-  it('rejects a second login in single mode (the default)', () => {
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    expect(() => manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).toThrow(
+  it('rejects a second login in single mode (the default)', async () => {
+    await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    await expect(manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).rejects.toThrow(
       'Only one GemStone session is allowed at a time',
     );
   });
 
-  it('allows multiple sessions in multiple mode with default export path (includes {session})', () => {
+  it('allows multiple sessions in multiple mode with default export path (includes {session})', async () => {
     configValues['sessionMode'] = 'multiple';
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+    await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    const session2 = await manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
 
-  it('allows multiple sessions in multiple mode when custom export path includes {session}', () => {
+  it('allows multiple sessions in multiple mode when custom export path includes {session}', async () => {
     configValues['sessionMode'] = 'multiple';
     configValues['exportPath'] = '{workspaceRoot}/gemstone/{session}/{dictName}';
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+    await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    const session2 = await manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
 
-  it('rejects a second login in multiple mode when custom export path lacks {session}', () => {
+  it('rejects a second login in multiple mode when custom export path lacks {session}', async () => {
     configValues['sessionMode'] = 'multiple';
     configValues['exportPath'] = '{workspaceRoot}/gemstone/{dictName}';
-    manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-    expect(() => manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).toThrow(
+    await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    await expect(manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib')).rejects.toThrow(
       'does not include {session}',
     );
   });
 
-  it('allows login again after logging out', () => {
-    const session = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+  it('allows login again after logging out', async () => {
+    const session = await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
     manager.logout(session.id);
-    const session2 = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+    const session2 = await manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
     expect(session2.id).toBe(2);
   });
 
   // What logging out of the CURRENT session leaves selected decides whether the
   // palette's Commit and Abort have a session to act in at all, or have to ask.
   describe('logout hands the selection on', () => {
-    const loginN = (n: number) => {
+    const loginN = async (n: number) => {
       configValues['sessionMode'] = 'multiple';
-      return Array.from({ length: n }, (_, i) =>
-        manager.login({ ...DEFAULT_LOGIN, label: `Session ${i + 1}` }, '/mock/lib'),
-      );
+      const sessions = [];
+      for (let i = 0; i < n; i++) {
+        sessions.push(
+          await manager.login({ ...DEFAULT_LOGIN, label: `Session ${i + 1}` }, '/mock/lib'),
+        );
+      }
+      return sessions;
     };
 
-    it('makes the remaining session current when the last one standing is unambiguous', () => {
-      const [first, second] = loginN(2);
+    it('makes the remaining session current when the last one standing is unambiguous', async () => {
+      const [first, second] = await loginN(2);
       manager.selectSession(first.id);
 
       manager.logout(first.id);
@@ -485,8 +492,8 @@ describe('SessionManager', () => {
     // and "the next one along" give different answers here, which is what makes
     // this the case worth having. Leaving nothing current would mean every "act
     // in the current session" command had nothing to act in.
-    it('promotes the session worked in before, not the next one along', () => {
-      const [first, second, third] = loginN(3);
+    it('promotes the session worked in before, not the next one along', async () => {
+      const [first, second, third] = await loginN(3);
       manager.selectSession(second.id);
 
       manager.logout(second.id);
@@ -499,8 +506,8 @@ describe('SessionManager', () => {
     // out. "Oldest still logged in" hands the window to session 1 — a stone the
     // user last touched hours ago; the session they were actually cycling
     // through is 2.
-    it('promotes the most recently worked in session, not the oldest', () => {
-      const [first, second, third] = loginN(3);
+    it('promotes the most recently worked in session, not the oldest', async () => {
+      const [first, second, third] = await loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
 
@@ -512,8 +519,8 @@ describe('SessionManager', () => {
 
     // Logging out the promoted session falls back another step rather than
     // stopping at the one just handed over.
-    it('walks further back when the promoted session is logged out in turn', () => {
-      const [first, second, third, fourth] = loginN(4);
+    it('walks further back when the promoted session is logged out in turn', async () => {
+      const [first, second, third, fourth] = await loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
@@ -532,8 +539,8 @@ describe('SessionManager', () => {
     // is the one worked in before the current one, and it is logged out in the
     // background first — so promoting it would hand the window a dead handle: a
     // GCI call that fails quietly, then `Session not found`.
-    it('skips a remembered session that has since been logged out', () => {
-      const [first, second, third, fourth] = loginN(4);
+    it('skips a remembered session that has since been logged out', async () => {
+      const [first, second, third, fourth] = await loginN(4);
       manager.selectSession(third.id);
       manager.selectSession(second.id);
       manager.selectSession(fourth.id);
@@ -547,15 +554,15 @@ describe('SessionManager', () => {
 
     // Nothing was ever switched between — login makes a session current only
     // when it is the first one — so there is no "before this" to go back to.
-    it('falls back to the oldest when no session was ever switched to', () => {
-      const [first, second] = loginN(3);
+    it('falls back to the oldest when no session was ever switched to', async () => {
+      const [first, second] = await loginN(3);
       manager.logout(first.id);
 
       expect(manager.getSelectedSession()?.id).toBe(second.id);
     });
 
-    it('leaves nothing current when the last session goes', () => {
-      const [only] = loginN(1);
+    it('leaves nothing current when the last session goes', async () => {
+      const [only] = await loginN(1);
       manager.logout(only.id);
 
       expect(manager.getSelectedSession()).toBeUndefined();
@@ -575,8 +582,8 @@ describe('SessionManager', () => {
 
     // The window has just changed which stone Display It / Execute It / a
     // notebook cell will run in, and none of those asks first.
-    it('says which session it promoted', () => {
-      const [first, second] = loginN(2);
+    it('says which session it promoted', async () => {
+      const [first, second] = await loginN(2);
       manager.selectSession(second.id);
 
       manager.logout(second.id);
@@ -589,8 +596,8 @@ describe('SessionManager', () => {
       );
     });
 
-    it('says nothing when the session logged out was not the current one', () => {
-      const [first, second] = loginN(3);
+    it('says nothing when the session logged out was not the current one', async () => {
+      const [first, second] = await loginN(3);
       manager.selectSession(first.id);
 
       manager.logout(second.id);
@@ -598,15 +605,15 @@ describe('SessionManager', () => {
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     });
 
-    it('turns hasActiveSession off when the last session goes', () => {
-      const [only] = loginN(1);
+    it('turns hasActiveSession off when the last session goes', async () => {
+      const [only] = await loginN(1);
       manager.logout(only.id);
 
       expect(contextCalls().at(-1)?.[2]).toBe(false);
     });
 
-    it('leaves hasActiveSession on when a session remains to be promoted', () => {
-      const [first] = loginN(3);
+    it('leaves hasActiveSession on when a session remains to be promoted', async () => {
+      const [first] = await loginN(3);
       manager.selectSession(first.id);
 
       manager.logout(first.id);
@@ -614,8 +621,8 @@ describe('SessionManager', () => {
       expect(contextCalls().at(-1)?.[2]).toBe(true);
     });
 
-    it('keeps the current session when a background session is logged out', () => {
-      const [first, second] = loginN(3);
+    it('keeps the current session when a background session is logged out', async () => {
+      const [first, second] = await loginN(3);
       manager.selectSession(first.id);
 
       manager.logout(second.id);
@@ -628,8 +635,8 @@ describe('SessionManager', () => {
     // current one must not move the selection at all, whatever the promotion rule
     // is, so the case is pinned with the newest session going and the MIDDLE one
     // current, which is where a promotion that fired by mistake would land on 1.
-    it('leaves the current session alone when the newest is logged out from under it', () => {
-      const [first, second, third] = loginN(3);
+    it('leaves the current session alone when the newest is logged out from under it', async () => {
+      const [first, second, third] = await loginN(3);
       manager.selectSession(second.id);
 
       manager.logout(third.id);
@@ -645,8 +652,8 @@ describe('SessionManager', () => {
     // a network round trip per candidate in the middle of a logout, on the path
     // that Display It and a notebook cell are waiting on. The logout's own
     // GciTsLogout is the one call that has to happen.
-    it('promotes without a round trip to any gem', () => {
-      const [, second, third] = loginN(3);
+    it('promotes without a round trip to any gem', async () => {
+      const [, second, third] = await loginN(3);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
       vi.clearAllMocks();
@@ -662,8 +669,8 @@ describe('SessionManager', () => {
 
     // The same for the fallback arm, which walks every remaining session to find
     // the lowest id — reading ids off the map, not asking any of them anything.
-    it('falls back to the oldest without a round trip to any gem', () => {
-      const [first] = loginN(3);
+    it('falls back to the oldest without a round trip to any gem', async () => {
+      const [first] = await loginN(3);
       vi.clearAllMocks();
 
       manager.logout(first.id);
@@ -682,8 +689,8 @@ describe('SessionManager', () => {
     const rememberedOrder = (m: SessionManager) =>
       (m as unknown as { selectionOrder: number[] }).selectionOrder;
 
-    it('discards a logged-out session from the remembered order instead of stepping over it', () => {
-      const [first, second, third] = loginN(3);
+    it('discards a logged-out session from the remembered order instead of stepping over it', async () => {
+      const [first, second, third] = await loginN(3);
       manager.selectSession(first.id);
       manager.selectSession(second.id);
       manager.selectSession(third.id);
@@ -709,7 +716,7 @@ describe('SessionManager', () => {
     const invariantHolds = () =>
       manager.getSessions().length === 0 || manager.getSelectedSession() !== undefined;
 
-    it('holds through every order of logging three sessions out', () => {
+    it('holds through every order of logging three sessions out', async () => {
       configValues['sessionMode'] = 'multiple';
       // Each permutation of the logout order, over a fresh set of logins.
       const orders = [
@@ -721,9 +728,10 @@ describe('SessionManager', () => {
         [2, 1, 0],
       ];
       for (const order of orders) {
-        const ids = [1, 2, 3].map(
-          (n) => manager.login({ ...DEFAULT_LOGIN, label: `S${n}` }, '/mock/lib').id,
-        );
+        const ids: number[] = [];
+        for (const n of [1, 2, 3]) {
+          ids.push((await manager.login({ ...DEFAULT_LOGIN, label: `S${n}` }, '/mock/lib')).id);
+        }
         expect(invariantHolds(), 'after logging in').toBe(true);
         for (const which of order) {
           manager.logout(ids[which]);
@@ -738,7 +746,7 @@ describe('SessionManager', () => {
     // remembered selection order is exercised with its entries removed in every
     // order, which is the way "promote the most recently worked in" could reach
     // a session that is no longer logged in.
-    it('holds through every logout order when each session is worked in first', () => {
+    it('holds through every logout order when each session is worked in first', async () => {
       configValues['sessionMode'] = 'multiple';
       const orders = [
         [0, 1, 2],
@@ -749,9 +757,10 @@ describe('SessionManager', () => {
         [2, 1, 0],
       ];
       for (const order of orders) {
-        const ids = [1, 2, 3].map(
-          (n) => manager.login({ ...DEFAULT_LOGIN, label: `S${n}` }, '/mock/lib').id,
-        );
+        const ids: number[] = [];
+        for (const n of [1, 2, 3]) {
+          ids.push((await manager.login({ ...DEFAULT_LOGIN, label: `S${n}` }, '/mock/lib')).id);
+        }
         for (const which of order) {
           manager.selectSession(ids[which]);
           manager.logout(ids[which]);
@@ -762,14 +771,14 @@ describe('SessionManager', () => {
       }
     });
 
-    it('holds when a session is logged out and another logged in again', () => {
+    it('holds when a session is logged out and another logged in again', async () => {
       configValues['sessionMode'] = 'multiple';
-      const first = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
-      const second = manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
+      const first = await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+      const second = await manager.login({ ...DEFAULT_LOGIN, label: 'Second' }, '/mock/lib');
       manager.logout(first.id);
       expect(invariantHolds()).toBe(true);
 
-      manager.login({ ...DEFAULT_LOGIN, label: 'Third' }, '/mock/lib');
+      await manager.login({ ...DEFAULT_LOGIN, label: 'Third' }, '/mock/lib');
       expect(invariantHolds()).toBe(true);
 
       manager.logout(second.id);
@@ -778,16 +787,16 @@ describe('SessionManager', () => {
   });
 
   describe('resolveSession', () => {
-    const twoSessions = () => {
+    const twoSessions = async () => {
       configValues['sessionMode'] = 'multiple';
-      manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
-      const second = manager.login({ ...DEFAULT_LOGIN, label: 'Two' }, '/mock/lib');
+      await manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
+      const second = await manager.login({ ...DEFAULT_LOGIN, label: 'Two' }, '/mock/lib');
       manager.selectSession(second.id);
       return second;
     };
 
     it('uses the selected session without asking', async () => {
-      const selected = twoSessions();
+      const selected = await twoSessions();
 
       const resolved = await manager.resolveSession();
 
@@ -796,7 +805,7 @@ describe('SessionManager', () => {
     });
 
     it('asks anyway under alwaysAsk, for a command a wrong stone would cost', async () => {
-      const selected = twoSessions();
+      const selected = await twoSessions();
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
         label: 'One',
         session: manager.getSessions()[0],
@@ -809,7 +818,7 @@ describe('SessionManager', () => {
     });
 
     it('leads with the selected session, marked, so Enter keeps it', async () => {
-      const selected = twoSessions();
+      const selected = await twoSessions();
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
       await manager.resolveSession({ alwaysAsk: true });
@@ -823,7 +832,7 @@ describe('SessionManager', () => {
     });
 
     it('asks nothing when only one session is logged in, however it is called', async () => {
-      const only = manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
+      const only = await manager.login({ ...DEFAULT_LOGIN, label: 'One' }, '/mock/lib');
 
       const resolved = await manager.resolveSession({ alwaysAsk: true });
 
@@ -832,7 +841,7 @@ describe('SessionManager', () => {
     });
 
     it("carries the caller's wording into the prompt", async () => {
-      twoSessions();
+      await twoSessions();
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
       await manager.resolveSession({ alwaysAsk: true, placeHolder: 'file into' });
@@ -845,13 +854,13 @@ describe('SessionManager', () => {
   });
 
   describe('ping', () => {
-    it('reports success when the round-trip returns cleanly', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    it('reports success when the round-trip returns cleanly', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
       expect(manager.ping(session.id)).toEqual({ success: true, err: { number: 0, message: '' } });
     });
 
-    it('reports failure when the gem returns an error', () => {
-      const session = manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
+    it('reports failure when the gem returns an error', async () => {
+      const session = await manager.login({ ...DEFAULT_LOGIN, label: 'First' }, '/mock/lib');
       pingErrNumber = 4100;
       const result = manager.ping(session.id);
       expect(result.success).toBe(false);
@@ -913,7 +922,9 @@ describe('SessionManager', () => {
 
       const pending = manager.loginAsync(testLogin(), '/mock/lib');
 
-      expect(() => manager.login(testLogin(), '/mock/lib')).toThrow(/Only one GemStone session/);
+      await expect(manager.login(testLogin(), '/mock/lib')).rejects.toThrow(
+        /Only one GemStone session/,
+      );
 
       await pending;
     });

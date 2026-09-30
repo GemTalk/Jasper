@@ -302,13 +302,13 @@ function lastPanel() {
 }
 
 /** Invoke the panel's webview message handler with an arbitrary message. */
-function sendMessage(panel: ReturnType<typeof lastPanel>, msg: unknown) {
-  panel.webview.onDidReceiveMessage.mock.calls[0][0](msg);
+function sendMessage(panel: ReturnType<typeof lastPanel>, msg: unknown): Promise<void> {
+  return panel.webview.onDidReceiveMessage.mock.calls[0][0](msg);
 }
 
 /** Simulate the webview finishing load and requesting data. */
-function sendReady(panel: ReturnType<typeof lastPanel>) {
-  sendMessage(panel, { command: 'ready' });
+async function sendReady(panel: ReturnType<typeof lastPanel>): Promise<void> {
+  await sendMessage(panel, { command: 'ready' });
 }
 
 /** Simulate the user closing the panel window. */
@@ -760,8 +760,8 @@ describe('DebuggerPanel', () => {
       await tick();
       DebuggerPanel.create(session, 0x456n, 'a second halt');
       const second = lastPanel();
-      sendReady(second);
-      sendMessage(second, { command: 'selectFrame', level: 3 });
+      await sendReady(second);
+      await sendMessage(second, { command: 'selectFrame', level: 3 });
       await flushMicrotasks();
 
       // Nothing opened: the second panel is waiting on the first one's carve.
@@ -924,10 +924,10 @@ describe('DebuggerPanel', () => {
     expect(p2.dispose).toHaveBeenCalled();
   });
 
-  it('posts the error string back to the webview unchanged', () => {
+  it('posts the error string back to the webview unchanged', async () => {
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     const panel = lastPanel();
-    sendReady(panel);
+    await sendReady(panel);
 
     expect(initPayload(panel).errorMessage).toBe(ERROR_MSG);
   });
@@ -1000,11 +1000,11 @@ describe('DebuggerPanel', () => {
       expect(html).not.toMatch(/data-cmd="resume"[^>]*>Resume</);
     });
 
-    it('#10 copyStack: copies the FULL stack — short stack on top, then per-frame values', () => {
+    it('#10 copyStack: copies the FULL stack — short stack on top, then per-frame values', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel); // fetches + caches the stack
-      sendMessage(panel, { command: 'copyStack' });
+      await sendReady(panel); // fetches + caches the stack
+      await sendMessage(panel, { command: 'copyStack' });
 
       const text = vi.mocked(vscode.env.clipboard.writeText).mock.calls[0][0];
       // Header, error, then the short numbered stack ([1]..[5]) …
@@ -1018,30 +1018,30 @@ describe('DebuggerPanel', () => {
       expect(text).toContain('    self = <print 100>   {100}'); // frame 1 selfOop = 100
     });
 
-    it('writes a single frame (no leading number) to the clipboard on copyFrame', () => {
+    it('writes a single frame (no leading number) to the clipboard on copyFrame', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyFrame', level: 2 });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyFrame', level: 2 });
 
       expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(
         'SmallInteger (Object)>>#halt  @2 line 12',
       );
     });
 
-    it('ignores copyFrame for an unknown level without writing the clipboard', () => {
+    it('ignores copyFrame for an unknown level without writing the clipboard', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyFrame', level: 999 });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyFrame', level: 999 });
 
       expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
     });
 
-    it('marks real method frames as browsable in the init payload', () => {
+    it('marks real method frames as browsable in the init payload', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       const stack = initPayload(panel).stack as Array<{ browsable?: boolean }>;
       expect(stack.every((f) => f.browsable === true)).toBe(true);
@@ -1054,12 +1054,13 @@ describe('DebuggerPanel', () => {
         .mocked(vscode.commands.executeCommand)
         .mock.calls.filter((c) => c[0] === 'gemstone.explorer.findClass');
 
-    it('cascades the Explorer to the running method’s defining class and opens the method', () => {
+    it('cascades the Explorer to the running method’s defining class and opens the method', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
-      sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await tick();
 
       // The dictionary rides along so a class name shadowed across dictionaries
       // resolves to THIS class; the session id pins the reveal to this stone.
@@ -1076,17 +1077,18 @@ describe('DebuggerPanel', () => {
       expect(SystemBrowser.openAndNavigate).not.toHaveBeenCalled();
     });
 
-    it('does not browse an unknown frame level', () => {
+    it('does not browse an unknown frame level', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
-      sendMessage(panel, { command: 'browseFrame', level: 999 });
+      await sendMessage(panel, { command: 'browseFrame', level: 999 });
+      await tick();
 
       expect(findClassCalls()).toEqual([]);
     });
 
-    it('marks a doit frame unbrowsable, and refuses to browse it if asked anyway', () => {
+    it('marks a doit frame unbrowsable, and refuses to browse it if asked anyway', async () => {
       // A doit has no class>>selector to land on. The webview hides the Browse
       // item for a frame whose `browsable` is false (its own test covers that),
       // so this is the host's backstop: asked to browse one regardless, it says
@@ -1096,12 +1098,13 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       const stack = initPayload(panel).stack as Array<{ level: number; browsable?: boolean }>;
       expect(stack.every((f) => f.browsable === false)).toBe(true);
 
-      sendMessage(panel, { command: 'browseFrame', level: stack[0].level });
+      await sendMessage(panel, { command: 'browseFrame', level: stack[0].level });
+      await tick();
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('no class or method');
@@ -1117,21 +1120,22 @@ describe('DebuggerPanel', () => {
         .join('\n');
     }
 
-    it('shows a message instead of browsing when the selector cannot be located', () => {
-      vi.mocked(debug.getBrowseTarget).mockReturnValueOnce(undefined);
+    it('shows a message instead of browsing when the selector cannot be located', async () => {
+      vi.mocked(debug.getBrowseTarget).mockResolvedValueOnce(undefined);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
-      sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await tick();
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain('Could not locate #halt');
       expect(warned()).toContain('Could not locate #halt');
     });
 
-    it('shows a message instead of browsing when the class is outside the symbol list', () => {
-      vi.mocked(debug.getBrowseTarget).mockReturnValueOnce({
+    it('shows a message instead of browsing when the class is outside the symbol list', async () => {
+      vi.mocked(debug.getBrowseTarget).mockResolvedValueOnce({
         className: 'Loner',
         isMeta: false,
         dictName: '',
@@ -1139,9 +1143,10 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
-      sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await sendMessage(panel, { command: 'browseFrame', level: 2 });
+      await tick();
 
       expect(findClassCalls()).toEqual([]);
       expect(lastPosted(panel, 'init').errorMessage).toContain("isn't in your symbol list");
@@ -1163,9 +1168,10 @@ describe('DebuggerPanel', () => {
       try {
         DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
         const panel = lastPanel();
-        sendReady(panel);
+        await sendReady(panel);
 
-        sendMessage(panel, { command: 'browseFrame', level: 2 });
+        await sendMessage(panel, { command: 'browseFrame', level: 2 });
+        await tick();
         await flushMicrotasks();
 
         expect(lastPosted(panel, 'init').errorMessage).toContain(
@@ -1177,10 +1183,10 @@ describe('DebuggerPanel', () => {
       }
     });
 
-    it('#10 copyStack: assembles the batched dump rows into per-frame groups', () => {
+    it('#10 copyStack: assembles the batched dump rows into per-frame groups', async () => {
       // One batched fetch returns flat rows; the panel buckets them back into
       // Receiver / Instance variables / Arguments & Temps / (stack temps).
-      vi.mocked(debug.fetchStackDump).mockReturnValueOnce([
+      vi.mocked(debug.fetchStackDump).mockResolvedValueOnce([
         { serverLevel: 1, group: 'receiver', name: 'self', value: 'a JasperDebugDemo', oop: '100' },
         { serverLevel: 1, group: 'instvars', name: 'total', value: '42', oop: '84' },
         { serverLevel: 1, group: 'argtemps', name: 'each', value: '7', oop: '14' },
@@ -1188,8 +1194,8 @@ describe('DebuggerPanel', () => {
       ]);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyStack' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyStack' });
 
       const text = vi.mocked(vscode.env.clipboard.writeText).mock.calls[0][0];
       expect(text).toContain('Receiver:\n    self = a JasperDebugDemo   {100}');
@@ -1198,11 +1204,11 @@ describe('DebuggerPanel', () => {
       expect(text).toContain('(stack temps):\n    .t1 = nil   {20}');
     });
 
-    it('copyText: writes the given text to the clipboard (the Copy-path button)', () => {
+    it('copyText: writes the given text to the clipboard (the Copy-path button)', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyText', text: '/Users/me/.jasper/stacks/x.txt' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyText', text: '/Users/me/.jasper/stacks/x.txt' });
 
       expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('/Users/me/.jasper/stacks/x.txt');
     });
@@ -1210,8 +1216,8 @@ describe('DebuggerPanel', () => {
     it('#11 dumpStackToFile: writes ~/.jasper/stacks/<ts>_*.txt and posts the path notice (no tab opened)', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'dumpStackToFile' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'dumpStackToFile' });
       await tick();
 
       // Directory ensured + file written with the detailed text.
@@ -1241,8 +1247,8 @@ describe('DebuggerPanel', () => {
       vi.mocked(fs.promises.writeFile).mockRejectedValueOnce(new Error('disk full'));
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'dumpStackToFile' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'dumpStackToFile' });
       await tick();
 
       expect(panel.dispose).not.toHaveBeenCalled();
@@ -1256,10 +1262,10 @@ describe('DebuggerPanel', () => {
     it('Copy Stack and Dump Stack produce identical content for the same paused state', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyStack' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyStack' });
       const copied = vi.mocked(vscode.env.clipboard.writeText).mock.calls[0][0];
-      sendMessage(panel, { command: 'dumpStackToFile' });
+      await sendMessage(panel, { command: 'dumpStackToFile' });
       await tick();
       const dumped = vi.mocked(fs.promises.writeFile).mock.calls[0][1] as string;
 
@@ -1271,8 +1277,8 @@ describe('DebuggerPanel', () => {
     it('openDumpFile: opens the requested path in an editor (on-demand, a real tab)', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'openDumpFile', path: '/Users/me/.jasper/stacks/x.txt' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'openDumpFile', path: '/Users/me/.jasper/stacks/x.txt' });
       await tick();
 
       const opened = vi
@@ -1285,12 +1291,12 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    it('copyStack stays graceful when the batched variable fetch yields nothing', () => {
-      vi.mocked(debug.fetchStackDump).mockReturnValueOnce([]); // e.g. introspection failed
+    it('copyStack stays graceful when the batched variable fetch yields nothing', async () => {
+      vi.mocked(debug.fetchStackDump).mockResolvedValueOnce([]); // e.g. introspection failed
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'copyStack' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'copyStack' });
 
       const text = vi.mocked(vscode.env.clipboard.writeText).mock.calls[0][0];
       // Short stack + per-frame headings still render; just no variable groups.
@@ -1307,10 +1313,10 @@ describe('DebuggerPanel', () => {
       expect(html).toMatch(/\.pos\s*\{[^}]*--vscode-descriptionForeground/);
     });
 
-    it('numbers the frames 1..N, strictly ascending, for easy reference', () => {
+    it('numbers the frames 1..N, strictly ascending, for easy reference', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       const levels = initPayload(panel).stack.map((f: { level: number }) => f.level);
       // A deep stack (>2) so "ascending" is a meaningful assertion, not a coincidence.
@@ -1319,10 +1325,10 @@ describe('DebuggerPanel', () => {
       expect(levels).toEqual(levels.map((_: number, i: number) => i + 1));
     });
 
-    it('builds frame labels with block prefix, receiver disambiguation, and position', () => {
+    it('builds frame labels with block prefix, receiver disambiguation, and position', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       expect(initPayload(panel).stack).toMatchObject([
         { level: 1, label: '[] in JasperDebugDemo>>#finish', position: '@2 line 12' },
@@ -1335,7 +1341,7 @@ describe('DebuggerPanel', () => {
 
     // Ported from the DAP stackTraceRequest "doit frame" test: a valid frame
     // whose method can't be introspected is `Executed Code`, NOT an error.
-    it('labels a frame `Executed Code` when its method cannot be resolved', () => {
+    it('labels a frame `Executed Code` when its method cannot be resolved', async () => {
       // getMethodUriInfo already returns undefined in the base mock; make the
       // getMethodInfo fallback throw for the first frame (as a doit/anon frame).
       vi.mocked(debug.getMethodInfo).mockImplementationOnce(() => {
@@ -1344,21 +1350,21 @@ describe('DebuggerPanel', () => {
 
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       expect(initPayload(panel).stack[0].label).toBe('Executed Code');
     });
 
     // The other fallback branch: when the frame contents themselves can't be
     // fetched, the frame is `<frame N>` with no position (vs. "unavailable").
-    it('labels a frame `<frame N>` when its contents cannot be fetched', () => {
-      vi.mocked(debug.getFrameInfo).mockImplementationOnce(() => {
+    it('labels a frame `<frame N>` when its contents cannot be fetched', async () => {
+      vi.mocked(debug.getFrameInfo).mockImplementationOnce(async () => {
         throw new Error('cannot fetch frame contents');
       });
 
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       expect(initPayload(panel).stack[0]).toMatchObject({
         level: 1,
@@ -1369,7 +1375,7 @@ describe('DebuggerPanel', () => {
 
     // An "unprintable" / unresolvable receiver: getObjectClassName throws. The
     // label must still render (no crash), just without receiver disambiguation.
-    it('falls back to the defining class when the receiver class cannot be fetched', () => {
+    it('falls back to the defining class when the receiver class cannot be fetched', async () => {
       // First non-block frame (level 2) is the only one that queries the
       // receiver class; make that query throw.
       vi.mocked(debug.getObjectClassName).mockImplementationOnce(() => {
@@ -1378,7 +1384,7 @@ describe('DebuggerPanel', () => {
 
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       // Without the receiver class there is no `Receiver (Defining)` form —
       // just the plain defining-class label, and the frame isn't overridable
@@ -1393,14 +1399,14 @@ describe('DebuggerPanel', () => {
 
     // fetchStack's outer guard: if the stack can't even be measured (e.g. the
     // process died), the panel posts an empty stack rather than throwing.
-    it('returns an empty stack when the stack-depth query fails', () => {
+    it('returns an empty stack when the stack-depth query fails', async () => {
       vi.mocked(debug.getStackDepth).mockImplementationOnce(() => {
         throw new Error('process is dead');
       });
 
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
 
       expect(initPayload(panel).stack).toEqual([]);
     });
@@ -1434,10 +1440,10 @@ describe('DebuggerPanel', () => {
     // map a display level back to its server level. Reveal-specific mocks are set
     // AFTER this — fetchStack consumes only the base mocks, never the per-test
     // `…Once` ones, which are then picked up by the single revealFrameSource call.
-    function openPanelWithStack() {
+    async function openPanelWithStack() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
@@ -1455,9 +1461,9 @@ describe('DebuggerPanel', () => {
 
     it('opens the method source (gemstone://) in a group BELOW the panel, keeping focus', async () => {
       mockEditorGrid(1);
-      const panel = openPanelWithStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // for the reveal of frame 3
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO); // for the reveal of frame 3
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1480,9 +1486,9 @@ describe('DebuggerPanel', () => {
     });
 
     it("washes the companion source editor in the debugger's accent", async () => {
-      const panel = openPanelWithStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       // The two halves of the column are one thing — a debugger and the source
@@ -1504,9 +1510,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('highlights the step-point token, converting the 1-based source offset to 0-based', async () => {
-      const panel = openPanelWithStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const editor = await shownEditor();
@@ -1521,7 +1527,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('shows the executed source read-only, exactly as stored on the server', async () => {
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       // A true doit frame: no class>>selector at all (getMethodUriInfo AND
       // getMethodInfo both fail to resolve a home class). Doits run the user's
       // raw code, so the stored source IS the displayed source.
@@ -1529,7 +1535,7 @@ describe('DebuggerPanel', () => {
         throw new Error('doit: nil inClass');
       });
       vi.mocked(debug.getMethodSource).mockReturnValueOnce('JasperDebugDemo new run');
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1555,10 +1561,10 @@ describe('DebuggerPanel', () => {
     // method a developer is most likely to want a breakpoint in back on
     // gemstone-smalltalk and quietly take its gutter away.
     it('does NOT re-tag a gemstone:// method, so its breakpoint gutter survives', async () => {
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.languages.setTextDocumentLanguage).mockClear();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // reveal of frame 3
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO); // reveal of frame 3
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1569,13 +1575,13 @@ describe('DebuggerPanel', () => {
     it('tags the read-only stash as gemstone-smalltalk, so its source is highlighted', async () => {
       // The read-only scheme has no language of its own, and the highlighting is
       // the point of this pane. gemstone-smalltalk gives it that and no gutter.
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.languages.setTextDocumentLanguage).mockClear();
       vi.mocked(debug.getMethodInfo).mockImplementationOnce(() => {
         throw new Error('doit: nil inClass');
       });
       vi.mocked(debug.getMethodSource).mockReturnValueOnce('JasperDebugDemo new run');
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1587,11 +1593,11 @@ describe('DebuggerPanel', () => {
     });
 
     it('titles a read-only NON-symbol-list method by its method name (C3: never mislabel as Executed Code)', async () => {
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       // Frame 3: no dictName (getMethodUriInfo → undefined) but getMethodInfo
       // resolves a real class → a method, NOT executed code. It must open titled
       // by the method, not under "Executed Code".
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1603,8 +1609,8 @@ describe('DebuggerPanel', () => {
       // A non-symbol-list method or a doit is shown unmodified, so the server
       // step-point offsets map onto the displayed source directly and the step
       // point IS highlighted.
-      const panel = openPanelWithStack(); // frame 3 → read-only
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack(); // frame 3 → read-only
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const editor = await shownEditor();
@@ -1622,12 +1628,12 @@ describe('DebuggerPanel', () => {
       // short offsets overruns the array → undefined → highlight collapses to the
       // line. Source AND offsets must come from the home method. Here the block's
       // method (frame 3 → 3n) differs from its home (999n).
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(debug.getMethodBlockInfo).mockReturnValueOnce({
         isBlock: true,
         homeMethodOop: 999n,
       });
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       expect(debug.getMethodSource).toHaveBeenCalledWith(session, 999n);
@@ -1644,7 +1650,7 @@ describe('DebuggerPanel', () => {
       afterEach(() => {
         vi.mocked(debug.getStackDepth).mockImplementation(() => 5);
         vi.mocked(debug.getFrameInfo).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) => ({
+          async (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
             selfOop: BigInt(level * 100),
@@ -1677,7 +1683,7 @@ describe('DebuggerPanel', () => {
         //   level 3 — the doit home (step point 5, out in the wrapper glue)
         vi.mocked(debug.getStackDepth).mockImplementation(() => 3);
         vi.mocked(debug.getFrameInfo).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) => ({
+          async (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
             selfOop: 100n,
@@ -1712,11 +1718,11 @@ describe('DebuggerPanel', () => {
 
         DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
         const panel = lastPanel();
-        sendReady(panel);
+        await sendReady(panel);
         // filterStack collapses all three frames into one Executed Code frame.
         expect(initPayload(panel).stack).toHaveLength(1);
 
-        sendMessage(panel, { command: 'selectFrame', level: 1 });
+        await sendMessage(panel, { command: 'selectFrame', level: 1 });
         await flush();
 
         // Highlight uses the STOP frame (level 1 → sp 2 → col 7), NOT the
@@ -1729,11 +1735,11 @@ describe('DebuggerPanel', () => {
     });
 
     it('clears the highlight (no reveal) when there is no step point and no source line', async () => {
-      const panel = openPanelWithStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      const panel = await openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
       vi.mocked(debug.getStepPoint).mockReturnValueOnce(0); // no step point (reveal)
       vi.mocked(debug.getLineForIp).mockReturnValueOnce(0); // unmapped IP   (reveal)
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const editor = await shownEditor();
@@ -1742,9 +1748,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('clears the step-point highlight when the panel is closed', async () => {
-      const panel = openPanelWithStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
       const editor = await shownEditor();
       vi.mocked(editor.setDecorations).mockClear();
@@ -1771,12 +1777,12 @@ describe('DebuggerPanel', () => {
     }
 
     it('closes the companion source editor when the panel is closed', async () => {
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       // Set AFTER ready so these apply to the frame-3 reveal (not the stack walk):
       // a real gemstone:// method source, shown in source column 9.
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = (
@@ -1807,10 +1813,10 @@ describe('DebuggerPanel', () => {
       // exists to prevent) or catches a user's group mid-renumber.
       let releaseClose!: () => void;
       const closing = new Promise<void>((resolve) => (releaseClose = resolve));
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = (
@@ -1862,10 +1868,10 @@ describe('DebuggerPanel', () => {
       const unhandled: unknown[] = [];
       const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
       process.on('unhandledRejection', onUnhandled);
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = (
@@ -1905,10 +1911,10 @@ describe('DebuggerPanel', () => {
       // panel's group is empty and has nothing to save; it must not be held
       // hostage by that. The source group still holds the unsaved tab, so it is
       // not empty and is correctly left until the close actually lands.
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = (
@@ -1944,10 +1950,10 @@ describe('DebuggerPanel', () => {
       }
     });
 
-    it('closes nothing when the debugger never opened a source editor', () => {
+    it('closes nothing when the debugger never opened a source editor', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel); // no frame selected → no source opened
+      await sendReady(panel); // no frame selected → no source opened
       const groups = vscode.window.tabGroups.all as unknown as {
         viewColumn: number;
         tabs: unknown[];
@@ -1966,8 +1972,8 @@ describe('DebuggerPanel', () => {
       // Default mock editor has no viewColumn → sourceColumn stays undefined. The
       // read-only scheme is unique to this debugger, so it's safe to close anywhere
       // (a shared gemstone:// would NOT be — see the previous test's column guard).
-      const panel = openPanelWithStack(); // frame 3 → read-only (base getMethodUriInfo → undefined)
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanelWithStack(); // frame 3 → read-only (base getMethodUriInfo → undefined)
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -1986,16 +1992,16 @@ describe('DebuggerPanel', () => {
 
     it('closes the source editor AND every enhanced inspector it opened, together, on close', async () => {
       __setConfig('gemstone', 'inspector.preferred', 'auto');
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       // A real gemstone:// method source, shown in source column 9.
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       // Inspect two variables → two inspectors, each a closable handle.
-      sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
-      sendMessage(panel, { command: 'inspectVariable', oop: '901', name: 'total' });
+      await sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
+      await sendMessage(panel, { command: 'inspectVariable', oop: '901', name: 'total' });
       const inspectorCloses = vi
         .mocked(EnhancedInspector.create)
         .mock.results.map((r) => (r.value as { close: ReturnType<typeof vi.fn> }).close);
@@ -2030,7 +2036,7 @@ describe('DebuggerPanel', () => {
         Promise.resolve(cmd === 'vscode.getEditorLayout' ? layout : undefined),
       );
       try {
-        const panel = openPanelWithStack();
+        const panel = await openPanelWithStack();
         await flush();
         const applied = vi
           .mocked(vscode.commands.executeCommand)
@@ -2046,8 +2052,8 @@ describe('DebuggerPanel', () => {
         expect(applied.groups[1].size).toBe(960); // the debugger's 60%
 
         // The source then just opens into the group that carve created.
-        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+        await sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
         expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
           expect.anything(),
@@ -2064,9 +2070,9 @@ describe('DebuggerPanel', () => {
       // So the panel and its companion pane come up together: no click involved,
       // and the pane is the one the carve made below the panel.
       mockEditorGrid(1);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-      const panel = openPanelWithStack();
-      sendMessage(panel, { command: 'selectFrame', level: 1 }); // the default select
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+      const panel = await openPanelWithStack();
+      await sendMessage(panel, { command: 'selectFrame', level: 1 }); // the default select
       await flush();
 
       expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
@@ -2091,7 +2097,7 @@ describe('DebuggerPanel', () => {
         return Promise.resolve(reads === 1 ? stale : settled);
       });
       try {
-        const panel = openPanelWithStack();
+        const panel = await openPanelWithStack();
         await settleRetries();
 
         const applied = vi
@@ -2102,8 +2108,8 @@ describe('DebuggerPanel', () => {
         expect(reads).toBeGreaterThan(1); // it re-read rather than declining
 
         // …and the source opens into the group the carve created, not beside it.
-        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+        await sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
         expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
           expect.anything(),
@@ -2128,10 +2134,10 @@ describe('DebuggerPanel', () => {
         Promise.resolve(cmd === 'vscode.getEditorLayout' ? stale : undefined),
       );
       try {
-        const panel = openPanelWithStack();
+        const panel = await openPanelWithStack();
         await settleRetries();
-        vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
-        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO);
+        await sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
 
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
@@ -2175,7 +2181,7 @@ describe('DebuggerPanel', () => {
         // readable grid that never comes to hold the panel's group).
         arrange();
         try {
-          openPanelWithStack();
+          await openPanelWithStack();
           await settleRetries();
 
           expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
@@ -2196,7 +2202,7 @@ describe('DebuggerPanel', () => {
       // it can be seen.
       vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('kaboom in the grid'));
       try {
-        openPanelWithStack();
+        await openPanelWithStack();
         await settleRetries();
 
         expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('kaboom in the grid'));
@@ -2445,7 +2451,7 @@ describe('DebuggerPanel', () => {
     it('records the columns a live debugger holds, not just its source tabs', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
-      openPanelWithStack();
+      await openPanelWithStack();
       await flush();
 
       const stored: { columns?: number[] } | undefined = memento.get(ORPHAN_KEY);
@@ -2461,13 +2467,13 @@ describe('DebuggerPanel', () => {
     it('persists an opened source URI so an abrupt window close can reap it next launch', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce({
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce({
         ...URI_INFO,
         selector: 'orphanProbeA',
       });
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
 
       const uri = (
@@ -2480,13 +2486,13 @@ describe('DebuggerPanel', () => {
     it('drops the URI from the tracked set on a clean panel close (nothing to reap)', async () => {
       const memento = fakeMemento();
       DebuggerPanel.initSourceTabCleanup(memento);
-      const panel = openPanelWithStack();
+      const panel = await openPanelWithStack();
       vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce({
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce({
         ...URI_INFO,
         selector: 'orphanProbeB',
       });
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
       const uri = (
         vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
@@ -2558,7 +2564,7 @@ describe('DebuggerPanel', () => {
       it('opens the prompt and writes when an editable variable is double-clicked', async () => {
         const { handler, editor } = setup();
         vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('99');
-        vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(990n);
+        vi.mocked(debug.evaluateInFrameToOop).mockResolvedValueOnce(990n);
 
         handler(select(editor));
         await tick();
@@ -2592,7 +2598,7 @@ describe('DebuggerPanel', () => {
       it('surfaces a rejected expression as an error message', async () => {
         const { handler, editor } = setup();
         vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('bogus +');
-        vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(() => {
+        vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(async () => {
           throw new Error('a parse error');
         });
 
@@ -2762,9 +2768,9 @@ describe('DebuggerPanel', () => {
     // The white-box tests above seed the overlay maps by hand; this one drives the
     // REAL updateInlineValues against a source editor so the population path itself
     // (frame vars → editable-by-name + per-line hover + decoration) is covered.
-    it('updateInlineValues fills the editable + hover maps from the frame’s variables', () => {
+    it('updateInlineValues fills the editable + hover maps from the frame’s variables', async () => {
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 3
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -2786,7 +2792,7 @@ describe('DebuggerPanel', () => {
         sourceEditor: unknown;
         inlineValuesEnabled: boolean;
         inlineEditableByName: Map<string, { kind: string; index: number }>;
-        updateInlineValues(editor: unknown, level: number): void;
+        updateInlineValues(editor: unknown, level: number): Promise<void>;
       };
       const uri = 'gemstone-debug://1/Acct/instance/x/popMap';
       const src = '^year + 1';
@@ -2802,7 +2808,7 @@ describe('DebuggerPanel', () => {
       inst.sourceEditor = editor;
       inst.inlineValuesEnabled = true;
 
-      inst.updateInlineValues(editor, 3);
+      await inst.updateInlineValues(editor, 3);
 
       // The editable temp `year` (server write index 1) is indexed by name…
       expect(inst.inlineEditableByName.get('year')).toEqual({ kind: 'temp', index: 1 });
@@ -2829,7 +2835,7 @@ describe('DebuggerPanel', () => {
     // base getFrameInfo each test (a test that overrides it would otherwise leak).
     beforeEach(() => {
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -2841,17 +2847,17 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    function openPanel() {
+    async function openPanel() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
-    it('posts the selected frame variables, grouped (Receiver + Arguments & Temps with oops) on selectFrame', () => {
+    it('posts the selected frame variables, grouped (Receiver + Arguments & Temps with oops) on selectFrame', async () => {
       // The one-trip query returns grouped rows; only level 2 carries temps.
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 2
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -2868,8 +2874,8 @@ describe('DebuggerPanel', () => {
                 },
               ],
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 2 });
 
       const groups = lastPosted(panel, 'variables').groups;
       const receiver = groups.find((g: { kind: string }) => g.kind === 'receiver');
@@ -2881,15 +2887,15 @@ describe('DebuggerPanel', () => {
       ]);
     });
 
-    it("groups the enclosing method's names read-only, ahead of the frame's own", () => {
-      vi.mocked(debug.fetchFrameVariables).mockImplementation(() => [
+    it("groups the enclosing method's names read-only, ahead of the frame's own", async () => {
+      vi.mocked(debug.fetchFrameVariables).mockImplementation(async () => [
         { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
         { group: 'argtemps', name: 'each', value: '<print 11>', oop: '11', index: 1 },
         { group: 'homeargtemps', name: 'coll', value: '<print 22>', oop: '22', index: 0 },
       ]);
-      const panel = openPanel();
+      const panel = await openPanel();
 
-      sendMessage(panel, { command: 'selectFrame', level: 2 });
+      await sendMessage(panel, { command: 'selectFrame', level: 2 });
 
       const groups = lastPosted(panel, 'variables').groups;
       const home = groups.find((g: { kind: string }) => g.kind === 'homeargtemps');
@@ -2902,11 +2908,11 @@ describe('DebuggerPanel', () => {
       expect(kinds.indexOf('homeargtemps')).toBeLessThan(kinds.indexOf('argtemps'));
     });
 
-    it('alphabetizes instVars and named args/temps while preserving each slot write index', () => {
+    it('alphabetizes instVars and named args/temps while preserving each slot write index', async () => {
       // Rows arrive in deliberately NON-alphabetical order to prove the client
       // sorts them for display while each keeps its server-assigned write index.
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 2
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -2925,8 +2931,8 @@ describe('DebuggerPanel', () => {
                 },
               ],
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 2 });
 
       const groups = lastPosted(panel, 'variables').groups;
       // instVars sorted apple < zebra; indices stay source-order (zebra=1, apple=2).
@@ -2941,10 +2947,10 @@ describe('DebuggerPanel', () => {
       ]);
     });
 
-    it('splits named temps from the synthetic .tN eval-stack temps into a separate group', () => {
+    it('splits named temps from the synthetic .tN eval-stack temps into a separate group', async () => {
       // The server classifies `.tN` as group 'stacktemps' (read-only — no index).
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 2
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -2961,8 +2967,8 @@ describe('DebuggerPanel', () => {
                 },
               ],
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 2 });
 
       const groups = lastPosted(panel, 'variables').groups;
       expect(groups.find((g: { kind: string }) => g.kind === 'argtemps').vars).toEqual([
@@ -2975,9 +2981,9 @@ describe('DebuggerPanel', () => {
       expect(stack.vars[0].edit).toBeUndefined();
     });
 
-    it('includes the receiver instance variables as their own group', () => {
+    it('includes the receiver instance variables as their own group', async () => {
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 3
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -2994,8 +3000,8 @@ describe('DebuggerPanel', () => {
                 },
               ],
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
 
       const groups = lastPosted(panel, 'variables').groups;
       expect(groups.find((g: { kind: string }) => g.kind === 'instvars').vars).toEqual([
@@ -3004,49 +3010,49 @@ describe('DebuggerPanel', () => {
       ]);
     });
 
-    it('caches a frame’s variables — re-rendering it (e.g. toggling inline values) does not re-fetch', () => {
-      const panel = openPanel();
+    it('caches a frame’s variables — re-rendering it (e.g. toggling inline values) does not re-fetch', async () => {
+      const panel = await openPanel();
       vi.mocked(debug.fetchFrameVariables).mockClear();
       // Two renders of the SAME frame (the path a toggle/overlay re-render takes).
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       expect(vi.mocked(debug.fetchFrameVariables)).toHaveBeenCalledTimes(1);
     });
 
     it('re-fetches after the stack moves (cache invalidated on step)', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       vi.mocked(debug.fetchFrameVariables).mockClear();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await new Promise((r) => setTimeout(r, 0)); // let the non-blocking step settle
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       expect(vi.mocked(debug.fetchFrameVariables)).toHaveBeenCalled();
     });
 
     // `auto`, because the tabbed Inspector is the default even where the
     // Enhanced one is installed — reaching it is a deliberate preference.
-    it('opens an enhanced inspector for a clicked variable on auto when the session has one', () => {
+    it('opens an enhanced inspector for a clicked variable on auto when the session has one', async () => {
       __setConfig('gemstone', 'inspector.preferred', 'auto');
-      const panel = openPanel();
-      sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
       expect(EnhancedInspector.create).toHaveBeenCalledWith(session, 300n, 'self');
     });
 
-    it('falls back to the basic tabbed Inspector for a clicked variable when the session has no enhanced inspector', () => {
+    it('falls back to the basic tabbed Inspector for a clicked variable when the session has no enhanced inspector', async () => {
       session.enhancedInspectorAvailable = false;
-      const panel = openPanel();
+      const panel = await openPanel();
 
-      sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
+      await sendMessage(panel, { command: 'inspectVariable', oop: '300', name: 'self' });
 
       expect(EnhancedInspector.create).not.toHaveBeenCalled();
       expect(BasicInspector.create).toHaveBeenCalledWith(session, 300n, 'self');
     });
 
-    it('setVariable (instvar) evaluates the expr, writes via instVarAt:put:, refreshes, and reports ok', () => {
-      vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(777n);
-      const panel = openPanel();
+    it('setVariable (instvar) evaluates the expr, writes via instVarAt:put:, refreshes, and reports ok', async () => {
+      vi.mocked(debug.evaluateInFrameToOop).mockResolvedValueOnce(777n);
+      const panel = await openPanel();
       const before = posted(panel, 'variables').length;
-      sendMessage(panel, {
+      await sendMessage(panel, {
         command: 'setVariable',
         level: 3,
         kind: 'instvar',
@@ -3069,11 +3075,11 @@ describe('DebuggerPanel', () => {
       });
     });
 
-    it('setVariable (temp) writes via _frameAt:tempAt:put:, refreshes, and reports ok', () => {
-      vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(555n);
-      const panel = openPanel();
+    it('setVariable (temp) writes via _frameAt:tempAt:put:, refreshes, and reports ok', async () => {
+      vi.mocked(debug.evaluateInFrameToOop).mockResolvedValueOnce(555n);
+      const panel = await openPanel();
       const before = posted(panel, 'variables').length;
-      sendMessage(panel, {
+      await sendMessage(panel, {
         command: 'setVariable',
         level: 3,
         kind: 'temp',
@@ -3103,11 +3109,11 @@ describe('DebuggerPanel', () => {
           release = res;
         }),
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 }); // holds the session's single GCI call
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 }); // holds the session's single GCI call
       await tick();
 
-      sendMessage(panel, {
+      await sendMessage(panel, {
         command: 'setVariable',
         level: 3,
         kind: 'instvar',
@@ -3123,13 +3129,13 @@ describe('DebuggerPanel', () => {
       await tick();
     });
 
-    it('setVariable reports a compile/runtime error (and does NOT refresh) so the editor stays open', () => {
-      vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(() => {
+    it('setVariable reports a compile/runtime error (and does NOT refresh) so the editor stays open', async () => {
+      vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(async () => {
         throw new Error('a parse error');
       });
-      const panel = openPanel();
+      const panel = await openPanel();
       const before = posted(panel, 'variables').length;
-      sendMessage(panel, {
+      await sendMessage(panel, {
         command: 'setVariable',
         level: 3,
         kind: 'instvar',
@@ -3152,7 +3158,7 @@ describe('DebuggerPanel', () => {
         // The WRITE path still uses getFrameInfo (selfOop) + getInstVarOop
         // (capture original); the PANE display now comes from fetchFrameVariables.
         vi.mocked(debug.getFrameInfo).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) =>
+          async (_s: unknown, _p: unknown, level: number) =>
             level === 2
               ? {
                   methodOop: 2n,
@@ -3175,7 +3181,7 @@ describe('DebuggerPanel', () => {
         );
         vi.mocked(debug.getInstVarOop).mockReturnValue(700n);
         vi.mocked(debug.fetchFrameVariables).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) =>
+          async (_s: unknown, _p: unknown, level: number) =>
             level === 2
               ? [
                   { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -3200,10 +3206,10 @@ describe('DebuggerPanel', () => {
       afterEach(() => {
         vi.mocked(debug.getInstVarOop).mockReturnValue(700n);
         vi.mocked(debug.isSpecialOop).mockReturnValue(false);
-        vi.mocked(debug.evaluateInFrameToOop).mockReturnValue(999n);
+        vi.mocked(debug.evaluateInFrameToOop).mockResolvedValue(999n);
         vi.mocked(debug.continueExecution).mockReturnValue({ completed: true });
         vi.mocked(debug.fetchFrameVariables).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) => [
+          async (_s: unknown, _p: unknown, level: number) => [
             {
               group: 'receiver',
               name: 'self',
@@ -3218,27 +3224,27 @@ describe('DebuggerPanel', () => {
       const editInstVar = (panel: ReturnType<typeof lastPanel>, expr = '99') =>
         sendMessage(panel, { command: 'setVariable', level: 2, kind: 'instvar', index: 1, expr });
 
-      it('captures + pins the original on the FIRST edit only (not on the second)', () => {
-        vi.mocked(debug.evaluateInFrameToOop).mockReturnValue(999n);
-        const panel = openPanel();
-        editInstVar(panel, '99');
-        editInstVar(panel, '123');
+      it('captures + pins the original on the FIRST edit only (not on the second)', async () => {
+        vi.mocked(debug.evaluateInFrameToOop).mockResolvedValue(999n);
+        const panel = await openPanel();
+        await editInstVar(panel, '99');
+        await editInstVar(panel, '123');
 
         expect(debug.getInstVarOop).toHaveBeenCalledTimes(1); // captured once
         expect(debug.saveObjs).toHaveBeenCalledTimes(1); // pinned once
         expect(debug.saveObjs).toHaveBeenCalledWith(session, [700n]); // the original oop
       });
 
-      it('does NOT pin an immediate (special) original', () => {
+      it('does NOT pin an immediate (special) original', async () => {
         vi.mocked(debug.isSpecialOop).mockReturnValue(true);
-        const panel = openPanel();
-        editInstVar(panel);
+        const panel = await openPanel();
+        await editInstVar(panel);
         expect(debug.saveObjs).not.toHaveBeenCalled();
       });
 
-      it('marks the edited row revertible (and only that row)', () => {
-        const panel = openPanel();
-        editInstVar(panel);
+      it('marks the edited row revertible (and only that row)', async () => {
+        const panel = await openPanel();
+        await editInstVar(panel);
         const groups = lastPosted(panel, 'variables').groups;
         const count = groups.find((g: { kind: string }) => g.kind === 'instvars').vars[0];
         expect(count).toMatchObject({ name: 'count', revertible: true });
@@ -3247,10 +3253,15 @@ describe('DebuggerPanel', () => {
         expect(self.revertible).toBeUndefined();
       });
 
-      it('revertVariable writes the stored original back and clears the dirty flag', () => {
-        const panel = openPanel();
-        editInstVar(panel);
-        sendMessage(panel, { command: 'revertVariable', level: 2, kind: 'instvar', index: 1 });
+      it('revertVariable writes the stored original back and clears the dirty flag', async () => {
+        const panel = await openPanel();
+        await editInstVar(panel);
+        await sendMessage(panel, {
+          command: 'revertVariable',
+          level: 2,
+          kind: 'instvar',
+          index: 1,
+        });
 
         // The LAST instVar write restores the original (700), not the edit (999).
         expect(debug.setInstVar).toHaveBeenLastCalledWith(session, 300n, 1, 700n);
@@ -3260,23 +3271,28 @@ describe('DebuggerPanel', () => {
         expect(count.revertible).toBeUndefined(); // icon gone after revert
       });
 
-      it('revertVariable on a slot with no recorded original is a no-op', () => {
-        const panel = openPanel();
-        sendMessage(panel, { command: 'revertVariable', level: 2, kind: 'instvar', index: 1 });
+      it('revertVariable on a slot with no recorded original is a no-op', async () => {
+        const panel = await openPanel();
+        await sendMessage(panel, {
+          command: 'revertVariable',
+          level: 2,
+          kind: 'instvar',
+          index: 1,
+        });
         expect(debug.setInstVar).not.toHaveBeenCalled();
       });
 
-      it('reverts a frame temp via the original oop', () => {
-        vi.mocked(debug.evaluateInFrameToOop).mockReturnValue(999n);
-        const panel = openPanel();
-        sendMessage(panel, {
+      it('reverts a frame temp via the original oop', async () => {
+        vi.mocked(debug.evaluateInFrameToOop).mockResolvedValue(999n);
+        const panel = await openPanel();
+        await sendMessage(panel, {
           command: 'setVariable',
           level: 2,
           kind: 'temp',
           index: 1,
           expr: '99',
         });
-        sendMessage(panel, { command: 'revertVariable', level: 2, kind: 'temp', index: 1 });
+        await sendMessage(panel, { command: 'revertVariable', level: 2, kind: 'temp', index: 1 });
 
         // Original temp value (oop 11, from argAndTempOops[0]) written back.
         expect(debug.setFrameTemp).toHaveBeenLastCalledWith(
@@ -3288,28 +3304,28 @@ describe('DebuggerPanel', () => {
         );
       });
 
-      it('releases pinned originals on Resume (leaving the halt)', () => {
+      it('releases pinned originals on Resume (leaving the halt)', async () => {
         vi.mocked(debug.continueExecution).mockReturnValue({
           completed: false,
           errorMessage: 'next halt',
         });
-        const panel = openPanel();
-        editInstVar(panel); // pins 700
-        sendMessage(panel, { command: 'resume' });
+        const panel = await openPanel();
+        await editInstVar(panel); // pins 700
+        await sendMessage(panel, { command: 'resume' });
         expect(debug.releaseObjs).toHaveBeenCalledWith(session, [700n]);
       });
 
-      it('releases pinned originals when the debugger is CLOSED (no export-set leak)', () => {
-        const panel = openPanel();
-        editInstVar(panel); // pins 700
+      it('releases pinned originals when the debugger is CLOSED (no export-set leak)', async () => {
+        const panel = await openPanel();
+        await editInstVar(panel); // pins 700
         closePanel(panel); // user closes the debugger window
         expect(debug.releaseObjs).toHaveBeenCalledWith(session, [700n]);
       });
 
       it('releases pinned originals on Step (stack moved)', async () => {
-        const panel = openPanel();
-        editInstVar(panel); // pins 700
-        sendMessage(panel, { command: 'stepOver', level: 2 });
+        const panel = await openPanel();
+        await editInstVar(panel); // pins 700
+        await sendMessage(panel, { command: 'stepOver', level: 2 });
         await tick();
         expect(debug.releaseObjs).toHaveBeenCalledWith(session, [700n]);
       });
@@ -3317,8 +3333,8 @@ describe('DebuggerPanel', () => {
 
     it('evaluates an expression in the selected frame and posts the result', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42' });
       await tick();
 
       expect(debug.evaluateInFrameNb).toHaveBeenCalledWith(
@@ -3339,8 +3355,13 @@ describe('DebuggerPanel', () => {
     describe('the mode the evaluate pane asked for', () => {
       it('shows the printString for Display It', async () => {
         vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
-        const panel = openPanel();
-        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42', mode: 'display' });
+        const panel = await openPanel();
+        await sendMessage(panel, {
+          command: 'evalInFrame',
+          level: 3,
+          expr: '42 * 42',
+          mode: 'display',
+        });
         await tick();
 
         expect(lastPosted(panel, 'evalResult')).toMatchObject({ value: '1764', isError: false });
@@ -3348,8 +3369,8 @@ describe('DebuggerPanel', () => {
 
       it('treats a mode-less message as Display It, which is what bare Enter has always done', async () => {
         vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
-        const panel = openPanel();
-        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42' });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '42 * 42' });
         await tick();
 
         expect(lastPosted(panel, 'evalResult')).toMatchObject({ value: '1764' });
@@ -3357,8 +3378,8 @@ describe('DebuggerPanel', () => {
 
       it('acknowledges Execute It rather than printing the answer', async () => {
         vi.mocked(debug.evaluateInFrameNb).mockResolvedValueOnce('1764');
-        const panel = openPanel();
-        sendMessage(panel, {
+        const panel = await openPanel();
+        await sendMessage(panel, {
           command: 'evalInFrame',
           level: 3,
           expr: 'self commit',
@@ -3376,8 +3397,13 @@ describe('DebuggerPanel', () => {
 
       it('still shows an error in full for Execute It', async () => {
         vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(new Error('doesNotUnderstand'));
-        const panel = openPanel();
-        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar', mode: 'execute' });
+        const panel = await openPanel();
+        await sendMessage(panel, {
+          command: 'evalInFrame',
+          level: 3,
+          expr: 'foo bar',
+          mode: 'execute',
+        });
         await tick();
 
         // An error is not the answer — it is the reason there wasn't one.
@@ -3385,13 +3411,13 @@ describe('DebuggerPanel', () => {
         expect(lastPosted(panel, 'evalResult')).toMatchObject({ isError: true });
       });
 
-      it('opens the answer in an Inspector for Inspect It', () => {
-        vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(555n);
+      it('opens the answer in an Inspector for Inspect It', async () => {
+        vi.mocked(debug.evaluateInFrameToOop).mockResolvedValueOnce(555n);
         vi.mocked(EnhancedInspector.create).mockClear();
         vi.mocked(BasicInspector.create).mockClear();
-        const panel = openPanel();
+        const panel = await openPanel();
 
-        sendMessage(panel, {
+        await sendMessage(panel, {
           command: 'evalInFrame',
           level: 3,
           expr: 'self class',
@@ -3416,16 +3442,21 @@ describe('DebuggerPanel', () => {
         expect(opened).toEqual([[session, 555n, 'self class']]);
       });
 
-      it('reports an Inspect It that would not evaluate, and opens nothing', () => {
+      it('reports an Inspect It that would not evaluate, and opens nothing', async () => {
         session.enhancedInspectorAvailable = true;
-        vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(() => {
+        vi.mocked(debug.evaluateInFrameToOop).mockImplementationOnce(async () => {
           throw new Error('doesNotUnderstand');
         });
-        const panel = openPanel();
+        const panel = await openPanel();
         vi.mocked(EnhancedInspector.create).mockClear();
         vi.mocked(BasicInspector.create).mockClear();
 
-        sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar', mode: 'inspect' });
+        await sendMessage(panel, {
+          command: 'evalInFrame',
+          level: 3,
+          expr: 'foo bar',
+          mode: 'inspect',
+        });
 
         expect(EnhancedInspector.create).not.toHaveBeenCalled();
         expect(BasicInspector.create).not.toHaveBeenCalled();
@@ -3435,8 +3466,8 @@ describe('DebuggerPanel', () => {
 
     it('reports an eval error without throwing', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(new Error('doesNotUnderstand'));
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'foo bar' });
       await tick();
 
       expect(lastPosted(panel, 'evalResult')).toMatchObject({ isError: true });
@@ -3452,8 +3483,8 @@ describe('DebuggerPanel', () => {
           release = res;
         });
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '(1 to: 9e9) size' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '(1 to: 9e9) size' });
       await tick();
 
       expect(lastPosted(panel, 'cancellable')).toMatchObject({ on: true });
@@ -3470,11 +3501,11 @@ describe('DebuggerPanel', () => {
         opts.onStart?.(cancelSpy); // the nb runner hands the panel its cancel fn
         return new Promise<string>(() => {}); // never settles — the op stays "running"
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
       await tick();
 
-      sendMessage(panel, { command: 'cancelOp' });
+      await sendMessage(panel, { command: 'cancelOp' });
 
       expect(cancelSpy).toHaveBeenCalledTimes(1);
     });
@@ -3488,11 +3519,11 @@ describe('DebuggerPanel', () => {
           rejectEval = rej;
         });
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
       await tick();
 
-      sendMessage(panel, { command: 'cancelOp' }); // one click → soft break
+      await sendMessage(panel, { command: 'cancelOp' }); // one click → soft break
       rejectEval(new Error('the operation was interrupted')); // gem stops with an interrupt
       await tick();
 
@@ -3512,12 +3543,12 @@ describe('DebuggerPanel', () => {
           rejectEval = rej;
         });
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
       await tick();
 
-      sendMessage(panel, { command: 'cancelOp' }); // soft
-      sendMessage(panel, { command: 'cancelOp' }); // hard
+      await sendMessage(panel, { command: 'cancelOp' }); // soft
+      await sendMessage(panel, { command: 'cancelOp' }); // hard
       rejectEval(new Error('forced'));
       await tick();
 
@@ -3526,11 +3557,11 @@ describe('DebuggerPanel', () => {
 
     it('ignores a second eval while one is already running (busy)', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockReturnValueOnce(new Promise<string>(() => {})); // first hangs
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
       await tick();
 
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'second' });
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'second' });
       await tick();
 
       expect(debug.evaluateInFrameNb).toHaveBeenCalledTimes(1); // the second was refused while busy
@@ -3538,11 +3569,11 @@ describe('DebuggerPanel', () => {
 
     it('refuses a step while an eval is still running (shared nbBusy guard)', async () => {
       vi.mocked(debug.evaluateInFrameNb).mockReturnValueOnce(new Promise<string>(() => {})); // eval hangs
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'hang' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'hang' });
       await tick();
 
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
 
       expect(debug.stepOverNb).not.toHaveBeenCalled();
@@ -3550,11 +3581,11 @@ describe('DebuggerPanel', () => {
 
     it('refuses an eval while a step is still running (shared nbBusy guard)', async () => {
       vi.mocked(debug.stepOverNb).mockReturnValueOnce(new Promise(() => {})); // step hangs
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
 
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'x' });
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'x' });
       await tick();
 
       expect(debug.evaluateInFrameNb).not.toHaveBeenCalled();
@@ -3570,10 +3601,10 @@ describe('DebuggerPanel', () => {
           rejectFirst = rej;
         });
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'first' });
       await tick();
-      sendMessage(panel, { command: 'cancelOp' }); // cancelClicks → 1
+      await sendMessage(panel, { command: 'cancelOp' }); // cancelClicks → 1
       rejectFirst(new Error('interrupted'));
       await tick();
 
@@ -3583,7 +3614,7 @@ describe('DebuggerPanel', () => {
       vi.mocked(debug.evaluateInFrameNb).mockRejectedValueOnce(
         new Error('cannot create expression string'),
       );
-      sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'second' });
+      await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: 'second' });
       await tick();
 
       const res = lastPosted(panel, 'evalResult');
@@ -3591,23 +3622,23 @@ describe('DebuggerPanel', () => {
       expect(res.value).not.toContain('Cancelled');
     });
 
-    it('Resume disposes the panel when execution completes', () => {
+    it('Resume disposes the panel when execution completes', async () => {
       vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'resume' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'resume' });
 
       expect(debug.continueExecution).toHaveBeenCalledWith(session, GS_PROCESS);
       expect(panel.dispose).toHaveBeenCalled();
     });
 
-    it('Resume refreshes with the new error when it hits another stop', () => {
+    it('Resume refreshes with the new error when it hits another stop', async () => {
       vi.mocked(debug.continueExecution).mockReturnValueOnce({
         completed: false,
         errorMessage: 'next error',
       });
-      const panel = openPanel();
+      const panel = await openPanel();
       const before = posted(panel, 'init').length;
-      sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'resume' });
 
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(posted(panel, 'init').length).toBe(before + 1); // refreshed
@@ -3644,11 +3675,11 @@ describe('DebuggerPanel', () => {
         source = 'line1\nline2\nline3',
         offsets = [3, 9, 14],
       ) {
-        vi.mocked(debug.getMethodUriInfo).mockReturnValue(RT_URI_INFO); // every frame breakable + editable
+        vi.mocked(debug.getMethodUriInfo).mockResolvedValue(RT_URI_INFO); // every frame breakable + editable
         vi.mocked(debug.getMethodSource).mockReturnValue(source);
         vi.mocked(debug.getSourceOffsetsForMethod).mockReturnValue(offsets);
-        const panel = openPanel();
-        sendMessage(panel, { command: 'selectFrame', level: 3 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
         const results = vi.mocked(vscode.window.showTextDocument).mock.results;
         const editor = await results[results.length - 1].value;
@@ -3667,7 +3698,7 @@ describe('DebuggerPanel', () => {
       it('sets a temp break at the cursor step point, resumes, then clears it', async () => {
         vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
         const panel = await openWithCursor(1); // line 2 → step point 2 (offset 9)
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3695,7 +3726,7 @@ describe('DebuggerPanel', () => {
         });
         const panel = await openWithCursor(0); // line 1 → step point 1 (offset 3)
         const before = posted(panel, 'init').length;
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3721,17 +3752,17 @@ describe('DebuggerPanel', () => {
             true,
           ),
         ];
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalled();
         expect(queries.clearBreakAtStepPoint).not.toHaveBeenCalled(); // it's the user's break
       });
 
-      it('falls back to a flash + plain Resume when the source pane is not showing the frame', () => {
+      it('falls back to a flash + plain Resume when the source pane is not showing the frame', async () => {
         // No selectFrame sent → no source editor revealed → no usable cursor target.
         vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
-        const panel = openPanel();
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).not.toHaveBeenCalled();
         expect(debug.setBreakAtStepPointByOop).not.toHaveBeenCalled();
@@ -3746,7 +3777,7 @@ describe('DebuggerPanel', () => {
         // A single-frame doit stack: getMethodInfo throws (no home class) → the frame
         // is "Executed Code"; source is shown read-only (gemstone-debug:), 1:1.
         vi.mocked(debug.getStackDepth).mockReturnValue(1);
-        vi.mocked(debug.getFrameInfo).mockReturnValue({
+        vi.mocked(debug.getFrameInfo).mockResolvedValue({
           methodOop: 50n,
           ipOffset: 5,
           selfOop: 0n,
@@ -3756,7 +3787,7 @@ describe('DebuggerPanel', () => {
           argAndTempOops: [],
         });
         vi.mocked(debug.getMethodBlockInfo).mockReturnValue({ isBlock: false, homeMethodOop: 50n });
-        vi.mocked(debug.getMethodUriInfo).mockReturnValue(undefined);
+        vi.mocked(debug.getMethodUriInfo).mockResolvedValue(undefined);
         vi.mocked(debug.getMethodInfo).mockImplementation(() => {
           throw new Error('doit: nil inClass');
         });
@@ -3764,8 +3795,8 @@ describe('DebuggerPanel', () => {
         vi.mocked(debug.getMethodSource).mockReturnValue('line1\nline2\nline3');
         vi.mocked(debug.getSourceOffsetsForMethod).mockReturnValue([3, 9, 14]);
 
-        const panel = openPanel();
-        sendMessage(panel, { command: 'selectFrame', level: 1 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'selectFrame', level: 1 });
         await flush();
         const results = vi.mocked(vscode.window.showTextDocument).mock.results;
         const editor = await results[results.length - 1].value;
@@ -3777,7 +3808,7 @@ describe('DebuggerPanel', () => {
           new vscode.Position(1, 0),
         ); // line 2 → sp2
 
-        sendMessage(panel, { command: 'runToCursor', level: 1 });
+        await sendMessage(panel, { command: 'runToCursor', level: 1 });
 
         // Break set + cleared BY OOP (50n) at step point 2; the class>>selector path is NOT used.
         expect(debug.setBreakAtStepPointByOop).toHaveBeenCalledWith(session, 50n, 2);
@@ -3794,7 +3825,7 @@ describe('DebuggerPanel', () => {
         // Cursor at line 2 col 15 → offset 19 → nearest on-line step point is the
         // block body (sp3@20), NOT the leftmost self/do: (the old line-based bug).
         const panel = await openWithCursor(1, 15, 'hdr\nself do: [:e | body ]', [5, 10, 20]);
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3812,7 +3843,7 @@ describe('DebuggerPanel', () => {
         // `x := a asInteger` — sp1@1 (`x`, the store, col 0), sp2@6 (`a`, col 5),
         // sp3@8 (`asInteger`, col 7). Cursor on `asInteger` (col 7) → nearest sp3.
         const panel = await openWithCursor(0, 7, 'x := a asInteger', [1, 6, 8]);
-        sendMessage(panel, { command: 'runToCursor', level: 3 });
+        await sendMessage(panel, { command: 'runToCursor', level: 3 });
 
         expect(queries.setBreakAtStepPoint).toHaveBeenCalledWith(
           session,
@@ -3829,7 +3860,7 @@ describe('DebuggerPanel', () => {
       it('runs to cursor on a block frame against its HOME method, not the block', async () => {
         vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true });
         vi.mocked(debug.getStackDepth).mockReturnValue(1);
-        vi.mocked(debug.getFrameInfo).mockReturnValue({
+        vi.mocked(debug.getFrameInfo).mockResolvedValue({
           methodOop: 1n,
           ipOffset: 5,
           selfOop: 300n,
@@ -3841,14 +3872,14 @@ describe('DebuggerPanel', () => {
         // isBlock, with the enclosing (home) method a DIFFERENT oop (99n).
         vi.mocked(debug.getMethodBlockInfo).mockReturnValue({ isBlock: true, homeMethodOop: 99n });
         // Only the HOME method (99n) is an editable symbol-list method.
-        vi.mocked(debug.getMethodUriInfo).mockImplementation((_s: unknown, oop: bigint) =>
+        vi.mocked(debug.getMethodUriInfo).mockImplementation(async (_s: unknown, oop: bigint) =>
           oop === 99n ? RT_URI_INFO : undefined,
         );
         vi.mocked(debug.getMethodSource).mockReturnValue('line1\nline2\nline3');
         vi.mocked(debug.getSourceOffsetsForMethod).mockReturnValue([3, 9, 14]);
 
-        const panel = openPanel();
-        sendMessage(panel, { command: 'selectFrame', level: 1 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'selectFrame', level: 1 });
         await flush();
         const results = vi.mocked(vscode.window.showTextDocument).mock.results;
         const editor = await results[results.length - 1].value;
@@ -3860,7 +3891,7 @@ describe('DebuggerPanel', () => {
           new vscode.Position(1, 0),
         ); // line 2 → sp2
 
-        sendMessage(panel, { command: 'runToCursor', level: 1 });
+        await sendMessage(panel, { command: 'runToCursor', level: 1 });
 
         // Resolved via the HOME method (99n): source/offsets fetched for 99n and the
         // break set by the home's class>>selector (a block-method break would be by OOP).
@@ -3877,9 +3908,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('Step Over steps (non-blocking) from the selected user frame and refreshes, clearing the error banner', async () => {
-      const panel = openPanel();
+      const panel = await openPanel();
       const before = posted(panel, 'init').length;
-      sendMessage(panel, { command: 'stepOver', level: 3 }); // display 3 → server level 3
+      await sendMessage(panel, { command: 'stepOver', level: 3 }); // display 3 → server level 3
       await tick();
 
       expect(debug.stepOverNb).toHaveBeenCalledWith(session, GS_PROCESS, 3, expect.anything());
@@ -3915,7 +3946,7 @@ describe('DebuggerPanel', () => {
       function setUpWrappedDoit() {
         vi.mocked(debug.getStackDepth).mockImplementation(() => 3);
         vi.mocked(debug.getFrameInfo).mockImplementation(
-          (_s: unknown, _p: unknown, level: number) => ({
+          async (_s: unknown, _p: unknown, level: number) => ({
             methodOop: BigInt(level),
             ipOffset: 5,
             selfOop: 100n,
@@ -3938,9 +3969,9 @@ describe('DebuggerPanel', () => {
 
       it('Step Over redirects from the collapsed doit (server level 3) to the stop frame (level 1)', async () => {
         setUpWrappedDoit();
-        const panel = openPanel();
+        const panel = await openPanel();
         expect(initPayload(panel).stack).toHaveLength(1); // collapsed to one frame
-        sendMessage(panel, { command: 'stepOver', level: 1 }); // the single displayed frame
+        await sendMessage(panel, { command: 'stepOver', level: 1 }); // the single displayed frame
         await tick();
         // Without the fix this would step from the doit-home server level (3),
         // running the whole user block to completion; the stop frame is level 1.
@@ -3949,16 +3980,16 @@ describe('DebuggerPanel', () => {
 
       it('Step Into likewise steps the stop frame, not the doit home', async () => {
         setUpWrappedDoit();
-        const panel = openPanel();
-        sendMessage(panel, { command: 'stepInto', level: 1 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'stepInto', level: 1 });
         await tick();
         expect(debug.stepIntoNb).toHaveBeenCalledWith(session, GS_PROCESS, 1, expect.anything());
       });
 
       it('Step Through likewise steps the stop frame, not the doit home', async () => {
         setUpWrappedDoit();
-        const panel = openPanel();
-        sendMessage(panel, { command: 'stepThrough', level: 1 });
+        const panel = await openPanel();
+        await sendMessage(panel, { command: 'stepThrough', level: 1 });
         await tick();
         expect(debug.stepThruNb).toHaveBeenCalledWith(session, GS_PROCESS, 1, expect.anything());
       });
@@ -3970,8 +4001,8 @@ describe('DebuggerPanel', () => {
         errorMessage:
           'a ImproperOperation occurred (error 6014), Breakpoint and single-step not supported in native code',
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
       expect(panel.dispose).not.toHaveBeenCalled();
@@ -3987,9 +4018,9 @@ describe('DebuggerPanel', () => {
         errorNumber: 6011,
         errorMessage: 'a UncontinuableError occurred (error 6011), reason:rtErrUncontinuable',
       });
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(debug.getStackDepth).mockClear(); // refresh() re-walks the stack via fetchStack
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
       expect(panel.dispose).not.toHaveBeenCalled();
@@ -4004,16 +4035,16 @@ describe('DebuggerPanel', () => {
         errorNumber: 6011,
         errorMessage: 'a UncontinuableError occurred (error 6011)',
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 1 }); // sets the uncontinuable flag
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 1 }); // sets the uncontinuable flag
       await tick();
 
       // A retry must NOT hit the server again — that's what grows GemStone's
       // accumulating exception-chain message that Eric saw.
       vi.mocked(debug.continueExecution).mockClear();
       vi.mocked(debug.stepOverNb).mockClear();
-      sendMessage(panel, { command: 'resume' });
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
       expect(debug.continueExecution).not.toHaveBeenCalled();
@@ -4022,15 +4053,15 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/uncontinuable/i);
     });
 
-    it('Resume that hits 6011 shows the Terminate-only banner without refreshing', () => {
+    it('Resume that hits 6011 shows the Terminate-only banner without refreshing', async () => {
       vi.mocked(debug.continueExecution).mockReturnValueOnce({
         completed: false,
         errorNumber: 6011,
         errorMessage: 'a UncontinuableError occurred (error 6011)',
       });
-      const panel = openPanel();
+      const panel = await openPanel();
       const before = posted(panel, 'init').length;
-      sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'resume' });
 
       expect(panel.dispose).not.toHaveBeenCalled();
       expect(posted(panel, 'init').length).toBe(before + 1); // postInit, not a stack refresh
@@ -4043,13 +4074,13 @@ describe('DebuggerPanel', () => {
         errorNumber: 6011,
         errorMessage: 'a UncontinuableError occurred (error 6011)',
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 1 }); // → uncontinuable
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 1 }); // → uncontinuable
       await tick();
-      sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears the flag
+      await sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears the flag
       await tick();
       vi.mocked(debug.continueExecution).mockClear();
-      sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'resume' });
 
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(
         session,
@@ -4062,33 +4093,33 @@ describe('DebuggerPanel', () => {
 
     it('Step disposes the panel when the step completes the process', async () => {
       vi.mocked(debug.stepOverNb).mockResolvedValueOnce({ completed: true });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
 
       expect(panel.dispose).toHaveBeenCalled();
     });
 
     it('"Into" maps to gciStepInto (debugQueries.stepIntoNb), from the selected user frame', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepInto', level: 3 }); // display 3 → server level 3
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepInto', level: 3 }); // display 3 → server level 3
       await tick();
 
       expect(debug.stepIntoNb).toHaveBeenCalledWith(session, GS_PROCESS, 3, expect.anything());
     });
 
     it('"Through" maps to gciStepThru (debugQueries.stepThruNb), from the selected user frame', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepThrough', level: 4 }); // display 4 → server level 4
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepThrough', level: 4 }); // display 4 → server level 4
       await tick();
 
       expect(debug.stepThruNb).toHaveBeenCalledWith(session, GS_PROCESS, 4, expect.anything());
     });
 
     it('Restart Frame trims the stack (non-blocking) to the selected (deeper) frame and refreshes', async () => {
-      const panel = openPanel();
+      const panel = await openPanel();
       const before = posted(panel, 'init').length;
-      sendMessage(panel, { command: 'restartFrame', level: 2 });
+      await sendMessage(panel, { command: 'restartFrame', level: 2 });
       await tick();
 
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(
@@ -4101,8 +4132,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('debugger nb ops suppress the 2s toast (the in-panel overlay owns cancel)', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
 
       expect(debug.stepOverNb).toHaveBeenCalledWith(
@@ -4120,25 +4151,25 @@ describe('DebuggerPanel', () => {
         opts.onStart?.(cancelSpy); // the nb step begins polling → cancellable
         return new Promise(() => {}); // never settles — the step "runs"
       });
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
 
       expect(lastPosted(panel, 'cancellable')).toMatchObject({ on: true });
 
-      sendMessage(panel, { command: 'cancelOp' });
+      await sendMessage(panel, { command: 'cancelOp' });
       expect(cancelSpy).toHaveBeenCalledTimes(1);
       expect(lastPosted(panel, 'flash').text).toMatch(/break sent/i); // click acknowledged
 
-      sendMessage(panel, { command: 'cancelOp' });
+      await sendMessage(panel, { command: 'cancelOp' });
       expect(cancelSpy).toHaveBeenCalledTimes(2);
       expect(lastPosted(panel, 'flash').text).toMatch(/forc/i); // second click → force
     });
 
     it('Restart Frame on the top frame shows an in-panel notice and does not trim (GemStone cannot reset the TOS IP)', async () => {
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(debug.trimStackToLevelNb).mockClear();
-      sendMessage(panel, { command: 'restartFrame', level: 1 }); // display 1 → server level 1 (top)
+      await sendMessage(panel, { command: 'restartFrame', level: 1 }); // display 1 → server level 1 (top)
       await tick();
 
       expect(debug.trimStackToLevelNb).not.toHaveBeenCalled();
@@ -4157,30 +4188,30 @@ describe('DebuggerPanel', () => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'initialize' };
         throw new Error('doit');
       });
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(debug.trimStackToLevelNb).mockClear();
 
-      sendMessage(panel, { command: 'restartFrame', level: 2 }); // the Executed Code frame
+      await sendMessage(panel, { command: 'restartFrame', level: 2 }); // the Executed Code frame
       await tick();
 
       expect(debug.trimStackToLevelNb).not.toHaveBeenCalled();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/Executed Code/i);
     });
 
-    it('Terminate disposes the panel', () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'terminate' });
+    it('Terminate disposes the panel', async () => {
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'terminate' });
 
       expect(panel.dispose).toHaveBeenCalled();
     });
 
-    it('hands the completed result to onComplete on Resume, then disposes', () => {
+    it('hands the completed result to onComplete on Resume, then disposes', async () => {
       vi.mocked(debug.continueExecution).mockReturnValueOnce({ completed: true, resultOop: 0x55n });
       const onComplete = vi.fn();
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'resume' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'resume' });
 
       expect(onComplete).toHaveBeenCalledWith(0x55n);
       expect(panel.dispose).toHaveBeenCalled();
@@ -4191,15 +4222,15 @@ describe('DebuggerPanel', () => {
       const onComplete = vi.fn();
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
       expect(onComplete).toHaveBeenCalledWith(0x66n);
       expect(panel.dispose).toHaveBeenCalled();
     });
 
-    it('does NOT call onComplete when Resume hits another error (refreshes instead)', () => {
+    it('does NOT call onComplete when Resume hits another error (refreshes instead)', async () => {
       vi.mocked(debug.continueExecution).mockReturnValueOnce({
         completed: false,
         errorMessage: 'boom2',
@@ -4207,8 +4238,8 @@ describe('DebuggerPanel', () => {
       const onComplete = vi.fn();
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG, onComplete);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'resume' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'resume' });
 
       expect(onComplete).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
@@ -4221,12 +4252,12 @@ describe('DebuggerPanel', () => {
           release = res;
         }),
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 }); // starts, stays pending
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 }); // starts, stays pending
       await tick();
       expect(debug.stepOverNb).toHaveBeenCalledTimes(1);
 
-      sendMessage(panel, { command: 'stepOver', level: 3 }); // while the first is in flight
+      await sendMessage(panel, { command: 'stepOver', level: 3 }); // while the first is in flight
       await tick();
       expect(debug.stepOverNb).toHaveBeenCalledTimes(1); // not started again
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/still running/i); // user is told
@@ -4237,12 +4268,12 @@ describe('DebuggerPanel', () => {
 
     it('releases the in-flight guard after a FAILED op so the next op still runs (no permanent wedge)', async () => {
       vi.mocked(debug.stepOverNb).mockRejectedValueOnce(new Error('boom'));
-      const panel = openPanel();
-      sendMessage(panel, { command: 'stepOver', level: 3 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'stepOver', level: 3 });
       await tick();
       expect(lastPosted(panel, 'init').errorMessage).toMatch(/failed/i);
 
-      sendMessage(panel, { command: 'stepOver', level: 3 }); // guard must be released
+      await sendMessage(panel, { command: 'stepOver', level: 3 }); // guard must be released
       await tick();
       expect(debug.stepOverNb).toHaveBeenCalledTimes(2);
     });
@@ -4265,7 +4296,7 @@ describe('DebuggerPanel', () => {
     beforeEach(() => {
       // Restore the base getFrameInfo (mockImplementation leaks past clearAllMocks).
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4290,9 +4321,9 @@ describe('DebuggerPanel', () => {
     async function openWithEditableFrame(displayLevel: number) {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel); // fetchStack uses the base (undefined URI) mocks
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // for the reveal only
-      sendMessage(panel, { command: 'selectFrame', level: displayLevel });
+      await sendReady(panel); // fetchStack uses the base (undefined URI) mocks
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO); // for the reveal only
+      await sendMessage(panel, { command: 'selectFrame', level: displayLevel });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       return { panel, uri };
@@ -4341,8 +4372,8 @@ describe('DebuggerPanel', () => {
       // Frame 3 with the base (undefined URI) mocks resolves read-only.
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       saveListener()({ uri } as vscode.TextDocument);
@@ -4365,7 +4396,7 @@ describe('DebuggerPanel', () => {
       saveListener()({ uri } as vscode.TextDocument);
       await tick();
       vi.mocked(debug.continueExecution).mockClear();
-      sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'resume' });
 
       expect(debug.continueExecution).not.toHaveBeenCalled();
       expect(panel.dispose).not.toHaveBeenCalled();
@@ -4377,7 +4408,7 @@ describe('DebuggerPanel', () => {
       saveListener()({ uri } as vscode.TextDocument);
       await tick();
       vi.mocked(debug.stepOverNb).mockClear();
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
 
       expect(debug.stepOverNb).not.toHaveBeenCalled();
@@ -4387,10 +4418,10 @@ describe('DebuggerPanel', () => {
       const { panel, uri } = await openWithEditableFrame(1);
       saveListener()({ uri } as vscode.TextDocument); // stale top activation (sync guard)
       await tick();
-      sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears it
+      await sendMessage(panel, { command: 'restartFrame', level: 2 }); // deeper trim clears it
       await tick(); // let the async trim settle
       vi.mocked(debug.continueExecution).mockClear();
-      sendMessage(panel, { command: 'resume' });
+      await sendMessage(panel, { command: 'resume' });
 
       expect(debug.trimStackToLevelNb).toHaveBeenCalledWith(
         session,
@@ -4425,7 +4456,7 @@ describe('DebuggerPanel', () => {
     afterEach(() => {
       vi.mocked(debug.getStackDepth).mockImplementation(() => 5);
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: BigInt(level),
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4452,10 +4483,10 @@ describe('DebuggerPanel', () => {
      * stack) by default, or something absent (e.g. 99n) to model a stored block
      * invoked after its home method already returned.
      */
-    function openBlockStack(blockHomeOop = 10n) {
+    async function openBlockStack(blockHomeOop = 10n) {
       vi.mocked(debug.getStackDepth).mockImplementation(() => 4);
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 ? 10n : BigInt(level), // the home method's own activation
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4477,12 +4508,12 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
-    it('tells the webview the block frame can navigate to its home method (display level 3)', () => {
-      const panel = openBlockStack();
+    it('tells the webview the block frame can navigate to its home method (display level 3)', async () => {
+      const panel = await openBlockStack();
       const stack = initPayload(panel).stack;
 
       // The block frame is display 1; its home method `finish` is display 3.
@@ -4493,14 +4524,14 @@ describe('DebuggerPanel', () => {
       expect(stack[3].homeDisplayLevel).toBeUndefined();
     });
 
-    it("offers no home navigation when the block's home method has already returned", () => {
-      const panel = openBlockStack(99n); // home oop not present on the stack
+    it("offers no home navigation when the block's home method has already returned", async () => {
+      const panel = await openBlockStack(99n); // home oop not present on the stack
       expect(initPayload(panel).stack[0].homeDisplayLevel).toBeUndefined();
     });
 
     it('Restart on a block frame re-runs its HOME method (trims to the deeper home activation)', async () => {
-      const panel = openBlockStack();
-      sendMessage(panel, { command: 'restartFrame', level: 1 }); // the top block frame
+      const panel = await openBlockStack();
+      await sendMessage(panel, { command: 'restartFrame', level: 1 }); // the top block frame
       await tick();
 
       // Retargeted from the block (server 1) to its home method (server 3) — so it
@@ -4515,9 +4546,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('Restart on a block frame whose home already returned falls back to the top-frame notice', async () => {
-      const panel = openBlockStack(99n); // no home activation to retarget to
+      const panel = await openBlockStack(99n); // no home activation to retarget to
       vi.mocked(debug.trimStackToLevelNb).mockClear();
-      sendMessage(panel, { command: 'restartFrame', level: 1 });
+      await sendMessage(panel, { command: 'restartFrame', level: 1 });
       await tick();
 
       expect(debug.trimStackToLevelNb).not.toHaveBeenCalled();
@@ -4525,9 +4556,9 @@ describe('DebuggerPanel', () => {
     });
 
     it("Saving a block frame's (home-method) source re-enters at the home activation", async () => {
-      const panel = openBlockStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // the reveal → editable
-      sendMessage(panel, { command: 'selectFrame', level: 1 }); // select the block frame
+      const panel = await openBlockStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO); // the reveal → editable
+      await sendMessage(panel, { command: 'selectFrame', level: 1 }); // select the block frame
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       const saveListener = vi.mocked(vscode.workspace.onDidSaveTextDocument).mock.calls[0][0];
@@ -4551,11 +4582,11 @@ describe('DebuggerPanel', () => {
     //   server 5 — `[] in foo`  (outermost block; home oop 100n)
     //   server 6 — `Collection>>do:`
     //   server 7 — `JasperDebugDemo>>foo`  (the shared HOME method; oop 100n)
-    function openNestedBlockStack() {
+    async function openNestedBlockStack() {
       const HOME = 100n;
       vi.mocked(debug.getStackDepth).mockImplementation(() => 7);
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 7 ? HOME : BigInt(level), // the home method's own activation
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4576,12 +4607,12 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
-    it('points every nested block frame at the SAME home method frame (display level 7)', () => {
-      const panel = openNestedBlockStack();
+    it('points every nested block frame at the SAME home method frame (display level 7)', async () => {
+      const panel = await openNestedBlockStack();
       const stack = initPayload(panel).stack;
 
       // All three blocks (display 1, 3, 5) navigate to the one `foo` frame (7).
@@ -4596,8 +4627,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('Restart from the INNERMOST nested block re-runs the shared home method (trims to 7)', async () => {
-      const panel = openNestedBlockStack();
-      sendMessage(panel, { command: 'restartFrame', level: 1 });
+      const panel = await openNestedBlockStack();
+      await sendMessage(panel, { command: 'restartFrame', level: 1 });
       await tick();
 
       // The whole home method re-runs from the top — the inner AND outer blocks
@@ -4612,8 +4643,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('Restart from an OUTER nested block resolves to the same home method (not the inner block)', async () => {
-      const panel = openNestedBlockStack();
-      sendMessage(panel, { command: 'restartFrame', level: 5 }); // the outermost block
+      const panel = await openNestedBlockStack();
+      await sendMessage(panel, { command: 'restartFrame', level: 5 }); // the outermost block
       await tick();
 
       // homeMethodFrameLevel skips the deeper kernel frame and lands on `foo` (7),
@@ -4627,9 +4658,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('Saving from a nested block re-enters the shared home method (trims to 7)', async () => {
-      const panel = openNestedBlockStack();
-      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // reveal → editable
-      sendMessage(panel, { command: 'selectFrame', level: 3 }); // select the middle block
+      const panel = await openNestedBlockStack();
+      vi.mocked(debug.getMethodUriInfo).mockResolvedValueOnce(URI_INFO); // reveal → editable
+      await sendMessage(panel, { command: 'selectFrame', level: 3 }); // select the middle block
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
       const saveListener = vi.mocked(vscode.workspace.onDidSaveTextDocument).mock.calls[0][0];
@@ -4646,10 +4677,10 @@ describe('DebuggerPanel', () => {
     //   server 2 — `[] in foo`           (the block; home oop 10n)
     //   server 3 — `Collection>>do:`
     //   server 4 — `JasperDebugDemo>>foo` (the block's HOME method; oop 10n)
-    function openMidBlockStack() {
+    async function openMidBlockStack() {
       vi.mocked(debug.getStackDepth).mockImplementation(() => 4);
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 4 ? 10n : BigInt(level), // home activation is server 4
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4670,13 +4701,13 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
     it('Restart from a MID-stack block re-runs the home method, not the block in place', async () => {
-      const panel = openMidBlockStack();
-      sendMessage(panel, { command: 'restartFrame', level: 2 }); // the mid-stack block
+      const panel = await openMidBlockStack();
+      await sendMessage(panel, { command: 'restartFrame', level: 2 }); // the mid-stack block
       await tick();
 
       // Retargets DOWN to the home method (server 4) — NOT a trim to the block's
@@ -4702,11 +4733,11 @@ describe('DebuggerPanel', () => {
     //   server 4 — `[] in foo`  (block of the OUTER foo; home oop 100n)
     //   server 5 — `Collection>>do:`
     //   server 6 — `JasperDebugDemo>>foo`  (outer activation; oop 100n)
-    function openRecursiveBlockStack() {
+    async function openRecursiveBlockStack() {
       const HOME = 100n;
       vi.mocked(debug.getStackDepth).mockImplementation(() => 6);
       vi.mocked(debug.getFrameInfo).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) => ({
+        async (_s: unknown, _p: unknown, level: number) => ({
           methodOop: level === 3 || level === 6 ? HOME : BigInt(level), // two `foo` activations
           ipOffset: 5,
           selfOop: BigInt(level * 100),
@@ -4726,12 +4757,12 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
-    it('resolves each recursive block to its NEAREST home activation, not the deepest', () => {
-      const stack = initPayload(openRecursiveBlockStack()).stack;
+    it('resolves each recursive block to its NEAREST home activation, not the deepest', async () => {
+      const stack = initPayload(await openRecursiveBlockStack()).stack;
       // Inner block (display 1) → inner foo (3); outer block (display 4) → outer foo
       // (6). Both share the home METHOD oop, but navigate to DIFFERENT activations.
       expect(stack[0].homeDisplayLevel).toBe(3);
@@ -4739,8 +4770,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('Restart from a recursive block re-runs its OWN (nearest) home activation', async () => {
-      const panel = openRecursiveBlockStack();
-      sendMessage(panel, { command: 'restartFrame', level: 1 }); // the inner block
+      const panel = await openRecursiveBlockStack();
+      await sendMessage(panel, { command: 'restartFrame', level: 1 }); // the inner block
       await tick();
 
       // Trims to the inner foo (server 3), NOT the deeper outer foo (server 6) —
@@ -4769,7 +4800,7 @@ describe('DebuggerPanel', () => {
     // getDoesNotUnderstandInfo's mockReturnValue persists past clearAllMocks, so
     // restore "not a DNU" afterwards to keep later describes isolated.
     afterEach(() => {
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(undefined);
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(undefined);
       // getMethodInfo overrides below leak past clearAllMocks — restore the base.
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'JasperDebugDemo', selector: 'finish' };
@@ -4783,8 +4814,8 @@ describe('DebuggerPanel', () => {
      * are DNU machinery (defaultAction, doesNotUnderstand:) so they're trimmed and
      * the topmost DISPLAYED frame — the re-enterable sender — is server level 3.
      */
-    function openWithDnu() {
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(DNU);
+    async function openWithDnu() {
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(DNU);
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'MessageNotUnderstood', selector: 'defaultAction' };
         if (oop === 2n) return { className: 'Object', selector: 'doesNotUnderstand:' };
@@ -4792,7 +4823,7 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
@@ -4800,8 +4831,8 @@ describe('DebuggerPanel', () => {
       return vi.mocked(vscode.workspace.onDidSaveTextDocument).mock.calls[0][0];
     }
 
-    it('includes the DNU info in the init payload when parked on a doesNotUnderstand:', () => {
-      const panel = openWithDnu();
+    it('includes the DNU info in the init payload when parked on a doesNotUnderstand:', async () => {
+      const panel = await openWithDnu();
       expect(initPayload(panel).dnu).toEqual({
         selector: 'fourtyTwo:bar:',
         className: 'JasperDebugDemo',
@@ -4809,19 +4840,19 @@ describe('DebuggerPanel', () => {
       });
     });
 
-    it('omits dnu from the init payload when not a DNU', () => {
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(undefined);
+    it('omits dnu from the init payload when not a DNU', async () => {
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(undefined);
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       expect(initPayload(panel).dnu).toBeUndefined();
     });
 
     it('opens a pre-filled new-method template BELOW the panel and hints to fill+save', async () => {
       mockEditorGrid(1);
-      const panel = openWithDnu();
+      const panel = await openWithDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -4845,9 +4876,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('re-enters the sender frame (trim, NOT resume) on a clean compile, leaving Resume to the user', async () => {
-      const panel = openWithDnu();
+      const panel = await openWithDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
 
@@ -4863,8 +4894,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('closes the created method tab on debugger close (FS-provider URI form, : not %3A)', async () => {
-      const panel = openWithDnu();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      const panel = await openWithDnu();
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       // The FS provider swaps the template tab to this real method URI on save —
       // built via vscode.Uri.from (keyword ':' left un-encoded). closeSourceEditors
@@ -4887,9 +4918,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('does NOT trim (and keeps the template pending) when the compile fails', async () => {
-      const panel = openWithDnu();
+      const panel = await openWithDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
 
@@ -4909,14 +4940,14 @@ describe('DebuggerPanel', () => {
     it('does NOT trim a workspace/Executed Code sender — tells the user to re-run', async () => {
       // All frames resolve as Executed Code (no class) → the sender can't be
       // re-entered (kernel trim sends compiledMethodAt: to nil); never attempt it.
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(DNU);
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(DNU);
       vi.mocked(debug.getMethodInfo).mockImplementation(() => {
         throw new Error('doit: no class');
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendReady(panel);
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
 
@@ -4930,12 +4961,12 @@ describe('DebuggerPanel', () => {
     });
 
     it('refuses to create when the class has no home dictionary (not in the symbol list)', async () => {
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue({ ...DNU, dictName: '' });
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue({ ...DNU, dictName: '' });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
 
       expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
@@ -4943,12 +4974,12 @@ describe('DebuggerPanel', () => {
     });
 
     it('keeps the Create button suppressed once a create is underway (re-detect returns it)', async () => {
-      const panel = openWithDnu();
+      const panel = await openWithDnu();
       expect(initPayload(panel).dnu).toBeDefined(); // shown initially
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       // A refresh while editing must NOT re-offer the button (method-in-progress).
-      sendMessage(panel, { command: 'stepOver', level: 1 });
+      await sendMessage(panel, { command: 'stepOver', level: 1 });
       await tick();
       expect(lastPosted(panel, 'init').dnu).toBeUndefined();
     });
@@ -4969,10 +5000,10 @@ describe('DebuggerPanel', () => {
 
     // The base stack's level-2 frame is an inherited method: receiver is a
     // SmallInteger (oop 200) while the method (#halt) is defined in Object.
-    function openPanel() {
+    async function openPanel() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
@@ -4980,16 +5011,16 @@ describe('DebuggerPanel', () => {
       return vi.mocked(vscode.workspace.onDidSaveTextDocument).mock.calls[0][0];
     }
 
-    it('marks an inherited-method frame overridable, carrying the receiver class', () => {
-      const overridable = initPayload(openPanel()).stack.find(
+    it('marks an inherited-method frame overridable, carrying the receiver class', async () => {
+      const overridable = initPayload(await openPanel()).stack.find(
         (f: { overridable?: boolean }) => f.overridable,
       );
       expect(overridable.receiverClass).toBe('SmallInteger'); // the receiver's class…
       expect(overridable.label).toContain('Object'); // …while the method lives in Object
     });
 
-    it('does NOT mark a frame overridable when the receiver IS the defining class', () => {
-      const selfFrames = initPayload(openPanel()).stack.filter(
+    it('does NOT mark a frame overridable when the receiver IS the defining class', async () => {
+      const selfFrames = initPayload(await openPanel()).stack.filter(
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperDebugDemo',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
@@ -4998,9 +5029,9 @@ describe('DebuggerPanel', () => {
 
     it('opens a new-method template for the receiver class + frame selector, with banner help (no init)', async () => {
       mockEditorGrid(1);
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -5021,8 +5052,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('on a clean save, refreshes with a "used on next send" message and does NOT trim/resume (option B)', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls.at(-1)![0] as vscode.Uri;
 
@@ -5035,8 +5066,8 @@ describe('DebuggerPanel', () => {
     });
 
     it('keeps the template pending on a failed compile, then finishes on a clean re-save', async () => {
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls.at(-1)![0] as vscode.Uri;
 
@@ -5058,12 +5089,12 @@ describe('DebuggerPanel', () => {
     });
 
     it('refuses to implement when the receiver class has no home dictionary', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce([
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce([
         { className: 'SmallInteger', isMeta: false, dictName: '' },
       ]);
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
@@ -5085,14 +5116,14 @@ describe('DebuggerPanel', () => {
     ];
 
     it('QuickPicks the full chain (override vs already-implements) and opens the chosen class', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(CHAIN);
       // Choose SequenceableCollection (index 1) — a superclass override target.
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[1] as never,
       );
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       // The picker offered the whole chain, receiver first; classes that already
@@ -5120,13 +5151,13 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens the EXISTING source (no stub) when the chosen class already implements it', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[2] as never,
       ); // Collection (implements it)
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       // The real method URI (not a new-method template), and NOT clobbered by a stub.
@@ -5149,15 +5180,15 @@ describe('DebuggerPanel', () => {
     ];
 
     it('names the side of each class-side candidate, so the two Object rows differ', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(META_CHAIN);
       // Pick `Object class` (index 1) — indistinguishable from `Object` (index 4)
       // if the label dropped the side, and it is `isMeta` that picks the URI side.
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[1] as never,
       );
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
@@ -5179,13 +5210,13 @@ describe('DebuggerPanel', () => {
     });
 
     it('offers the base classes the metaclass chain crosses into, marked as base classes', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(META_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(META_CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[2] as never,
       ); // Class — a genuine target, offered rather than withheld
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       const items = vi.mocked(vscode.window.showQuickPick).mock.calls.at(-1)![0] as {
@@ -5203,7 +5234,7 @@ describe('DebuggerPanel', () => {
     });
 
     it('warns that a subclass implementation shadows an override placed higher up', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce([
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce([
         { className: 'Interval', isMeta: false, dictName: 'Globals', implementsSelector: true }, // active impl
         {
           className: 'SequenceableCollection',
@@ -5215,8 +5246,8 @@ describe('DebuggerPanel', () => {
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[1] as never,
       ); // implement in the superclass
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
       // Save → the message explains Interval still shadows it (no trim — option B).
       saveListener()({
@@ -5228,11 +5259,11 @@ describe('DebuggerPanel', () => {
     });
 
     it('opens nothing when the inheritance-chain QuickPick is cancelled', async () => {
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce(undefined);
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
@@ -5240,8 +5271,8 @@ describe('DebuggerPanel', () => {
 
     it('skips the QuickPick when the chain has a single class', async () => {
       // Default mock chain is single-element → straight to the template, no prompt.
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
       expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
     });
@@ -5261,7 +5292,7 @@ describe('DebuggerPanel', () => {
         if (oop === 2n) return { className: 'Object', selector: 'halt' };
         return { className: 'JasperDebugDemo', selector: 'accumulateFrom:to:' };
       });
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(undefined);
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(undefined);
     });
 
     // serverLevel → method identity. Level 1 is the marker, level 2 the abstract
@@ -5295,10 +5326,10 @@ describe('DebuggerPanel', () => {
       { className: 'Object', isMeta: false, dictName: 'Kernel', implementsSelector: true },
     ];
 
-    function openPanel() {
+    async function openPanel() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
@@ -5306,9 +5337,9 @@ describe('DebuggerPanel', () => {
       return vi.mocked(vscode.workspace.onDidSaveTextDocument).mock.calls[0][0];
     }
 
-    it('opens the debugger on the abstract method (subclassResponsibility frame trimmed)', () => {
+    it('opens the debugger on the abstract method (subclassResponsibility frame trimmed)', async () => {
       setUpSubclassRespStack();
-      const stack = initPayload(openPanel()).stack;
+      const stack = initPayload(await openPanel()).stack;
       // The marker frame is trimmed; the abstract method `Integer>>foo` is the top.
       expect(stack[0].label).toContain('foo');
       expect(stack.some((f: { label: string }) => /subclassResponsibility/.test(f.label))).toBe(
@@ -5316,34 +5347,34 @@ describe('DebuggerPanel', () => {
       );
     });
 
-    it('offers the "Implement #sel" action when parked on a subclassResponsibility', () => {
+    it('offers the "Implement #sel" action when parked on a subclassResponsibility', async () => {
       setUpSubclassRespStack();
-      expect(initPayload(openPanel()).subclassResp).toEqual({ selector: 'foo' });
+      expect(initPayload(await openPanel()).subclassResp).toEqual({ selector: 'foo' });
     });
 
-    it('does NOT offer the implement action when a doesNotUnderstand: is also parked (DNU wins)', () => {
+    it('does NOT offer the implement action when a doesNotUnderstand: is also parked (DNU wins)', async () => {
       setUpSubclassRespStack();
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue({
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue({
         className: 'Foo',
         isMeta: false,
         dictName: 'Globals',
         selector: 'bar',
         argCount: 0,
       });
-      const payload = initPayload(openPanel());
+      const payload = initPayload(await openPanel());
       expect(payload.subclassResp).toBeUndefined();
       expect(payload.dnu).toBeDefined();
     });
 
     it('QuickPicks the chain BOUNDED at the abstract definer, then opens a stub', async () => {
       setUpSubclassRespStack();
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(SR_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(SR_CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[0] as never,
       ); // LargeNegativeInteger
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementSubclassResponsibility' });
+      await sendMessage(panel, { command: 'implementSubclassResponsibility' });
       await flush();
 
       // Bounded at Integer (the definer) — Number/Object above it are dropped.
@@ -5362,12 +5393,12 @@ describe('DebuggerPanel', () => {
 
     it('on a clean save, re-enters the caller so Resume re-dispatches into the new method', async () => {
       setUpSubclassRespStack(); // caller (level 3) is a re-enterable method frame
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(SR_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(SR_CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[0] as never,
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementSubclassResponsibility' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementSubclassResponsibility' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls.at(-1)![0] as vscode.Uri;
 
@@ -5379,12 +5410,12 @@ describe('DebuggerPanel', () => {
 
     it('tells the user to re-run when the caller is workspace/Executed Code (no trim)', async () => {
       setUpSubclassRespStack(true); // caller is a doit → not re-enterable
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(SR_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(SR_CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[0] as never,
       );
-      const panel = openPanel();
-      sendMessage(panel, { command: 'implementSubclassResponsibility' });
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'implementSubclassResponsibility' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls.at(-1)![0] as vscode.Uri;
 
@@ -5396,13 +5427,13 @@ describe('DebuggerPanel', () => {
 
     it('stops offering Implement after a re-run save (srSuppressed) — the method now exists', async () => {
       setUpSubclassRespStack(true);
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce(SR_CHAIN);
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce(SR_CHAIN);
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[0] as never,
       );
-      const panel = openPanel();
+      const panel = await openPanel();
       expect(initPayload(panel).subclassResp).toEqual({ selector: 'foo' }); // offered at first
-      sendMessage(panel, { command: 'implementSubclassResponsibility' });
+      await sendMessage(panel, { command: 'implementSubclassResponsibility' });
       await flush();
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls.at(-1)![0] as vscode.Uri;
 
@@ -5413,7 +5444,7 @@ describe('DebuggerPanel', () => {
       expect(lastPosted(panel, 'init').subclassResp).toBeUndefined();
     });
 
-    it('does NOT offer Implement when the frame below the marker is not a real method', () => {
+    it('does NOT offer Implement when the frame below the marker is not a real method', async () => {
       // Defensive guard: an Executed-Code / block frame can't be implemented in.
       vi.mocked(debug.getStackDepth).mockImplementation(() => 3);
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
@@ -5421,7 +5452,7 @@ describe('DebuggerPanel', () => {
         if (oop === 2n) throw new Error('doit'); // frame below the marker → Executed Code
         return { className: 'JasperDebugDemo', selector: 'run' };
       });
-      expect(initPayload(openPanel()).subclassResp).toBeUndefined();
+      expect(initPayload(await openPanel()).subclassResp).toBeUndefined();
     });
   });
 
@@ -5446,13 +5477,13 @@ describe('DebuggerPanel', () => {
         if (oop === 2n) return { className: 'Object', selector: 'halt' };
         return { className: 'JasperDebugDemo', selector: 'accumulateFrom:to:' };
       });
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(undefined);
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(undefined);
     });
 
-    function openPanel() {
+    async function openPanel() {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
@@ -5471,20 +5502,20 @@ describe('DebuggerPanel', () => {
 
     // --- Implement-in override (override an inherited method in the receiver's class), class side ---
 
-    it('marks an inherited CLASS-SIDE frame overridable, carrying the receiver metaclass', () => {
+    it('marks an inherited CLASS-SIDE frame overridable, carrying the receiver metaclass', async () => {
       classSideInheritedAtLevel2('JasperMakerLeaf class');
-      const overridable = initPayload(openPanel()).stack.find(
+      const overridable = initPayload(await openPanel()).stack.find(
         (f: { overridable?: boolean }) => f.overridable,
       );
       expect(overridable.receiverClass).toBe('JasperMakerLeaf class'); // the receiver's metaclass…
       expect(overridable.label).toContain('JasperMakerBase'); // …while the method lives in the superclass
     });
 
-    it('does NOT mark a CLASS-SIDE frame overridable when the receiver IS the defining class', () => {
+    it('does NOT mark a CLASS-SIDE frame overridable when the receiver IS the defining class', async () => {
       // Receiver is JasperMakerBase itself → "JasperMakerBase class"; the
       // `receiverClass !== definingClassName + " class"` guard must suppress it.
       classSideInheritedAtLevel2('JasperMakerBase class');
-      const selfFrames = initPayload(openPanel()).stack.filter(
+      const selfFrames = initPayload(await openPanel()).stack.filter(
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperMakerBase class',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
@@ -5493,12 +5524,12 @@ describe('DebuggerPanel', () => {
 
     it('implementInReceiver opens a CLASS-side new-method template for a metaclass receiver', async () => {
       classSideInheritedAtLevel2('JasperMakerLeaf class');
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce([
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce([
         { className: 'JasperMakerLeaf', isMeta: true, dictName: 'UserGlobals' },
       ]);
-      const panel = openPanel();
+      const panel = await openPanel();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementInReceiver', level: 2 });
+      await sendMessage(panel, { command: 'implementInReceiver', level: 2 });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -5517,7 +5548,7 @@ describe('DebuggerPanel', () => {
         return { className: 'JasperDebugDemo', selector: 'run' };
       });
       // Class-side receiver chain, bounded at the abstract definer (isMeta throughout).
-      vi.mocked(debug.getReceiverClassChain).mockReturnValueOnce([
+      vi.mocked(debug.getReceiverClassChain).mockResolvedValueOnce([
         {
           className: 'JasperConcreteMaker',
           isMeta: true,
@@ -5534,10 +5565,10 @@ describe('DebuggerPanel', () => {
       vi.mocked(vscode.window.showQuickPick).mockImplementationOnce(
         async (items: unknown) => (items as { index: number }[])[0] as never,
       ); // JasperConcreteMaker class
-      const panel = openPanel();
+      const panel = await openPanel();
       expect(initPayload(panel).subclassResp).toEqual({ selector: 'defaultInstance' });
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'implementSubclassResponsibility' });
+      await sendMessage(panel, { command: 'implementSubclassResponsibility' });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -5555,8 +5586,8 @@ describe('DebuggerPanel', () => {
       argCount: 1,
     };
 
-    function openWithClassDnu() {
-      vi.mocked(debug.getDoesNotUnderstandInfo).mockReturnValue(DNU_META);
+    async function openWithClassDnu() {
+      vi.mocked(debug.getDoesNotUnderstandInfo).mockResolvedValue(DNU_META);
       vi.mocked(debug.getMethodInfo).mockImplementation((_s: unknown, oop: bigint) => {
         if (oop === 1n) return { className: 'MessageNotUnderstood', selector: 'defaultAction' };
         if (oop === 2n) return { className: 'Object', selector: 'doesNotUnderstand:' };
@@ -5564,12 +5595,12 @@ describe('DebuggerPanel', () => {
       });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       return panel;
     }
 
-    it('carries isMeta in the DNU init payload when the receiver is a class', () => {
-      const panel = openWithClassDnu();
+    it('carries isMeta in the DNU init payload when the receiver is a class', async () => {
+      const panel = await openWithClassDnu();
       expect(initPayload(panel).dnu).toEqual({
         selector: 'makeFancyThing:',
         className: 'JasperClassSideDemo',
@@ -5578,9 +5609,9 @@ describe('DebuggerPanel', () => {
     });
 
     it('createDnuMethod opens a CLASS-side new-method URI for a class receiver', async () => {
-      const panel = openWithClassDnu();
+      const panel = await openWithClassDnu();
       vi.mocked(vscode.workspace.openTextDocument).mockClear();
-      sendMessage(panel, { command: 'createDnuMethod' });
+      await sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
 
       const uri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
@@ -5590,7 +5621,7 @@ describe('DebuggerPanel', () => {
 
     // --- editable Variables on a class-side frame (classInstVars) ---
 
-    it('shows + edits a class-instance variable on a class-side frame (receiver is a class)', () => {
+    it('shows + edits a class-instance variable on a class-side frame (receiver is a class)', async () => {
       // Frame at level 3 (selfOop 300) has a class receiver; its named
       // instVars are the class-instance variables (e.g. `registry`).
       vi.mocked(debug.getObjectClassName).mockImplementation((_s: unknown, selfOop: bigint) =>
@@ -5598,7 +5629,7 @@ describe('DebuggerPanel', () => {
       );
       // The one-trip query returns the class-instance var as an instvars row.
       vi.mocked(debug.fetchFrameVariables).mockImplementation(
-        (_s: unknown, _p: unknown, level: number) =>
+        async (_s: unknown, _p: unknown, level: number) =>
           level === 3
             ? [
                 { group: 'receiver', name: 'self', value: '<print 300>', oop: '300', index: 0 },
@@ -5614,9 +5645,9 @@ describe('DebuggerPanel', () => {
                 },
               ],
       );
-      vi.mocked(debug.evaluateInFrameToOop).mockReturnValueOnce(777n);
-      const panel = openPanel();
-      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      vi.mocked(debug.evaluateInFrameToOop).mockResolvedValueOnce(777n);
+      const panel = await openPanel();
+      await sendMessage(panel, { command: 'selectFrame', level: 3 });
 
       // The class-instance var renders in the instvars group with edit metadata.
       const groups = lastPosted(panel, 'variables').groups;
@@ -5624,7 +5655,7 @@ describe('DebuggerPanel', () => {
         { name: 'registry', value: '<print 7>', oop: '7', edit: { kind: 'instvar', index: 1 } },
       ]);
       // Writing it routes through the same instVarAt:put: primitive, class receiver.
-      sendMessage(panel, {
+      await sendMessage(panel, {
         command: 'setVariable',
         level: 3,
         kind: 'instvar',
@@ -5640,16 +5671,16 @@ describe('DebuggerPanel', () => {
   });
 
   describe('layout persistence', () => {
-    it('remembers a saved split so the next panel opens with it', () => {
+    it('remembers a saved split so the next panel opens with it', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      sendMessage(lastPanel(), { command: 'saveLayout', stackBasis: '42%' });
+      await sendMessage(lastPanel(), { command: 'saveLayout', stackBasis: '42%' });
 
       // A freshly created panel injects the remembered basis into its HTML.
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       expect(lastPanel().webview.html).toMatch(/--stack-basis:\s*42%/);
 
       // Restore the default so later tests see the standard 60% split.
-      sendMessage(lastPanel(), { command: 'saveLayout', stackBasis: '60%' });
+      await sendMessage(lastPanel(), { command: 'saveLayout', stackBasis: '60%' });
     });
 
     it('puts the answer beside the expression, on one row', () => {
@@ -5669,18 +5700,18 @@ describe('DebuggerPanel', () => {
       expect(html).toMatch(/\.eval-result\s*\{[^}]*white-space:\s*pre;/);
     });
 
-    it('opens with the eval bar ready to type, and remembers if you close it', () => {
+    it('opens with the eval bar ready to type, and remembers if you close it', async () => {
       // One row either way now, so there's no reason to make you open it first.
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       expect(lastPanel().webview.html).toContain('<body class="">');
       expect(lastPanel().webview.html).toContain('id="evalToggle"');
       expect(lastPanel().webview.html).toContain('Evaluate in this frame…');
 
-      sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: true });
+      await sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: true });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       expect(lastPanel().webview.html).toContain('<body class="eval-collapsed">');
 
-      sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: false }); // restore
+      await sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: false }); // restore
     });
 
     it('frames itself so the column never reads as a source editor', () => {
@@ -5742,7 +5773,7 @@ describe('DebuggerPanel', () => {
         vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
           Promise.resolve(cmd === 'vscode.getEditorLayout' ? carved : undefined),
         );
-        sendMessage(panel, { command: 'fit', needed: 300, viewport: 220 });
+        await sendMessage(panel, { command: 'fit', needed: 300, viewport: 220 });
         await tick();
         await tick();
 
@@ -5792,7 +5823,7 @@ describe('DebuggerPanel', () => {
         const before = vi
           .mocked(vscode.commands.executeCommand)
           .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout').length;
-        sendMessage(panel, { command: 'fit', needed: 900, viewport: 100 });
+        await sendMessage(panel, { command: 'fit', needed: 900, viewport: 100 });
         await tick();
         await tick();
 
@@ -5832,12 +5863,12 @@ describe('DebuggerPanel', () => {
 
         // 400 needed in a 430 viewport whose group is 470 (40px of tab bar) — the
         // panel wants 440 and has 470, so nothing to do.
-        sendMessage(panel, { command: 'fit', needed: 400, viewport: 430 });
+        await sendMessage(panel, { command: 'fit', needed: 400, viewport: 430 });
         await tick();
         await tick();
         // A later render reports again (a bigger banner) — but the divider is the
         // user's now, so it is ignored.
-        sendMessage(panel, { command: 'fit', needed: 900, viewport: 430 });
+        await sendMessage(panel, { command: 'fit', needed: 900, viewport: 430 });
         await tick();
         await tick();
 
@@ -5863,7 +5894,7 @@ describe('DebuggerPanel', () => {
       (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       await tick();
 
       expect(() => closePanel(panel)).not.toThrow();
@@ -5887,7 +5918,7 @@ describe('DebuggerPanel', () => {
       mockEditorGrid(2); // the panel opens into column 2 and carves 3 below it
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
       const panel = lastPanel();
-      sendReady(panel);
+      await sendReady(panel);
       await tick();
 
       // The debugger's pair (2 and 3) is empty after its tabs close; the user's
@@ -5915,9 +5946,9 @@ describe('DebuggerPanel', () => {
       expect(closed).toEqual([2, 3]);
     });
 
-    it('offers maximize as the way out of a column that is too small to work in', () => {
+    it('offers maximize as the way out of a column that is too small to work in', async () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      sendMessage(lastPanel(), { command: 'maximizePanel' });
+      await sendMessage(lastPanel(), { command: 'maximizePanel' });
 
       // VS Code clips a webview rather than adapting it, so the escape hatch is
       // to take the whole editor area; the same toggle puts the grid back.
@@ -6013,7 +6044,7 @@ describe('DebuggerPanel', () => {
           Promise.resolve(cmd === 'vscode.getEditorLayout' ? carved : undefined),
         );
         // Plenty of room: 200 needed in a 500 group, so the ratio wins outright.
-        sendMessage(panel, { command: 'fit', needed: 200, viewport: 500 });
+        await sendMessage(panel, { command: 'fit', needed: 200, viewport: 500 });
         await tick();
         await tick();
 

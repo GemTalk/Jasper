@@ -149,22 +149,22 @@ describe('fetchPrintString', () => {
 });
 
 describe('fetchFullPrintString', () => {
-  it('returns full string on happy path', () => {
+  it('returns full string on happy path', async () => {
     expect.assertions(1);
     const session = createFullPrintSession('this is the full print string');
-    expect(fetchFullPrintString(session, 1000n)).toBe('this is the full print string');
+    expect(await fetchFullPrintString(session, 1000n)).toBe('this is the full print string');
   });
 
-  it('surfaces the underlying error message when the execute fails', () => {
+  it('surfaces the underlying error message when the execute fails', async () => {
     expect.assertions(1);
     const session = createFullPrintSession('', true);
-    expect(fetchFullPrintString(session, 1000n)).toBe('<error: execution failed>');
+    expect(await fetchFullPrintString(session, 1000n)).toBe('<error: execution failed>');
   });
 
-  it('embeds the oop in emitted Smalltalk', () => {
+  it('embeds the oop in emitted Smalltalk', async () => {
     expect.assertions(1);
     const session = createFullPrintSession('result');
-    fetchFullPrintString(session, 99999n);
+    await fetchFullPrintString(session, 99999n);
     const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
     const code = mockExec.mock.calls[0][1] as string;
     expect(code).toContain('99999');

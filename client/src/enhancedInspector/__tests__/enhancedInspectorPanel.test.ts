@@ -527,15 +527,16 @@ describe('EnhancedInspector', () => {
   });
 
   describe('K — fetchFullPrintString', () => {
-    it('wraps fetchFullPrintString result in JSON with stylerSpecification null and posts fullPrintString', () => {
+    it('wraps fetchFullPrintString result in JSON with stylerSpecification null and posts fullPrintString', async () => {
       expect.assertions(2);
-      vi.mocked(debug.fetchFullPrintString).mockReturnValue('this is the full text');
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue('this is the full text');
       setup();
       mock.sendMessage({
         command: 'fetchFullPrintString',
         oop: '1000',
         methodSelector: 'gtPrintFor:',
       });
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(debug.fetchFullPrintString).toHaveBeenCalled();
       expect(mock.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({

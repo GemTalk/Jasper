@@ -247,10 +247,20 @@ export class GemStoneDebugSession extends DebugSession {
 
   // ── Stack Trace ─────────────────────────────────────────
 
+  // DebugSession dispatches requests synchronously and ignores what a handler
+  // returns, so the async work runs detached. It cannot reject: it catches
+  // every failure and always sends the response itself.
   protected stackTraceRequest(
     response: DebugProtocol.StackTraceResponse,
     args: DebugProtocol.StackTraceArguments,
   ): void {
+    void this.answerStackTraceRequest(response, args);
+  }
+
+  private async answerStackTraceRequest(
+    response: DebugProtocol.StackTraceResponse,
+    args: DebugProtocol.StackTraceArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { stackFrames: [], totalFrames: 0 };
       this.sendResponse(response);
@@ -266,13 +276,13 @@ export class GemStoneDebugSession extends DebugSession {
       const frames: StackFrame[] = [];
       for (let level = startFrame + 1; level <= endFrame; level++) {
         try {
-          const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+          const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
           const sourceRef = this.allocSourceRef(info.methodOop);
 
           let frameName: string;
           let sourcePath: string | undefined;
           try {
-            const uriInfo = debug.getMethodUriInfo(this.session, info.methodOop);
+            const uriInfo = await debug.getMethodUriInfo(this.session, info.methodOop);
             if (uriInfo && uriInfo.dictName) {
               const baseClass = uriInfo.className;
               const side = uriInfo.isMeta ? 'class' : 'instance';
@@ -363,6 +373,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.ScopesResponse,
     args: DebugProtocol.ScopesArguments,
   ): void {
+    void this.answerScopesRequest(response, args);
+  }
+
+  private async answerScopesRequest(
+    response: DebugProtocol.ScopesResponse,
+    args: DebugProtocol.ScopesArguments,
+  ): Promise<void> {
     const level = args.frameId;
 
     const argsRef = this.allocVarRef({ kind: 'frame', level });
@@ -371,7 +388,7 @@ export class GemStoneDebugSession extends DebugSession {
     // Actually, let's resolve the receiver OOP now
     if (this.session) {
       try {
-        const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+        const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
         // Update the receiver ref with the actual OOP
         this.varRefMap.set(receiverRef, { kind: 'receiver', oop: info.selfOop });
       } catch {
@@ -394,6 +411,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.VariablesResponse,
     args: DebugProtocol.VariablesArguments,
   ): void {
+    void this.answerVariablesRequest(response, args);
+  }
+
+  private async answerVariablesRequest(
+    response: DebugProtocol.VariablesResponse,
+    args: DebugProtocol.VariablesArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { variables: [] };
       this.sendResponse(response);
@@ -410,7 +434,7 @@ export class GemStoneDebugSession extends DebugSession {
     try {
       switch (varRef.kind) {
         case 'frame':
-          response.body = { variables: this.getFrameVariables(varRef.level) };
+          response.body = { variables: await this.getFrameVariables(varRef.level) };
           break;
         case 'receiver':
           response.body = { variables: this.getReceiverVariables(varRef.oop) };
@@ -437,9 +461,9 @@ export class GemStoneDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
-  private getFrameVariables(level: number): Variable[] {
+  private async getFrameVariables(level: number): Promise<Variable[]> {
     if (!this.session) return [];
-    const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+    const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
     const vars: Variable[] = [];
 
     for (let i = 0; i < info.argAndTempNames.length && i < info.argAndTempOops.length; i++) {
@@ -632,6 +656,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.EvaluateResponse,
     args: DebugProtocol.EvaluateArguments,
   ): void {
+    void this.answerEvaluateRequest(response, args);
+  }
+
+  private async answerEvaluateRequest(
+    response: DebugProtocol.EvaluateResponse,
+    args: DebugProtocol.EvaluateArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { result: '<no session>', variablesReference: 0 };
       this.sendResponse(response);
@@ -640,7 +671,12 @@ export class GemStoneDebugSession extends DebugSession {
 
     const level = args.frameId || 1;
     try {
-      const result = debug.evaluateInFrame(this.session, this.gsProcess, args.expression, level);
+      const result = await debug.evaluateInFrame(
+        this.session,
+        this.gsProcess,
+        args.expression,
+        level,
+      );
       response.body = { result, variablesReference: 0 };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
