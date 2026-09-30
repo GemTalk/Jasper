@@ -70,11 +70,11 @@ export async function reverseMethodCategoryEdit(
   // The stone does not have the category, so this is a still-empty one and the Explorer's
   // overlay is the only place the action happened.
   if (!categories.includes(entry.after)) {
-    return reverseInOverlay(entry, categories, where);
+    return await reverseInOverlay(entry, categories, where);
   }
 
   // From here the category is real.
-  if (entry.before === null) return removeReal(session, entry, where);
+  if (entry.before === null) return await removeReal(session, entry, where);
 
   // Check BEFORE asking anything: one already back the way it was costs no modal.
   if (categories.includes(entry.before)) {

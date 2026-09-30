@@ -781,7 +781,7 @@ describe('SystemBrowser', () => {
       it('ignores a second ± click while the first toggle is still opening', async () => {
         selectArray();
         let releaseGroup: () => void = () => {};
-        vi.mocked(commands.executeCommand).mockImplementation((cmd: string) => {
+        commands.executeCommand.mockImplementation((cmd: string) => {
           if (cmd === 'workbench.action.newGroupBelow')
             return new Promise<void>((r) => {
               releaseGroup = r;

@@ -51,7 +51,7 @@ export class SourceEditorPlacement {
     if (owned.size > 0) return [...owned.keys()].sort((a, b) => a - b)[0];
     if (!this.createHome)
       throw new Error('SourceEditorPlacement.homeColumn needs a createHome strategy');
-    return this.createHome();
+    return await this.createHome();
   }
 
   /**
