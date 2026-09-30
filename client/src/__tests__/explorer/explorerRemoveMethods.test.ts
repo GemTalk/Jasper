@@ -185,7 +185,7 @@ describe('removing several methods nothing sends', () => {
     expect(String(showInformationMessage.mock.calls[0][0])).toContain('nothing referenced them');
   });
 
-  it('says it for the scanned methods when only some of them are overrides', async () => {
+  it('names only the scanned methods when some of them are overrides', async () => {
     hierarchyImplementorsOf.mockImplementation(
       (_s: unknown, _d: number, _c: string, selector: string) =>
         selector === 'printOn:' ? [sender({ className: 'Object', selector: 'printOn:' })] : [],
@@ -193,7 +193,11 @@ describe('removing several methods nothing sends', () => {
 
     await removeMethods(makeController(), [row('printOn:'), row('size')]);
 
-    expect(String(showInformationMessage.mock.calls[0][0])).toContain('nothing referenced them');
+    const notice = String(showInformationMessage.mock.calls[0][0]);
+    expect(notice).not.toContain('nothing referenced them');
+    expect(notice).toContain(
+      'nothing referenced #size; senders of #printOn: now resolve to Object >> #printOn:',
+    );
   });
 
   it("carries an override's note: senders resolve to the inherited method", async () => {
@@ -387,8 +391,8 @@ describe('removing several methods — the pane', () => {
 
 describe('removing several methods — one of them cannot be removed', () => {
   /**
-   * A removal fails when the method is not there to remove: another session took it, or the
-   * row is stale. That is a fact about THAT row and says nothing about the ones after it, so
+   * A removal usually fails because the method is already gone: another session took it, or
+   * the row is stale. That is a fact about THAT row and says nothing about the ones after it, so
    * the run carries on and the report names whatever did not go. Stopping at the first
    * failure abandoned removals that would have succeeded.
    */
