@@ -42,7 +42,7 @@ export type ConnectLoopbackClient = (port: number) => Promise<RawSocketConnectio
 export async function openLoopbackConnectionWith(
   connectClient: ConnectLoopbackClient,
 ): Promise<LoopbackConnection> {
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const server = createServer();
 
     server.once('error', reject);

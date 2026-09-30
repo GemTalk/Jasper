@@ -320,7 +320,7 @@ export async function chooseTonelDictionary(
   if (existing.length === 1) return existing[0];
 
   const choices = existing.length > 1 ? existing : queries.getDictionaryNames(session);
-  return vscode.window.showQuickPick(choices, {
+  return await vscode.window.showQuickPick(choices, {
     title: `File in ${className}`,
     placeHolder:
       existing.length > 1
