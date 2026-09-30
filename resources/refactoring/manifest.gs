@@ -63,7 +63,7 @@ m add: (Array with: 'RBTonelScanner' with: 3).
 m add: (Array with: 'RBWorkspaceNode' with: 15).
 m add: (Array with: 'GsChangeSignatureRefactoring' with: 44).
 m add: (Array with: 'GsClassHistory' with: 13).
-m add: (Array with: 'GsExtractMethodRefactoring' with: 71).
+m add: (Array with: 'GsExtractMethodRefactoring' with: 76).
 m add: (Array with: 'GsExtractSuperclassRefactoring' with: 61).
 m add: (Array with: 'GsExtractTemporaryRefactoring' with: 50).
 m add: (Array with: 'GsInlineMethodRefactoring' with: 59).

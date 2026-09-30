@@ -1,5 +1,7 @@
 /**
- * The notice that follows an undoable action, with Undo on it (issue #434).
+ * The notice that follows an undoable action, with Undo on it (issue #434) -- whether the
+ * action succeeded (`notifyUndoable`) or went wrong part-way and still left something to
+ * undo (`notifyUndoableFailure`).
  *
  * This is the affordance that actually gets used, and the only one with no discovery cost:
  * it appears where the user is already looking, at the moment they would want it. Every
@@ -35,15 +37,36 @@ import { UndoEntry } from './undoTypes';
  * a button that would undo something else. Returns immediately.
  */
 export function notifyUndoable(message: string, entry: UndoEntry | undefined): void {
+  offerUndo(vscode.window.showInformationMessage, message, entry);
+}
+
+/**
+ * The same offer on an ERROR notice, for an action that went wrong part-way and still left
+ * something to undo — a multi-method removal where some of them could not be removed, say.
+ *
+ * That case needs the button MORE than the happy one, not less: the happy path's notice is
+ * the only thing standing between the user and a removal they did not have to confirm, and
+ * when it is replaced by an error the offer went with it. The user was told what failed and
+ * left with no way back from what didn't.
+ */
+export function notifyUndoableFailure(message: string, entry: UndoEntry | undefined): void {
+  offerUndo(vscode.window.showErrorMessage, message, entry);
+}
+
+function offerUndo(
+  show: (message: string, ...items: string[]) => Thenable<string | undefined>,
+  message: string,
+  entry: UndoEntry | undefined,
+): void {
   if (!entry) {
-    void vscode.window.showInformationMessage(message);
+    void show(message);
     return;
   }
   // The button says what pressing it does: "Revert" for a class edit, which binds an
   // earlier version rather than rolling anything back, and "Undo" for everything else.
   const action = undoVerb(entry);
   void (async () => {
-    const choice = await vscode.window.showInformationMessage(message, action);
+    const choice = await show(message, action);
     if (choice !== action) return;
     await vscode.commands.executeCommand(UNDO_COMMAND);
   })();

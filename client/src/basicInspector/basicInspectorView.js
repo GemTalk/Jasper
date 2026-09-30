@@ -16,9 +16,10 @@
  * Exposed as the global `BasicInspectorView`.
  */
 (function () {
-  var strip, ctxMenu, methodCtxMenu, vscode, PAGE_SIZE, Columns;
+  var strip, ctxMenu, methodCtxMenu, headerCtxMenu, vscode, PAGE_SIZE, Columns;
   var ctxTarget = null; // { columnId, oop, label, value, kind, index, keyOop, editable }
   var methodCtxTarget = null; // { oop, selector, isMeta } — the Meta tab's selector rows
+  var headerCtxTarget = null; // { text, what } — what the header menu's Copy copies
 
   // ── Small helpers ─────────────────────────
 
@@ -1157,6 +1158,54 @@
     methodCtxTarget = null;
   }
 
+  /**
+   * The column header and the Meta tab's header get a Copy-only menu. They are
+   * read-only labels, so the host's own menu offered Cut and Paste that did
+   * nothing there. Copy takes the piece right-clicked -- the class name, the
+   * label, the oop, one info-bar fact -- and falls back to the class name for
+   * the space between them.
+   */
+  function showHeaderCtxMenu(x, y, target) {
+    headerCtxTarget = target;
+    headerCtxMenu.style.display = 'block';
+    var w = headerCtxMenu.offsetWidth || 80;
+    var h = headerCtxMenu.offsetHeight || 30;
+    headerCtxMenu.style.left = Math.max(0, Math.min(x, window.innerWidth - w - 4)) + 'px';
+    headerCtxMenu.style.top = Math.max(0, Math.min(y, window.innerHeight - h - 4)) + 'px';
+  }
+
+  function hideHeaderCtxMenu() {
+    if (!headerCtxMenu) return;
+    headerCtxMenu.style.display = 'none';
+    headerCtxTarget = null;
+  }
+
+  function runHeaderCtxAction(action) {
+    var t = headerCtxTarget;
+    hideHeaderCtxMenu();
+    if (t && action === 'copy') post({ command: 'copyText', text: t.text, what: t.what });
+  }
+
+  /** What Copy takes from a right-click at `el` in `col`'s header rows, or null
+   *  when `el` is not in one of them. */
+  function headerCopyTarget(col, el) {
+    var region = el.closest('.header, .meta-head, .meta-info-bar');
+    if (!region) return null;
+    if (el.closest('.header-oop')) return { text: String(col.oop), what: 'OOP' };
+    if (el.closest('.obj-label')) {
+      return { text: col.el.root.querySelector('.header .obj-label').textContent, what: 'Label' };
+    }
+    var fact = region.classList.contains('meta-info-bar') ? el.closest('span') : null;
+    var strong = fact && fact.querySelector('strong');
+    if (strong) {
+      var what = fact.textContent.slice(0, fact.textContent.indexOf(':'));
+      return { text: strong.textContent, what: what };
+    }
+    var metaName = region.querySelector('.meta-class-name');
+    var className = metaName || col.el.root.querySelector('.header .obj-class');
+    return { text: className.textContent, what: 'Class name' };
+  }
+
   function runMethodCtxAction(action) {
     var t = methodCtxTarget;
     hideMethodCtxMenu();
@@ -1319,14 +1368,16 @@
     strip.addEventListener('contextmenu', function (ev) {
       var col = Columns.columnOf(ev.target);
       if (!col) return;
-      // Two kinds of right-clickable row, checked in order. Anything else (the
-      // Definition/Comment <pre>s, blank space) falls through to the host menu
-      // on purpose, because Copy is useful there.
+      // Three kinds of right-clickable place, checked in order: a selector row,
+      // the header rows, a table row. Anything else (the Definition/Comment
+      // <pre>s, blank space) falls through to the host menu on purpose, because
+      // selecting text and copying it is useful there.
       var methodEl = ev.target.closest ? ev.target.closest('.method-item') : null;
       if (methodEl) {
         ev.preventDefault();
         Columns.focus(col);
         hideCtxMenu();
+        hideHeaderCtxMenu();
         showMethodCtxMenu(ev.clientX, ev.clientY, {
           oop: col.oop,
           selector: methodEl.dataset.selector,
@@ -1336,6 +1387,15 @@
         });
         return;
       }
+      var header = headerCtxMenu && ev.target.closest ? headerCopyTarget(col, ev.target) : null;
+      if (header) {
+        ev.preventDefault();
+        Columns.focus(col);
+        hideCtxMenu();
+        hideMethodCtxMenu();
+        showHeaderCtxMenu(ev.clientX, ev.clientY, header);
+        return;
+      }
       var tr = ev.target.closest ? ev.target.closest('tr[data-row]') : null;
       if (!tr) return;
       var target = rowContext(col, Number(tr.dataset.row));
@@ -1343,6 +1403,7 @@
       ev.preventDefault();
       Columns.focus(col);
       hideMethodCtxMenu();
+      hideHeaderCtxMenu();
       showCtxMenu(ev.clientX, ev.clientY, target);
     });
 
@@ -1356,9 +1417,17 @@
       if (item) runMethodCtxAction(item.dataset.action);
     });
 
+    if (headerCtxMenu) {
+      headerCtxMenu.addEventListener('click', function (ev) {
+        var item = ev.target.closest('[data-action]');
+        if (item) runHeaderCtxAction(item.dataset.action);
+      });
+    }
+
     document.addEventListener('click', function (ev) {
       if (!ctxMenu.contains(ev.target)) hideCtxMenu();
       if (!methodCtxMenu.contains(ev.target)) hideMethodCtxMenu();
+      if (headerCtxMenu && !headerCtxMenu.contains(ev.target)) hideHeaderCtxMenu();
     });
 
     // Enter dives in place — the Jadeite idiom, kept distinct from the
@@ -1368,6 +1437,7 @@
       if (ev.key === 'Escape') {
         hideCtxMenu();
         hideMethodCtxMenu();
+        hideHeaderCtxMenu();
         return;
       }
       if (ev.key !== 'Enter') return;
@@ -1514,6 +1584,8 @@
     strip = opts.strip;
     ctxMenu = opts.ctxMenu;
     methodCtxMenu = opts.methodCtxMenu;
+    // Optional so a harness that only drives the rows need not build it.
+    headerCtxMenu = opts.headerCtxMenu || null;
     vscode = opts.vscode;
     PAGE_SIZE = opts.pageSize;
 
