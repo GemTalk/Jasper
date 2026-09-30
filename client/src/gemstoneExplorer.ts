@@ -1236,7 +1236,7 @@ export class ExplorerController {
   // and land in the wrong session (or a same-named dictionary/category). With no id, fall back to the
   // normal "resolve the selected session (prompting if ambiguous)" path.
   private async resolveSessionFor(sessionId?: number): Promise<ActiveSession | undefined> {
-    if (sessionId === undefined) return this.sessionManager.resolveSession();
+    if (sessionId === undefined) return await this.sessionManager.resolveSession();
     const session = this.sessionManager.getSession(sessionId);
     if (!session) {
       void vscode.window.showWarningMessage(
@@ -1484,7 +1484,7 @@ export class ExplorerController {
   // promise they return is already resolved.
   async beginFilter(viewId: string): Promise<void> {
     if (viewId === VIEW_METHODS) {
-      return this.openPaneFindWidget(viewId);
+      return await this.openPaneFindWidget(viewId);
     }
     // A box already open (another pane's funnel, say) no longer closes itself when focus moves
     // here, so put it away first — and as an accept, since opening a second filter box is not a
@@ -4950,7 +4950,7 @@ export class ExplorerController {
     scanFailed?: string;
     truncated: boolean;
   }> {
-    return vscode.window.withProgress(
+    return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title,

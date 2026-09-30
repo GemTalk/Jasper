@@ -99,9 +99,9 @@ async function getRootNodes(provider: OsConfigTreeProvider): Promise<OsConfigNod
         resolve();
       });
     });
-    return provider.getChildren();
+    return await provider.getChildren();
   }
-  return Array.isArray(initial) ? initial : await initial;
+  return await initial;
 }
 
 /** Find the (at most one) node of a given kind, narrowed to that variant. */

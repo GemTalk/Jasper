@@ -524,7 +524,7 @@ export const window = {
     async (_opts: unknown, task: (progress: unknown, token: unknown) => Promise<unknown>) => {
       const progress = { report: vi.fn() };
       const token = { isCancellationRequested: false };
-      return task(progress, token);
+      return await task(progress, token);
     },
   ),
 };
