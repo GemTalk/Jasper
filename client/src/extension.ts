@@ -5097,7 +5097,7 @@ export function activate(context: vscode.ExtensionContext) {
             report: () => {
               /* no surrounding progress notification here; the Admin channel has the detail */
             },
-            showError: (m) => vscode.window.showErrorMessage(m),
+            showError: (m) => void vscode.window.showErrorMessage(m),
           },
         );
         if (outcome.kind === 'stopped') {

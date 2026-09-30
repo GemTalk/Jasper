@@ -67,7 +67,7 @@ import type { SessionManager, ActiveSession } from '../../sessionManager';
 const SESSION_ID = 7;
 const SESSION = { id: SESSION_ID } as ActiveSession;
 
-const executeCommand = commands.executeCommand as ReturnType<typeof vi.fn>;
+const executeCommand = commands.executeCommand;
 
 /** Every command the run executed, as plain strings. */
 function executedCommands(): string[] {

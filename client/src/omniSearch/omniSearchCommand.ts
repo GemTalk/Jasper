@@ -262,7 +262,7 @@ export function buildViewContextResolver(
             ),
           ),
         previewSource: buildPreviewSource(session),
-        onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
+        onError: (message) => void vscode.window.showErrorMessage(`GemStone Search: ${message}`),
       },
     };
   };
@@ -294,7 +294,7 @@ export function buildSpotterDeps(session: ActiveSession): OmniPanelDeps {
         ),
       ),
     previewSource: buildPreviewSource(session),
-    onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
+    onError: (message) => void vscode.window.showErrorMessage(`GemStone Search: ${message}`),
   };
 }
 

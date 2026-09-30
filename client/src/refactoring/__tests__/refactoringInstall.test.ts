@@ -25,9 +25,9 @@ import {
   REFACTORING_PAYLOAD_FILES,
 } from '../refactoringInstall';
 
-const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
-const executeFetchStringNbMock = executeFetchStringNb as ReturnType<typeof vi.fn>;
-const checkAvailableMock = checkRefactoringSupportAvailable as ReturnType<typeof vi.fn>;
+const executeFetchStringMock = vi.mocked(executeFetchString);
+const executeFetchStringNbMock = vi.mocked(executeFetchStringNb);
+const checkAvailableMock = vi.mocked(checkRefactoringSupportAvailable);
 
 // The install's two long round trips — filing in the loader, then running it —
 // go through the NON-blocking helper. The synchronous one would freeze the
