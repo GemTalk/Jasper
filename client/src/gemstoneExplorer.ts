@@ -4471,13 +4471,19 @@ export class ExplorerController {
     session: ActiveSession,
     dictRef: number | string | undefined,
   ): string | undefined {
-    // A name given directly (a Hierarchy node's own dictionary) is already the answer. Only an
-    // INDEX needs resolving, and only then is the tree's selected name a safe shortcut — it
-    // names the dictionary that index came from. Preferring `state.dictName` unconditionally
-    // labelled a Hierarchy ancestor's history with the selected dictionary instead of its own.
+    // A name given directly (a Hierarchy node's own dictionary) is already the answer. An INDEX
+    // has to be resolved, and the tree's selected name is a shortcut for exactly ONE index —
+    // the selected one. Using it for any index labelled a Hierarchy ancestor with the selected
+    // dictionary: Class History on `Object`, which lives in Globals, opened saying UserGlobals.
+    // The history itself was scoped correctly, so only the label lied, which is the worse half
+    // of the bug this scoping exists to prevent — the panel's job is to say WHICH of the
+    // same-named classes these versions belong to.
     if (typeof dictRef === 'string') return dictRef;
     if (dictRef === undefined) return this.state.dictName;
-    return this.state.dictName ?? dictionaryNameFor(session, dictRef);
+    if (dictRef === this.state.dictIndex) {
+      return this.state.dictName ?? dictionaryNameFor(session, dictRef);
+    }
+    return dictionaryNameFor(session, dictRef);
   }
 
   // Show one method's recorded source history (context menu on a method row). The

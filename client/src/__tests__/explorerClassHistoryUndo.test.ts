@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // Stub only what the class-history flow touches.
 vi.mock('../browserQueries', () => ({
   getClassHistory: vi.fn(),
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Published', 'Globals']),
   revertClassToVersion: vi.fn(),
   removeClassVersion: vi.fn(),
   getClassEnvironments: vi.fn(() => []),
@@ -170,13 +171,47 @@ describe('ExplorerController.classHistory — which dictionary the history belon
     expect(await historyDictFor(ctl, node)).toBe(2);
   });
 
+  /** The dictionary name the panel was labelled with. */
+  const panelDictName = () =>
+    (vi.mocked(showClassHistoryPanel).mock.calls[0][3] as { dictName?: string }).dictName;
+
   it("labels the panel with the hierarchy node's dictionary", async () => {
     const ctl = makeController();
     const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);
     await ctl.classHistory(node);
-    expect(vi.mocked(showClassHistoryPanel).mock.calls[0][3]).toMatchObject({
-      dictName: 'Globals',
-    });
+    expect(panelDictName()).toBe('Globals');
+  });
+
+  it("labels the panel with the node's OWN dictionary when the node carries an index", async () => {
+    // The case the name-carrying node above cannot reach. A Hierarchy node now usually gives an
+    // INDEX, and the selected dictionary's name was used for any index at all: Class History on
+    // `Object`, which lives in Globals, opened saying UserGlobals. The versions listed were the
+    // right ones, which is what makes a wrong label worse than a wrong lookup — nothing else on
+    // screen says which of the same-named classes they belong to.
+    const ctl = makeController(); // selection is index 3, 'UserGlobals'
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false, undefined, 2);
+
+    await ctl.classHistory(node);
+
+    expect(panelDictName()).toBe('Published');
+  });
+
+  it("uses the selection's own name when the node's index IS the selected one", async () => {
+    // The shortcut is still right for exactly one index, and it is the one that avoids a query.
+    const ctl = makeController();
+    const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false, undefined, 3);
+
+    await ctl.classHistory(node);
+
+    expect(panelDictName()).toBe('UserGlobals');
+  });
+
+  it('labels a class row with the selected dictionary', async () => {
+    const ctl = makeController();
+
+    await ctl.classHistory({ className: 'Account' });
+
+    expect(panelDictName()).toBe('UserGlobals');
   });
 
   it('records the restore against the dictionary the panel was opened on', async () => {
