@@ -123,13 +123,13 @@ export class StepPointHintsProvider implements vscode.InlayHintsProvider {
     return tooltip;
   }
 
-  provideInlayHints(
+  async provideInlayHints(
     document: vscode.TextDocument,
     range: vscode.Range,
-  ): vscode.InlayHint[] | undefined {
+  ): Promise<vscode.InlayHint[] | undefined> {
     if (!this.visible()) return undefined;
 
-    const info = this.stepPoints.get(document);
+    const info = await this.stepPoints.get(document);
     if (!info) return undefined;
 
     const from = document.offsetAt(range.start);

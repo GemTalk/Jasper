@@ -23,10 +23,10 @@ describe('recognizing a transaction mode', () => {
 });
 
 describe('reading mode and transaction state together', () => {
-  it('takes both from one round trip', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'manualBegin false\n');
+  it('takes both from one round trip', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'manualBegin false\n');
 
-    expect(getTransactionState(execute)).toEqual({
+    expect(await getTransactionState(execute)).toEqual({
       mode: 'manualBegin',
       inTransaction: false,
     });
@@ -35,26 +35,28 @@ describe('reading mode and transaction state together', () => {
     expect(execute.mock.calls[0][0]).toContain('System transactionMode asString');
   });
 
-  it('reads true as in a transaction', () => {
-    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'autoBegin true'))).toEqual({
+  it('reads true as in a transaction', async () => {
+    expect(await getTransactionState(vi.fn<QueryExecutor>(async () => 'autoBegin true'))).toEqual({
       mode: 'autoBegin',
       inTransaction: true,
     });
   });
 
-  it('leaves each half undefined on its own when the stone answers oddly', () => {
-    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'manualBegin nil'))).toEqual({
+  it('leaves each half undefined on its own when the stone answers oddly', async () => {
+    expect(await getTransactionState(vi.fn<QueryExecutor>(async () => 'manualBegin nil'))).toEqual({
       mode: 'manualBegin',
       inTransaction: undefined,
     });
-    expect(getTransactionState(vi.fn<QueryExecutor>(() => 'somethingElse true'))).toEqual({
+    expect(
+      await getTransactionState(vi.fn<QueryExecutor>(async () => 'somethingElse true')),
+    ).toEqual({
       mode: undefined,
       inTransaction: true,
     });
   });
 
-  it('survives an empty answer without throwing', () => {
-    expect(getTransactionState(vi.fn<QueryExecutor>(() => ''))).toEqual({
+  it('survives an empty answer without throwing', async () => {
+    expect(await getTransactionState(vi.fn<QueryExecutor>(async () => ''))).toEqual({
       mode: undefined,
       inTransaction: undefined,
     });
@@ -62,36 +64,38 @@ describe('reading mode and transaction state together', () => {
 });
 
 describe('switching the transaction mode', () => {
-  it('asks for the mode and answers what the stone reports afterwards', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'transactionless');
+  it('asks for the mode and answers what the stone reports afterwards', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'transactionless');
 
-    expect(setTransactionMode(execute, 'transactionless')).toBe('transactionless');
+    expect(await setTransactionMode(execute, 'transactionless')).toBe('transactionless');
     expect(execute.mock.calls[0][0]).toContain('System transactionMode: #transactionless');
   });
 
-  it('answers undefined when the switch did not land, so no caller caches a mode that was never reached', () => {
+  it('answers undefined when the switch did not land, so no caller caches a mode that was never reached', async () => {
     // The stone still reports the old mode — the switch silently did not take.
-    const execute = vi.fn<QueryExecutor>(() => 'notAMode');
+    const execute = vi.fn<QueryExecutor>(async () => 'notAMode');
 
-    expect(setTransactionMode(execute, 'manualBegin')).toBeUndefined();
+    expect(await setTransactionMode(execute, 'manualBegin')).toBeUndefined();
   });
 });
 
 describe('the gem’s own SigAbort servicing', () => {
-  it('arms it', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'GemAutoServiceSigAbort set');
+  it('arms it', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'GemAutoServiceSigAbort set');
 
-    setGemAutoServiceSigAbort(execute, true);
+    await setGemAutoServiceSigAbort(execute, true);
 
     expect(execute.mock.calls[0][0]).toContain(
       'System gemConfigurationAt: #GemAutoServiceSigAbort put: true',
     );
   });
 
-  it('reads it back', () => {
-    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'true'))).toBe(true);
-    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'false'))).toBe(false);
-    expect(getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(() => 'nil'))).toBeUndefined();
+  it('reads it back', async () => {
+    expect(await getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(async () => 'true'))).toBe(true);
+    expect(await getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(async () => 'false'))).toBe(false);
+    expect(
+      await getGemAutoServiceSigAbort(vi.fn<QueryExecutor>(async () => 'nil')),
+    ).toBeUndefined();
   });
 });
 

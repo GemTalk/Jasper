@@ -6,11 +6,11 @@ export interface TestMethodInfo {
   category: string;
 }
 
-export function discoverTestMethods(
+export async function discoverTestMethods(
   execute: QueryExecutor,
   className: string,
   dictName?: string,
-): TestMethodInfo[] {
+): Promise<TestMethodInfo[]> {
   // Resolve dictionary-scoped so we list the methods of the specific class
   // the caller means, not whichever same-named class wins bare-name lookup.
   const code = `| cls ws |
@@ -22,7 +22,7 @@ cls testSelectors asSortedCollection do: [:each |
     nextPutAll: ((cls categoryOfSelector: each environmentId: 0) ifNil: ['']);
     lf].
 ws contents`;
-  const data = execute(code);
+  const data = await execute(code);
   return splitLines(data).map((line) => {
     const [selector, category] = line.split('\t');
     return { selector, category: category || '' };

@@ -23,7 +23,7 @@ import { searchSelectors } from '../../queries/searchSelectors';
 import { defaultQueryExecutorUsing } from '../../browserQueries';
 import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
 import { OMNI_DEFAULTS } from '../omniConfig';
-import { NEVER_CANCELLED, OmniConfig, OmniResult } from '../omniTypes';
+import { NEVER_CANCELLED, OmniConfig } from '../omniTypes';
 import type { ActiveSession } from '../../sessionManager';
 
 // How far down the first page `Array>>at:` is allowed to sit. Nothing in the image fixes the exact
@@ -44,11 +44,11 @@ describe('methods search relevance (integration)', () => {
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
   const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS, ...over });
 
-  it('returns the exact implementors of a common selector even though the scan is bounded', () => {
+  it('returns the exact implementors of a common selector even though the scan is bounded', async () => {
     const exec = defaultQueryExecutorUsing(session());
     const limit = OMNI_DEFAULTS.maxResultsPerCategory * SERVER_OVERFETCH;
 
-    const rows = searchSelectors(exec, 'at:', { limit, ignoreCase: true });
+    const rows = await searchSelectors(exec, 'at:', { limit, ignoreCase: true });
 
     // The scan really is up against its bound — this is the condition under which the bug appeared.
     expect(rows).toHaveLength(limit);
@@ -64,12 +64,12 @@ describe('methods search relevance (integration)', () => {
     expect(rows.slice(0, firstInexact).every((r) => r.selector === 'at:')).toBe(true);
   });
 
-  it('puts Array>>at: on the first page of the Methods results for the term `at:`', () => {
+  it('puts Array>>at: on the first page of the Methods results for the term `at:`', async () => {
     const provider = createMethodsProvider(1, (term, limit, ignoreCase) =>
       searchSelectors(defaultQueryExecutorUsing(session()), term, { limit, ignoreCase }),
     );
 
-    const shown = provider.search('at:', cfg(), NEVER_CANCELLED) as OmniResult[];
+    const shown = await provider.search('at:', cfg(), NEVER_CANCELLED);
     const labels = shown.map((r) => r.label);
 
     // The reported bug, in one assertion.
@@ -80,10 +80,10 @@ describe('methods search relevance (integration)', () => {
     expect(labels[0].endsWith('>>at:')).toBe(true);
   });
 
-  it('still finds a selector the term only appears INSIDE, once the better tiers run out', () => {
+  it('still finds a selector the term only appears INSIDE, once the better tiers run out', async () => {
     // The tiers must not become a filter: a term with no exact and no prefix match has to fall through
     // to plain substring hits, which is the only thing the old scan did.
-    const rows = searchSelectors(defaultQueryExecutorUsing(session()), 'VarAt:pu', {
+    const rows = await searchSelectors(defaultQueryExecutorUsing(session()), 'VarAt:pu', {
       limit: 40,
       ignoreCase: true,
     });

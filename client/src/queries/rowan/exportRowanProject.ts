@@ -16,11 +16,11 @@ export interface RowanExportResult {
 // load specification — `writeResolvedProject:` deliberately omits the load spec,
 // and without it the copy cannot be reloaded. `asDefinition` + `writeResolvedProject:`
 // have no image side effects (no dirty-flag changes, unlike `writeProjectNamed:`).
-export function exportRowanProject(
+export async function exportRowanProject(
   execute: QueryExecutor,
   projectName: string,
   targetDir: string,
-): RowanExportResult {
+): Promise<RowanExportResult> {
   const code = `| r lp def sep |
 sep := String with: Character tab.
 r := System myUserProfile symbolList objectNamed: #'Rowan'.
@@ -34,7 +34,7 @@ lp isNil ifTrue: [^'ERR' , sep , 'Project ${escapeString(projectName)} is not lo
   on: Error do: [:e | ^'ERR' , sep , e messageText].
 'OK' , sep , '${escapeString(targetDir)}'`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const tab = raw.indexOf('\t');
   const status = tab === -1 ? raw.trim() : raw.slice(0, tab);
   const detail = tab === -1 ? '' : raw.slice(tab + 1).trim();

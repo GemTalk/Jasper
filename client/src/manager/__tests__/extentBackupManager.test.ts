@@ -27,7 +27,7 @@ function makeExecutor(
     resume: 'OK',
     ...over,
   };
-  return vi.fn<QueryExecutor>((code) => {
+  return vi.fn<QueryExecutor>(async (code) => {
     if (code.includes('FULL_LOGGING')) return r.fullLogging;
     if (code.includes('SystemRepository fileNames')) return r.extents;
     if (code.includes('suspendCheckpointsForMinutes')) return r.suspend;

@@ -31,15 +31,15 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
     getSelectedSession: () => session ?? undefined,
   } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
-  vi.spyOn(ctl, 'selectDict').mockImplementation(() => {});
+  vi.spyOn(ctl, 'selectDict').mockImplementation(async () => {});
   return ctl;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
-  vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 3 });
-  vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals', 'Reports']);
+  vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 3 });
+  vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals', 'Globals', 'Reports']);
 });
 
 describe('ExplorerController.newDictionary', () => {
@@ -87,7 +87,7 @@ describe('ExplorerController.newDictionary', () => {
   it('records nothing when the dictionary did not appear on the symbol list', async () => {
     const ctl = makeController();
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Reports');
-    vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
+    vi.mocked(captureDictionary).mockResolvedValue({ present: false, name: 'Reports', index: 0 });
 
     await ctl.newDictionary();
 

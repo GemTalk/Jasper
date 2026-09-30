@@ -124,9 +124,9 @@ export async function runInstVarRefactor(
   }
 
   const token = `iv_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearInstVarPreview(session, token);
+      await queries.clearInstVarPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -149,18 +149,18 @@ export async function runInstVarRefactor(
     void vscode.window.showErrorMessage(
       `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return undefined;
   }
   if (start.total === 0) {
     refuse('Nothing to change.');
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
@@ -177,10 +177,10 @@ export async function runInstVarRefactor(
       void vscode.window.showErrorMessage(
         `${titleFor(req)} failed: ${e instanceof Error ? e.message : String(e)}`,
       );
-      safeClear();
+      await safeClear();
       return undefined;
     }
-    safeClear();
+    await safeClear();
     const failure = result.error ?? result.failed[0]?.error;
     if (failure !== undefined) {
       void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${failure}`);
@@ -220,12 +220,12 @@ export async function runInstVarRefactor(
       // The engine stops at the first failure and never aborts on its own (that would discard the
       // user's other in-flight work). The panel surfaces the failure in place and, when a partial
       // reshape is stranded, offers this abort directly — no toast, no second confirmation.
-      abort: () => {
-        queries.abortSessionTransaction(session);
+      abort: async () => {
+        await queries.abortSessionTransaction(session);
       },
       // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
       sessionNeedsCommit: () => queries.sessionNeedsCommit(session),
-      cleanup: safeClear,
+      cleanup: () => void safeClear(),
     },
     accessorNote,
   );
@@ -248,7 +248,7 @@ export async function runInstVarRefactor(
   // engine's signal that one of them ran.
   if (!result.committed) {
     try {
-      queries.recordReverseRename(
+      await queries.recordReverseRename(
         session,
         op === 'add' ? 'instVarAdd' : 'instVarRemove',
         className,

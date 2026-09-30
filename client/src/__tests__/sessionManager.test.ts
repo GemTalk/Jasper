@@ -302,7 +302,7 @@ describe('SessionManager', () => {
       expect(session.sigAbortArmed).toBeUndefined();
 
       failArm = false;
-      manager.refreshTransactionState(session.id);
+      await manager.refreshTransactionState(session.id);
 
       expect(session.sigAbortArmed).toBe(true);
     });
@@ -311,11 +311,11 @@ describe('SessionManager', () => {
     it('does not arm again after a manualBegin → autoBegin → manualBegin round trip', async () => {
       const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
-      manager.setTransactionMode(session.id, 'manualBegin');
+      await manager.setTransactionMode(session.id, 'manualBegin');
       transactionStateAnswer = 'autoBegin true';
-      manager.setTransactionMode(session.id, 'autoBegin');
+      await manager.setTransactionMode(session.id, 'autoBegin');
       transactionStateAnswer = 'manualBegin false';
-      manager.setTransactionMode(session.id, 'manualBegin');
+      await manager.setTransactionMode(session.id, 'manualBegin');
 
       expect(armCalls()).toBe(1);
     });
@@ -323,8 +323,8 @@ describe('SessionManager', () => {
     it('does not arm again on every read while the session stays in manualBegin', async () => {
       transactionStateAnswer = 'manualBegin false';
       const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
-      manager.refreshTransactionState(session.id);
-      manager.refreshTransactionState(session.id);
+      await manager.refreshTransactionState(session.id);
+      await manager.refreshTransactionState(session.id);
 
       expect(armCalls()).toBe(1);
     });
@@ -335,7 +335,7 @@ describe('SessionManager', () => {
       const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
 
-      manager.setTransactionMode(session.id, 'manualBegin');
+      await manager.setTransactionMode(session.id, 'manualBegin');
 
       const switchCall = executeAndFetchStringMock.mock.calls.find(
         (c) => typeof c[1] === 'string' && c[1].includes('System transactionMode: #manualBegin'),
@@ -349,7 +349,7 @@ describe('SessionManager', () => {
       const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       transactionStateAnswer = 'manualBegin false';
 
-      manager.setTransactionMode(session.id, 'manualBegin');
+      await manager.setTransactionMode(session.id, 'manualBegin');
 
       expect(
         executeAndFetchStringMock.mock.calls.some(
@@ -364,7 +364,7 @@ describe('SessionManager', () => {
       const session = await manager.login({ ...DEFAULT_LOGIN, label: 'Test' }, '/mock/lib');
       switchAnswer = 'autoBegin';
 
-      expect(() => manager.setTransactionMode(session.id, 'manualBegin')).toThrow(
+      await expect(manager.setTransactionMode(session.id, 'manualBegin')).rejects.toThrow(
         'the stone reports autoBegin after the switch, not manualBegin',
       );
       expect(session.transactionMode).toBe('autoBegin');
@@ -376,7 +376,7 @@ describe('SessionManager', () => {
       manager.onDidChangeTransactionState((id) => seen.push(id));
       transactionStateAnswer = 'manualBegin false';
 
-      manager.setTransactionMode(session.id, 'manualBegin');
+      await manager.setTransactionMode(session.id, 'manualBegin');
 
       expect(seen).toEqual([session.id]);
     });
@@ -398,7 +398,7 @@ describe('SessionManager', () => {
         manager.onDidChangeTransactionState((id) => seen.push(id));
         transactionStateAnswer = `manualBegin ${after}`;
 
-        act(manager, session.id);
+        await act(manager, session.id);
 
         expect(session.inTransaction).toBe(after);
         expect(seen).toEqual([session.id]);
@@ -411,7 +411,7 @@ describe('SessionManager', () => {
       manager.onDidChangeTransactionState((id) => seen.push(id));
 
       // The stone keeps answering autoBegin/true: a redraw here would be noise.
-      manager.refreshTransactionState(session.id);
+      await manager.refreshTransactionState(session.id);
 
       expect(seen).toEqual([]);
     });

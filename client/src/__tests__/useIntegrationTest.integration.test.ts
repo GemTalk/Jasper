@@ -62,8 +62,8 @@ describe('integration test harness commit guard (integration)', () => {
     expect(err.message).toContain(COMMIT_GUARD_REASON);
   });
 
-  it('refuses a commit attempted on a second, independent session', () => {
-    withTransientSession((transientSession) => {
+  it('refuses a commit attempted on a second, independent session', async () => {
+    await withTransientSession((transientSession) => {
       expect(commitGuardIsArmedOn(transientSession)).toBe(true);
       expectRefusedByCommitGuard(commitOn(transientSession));
     });
@@ -77,7 +77,7 @@ describe('integration test harness commit guard (integration)', () => {
     expectRefusedByCommitGuard(commitOn(session));
   });
 
-  it('leaves the session usable after a refused commit', () => {
+  it('leaves the session usable after a refused commit', async () => {
     expect(commitOn(session)).toThrow();
 
     expect(gci.executeAndRelease(session, '3 + 4 = 7', (oop) => gci.isTrueOop(oop))).toBe(true);
@@ -112,31 +112,32 @@ describe('allowedCommits budget (integration)', () => {
     { allowedCommits: 3 },
   );
 
-  const isVisibleToOtherSessions = (key: string): boolean => {
+  const isVisibleToOtherSessions = async (key: string): Promise<boolean> => {
     let visible = false;
-    withTransientSession((transientSession) => {
+    await withTransientSession((transientSession) => {
       visible = gci.isIncludedInUserGlobals(transientSession, key);
     });
     return visible;
   };
 
-  it('does not let a commit made during the test reach other sessions', () => {
+  it('does not let a commit made during the test reach other sessions', async () => {
     const key = gci.storeInUniqueUserGlobalsKey(session, 'true');
     gci.executeDiscardingResult(session, 'System commitTransaction');
 
-    const visibleElsewhere = isVisibleToOtherSessions(key);
+    const visibleElsewhere = await isVisibleToOtherSessions(key);
 
     expect(visibleElsewhere).toBe(false);
   });
 
-  it('does not let several sequential commits made during the test reach other sessions', () => {
+  it('does not let several sequential commits made during the test reach other sessions', async () => {
     const keys = [0, 1, 2].map(() => {
       const key = gci.storeInUniqueUserGlobalsKey(session, 'true');
       gci.executeDiscardingResult(session, 'System commitTransaction');
       return key;
     });
 
-    const visibleElsewhere = keys.map(isVisibleToOtherSessions);
+    const visibleElsewhere: boolean[] = [];
+    for (const key of keys) visibleElsewhere.push(await isVisibleToOtherSessions(key));
 
     expect(visibleElsewhere).toEqual(keys.map(() => false));
   });
@@ -148,14 +149,14 @@ describe('allowedCommits budget (integration)', () => {
     expectUtf8OopToResolveViaSymbolLookup(session, gci);
   });
 
-  it('budgets commits for a session re-established part way through a test', () => {
+  it('budgets commits for a session re-established part way through a test', async () => {
     logout();
     login();
 
     const key = gci.storeInUniqueUserGlobalsKey(session, 'true');
     gci.executeDiscardingResult(session, 'System commitTransaction');
 
-    expect(isVisibleToOtherSessions(key)).toBe(false);
+    expect(await isVisibleToOtherSessions(key)).toBe(false);
   });
 });
 

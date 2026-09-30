@@ -85,15 +85,15 @@ const CLASS_FILE = [
 describe('fileInFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(queries.fileInChunk).mockReturnValue('ok');
-    vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
-    vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
+    vi.mocked(queries.fileInChunk).mockResolvedValue('ok');
+    vi.mocked(queries.compileMethod).mockResolvedValue('Compiled');
+    vi.mocked(queries.removeAllMethods).mockResolvedValue('ok');
   });
 
-  it('runs every step of a class file-out, in order', () => {
+  it('runs every step of a class file-out, in order', async () => {
     withFiles({ [A_GS]: CLASS_FILE });
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     expect(outcome.errors).toEqual([]);
     expect(outcome.executed).toBe(1);
@@ -105,10 +105,10 @@ describe('fileInFile', () => {
     expect(queries.removeAllMethods).toHaveBeenCalledWith(SESSION, 'Animal', true);
   });
 
-  it('compiles each method into the category and side the file put it in', () => {
+  it('compiles each method into the category and side the file put it in', async () => {
     withFiles({ [A_GS]: CLASS_FILE });
 
-    fileInFile(SESSION, A_GS);
+    await fileInFile(SESSION, A_GS);
 
     expect(queries.compileMethod).toHaveBeenCalledWith(
       SESSION,
@@ -128,13 +128,13 @@ describe('fileInFile', () => {
     );
   });
 
-  it('keeps going after a failing method and names the one that failed', () => {
+  it('keeps going after a failing method and names the one that failed', async () => {
     withFiles({ [A_GS]: CLASS_FILE });
-    vi.mocked(queries.compileMethod).mockImplementationOnce(() => {
+    vi.mocked(queries.compileMethod).mockImplementationOnce(async () => {
       throw new Error('CompileError: undefined symbol');
     });
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     // The class-side method still went in.
     expect(outcome.compiled).toBe(1);
@@ -146,47 +146,47 @@ describe('fileInFile', () => {
     expect(outcome.errors[0].file).toBe(A_GS);
   });
 
-  it('follows an input line, resolving it beside the file that named it', () => {
+  it('follows an input line, resolving it beside the file that named it', async () => {
     withFiles({
       [LOADER]: ['doit', 'UserGlobals at: #Animals put: nil', '%', 'input Animal.gs'].join('\n'),
       [A_GS]: CLASS_FILE,
     });
 
-    const outcome = fileInFile(SESSION, LOADER);
+    const outcome = await fileInFile(SESSION, LOADER);
 
     expect(outcome.files).toBe(2);
     expect(outcome.executed).toBe(2);
     expect(outcome.compiled).toBe(2);
   });
 
-  it('does not loop on files that input each other', () => {
+  it('does not loop on files that input each other', async () => {
     withFiles({
       [A_GS]: 'input Dog.gs',
       [D_GS]: 'input Animal.gs',
     });
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     expect(outcome.files).toBe(2);
     expect(outcome.errors).toEqual([]);
   });
 
-  it('reports an input naming a file that is not there', () => {
+  it('reports an input naming a file that is not there', async () => {
     withFiles({ [LOADER]: 'input Missing.gs' });
 
-    const outcome = fileInFile(SESSION, LOADER);
+    const outcome = await fileInFile(SESSION, LOADER);
 
     expect(outcome.errors).toHaveLength(1);
     expect(outcome.errors[0].message).toContain('Could not read');
     expect(outcome.errors[0].file).toBe(at('/src/Missing.gs'));
   });
 
-  it('reports a directive it does not recognise, and runs the rest of the file', () => {
+  it('reports a directive it does not recognise, and runs the rest of the file', async () => {
     withFiles({
       [A_GS]: ['wibble', 'doit', "Object subclass: 'Animal'", '%'].join('\n'),
     });
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     expect(outcome.executed).toBe(1);
     expect(outcome.errors).toEqual([]);
@@ -194,7 +194,7 @@ describe('fileInFile', () => {
     expect(outcome.skipped[0].message).toContain('wibble');
   });
 
-  it("runs a topaz script's chunks and leaves its topaz commands alone", () => {
+  it("runs a topaz script's chunks and leaves its topaz commands alone", async () => {
     withFiles({
       [TPZ]: [
         'set gemstone gs64stone',
@@ -209,7 +209,7 @@ describe('fileInFile', () => {
       ].join('\n'),
     });
 
-    const outcome = fileInFile(SESSION, TPZ);
+    const outcome = await fileInFile(SESSION, TPZ);
 
     expect(outcome.executed).toBe(1);
     // The preamble is recognised as topaz's own, not reported as gibberish.
@@ -225,47 +225,47 @@ describe('fileInFile', () => {
     expect(outcome.stopped).toBe(true);
   });
 
-  it('reads no further than exit, as topaz would', () => {
+  it('reads no further than exit, as topaz would', async () => {
     withFiles({
       [TPZ]: ['doit', "Object subclass: 'Animal'", '%', 'exit', 'doit', 'Never run', '%'].join(
         '\n',
       ),
     });
 
-    const outcome = fileInFile(SESSION, TPZ);
+    const outcome = await fileInFile(SESSION, TPZ);
 
     expect(outcome.executed).toBe(1);
     expect(queries.fileInChunk).not.toHaveBeenCalledWith(SESSION, 'Never run');
   });
 
-  it('stops the files an exit-ing file pulled it in beside', () => {
+  it('stops the files an exit-ing file pulled it in beside', async () => {
     withFiles({
       [LOADER]: ['input Animal.gs', 'input Dog.gs'].join('\n'),
       [A_GS]: 'exit',
       [D_GS]: CLASS_FILE,
     });
 
-    const outcome = fileInFile(SESSION, LOADER);
+    const outcome = await fileInFile(SESSION, LOADER);
 
     expect(outcome.stopped).toBe(true);
     expect(outcome.files).toBe(2);
     expect(outcome.compiled).toBe(0);
   });
 
-  it('reads a file that starts with a byte-order mark', () => {
+  it('reads a file that starts with a byte-order mark', async () => {
     withFiles({ [A_GS]: `\uFEFF${CLASS_FILE}` });
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     expect(outcome.errors).toEqual([]);
     expect(outcome.skipped).toEqual([]);
     expect(outcome.executed).toBe(1);
   });
 
-  it('reports a file it cannot read rather than throwing', () => {
+  it('reports a file it cannot read rather than throwing', async () => {
     withFiles({});
 
-    const outcome = fileInFile(SESSION, A_GS);
+    const outcome = await fileInFile(SESSION, A_GS);
 
     expect(outcome.files).toBe(0);
     expect(outcome.errors).toHaveLength(1);
@@ -313,9 +313,9 @@ describe('the File In command', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(queries.fileInChunk).mockReturnValue('ok');
-    vi.mocked(queries.compileMethod).mockReturnValue('Compiled');
-    vi.mocked(queries.removeAllMethods).mockReturnValue('ok');
+    vi.mocked(queries.fileInChunk).mockResolvedValue('ok');
+    vi.mocked(queries.compileMethod).mockResolvedValue('Compiled');
+    vi.mocked(queries.removeAllMethods).mockResolvedValue('ok');
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
     vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
@@ -518,7 +518,7 @@ describe('the File In command', () => {
   });
 
   it('reports errors with the first one named, and offers the log', async () => {
-    vi.mocked(queries.compileMethod).mockImplementation(() => {
+    vi.mocked(queries.compileMethod).mockImplementation(async () => {
       throw new Error('CompileError: nope');
     });
 

@@ -62,10 +62,10 @@ function same(a: MethodSlotState, b: MethodSlotState): boolean {
  * taken away again; recording a reversal that is wrong in one direction is worse than
  * recording none.
  */
-export function beginMethodEdit(
+export async function beginMethodEdit(
   session: ActiveSession,
   slots: MethodSlot[],
-): MethodEditRecording | undefined {
+): Promise<MethodEditRecording | undefined> {
   if (slots.length === 0) return undefined;
   if (slots.some((s) => s.environmentId !== 0)) {
     logInfo('[undo] not recording: a slot names a non-default method environment');
@@ -76,7 +76,7 @@ export function beginMethodEdit(
   // edit fails.
   let before: MethodSlotState[];
   try {
-    before = captureMethodSlots(defaultQueryExecutorUsing(session), slots);
+    before = await captureMethodSlots(defaultQueryExecutorUsing(session), slots);
   } catch (e: unknown) {
     logInfo(`[undo] capture failed, edit will not be undoable: ${describe(e)}`);
     return undefined;
@@ -122,12 +122,12 @@ function describe(e: unknown): string {
  * `undefined` when the read fails, which the caller turns into "not undoable" rather than a
  * guess.
  */
-export function readMethodSlotState(
+export async function readMethodSlotState(
   session: ActiveSession,
   slots: MethodSlot[],
-): MethodSlotState[] | undefined {
+): Promise<MethodSlotState[] | undefined> {
   try {
-    const states = captureMethodSlots(defaultQueryExecutorUsing(session), slots);
+    const states = await captureMethodSlots(defaultQueryExecutorUsing(session), slots);
     return states.length === slots.length ? states : undefined;
   } catch (e: unknown) {
     logInfo(`[undo] could not read what the edit left: ${describe(e)}`);
@@ -146,11 +146,11 @@ export function readMethodSlotState(
  * `commit` is called only once the removal has actually succeeded — a deletion GemStone
  * refused must not leave an entry offering to restore a method that never went away.
  */
-export function beginMethodDeletion(
+export async function beginMethodDeletion(
   session: ActiveSession,
   slot: MethodSlot,
-): { commit(): UndoEntry | undefined } | undefined {
-  const recording = beginMethodEdit(session, [slot]);
+): Promise<{ commit(): UndoEntry | undefined } | undefined> {
+  const recording = await beginMethodEdit(session, [slot]);
   if (!recording) return undefined;
   // Nothing was there to begin with: the removal is a no-op and there is nothing to undo.
   if (!recording.before[0].exists) return undefined;

@@ -261,7 +261,8 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
   ): void {
     if (this.pending.has(cacheKey)) return;
     this.pending.add(cacheKey);
-    const timer = setTimeout(() => {
+    const timer = setTimeout(() => void countNow(), 0);
+    const countNow = async (): Promise<void> => {
       this.countTimers.delete(timer);
       if (this.disposed) return; // editor/extension torn down before the timer fired
       let count = 0;
@@ -269,8 +270,8 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
         try {
           count +=
             data.kind === 'senders'
-              ? queries.sendersOf(session, data.selector, env).length
-              : queries.implementorsOf(session, data.selector, env).length;
+              ? (await queries.sendersOf(session, data.selector, env)).length
+              : (await queries.implementorsOf(session, data.selector, env)).length;
         } catch {
           // Session may be busy or selector not found in this env
         }
@@ -278,7 +279,7 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
       this.countCache.set(cacheKey, count);
       this.pending.delete(cacheKey);
       this._onDidChangeCodeLenses.fire();
-    }, 0);
+    };
     this.countTimers.add(timer);
   }
 

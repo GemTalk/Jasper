@@ -17,7 +17,10 @@ export interface RowanClassOwners {
 // given name. Scans every loaded project's packages (the image-level
 // loadedClassNamed: doesn't resolve classes that live outside the connected
 // user's symbolList, e.g. STON's in UserGlobals). Rows are tagged D/X.
-export function findRowanClassOwners(execute: QueryExecutor, className: string): RowanClassOwners {
+export async function findRowanClassOwners(
+  execute: QueryExecutor,
+  className: string,
+): Promise<RowanClassOwners> {
   const esc = escapeString(className);
   const code = `| r img ws |
 r := System myUserProfile symbolList objectNamed: #'Rowan'.
@@ -33,7 +36,7 @@ ws := WriteStream on: Unicode7 new.
   on: Error do: [:e | nil].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const owners: RowanClassOwners = { defined: [], extended: [] };
   for (const line of raw.split('\n')) {

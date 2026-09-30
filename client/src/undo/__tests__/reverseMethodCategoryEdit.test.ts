@@ -46,15 +46,15 @@ function entry(): MethodCategoryUndoEntry {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(renameCategory).mockReturnValue('ok');
+  vi.mocked(renameCategory).mockResolvedValue('ok');
   vi.mocked(renameOverlayCategory).mockResolvedValue('ok');
   vi.mocked(removeOverlayCategory).mockResolvedValue('ok');
-  vi.mocked(removeMethodCategory).mockReturnValue('ok');
+  vi.mocked(removeMethodCategory).mockResolvedValue('ok');
 });
 
 describe('reverseMethodCategoryEdit', () => {
   it('renames the category back, through the dictionary and side it was renamed on', async () => {
-    vi.mocked(getMethodCategories).mockReturnValue(['reading', 'printing']);
+    vi.mocked(getMethodCategories).mockResolvedValue(['reading', 'printing']);
 
     expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
 
@@ -74,7 +74,7 @@ describe('reverseMethodCategoryEdit', () => {
   it('does nothing on the stone when the category is already back the way it was', async () => {
     // 'reading' is gone and 'accessing' is there: nothing on the stone to rename. The overlay
     // is asked, finds nothing listed, and the entry is spent.
-    vi.mocked(getMethodCategories).mockReturnValue(['accessing', 'printing']);
+    vi.mocked(getMethodCategories).mockResolvedValue(['accessing', 'printing']);
     vi.mocked(renameOverlayCategory).mockResolvedValue('not-listed');
 
     expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
@@ -84,7 +84,7 @@ describe('reverseMethodCategoryEdit', () => {
   it('refuses, and names the collision, when the old name has been taken again', async () => {
     // Renaming onto an existing category is exactly what GemStone refuses; saying so here
     // beats letting error 2032 reach the user unexplained.
-    vi.mocked(getMethodCategories).mockReturnValue(['reading', 'accessing']);
+    vi.mocked(getMethodCategories).mockResolvedValue(['reading', 'accessing']);
 
     expect(await reverseMethodCategoryEdit(session, entry())).toBe(false);
 
@@ -95,7 +95,7 @@ describe('reverseMethodCategoryEdit', () => {
   });
 
   it('never renames on the stone when the target has no server existence', async () => {
-    vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+    vi.mocked(getMethodCategories).mockResolvedValue(['printing']);
 
     await reverseMethodCategoryEdit(session, entry());
 
@@ -103,7 +103,7 @@ describe('reverseMethodCategoryEdit', () => {
   });
 
   it('keeps the entry on offer when the categories cannot be read', async () => {
-    vi.mocked(getMethodCategories).mockImplementation(() => {
+    vi.mocked(getMethodCategories).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -112,8 +112,8 @@ describe('reverseMethodCategoryEdit', () => {
   });
 
   it('reports a rename the stone refused', async () => {
-    vi.mocked(getMethodCategories).mockReturnValue(['reading']);
-    vi.mocked(renameCategory).mockImplementation(() => {
+    vi.mocked(getMethodCategories).mockResolvedValue(['reading']);
+    vi.mocked(renameCategory).mockImplementation(async () => {
       throw new Error('classErrMethCatExists');
     });
 
@@ -127,7 +127,7 @@ describe('reverseMethodCategoryEdit', () => {
     // The stone does not have the renamed category, so this is a "+"-button one and the
     // overlay is the only place the rename happened.
     beforeEach(() => {
-      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+      vi.mocked(getMethodCategories).mockResolvedValue(['printing']);
     });
 
     it('renames it back in the overlay, and says nothing reached the stone', async () => {
@@ -170,7 +170,7 @@ describe('reverseMethodCategoryEdit', () => {
     it('reverses on the STONE once a method has been filed into it', async () => {
       // A fresh category becomes real the moment something lands in it, and the reversal has
       // to follow — which is why the entry carries no overlay flag to go stale.
-      vi.mocked(getMethodCategories).mockReturnValue(['reading', 'printing']);
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading', 'printing']);
 
       expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
 
@@ -194,7 +194,7 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('removes it from the stone once it is real, and says nothing moved', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['reading', 'printing']);
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading', 'printing']);
 
       expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
 
@@ -215,8 +215,8 @@ describe('reverseMethodCategoryEdit', () => {
     it('REFUSES when the category has been filled since, and names the count', async () => {
       // `removeCategory:` takes the methods in a category with it rather than refusing, so
       // attempting it here would silently delete them.
-      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
-      vi.mocked(removeMethodCategory).mockReturnValue('holds:3');
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading']);
+      vi.mocked(removeMethodCategory).mockResolvedValue('holds:3');
 
       expect(await reverseMethodCategoryEdit(session, created())).toBe(false);
 
@@ -230,8 +230,8 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('reads one held method as singular', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
-      vi.mocked(removeMethodCategory).mockReturnValue('holds:1');
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading']);
+      vi.mocked(removeMethodCategory).mockResolvedValue('holds:1');
 
       await reverseMethodCategoryEdit(session, created());
 
@@ -241,7 +241,7 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('takes it out of the overlay while it is still empty', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+      vi.mocked(getMethodCategories).mockResolvedValue(['printing']);
 
       expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
 
@@ -254,7 +254,7 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('spends the entry when the overlay no longer lists it', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+      vi.mocked(getMethodCategories).mockResolvedValue(['printing']);
       vi.mocked(removeOverlayCategory).mockResolvedValue('not-listed');
 
       expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
@@ -266,8 +266,8 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('keeps the entry on offer when the removal itself raises', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
-      vi.mocked(removeMethodCategory).mockImplementation(() => {
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading']);
+      vi.mocked(removeMethodCategory).mockImplementation(async () => {
         throw new Error('session busy');
       });
 
@@ -278,8 +278,8 @@ describe('reverseMethodCategoryEdit', () => {
     });
 
     it('reports a removal the stone refused for another reason', async () => {
-      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
-      vi.mocked(removeMethodCategory).mockReturnValue('not-found');
+      vi.mocked(getMethodCategories).mockResolvedValue(['reading']);
+      vi.mocked(removeMethodCategory).mockResolvedValue('not-found');
 
       expect(await reverseMethodCategoryEdit(session, created())).toBe(false);
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(

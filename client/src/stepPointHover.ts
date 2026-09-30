@@ -22,10 +22,13 @@ export class StepPointHoverProvider implements vscode.HoverProvider {
     private breakpoints: BreakpointManager,
   ) {}
 
-  provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
+  async provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+  ): Promise<vscode.Hover | null> {
     if (document.uri.scheme !== 'gemstone') return null;
 
-    const info = this.stepPoints.get(document);
+    const info = await this.stepPoints.get(document);
     if (!info || info.offsets.length === 0) return null;
 
     const offset = document.offsetAt(position);

@@ -17,17 +17,17 @@ export interface ClassReference {
  *  Resolution is deliberately unscoped: a class referenced in a method resolves the
  *  way the compiler resolved it, which may be a different dictionary than the one
  *  the editor's class lives in. */
-export function resolveClassReference(
+export async function resolveClassReference(
   execute: QueryExecutor,
   name: string,
-): ClassReference | undefined {
+): Promise<ClassReference | undefined> {
   const code = `| obj |
 obj := System myUserProfile symbolList objectNamed: '${escapeString(name)}' asSymbol.
 (obj isNil or: [(obj isKindOf: Class) not])
   ifTrue: ['']
   ifFalse: [
     obj name asString, (String with: Character lf), ${symbolListIndexOfClassExpr('obj')} printString ]`;
-  const lines = splitLines(execute(code));
+  const lines = splitLines(await execute(code));
   if (lines.length === 0) return undefined;
   const dictIndex = lines.length > 1 ? Number(lines[1]) : 0;
   return { className: lines[0], dictIndex: Number.isFinite(dictIndex) ? dictIndex : 0 };

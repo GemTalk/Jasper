@@ -40,7 +40,7 @@ function makeController(
 describe('ExplorerController.renameClassCategory', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue([]);
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue([]);
   });
 
   it('does nothing without a session', async () => {
@@ -75,7 +75,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Baz', category: 'Unrelated' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 2');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 2');
 
     await ctl.renameClassCategory(NODE);
 
@@ -100,7 +100,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Foo', category: 'Announcements' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockImplementation(() => {
+    vi.mocked(queries.renameClassCategory).mockImplementation(async () => {
       throw new Error('boom');
     });
     await ctl.renameClassCategory(NODE);
@@ -126,7 +126,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Foo', category: 'Announcements-Core' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Kernel');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 1');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 1');
 
     await ctl.renameClassCategory(NESTED_NODE);
 
@@ -194,7 +194,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Baz', category: 'Unrelated' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 0');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 0');
 
     await ctl.renameClassCategory(NODE);
 
@@ -219,7 +219,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Foo', category: 'Announcements' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 0');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 0');
 
     await ctl.renameClassCategory(NODE);
 
@@ -234,7 +234,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Foo', category: 'Announcements' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 2 skipped: 1');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 2 skipped: 1');
 
     await ctl.renameClassCategory(NODE);
 
@@ -249,7 +249,7 @@ describe('ExplorerController.renameClassCategory', () => {
       { className: 'Foo', category: 'Announcements' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('unexpected server reply');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('unexpected server reply');
 
     await ctl.renameClassCategory(NODE);
 
@@ -277,7 +277,7 @@ describe('ExplorerController.renameClassCategory', () => {
     ctl.state.classCategory = 'Announcements-Core'; // selection inside the renamed subtree
 
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 1');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 1');
 
     await ctl.renameClassCategory(NODE);
 
@@ -295,7 +295,7 @@ describe('ExplorerController.renameClassCategory', () => {
     ctl.state.classCategory = 'Announcementss-Core'; // shares a prefix but is NOT in the subtree
 
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 1');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 1');
 
     await ctl.renameClassCategory(NODE);
 
@@ -315,7 +315,7 @@ describe('ExplorerController.renameClassCategory — undo (#434)', () => {
     // per-test queue would be answered in a later test instead.
     vi.mocked(queries.getClassesWithCategory).mockReset();
     vi.mocked(queries.renameClassCategory).mockReset();
-    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 2');
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('renamed: 2');
   });
 
   it('records each class under its OWN former label, so a merge is reversible', async () => {
@@ -324,8 +324,8 @@ describe('ExplorerController.renameClassCategory — undo (#434)', () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Existing');
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Announcements', B: 'Existing' }))
-      .mockReturnValue(entries({ A: 'Existing', B: 'Existing' }));
+      .mockResolvedValueOnce(entries({ A: 'Announcements', B: 'Existing' }))
+      .mockResolvedValue(entries({ A: 'Existing', B: 'Existing' }));
 
     await ctl.renameClassCategory(NODE);
 
@@ -340,8 +340,8 @@ describe('ExplorerController.renameClassCategory — undo (#434)', () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce(entries({ A: 'Announcements', B: 'Announcements-Core' }))
-      .mockReturnValue(entries({ A: 'Renamed', B: 'Renamed-Core' }));
+      .mockResolvedValueOnce(entries({ A: 'Announcements', B: 'Announcements-Core' }))
+      .mockResolvedValue(entries({ A: 'Renamed', B: 'Renamed-Core' }));
 
     await ctl.renameClassCategory(NODE);
 
@@ -355,8 +355,8 @@ describe('ExplorerController.renameClassCategory — undo (#434)', () => {
   it('records nothing when the server refused the rename', async () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
-    vi.mocked(queries.renameClassCategory).mockReturnValue('Dictionary not found');
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue(entries({ A: 'Announcements' }));
+    vi.mocked(queries.renameClassCategory).mockResolvedValue('Dictionary not found');
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue(entries({ A: 'Announcements' }));
 
     await ctl.renameClassCategory(NODE);
 
@@ -366,7 +366,7 @@ describe('ExplorerController.renameClassCategory — undo (#434)', () => {
   it('records nothing when no class actually moved', async () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Renamed');
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue(entries({ A: 'Announcements' }));
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue(entries({ A: 'Announcements' }));
 
     await ctl.renameClassCategory(NODE);
 

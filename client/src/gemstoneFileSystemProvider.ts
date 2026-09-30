@@ -729,7 +729,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
   // parseDirUri). Runs stone queries lazily — only when a crumb dropdown is
   // opened — and degrades to an empty list on any query error so a hiccup yields
   // an empty dropdown rather than a broken breadcrumb.
-  readDirectory(uri: vscode.Uri): [string, vscode.FileType][] {
+  async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
     const dir = parseDirUri(uri);
     if (!dir) return [];
     // Resolve the session directly (not getSession, which reaps stale tabs) —
@@ -740,13 +740,14 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     try {
       switch (dir.kind) {
         case 'root':
-          return queries
-            .getDictionaryNames(session)
-            .map((n): [string, vscode.FileType] => [n, Directory]);
+          return (await queries.getDictionaryNames(session)).map((n): [string, vscode.FileType] => [
+            n,
+            Directory,
+          ]);
         case 'dict':
-          return queries
-            .getClassNames(session, dir.dictIndex ?? dir.dictName)
-            .map((n): [string, vscode.FileType] => [n, Directory]);
+          return (await queries.getClassNames(session, dir.dictIndex ?? dir.dictName)).map(
+            (n): [string, vscode.FileType] => [n, Directory],
+          );
         case 'class':
           return [
             ['instance', Directory],
@@ -754,12 +755,16 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
             ['definition', File],
           ];
         case 'side':
-          return queries
-            .getMethodCategories(session, dir.className, dir.isMeta, dir.dictIndex ?? dir.dictName)
-            .map((c): [string, vscode.FileType] => [c, Directory]);
+          return (
+            await queries.getMethodCategories(
+              session,
+              dir.className,
+              dir.isMeta,
+              dir.dictIndex ?? dir.dictName,
+            )
+          ).map((c): [string, vscode.FileType] => [c, Directory]);
         case 'category':
-          return queries
-            .getMethodList(session, dir.className)
+          return (await queries.getMethodList(session, dir.className))
             .filter((m) => m.isMeta === dir.isMeta && m.category === dir.category)
             .map((m): [string, vscode.FileType] => [escapeSelectorSlashes(m.selector), File]);
       }
@@ -772,7 +777,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     return [];
   }
 
-  readFile(uri: vscode.Uri): Uint8Array {
+  async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const parsed = parseUri(uri);
 
     if (parsed.kind === 'new-class') {
@@ -806,7 +811,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       case 'method': {
         const dictRef = parsed.dictIndex ?? parsed.dictName;
         text = parsed.base
-          ? queries.getBaseMethodSource(
+          ? await queries.getBaseMethodSource(
               session,
               parsed.className,
               parsed.isMeta,
@@ -814,7 +819,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
               parsed.environmentId,
               dictRef,
             )
-          : queries.getMethodSource(
+          : await queries.getMethodSource(
               session,
               parsed.className,
               parsed.isMeta,
@@ -828,8 +833,8 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         // GemStone's `definition` omits the category; show it on its own line so
         // it's visible and editable (the save path applies it separately).
         const dictRef = parsed.dictIndex ?? parsed.dictName;
-        const definition = queries.getClassDefinition(session, parsed.className, dictRef);
-        const category = queries.getClassCategory(session, parsed.className, dictRef);
+        const definition = await queries.getClassDefinition(session, parsed.className, dictRef);
+        const category = await queries.getClassCategory(session, parsed.className, dictRef);
         text = withCategoryLine(definition, category);
         break;
       }
@@ -839,7 +844,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         // and saving writes the boilerplate in as a real comment. See
         // getStoredClassComment for why the hover and the System Browser's Comment
         // panel deliberately still show the synthesised text.
-        text = queries.getStoredClassComment(
+        text = await queries.getStoredClassComment(
           session,
           parsed.className,
           parsed.dictIndex ?? parsed.dictName,
@@ -850,11 +855,11 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     return new TextEncoder().encode(text);
   }
 
-  writeFile(
+  async writeFile(
     uri: vscode.Uri,
     content: Uint8Array,
     _options: { create: boolean; overwrite: boolean },
-  ): void {
+  ): Promise<void> {
     logInfo(`[FS] writeFile ${uri.toString()} (${content.length} bytes)`);
     const parsed = parseUri(uri);
     const session = this.getSession(parsed.sessionId);
@@ -863,19 +868,19 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     try {
       switch (parsed.kind) {
         case 'method':
-          this.compileMethod(uri, parsed, source, session);
+          await this.compileMethod(uri, parsed, source, session);
           break;
         case 'definition':
-          this.compileClassDefinition(uri, parsed, source, session);
+          await this.compileClassDefinition(uri, parsed, source, session);
           break;
         case 'comment':
-          this.saveClassComment(parsed, source, session);
+          await this.saveClassComment(parsed, source, session);
           break;
         case 'new-class':
-          this.compileClassDefinition(uri, parsed, source, session);
+          await this.compileClassDefinition(uri, parsed, source, session);
           break;
         case 'new-method':
-          this.compileMethod(uri, parsed, source, session);
+          await this.compileMethod(uri, parsed, source, session);
           break;
       }
 
@@ -904,16 +909,20 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     }
   }
 
-  private saveClassComment(parsed: ParsedCommentUri, source: string, session: ActiveSession): void {
+  private async saveClassComment(
+    parsed: ParsedCommentUri,
+    source: string,
+    session: ActiveSession,
+  ): Promise<void> {
     const dictRef = parsed.dictIndex ?? parsed.dictName;
     // Read the old comment BEFORE overwriting it — this is the one moment it still
     // exists (#434).
-    const recording = beginClassCommentEdit(session, {
+    const recording = await beginClassCommentEdit(session, {
       dict: dictRef,
       className: parsed.className,
     });
 
-    const result = queries.setClassComment(session, parsed.className, source, dictRef);
+    const result = await queries.setClassComment(session, parsed.className, source, dictRef);
     // setClassComment reports a class it cannot resolve by RETURNING a status string rather
     // than throwing, so "Comment updated" used to appear over a save that wrote nothing —
     // and an undo entry for it would offer to put back a comment nobody replaced.
@@ -935,7 +944,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     });
   }
 
-  private compileMethod(
+  private async compileMethod(
     uri: vscode.Uri,
     parsedMethodUri: ParsedNewMethodUri | ParsedMethodUri,
     sourceCode: string,
@@ -944,9 +953,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // Snapshot BEFORE compiling — this is the one moment the previous source still
     // exists. A capture that fails answers undefined and the save proceeds unrecorded.
     const slots = undoSlotsForSave(parsedMethodUri, sourceCode);
-    const recording = beginMethodEdit(session, slots);
+    const recording = await beginMethodEdit(session, slots);
 
-    const result = queries.compileMethod(
+    const result = await queries.compileMethod(
       session,
       parsedMethodUri.className,
       parsedMethodUri.isMeta,
@@ -967,7 +976,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     const recv = receiver(parsedMethodUri.className, parsedMethodUri.isMeta);
     if (
-      this.classIsWritable(
+      await this.classIsWritable(
         session,
         parsedMethodUri.className,
         parsedMethodUri.dictIndex ?? parsedMethodUri.dictName,
@@ -1012,7 +1021,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     );
   }
 
-  private compileClassDefinition(
+  private async compileClassDefinition(
     uri: vscode.Uri,
     parsed: ParsedNewClassUri | ParsedDefinitionUri,
     source: string,
@@ -1048,7 +1057,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // redefinition, so this guard is new-class only.)
     if (parsed.kind === 'new-class') {
       const intended = classNameFromDefinition(defSource);
-      if (intended && queries.classExistsInDictionary(session, intended, dictRef)) {
+      if (intended && (await queries.classExistsInDictionary(session, intended, dictRef))) {
         throw new BrowserQueryError(
           `A class named ${intended} already exists in ${targetDictName} — not overwriting it. ` +
             `Choose a different name, or edit the existing class from its own definition editor.`,
@@ -1069,7 +1078,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       classNameFromDefinition(defSource) ??
       (parsed.kind === 'definition' ? parsed.className : undefined);
     const recording = undoName
-      ? beginClassEdit(session, [{ dict: dictRef, className: undoName }])
+      ? await beginClassEdit(session, [{ dict: dictRef, className: undoName }])
       : undefined;
 
     // And snapshot what every class in the dictionary is filed under, for the save whose ONLY
@@ -1082,9 +1091,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // is the only time the earlier categories can still be read; committed below only when the
     // class recording found nothing, since a save that DID reshape the class is put back by
     // rebinding the earlier version, which carries its own category with it.
-    const categoryRecording = beginClassCategoryEdit(session, dictRef);
+    const categoryRecording = await beginClassCategoryEdit(session, dictRef);
 
-    const className = queries.compileClassDefinition(session, defSource);
+    const className = await queries.compileClassDefinition(session, defSource);
 
     // Apply the category the subclass message could not carry — always, including an
     // empty value: the editor always shows a `category:` line, so deleting/emptying it
@@ -1093,7 +1102,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // lose the freshly compiled class, so it's logged, not thrown.
     const desiredCategory = category ?? '';
     try {
-      const result = queries.recategorizeClass(session, className, desiredCategory, dictRef);
+      const result = await queries.recategorizeClass(session, className, desiredCategory, dictRef);
       // recategorizeClass reports soft failures (e.g. the class not resolving in
       // dictRef) by RETURNING a status string rather than throwing — surface it so the
       // typed category isn't silently dropped behind a "saved" message.
@@ -1111,7 +1120,10 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // method) without persisting, yet GemStone reports success — warn instead
     // of a misleading "updated" toast. A new class that couldn't be written to
     // its target dictionary would have thrown above, so it's always a success.
-    if (parsed.kind === 'definition' && !this.classIsWritable(session, className, dictRef)) {
+    if (
+      parsed.kind === 'definition' &&
+      !(await this.classIsWritable(session, className, dictRef))
+    ) {
       vscode.window.showWarningMessage(
         `${className} recompiled transiently — NOT persisted (the class is not writable). ` +
           `The change will be lost when the session ends.`,
@@ -1125,7 +1137,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       const message = created
         ? `Class created: ${className}`
         : `Class definition updated for ${className}`;
-      const classEntry = recording?.commit(
+      const classEntry = await recording?.commit(
         created ? `Add class ${className}` : `Redefine class ${className}`,
       );
       // Labelled exactly as the Explorer's own Move Class to Category labels it: the user files
@@ -1134,11 +1146,11 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       notifyUndoable(
         message,
         classEntry ??
-          categoryRecording?.commit(
+          (await categoryRecording?.commit(
             desiredCategory
               ? `Move class ${className} to category ${desiredCategory}`
               : `Clear the class category of ${className}`,
-          ),
+          )),
       );
     }
 
@@ -1177,13 +1189,13 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
   // reported as success but never persists. Defaults to true if the check
   // itself fails, so a transient query error never turns a real save into a
   // spurious "not persisted" warning.
-  private classIsWritable(
+  private async classIsWritable(
     session: ActiveSession,
     className: string,
     dict?: number | string,
-  ): boolean {
+  ): Promise<boolean> {
     try {
-      return queries.canClassBeWritten(session, className, dict);
+      return await queries.canClassBeWritten(session, className, dict);
     } catch {
       return true;
     }

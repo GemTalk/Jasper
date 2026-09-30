@@ -23,12 +23,12 @@ import { isRealClassComment } from './classCommentPresence';
  * to tell a real write from a class the lookup could not resolve, which is the
  * same question for a removal.
  */
-export function setClassComment(
+export async function setClassComment(
   execute: QueryExecutor,
   className: string,
   comment: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const esc = escapeString(className);
   const write = isRealClassComment(comment)
     ? `cls comment: '${escapeString(comment)}'.`
@@ -39,5 +39,5 @@ cls ifNil: [^ 'Class not found: ${esc}'].
 cls isBehavior ifFalse: [^ 'Not a class: ${esc}'].
 ${write}
 'Comment set: ' , cls name`;
-  return execute(code);
+  return await execute(code);
 }

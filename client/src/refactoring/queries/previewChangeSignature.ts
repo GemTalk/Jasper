@@ -122,6 +122,9 @@ export function applyChangeSignature(
 }
 
 // Drop a finished preview from SessionTemps.
-export function clearChangeSignaturePreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsChangeSignatureRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearChangeSignaturePreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsChangeSignatureRefactoring clearToken: '${escapeString(token)}'`);
 }

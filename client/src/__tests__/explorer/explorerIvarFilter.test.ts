@@ -43,8 +43,10 @@ function setMethodFilter(ctl: ExplorerController, pattern: string): void {
 }
 
 // The method rows only — a filter chip leads the list while filtering.
-function methodItems(ctl: ExplorerController): MethodItem[] {
-  return ctl.methodProvider.getChildren().filter((r): r is MethodItem => r instanceof MethodItem);
+async function methodItems(ctl: ExplorerController): Promise<MethodItem[]> {
+  return (await ctl.methodProvider.getChildren()).filter(
+    (r): r is MethodItem => r instanceof MethodItem,
+  );
 }
 
 function selectors(rows: MethodItem[]): string[] {
@@ -70,48 +72,48 @@ beforeEach(() => {
 });
 
 describe('Methods pane instance-variable filter', () => {
-  it('reads:<ivar> keeps only methods that read the ivar, marked r', () => {
+  it('reads:<ivar> keeps only methods that read the ivar, marked r', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    const rows = methodItems(ctl);
+    const rows = await methodItems(ctl);
 
     expect(selectors(rows)).toEqual(['count']);
     expect(rows[0].description).toBe('r');
   });
 
-  it('writes:<ivar> keeps only methods that write the ivar, marked w', () => {
+  it('writes:<ivar> keeps only methods that write the ivar, marked w', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'writes:count');
 
-    const rows = methodItems(ctl);
+    const rows = await methodItems(ctl);
 
     expect(selectors(rows)).toEqual(['count:']);
     expect(rows[0].description).toBe('w');
   });
 
-  it('accesses:<ivar> keeps both readers and writers', () => {
+  it('accesses:<ivar> keeps both readers and writers', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'accesses:count');
 
-    expect(selectors(methodItems(ctl))).toEqual(['count', 'count:']);
+    expect(selectors(await methodItems(ctl))).toEqual(['count', 'count:']);
   });
 
-  it('leaves a plain textual filter untouched (no ivar query needed)', () => {
+  it('leaves a plain textual filter untouched (no ivar query needed)', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'count');
 
-    const rows = methodItems(ctl);
+    const rows = await methodItems(ctl);
 
     expect(selectors(rows)).toEqual(['count', 'count:']);
     expect(rows.every((r) => r.description === '')).toBe(true);
   });
 
-  it('reloads the ivar map when the method list is reloaded (no stale cache)', () => {
+  it('reloads the ivar map when the method list is reloaded (no stale cache)', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    methodItems(ctl); // builds + caches the ivar map
+    await methodItems(ctl); // builds + caches the ivar map
     const afterFirst = ivarQuery.mock.calls.length;
     expect(afterFirst).toBeGreaterThan(0);
 
@@ -120,60 +122,62 @@ describe('Methods pane instance-variable filter', () => {
     setEnvLines(ctl, [
       { isMeta: false, envId: 0, category: 'accessing', selectors: ['count', 'count:', 'size'] },
     ]);
-    methodItems(ctl);
+    await methodItems(ctl);
 
     expect(ivarQuery.mock.calls.length).toBeGreaterThan(afterFirst);
   });
 });
 
 describe('Methods pane filter chip', () => {
-  it('leads the list with a distinct filter chip while filtering', () => {
+  it('leads the list with a distinct filter chip while filtering', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    const [first] = ctl.methodProvider.getChildren();
+    const [first] = await ctl.methodProvider.getChildren();
 
     expect(first).toBeInstanceOf(FilterChipItem);
     expect((first as FilterChipItem).description).toBe('reads:count');
     expect((first as FilterChipItem).viewId).toBe(VIEW_METHODS);
   });
 
-  it('shows no chip when nothing is filtered', () => {
+  it('shows no chip when nothing is filtered', async () => {
     const ctl = makeController();
 
-    const rows = ctl.methodProvider.getChildren();
+    const rows = await ctl.methodProvider.getChildren();
 
     expect(rows.some((r) => r instanceof FilterChipItem)).toBe(false);
   });
 
-  it('clears the pane filter when the chip is cleared', () => {
+  it('clears the pane filter when the chip is cleared', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    ctl.clearFilter(VIEW_METHODS);
+    await ctl.clearFilter(VIEW_METHODS);
 
     expect(ctl.getFilter(VIEW_METHODS)).toBeUndefined();
-    expect(ctl.methodProvider.getChildren().some((r) => r instanceof FilterChipItem)).toBe(false);
+    expect((await ctl.methodProvider.getChildren()).some((r) => r instanceof FilterChipItem)).toBe(
+      false,
+    );
   });
 
-  it('treats the chip as a root so reveal never targets it', () => {
+  it('treats the chip as a root so reveal never targets it', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
-    const chip = ctl.methodProvider
-      .getChildren()
-      .find((r): r is FilterChipItem => r instanceof FilterChipItem)!;
+    const chip = (await ctl.methodProvider.getChildren()).find(
+      (r): r is FilterChipItem => r instanceof FilterChipItem,
+    )!;
 
     expect(ctl.methodProvider.getParent(chip)).toBeUndefined();
   });
 });
 
 describe('ExplorerController.filterMethodsByIvar', () => {
-  it('selects the ivar’s own class, seeds the reads: token, and switches to instance side', () => {
+  it('selects the ivar’s own class, seeds the reads: token, and switches to instance side', async () => {
     const ctl = makeController();
     ctl.setMethodSide(true);
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
+    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(async () => {});
 
-    ctl.filterMethodsByIvar('reads', 'count', 'Other');
+    await ctl.filterMethodsByIvar('reads', 'count', 'Other');
 
     expect(selectClass).toHaveBeenCalledTimes(1);
     expect(selectClass.mock.calls[0][0].className).toBe('Other');
@@ -184,11 +188,11 @@ describe('ExplorerController.filterMethodsByIvar', () => {
     expect(ctl.showClassMethods).toBe(false);
   });
 
-  it('does not re-select the class when the pane already shows it', () => {
+  it('does not re-select the class when the pane already shows it', async () => {
     const ctl = makeController(); // state.className === 'Demo'
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
+    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(async () => {});
 
-    ctl.filterMethodsByIvar('accesses', 'count', 'Demo');
+    await ctl.filterMethodsByIvar('accesses', 'count', 'Demo');
 
     expect(selectClass).not.toHaveBeenCalled();
     expect(ctl.getFilter(VIEW_METHODS)).toBe('accesses:count');
@@ -198,46 +202,48 @@ describe('ExplorerController.filterMethodsByIvar', () => {
 const METHOD_URI = 'gemstone://1/UserGlobals/Demo/instance/accessing/count';
 
 describe('source-editor ivar highlighting', () => {
-  it('resolves the ivar names a method source should highlight under the filter', () => {
+  it('resolves the ivar names a method source should highlight under the filter', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    expect(ctl.ivarsToHighlight(Uri.parse(METHOD_URI))).toEqual(['count']);
+    expect(await ctl.ivarsToHighlight(Uri.parse(METHOD_URI))).toEqual(['count']);
   });
 
-  it('highlights nothing for a plain textual filter', () => {
+  it('highlights nothing for a plain textual filter', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'count');
 
-    expect(ctl.ivarsToHighlight(Uri.parse(METHOD_URI))).toEqual([]);
+    expect(await ctl.ivarsToHighlight(Uri.parse(METHOD_URI))).toEqual([]);
   });
 
-  it('highlights nothing for a non-gemstone editor', () => {
+  it('highlights nothing for a non-gemstone editor', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
 
-    expect(ctl.ivarsToHighlight(Uri.parse('file:///x.st'))).toEqual([]);
+    expect(await ctl.ivarsToHighlight(Uri.parse('file:///x.st'))).toEqual([]);
   });
 
-  it('decorates each occurrence of the filtered ivar in the opened source', () => {
+  it('decorates each occurrence of the filtered ivar in the opened source', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
     const editor = fakeEditor(METHOD_URI, 'count\n\t^count');
 
-    (ctl as unknown as { applyIvarHighlight: (e: unknown) => void }).applyIvarHighlight(editor);
+    await (
+      ctl as unknown as { applyIvarHighlight: (e: unknown) => Promise<void> }
+    ).applyIvarHighlight(editor);
 
     expect(editor.setDecorations).toHaveBeenCalledTimes(1);
     expect((editor.setDecorations.mock.calls[0][1] as unknown[]).length).toBe(2);
   });
 
-  it('refreshes highlights across every visible source editor', () => {
+  it('refreshes highlights across every visible source editor', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'reads:count');
     const editor = fakeEditor(METHOD_URI, 'count\n\t^count');
     window.visibleTextEditors = [editor];
 
     try {
-      ctl.refreshIvarHighlights();
+      await ctl.refreshIvarHighlights();
 
       expect(editor.setDecorations).toHaveBeenCalledTimes(1);
       expect((editor.setDecorations.mock.calls[0][1] as unknown[]).length).toBe(2);

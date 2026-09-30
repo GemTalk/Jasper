@@ -278,7 +278,7 @@ describe('SystemBrowser', () => {
     onDidDispose: ReturnType<typeof vi.fn>;
     onDidChangeViewState: ReturnType<typeof vi.fn>;
   };
-  let messageHandler: (msg: unknown) => void;
+  let messageHandler: (msg: unknown) => Promise<void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -299,8 +299,12 @@ describe('SystemBrowser', () => {
         webview: {
           html: '',
           postMessage: vi.fn(),
-          onDidReceiveMessage: vi.fn((handler: (msg: unknown) => void) => {
-            messageHandler = handler;
+          onDidReceiveMessage: vi.fn((handler: (msg: unknown) => Promise<void>) => {
+            // Some messages start their work detached, so let that settle too.
+            messageHandler = async (msg) => {
+              await handler(msg);
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            };
             return { dispose: () => {} };
           }),
         },
@@ -313,15 +317,15 @@ describe('SystemBrowser', () => {
       return mockPanel as unknown as ReturnType<typeof window.createWebviewPanel>;
     });
 
-    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals']);
-    vi.mocked(queries.getGlobalsForDictionary).mockReturnValue([]);
-    vi.mocked(queries.getDictionaryEntries).mockReturnValue([
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals', 'Globals']);
+    vi.mocked(queries.getGlobalsForDictionary).mockResolvedValue([]);
+    vi.mocked(queries.getDictionaryEntries).mockResolvedValue([
       { isClass: true, category: 'Kernel', name: 'Array' },
       { isClass: true, category: 'Kernel', name: 'Set' },
       { isClass: true, category: 'Collections', name: 'Bag' },
       { isClass: false, category: '', name: 'AllUsers' },
     ]);
-    vi.mocked(queries.getClassEnvironments).mockReturnValue([
+    vi.mocked(queries.getClassEnvironments).mockResolvedValue([
       { isMeta: false, envId: 0, category: 'Accessing', selectors: ['name', 'name:'] },
       { isMeta: false, envId: 0, category: 'Comparing', selectors: ['=', 'hash'] },
       { isMeta: true, envId: 0, category: 'Instance Creation', selectors: ['new', 'new:'] },
@@ -381,13 +385,13 @@ describe('SystemBrowser', () => {
       expect(window.createWebviewPanel).toHaveBeenCalledTimes(2);
     });
 
-    it('updates title to Browser: ClassName when a class is selected', () => {
+    it('updates title to Browser: ClassName when a class is selected', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       expect(mockPanel.title).toBe('Browser: Array');
     });
   });
@@ -410,8 +414,8 @@ describe('SystemBrowser', () => {
       SystemBrowser.show(session, exportManager);
     });
 
-    it('loads dictionaries on ready', () => {
-      messageHandler({ command: 'ready' });
+    it('loads dictionaries on ready', async () => {
+      await messageHandler({ command: 'ready' });
       expect(queries.getDictionaryNames).toHaveBeenCalledWith(session);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadDictionaries',
@@ -419,9 +423,9 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('loads class categories on selectDictionary', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('loads class categories on selectDictionary', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       expect(queries.getDictionaryEntries).toHaveBeenCalledWith(session, 1);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadClassCategories',
@@ -430,9 +434,9 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('selecting a dictionary populates the class list automatically', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('selecting a dictionary populates the class list automatically', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadClasses',
@@ -440,32 +444,32 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('loads all classes on selectCategory with ALL', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads all classes on selectCategory with ALL', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadClasses',
         items: ['Array', 'Bag', 'Set'],
       });
     });
 
-    it('loads filtered classes on selectCategory', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: 'Kernel' });
+    it('loads filtered classes on selectCategory', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: 'Kernel' });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadClasses',
         items: ['Array', 'Set'],
       });
     });
 
-    it('loads method categories on selectClass', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads method categories on selectClass', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       expect(queries.getClassEnvironments).toHaveBeenCalledWith(session, 1, 'Array', 0);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -474,11 +478,11 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('selecting a class populates the method list automatically', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('selecting a class populates the method list automatically', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
@@ -488,13 +492,13 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('loads class-side method categories on toggleSide', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads class-side method categories on toggleSide', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleSide', isMeta: true });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleSide', isMeta: true });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
         items: [ALL_METHODS_CATEGORY, 'Instance Creation'],
@@ -502,12 +506,12 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('toggling to the class side populates the method list automatically', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('toggling to the class side populates the method list automatically', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleSide', isMeta: true });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleSide', isMeta: true });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
@@ -517,13 +521,13 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('loads all methods on selectMethodCategory with ALL', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads all methods on selectMethodCategory with ALL', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
         items: ['=', 'hash', 'name', 'name:'],
@@ -532,13 +536,13 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('loads filtered methods on selectMethodCategory', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads filtered methods on selectMethodCategory', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
         items: ['name', 'name:'],
@@ -555,7 +559,7 @@ describe('SystemBrowser', () => {
       };
 
       beforeEach(() => {
-        vi.mocked(queries.getClassEnvironments).mockReturnValue([
+        vi.mocked(queries.getClassEnvironments).mockResolvedValue([
           {
             isMeta: false,
             envId: 0,
@@ -580,12 +584,12 @@ describe('SystemBrowser', () => {
         ]);
       });
 
-      function selectArray(): void {
-        messageHandler({ command: 'ready' });
-        messageHandler({ command: 'selectDictionary', index: 1 });
-        messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      async function selectArray(): Promise<void> {
+        await messageHandler({ command: 'ready' });
+        await messageHandler({ command: 'selectDictionary', index: 1 });
+        await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
         vi.mocked(fs.existsSync).mockReturnValue(false);
-        messageHandler({ command: 'selectClass', name: 'Array' });
+        await messageHandler({ command: 'selectClass', name: 'Array' });
       }
 
       function lastLoadMethods(): LoadMethodsMsg {
@@ -596,25 +600,25 @@ describe('SystemBrowser', () => {
         return calls[calls.length - 1];
       }
 
-      it('attaches bits only for displayed selectors on the current side', () => {
-        selectArray();
-        messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      it('attaches bits only for displayed selectors on the current side', async () => {
+        await selectArray();
+        await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
         const msg = lastLoadMethods();
         expect(msg.items).toEqual(['name', 'name:']);
         // name: has no entry, so it is absent — only name carries a bit.
         expect(msg.methodOverrideBits).toEqual({ name: 1 });
       });
 
-      it('aggregates bits across categories for ALL METHODS', () => {
-        selectArray();
-        messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
+      it('aggregates bits across categories for ALL METHODS', async () => {
+        await selectArray();
+        await messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
         expect(lastLoadMethods().methodOverrideBits).toEqual({ name: 1, '=': 3 });
       });
 
-      it('uses class-side bits after toggling to the class side', () => {
-        selectArray();
-        messageHandler({ command: 'toggleSide', isMeta: true });
-        messageHandler({ command: 'selectMethodCategory', name: 'Instance Creation' });
+      it('uses class-side bits after toggling to the class side', async () => {
+        await selectArray();
+        await messageHandler({ command: 'toggleSide', isMeta: true });
+        await messageHandler({ command: 'selectMethodCategory', name: 'Instance Creation' });
         const msg = lastLoadMethods();
         expect(msg.items).toEqual(['new', 'new:']);
         expect(msg.methodOverrideBits).toEqual({ new: 2 });
@@ -632,7 +636,7 @@ describe('SystemBrowser', () => {
       beforeEach(() => {
         // Instance side carries session methods (an extension and an override
         // living in a *package category); the class side carries none.
-        vi.mocked(queries.getClassEnvironments).mockReturnValue([
+        vi.mocked(queries.getClassEnvironments).mockResolvedValue([
           {
             isMeta: false,
             envId: 0,
@@ -660,12 +664,12 @@ describe('SystemBrowser', () => {
         ]);
       });
 
-      function selectArray(): void {
-        messageHandler({ command: 'ready' });
-        messageHandler({ command: 'selectDictionary', index: 1 });
-        messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      async function selectArray(): Promise<void> {
+        await messageHandler({ command: 'ready' });
+        await messageHandler({ command: 'selectDictionary', index: 1 });
+        await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
         vi.mocked(fs.existsSync).mockReturnValue(false);
-        messageHandler({ command: 'selectClass', name: 'Array' });
+        await messageHandler({ command: 'selectClass', name: 'Array' });
       }
 
       function lastCategories(): LoadCategoriesMsg {
@@ -684,8 +688,8 @@ describe('SystemBrowser', () => {
         return calls[calls.length - 1];
       }
 
-      it('offers the computed Session Methods category at the head, right after ALL METHODS', () => {
-        selectArray();
+      it('offers the computed Session Methods category at the head, right after ALL METHODS', async () => {
+        await selectArray();
         expect(lastCategories().items).toEqual([
           ALL_METHODS_CATEGORY,
           SESSION_METHODS_CATEGORY,
@@ -694,29 +698,29 @@ describe('SystemBrowser', () => {
         ]);
       });
 
-      it('omits the Session Methods category on a side that has no session methods', () => {
-        selectArray();
-        messageHandler({ command: 'toggleSide', isMeta: true });
+      it('omits the Session Methods category on a side that has no session methods', async () => {
+        await selectArray();
+        await messageHandler({ command: 'toggleSide', isMeta: true });
         expect(lastCategories().items).toEqual([ALL_METHODS_CATEGORY, 'Instance Creation']);
       });
 
-      it('lists every session method (extension and override) when the category is selected', () => {
-        selectArray();
-        messageHandler({ command: 'selectMethodCategory', name: SESSION_METHODS_CATEGORY });
+      it('lists every session method (extension and override) when the category is selected', async () => {
+        await selectArray();
+        await messageHandler({ command: 'selectMethodCategory', name: SESSION_METHODS_CATEGORY });
         const msg = lastLoadMethods();
         expect(msg.items).toEqual(['ext1', 'isVowel']);
         expect(msg.sessionMethodBits).toEqual({ ext1: 1, isVowel: 2 });
       });
 
-      it('does not list ordinary persistent methods under the Session Methods category', () => {
-        selectArray();
-        messageHandler({ command: 'selectMethodCategory', name: SESSION_METHODS_CATEGORY });
+      it('does not list ordinary persistent methods under the Session Methods category', async () => {
+        await selectArray();
+        await messageHandler({ command: 'selectMethodCategory', name: SESSION_METHODS_CATEGORY });
         expect(lastLoadMethods().items).not.toContain('name');
       });
 
-      it('attaches session flags for the displayed selectors of a normal category', () => {
-        selectArray();
-        messageHandler({ command: 'selectMethodCategory', name: '*mypkg' });
+      it('attaches session flags for the displayed selectors of a normal category', async () => {
+        await selectArray();
+        await messageHandler({ command: 'selectMethodCategory', name: '*mypkg' });
         expect(lastLoadMethods().sessionMethodBits).toEqual({ ext1: 1, isVowel: 2 });
       });
 
@@ -733,8 +737,8 @@ describe('SystemBrowser', () => {
       }
 
       it('compares an override against its persistent base, labeling each pane', async () => {
-        selectArray();
-        messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+        await selectArray();
+        await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         const call = lastDiffCall();
@@ -747,15 +751,15 @@ describe('SystemBrowser', () => {
       });
 
       it('toggles the diff off and reopens the plain session source when the same override is clicked again', async () => {
-        selectArray();
-        messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+        await selectArray();
+        await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
         await new Promise((resolve) => setTimeout(resolve, 0));
         const [, baseUri, overrideUri] = lastDiffCall()!;
         window.tabGroups.all = [{ tabs: [{ input: new TabInputTextDiff(baseUri, overrideUri) }] }];
         const before = diffCallCount();
         vi.mocked(workspace.openTextDocument).mockClear();
 
-        messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+        await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         // Reopened the plain method source — no diff, no "(base)/(session override)" label.
@@ -779,7 +783,7 @@ describe('SystemBrowser', () => {
       });
 
       it('ignores a second ± click while the first toggle is still opening', async () => {
-        selectArray();
+        await selectArray();
         let releaseGroup: () => void = () => {};
         commands.executeCommand.mockImplementation((cmd: string) => {
           if (cmd === 'workbench.action.newGroupBelow')
@@ -790,10 +794,10 @@ describe('SystemBrowser', () => {
         });
         try {
           // First click starts opening the diff and blocks awaiting the new group.
-          messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+          await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
           await new Promise((resolve) => setTimeout(resolve, 0));
           // Second click lands mid-flight — the busy guard must drop it.
-          messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+          await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
           await new Promise((resolve) => setTimeout(resolve, 0));
 
           releaseGroup();
@@ -806,14 +810,14 @@ describe('SystemBrowser', () => {
       });
 
       it('closes the override diff when navigating to another method', async () => {
-        selectArray();
-        messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
+        await selectArray();
+        await messageHandler({ command: 'compareSessionOverride', selector: 'isVowel' });
         await new Promise((resolve) => setTimeout(resolve, 0));
         const [, baseUri, overrideUri] = lastDiffCall()!;
         const diffTab = { input: new TabInputTextDiff(baseUri, overrideUri) };
         window.tabGroups.all = [{ tabs: [diffTab] }];
 
-        messageHandler({ command: 'selectMethod', selector: 'name' });
+        await messageHandler({ command: 'selectMethod', selector: 'name' });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(window.tabGroups.close).toHaveBeenCalledWith(diffTab);
@@ -822,17 +826,17 @@ describe('SystemBrowser', () => {
     });
 
     describe('override-arrow click (showHierarchyImpls)', () => {
-      function selectArray(): void {
-        messageHandler({ command: 'ready' });
-        messageHandler({ command: 'selectDictionary', index: 1 });
-        messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      async function selectArray(): Promise<void> {
+        await messageHandler({ command: 'ready' });
+        await messageHandler({ command: 'selectDictionary', index: 1 });
+        await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
         vi.mocked(fs.existsSync).mockReturnValue(false);
-        messageHandler({ command: 'selectClass', name: 'Array' });
+        await messageHandler({ command: 'selectClass', name: 'Array' });
       }
 
-      it('forwards to gemstone.hierarchyImplementorsOf with the current context', () => {
-        selectArray();
-        messageHandler({ command: 'showHierarchyImpls', selector: 'name', direction: 'up' });
+      it('forwards to gemstone.hierarchyImplementorsOf with the current context', async () => {
+        await selectArray();
+        await messageHandler({ command: 'showHierarchyImpls', selector: 'name', direction: 'up' });
         expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.hierarchyImplementorsOf', {
           selector: 'name',
           className: 'Array',
@@ -843,19 +847,19 @@ describe('SystemBrowser', () => {
         });
       });
 
-      it('carries the class side and direction through', () => {
-        selectArray();
-        messageHandler({ command: 'toggleSide', isMeta: true });
-        messageHandler({ command: 'showHierarchyImpls', selector: 'new', direction: 'down' });
+      it('carries the class side and direction through', async () => {
+        await selectArray();
+        await messageHandler({ command: 'toggleSide', isMeta: true });
+        await messageHandler({ command: 'showHierarchyImpls', selector: 'new', direction: 'down' });
         expect(commands.executeCommand).toHaveBeenCalledWith(
           'gemstone.hierarchyImplementorsOf',
           expect.objectContaining({ selector: 'new', isMeta: true, direction: 'down' }),
         );
       });
 
-      it('does nothing when no class is selected', () => {
-        messageHandler({ command: 'ready' });
-        messageHandler({ command: 'showHierarchyImpls', selector: 'name', direction: 'up' });
+      it('does nothing when no class is selected', async () => {
+        await messageHandler({ command: 'ready' });
+        await messageHandler({ command: 'showHierarchyImpls', selector: 'name', direction: 'up' });
         expect(commands.executeCommand).not.toHaveBeenCalledWith(
           'gemstone.hierarchyImplementorsOf',
           expect.anything(),
@@ -863,11 +867,11 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('posts showError when a handler throws', () => {
-      vi.mocked(queries.getDictionaryNames).mockImplementation(() => {
+    it('posts showError when a handler throws', async () => {
+      vi.mocked(queries.getDictionaryNames).mockImplementation(async () => {
         throw new Error('GCI failure');
       });
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'showError',
         message: 'GCI failure',
@@ -880,28 +884,28 @@ describe('SystemBrowser', () => {
       SystemBrowser.show(session, exportManager);
     });
 
-    it('caches dictionary entries', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('caches dictionary entries', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       expect(queries.getDictionaryEntries).toHaveBeenCalledTimes(1);
     });
 
-    it('caches environment data', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('caches environment data', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       expect(queries.getClassEnvironments).toHaveBeenCalledTimes(1);
     });
 
-    it('clears caches on refresh', () => {
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'refresh' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('clears caches on refresh', async () => {
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'refresh' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       expect(queries.getDictionaryEntries).toHaveBeenCalledTimes(2);
     });
   });
@@ -924,17 +928,17 @@ describe('SystemBrowser', () => {
       '%',
     ].join('\n');
 
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
     });
 
-    it('does not open a file when selecting a class', () => {
+    it('does not open a file when selecting a class', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       vi.mocked(fs.readFileSync).mockReturnValue(gsContent);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       expect(window.showTextDocument).not.toHaveBeenCalled();
       expect(workspace.openTextDocument).not.toHaveBeenCalled();
     });
@@ -942,10 +946,10 @@ describe('SystemBrowser', () => {
     it('opens a gemstone:// method editor when selecting a method', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
-      messageHandler({ command: 'selectMethodCategory', name: 'accessing' });
-      messageHandler({ command: 'selectMethod', selector: 'size' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'accessing' });
+      await messageHandler({ command: 'selectMethod', selector: 'size' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -963,10 +967,10 @@ describe('SystemBrowser', () => {
     it('includes the method category in the gemstone:// URI', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
-      messageHandler({ command: 'selectMethodCategory', name: 'accessing' });
-      messageHandler({ command: 'selectMethod', selector: 'size' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'accessing' });
+      await messageHandler({ command: 'selectMethod', selector: 'size' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -978,11 +982,11 @@ describe('SystemBrowser', () => {
     it('uses class side in URI when isMeta is true', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleSide', isMeta: true });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleSide', isMeta: true });
 
-      messageHandler({ command: 'selectMethodCategory', name: 'instance creation' });
-      messageHandler({ command: 'selectMethod', selector: 'new' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'instance creation' });
+      await messageHandler({ command: 'selectMethod', selector: 'new' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -994,9 +998,9 @@ describe('SystemBrowser', () => {
     it('uses the method\'s real category (not "as yet unclassified") when ALL METHODS is selected', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
-      messageHandler({ command: 'selectMethod', selector: 'name' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
+      await messageHandler({ command: 'selectMethod', selector: 'name' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -1010,10 +1014,10 @@ describe('SystemBrowser', () => {
     it("uses the class-side method's real category when ALL METHODS is selected", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleSide', isMeta: true });
-      messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
-      messageHandler({ command: 'selectMethod', selector: 'new' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleSide', isMeta: true });
+      await messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
+      await messageHandler({ command: 'selectMethod', selector: 'new' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -1027,8 +1031,8 @@ describe('SystemBrowser', () => {
     it('falls back to "as yet unclassified" only for a method with no environment entry', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethod', selector: 'ghostMethod' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethod', selector: 'ghostMethod' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -1040,9 +1044,9 @@ describe('SystemBrowser', () => {
     it('opens a gemstone:// editor even when method is not found in the .gs file', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
-      messageHandler({ command: 'selectMethod', selector: 'nonExistentMethod' });
+      await messageHandler({ command: 'selectMethod', selector: 'nonExistentMethod' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -1061,19 +1065,19 @@ describe('SystemBrowser', () => {
       { className: 'SmallArray', dictName: 'UserGlobals', kind: 'subclass' },
     ];
 
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      vi.mocked(queries.getClassHierarchy).mockReturnValue(hierarchyData);
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      vi.mocked(queries.getClassHierarchy).mockResolvedValue(hierarchyData);
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
-    it('fetches hierarchy and posts data when toggling to hierarchy mode', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('fetches hierarchy and posts data when toggling to hierarchy mode', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
 
       expect(queries.getClassHierarchy).toHaveBeenCalledWith(session, 'Array');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1098,12 +1102,12 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('posts empty hierarchy when no class is selected', () => {
+    it('posts empty hierarchy when no class is selected', async () => {
       // Deselect class by selecting a new dictionary
-      messageHandler({ command: 'selectDictionary', index: 2 });
+      await messageHandler({ command: 'selectDictionary', index: 2 });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
 
       expect(queries.getClassHierarchy).not.toHaveBeenCalled();
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1117,11 +1121,11 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('restores category data when toggling back to category mode', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('restores category data when toggling back to category mode', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleViewMode', mode: 'category' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'category' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'setViewMode',
@@ -1139,14 +1143,14 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('restores class selection and method categories when toggling back to category mode', () => {
+    it('restores class selection and method categories when toggling back to category mode', async () => {
       // Select a class so method categories are loaded
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleViewMode', mode: 'category' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'category' });
 
       // Class list should include the selected class
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
@@ -1163,15 +1167,15 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('restores method category and method selection when toggling back to category mode', () => {
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
-      messageHandler({ command: 'selectMethod', selector: 'size' });
+    it('restores method category and method selection when toggling back to category mode', async () => {
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectMethod', selector: 'size' });
 
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleViewMode', mode: 'category' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'category' });
 
       // Method categories should be restored with selection
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1188,11 +1192,11 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('loads method categories when selecting a hierarchy class', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('loads method categories when selecting a hierarchy class', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'selectHierarchyClass', className: 'Array' });
+      await messageHandler({ command: 'selectHierarchyClass', className: 'Array' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -1207,11 +1211,11 @@ describe('SystemBrowser', () => {
     // "Class Definition subtab is not updated like it is if I simply
     // click on another class." Pin that the click now refreshes the
     // Class Definition.
-    it('refreshes the Class Definition panel when a hierarchy class is clicked', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('refreshes the Class Definition panel when a hierarchy class is clicked', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(ClassBrowser.showOrUpdate).mockClear();
 
-      messageHandler({ command: 'selectHierarchyClass', className: 'Collection' });
+      await messageHandler({ command: 'selectHierarchyClass', className: 'Collection' });
 
       expect(ClassBrowser.showOrUpdate).toHaveBeenCalledWith(
         session,
@@ -1221,53 +1225,53 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('resolves correct dictionary for hierarchy class from different dict', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('resolves correct dictionary for hierarchy class from different dict', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
       // Select 'Collection' which is in 'Globals' (index 2)
-      messageHandler({ command: 'selectHierarchyClass', className: 'Collection' });
+      await messageHandler({ command: 'selectHierarchyClass', className: 'Collection' });
 
       expect(queries.getClassEnvironments).toHaveBeenCalledWith(session, 2, 'Collection', 0);
     });
 
-    it('ignores selectHierarchyClass for unknown class', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('ignores selectHierarchyClass for unknown class', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(queries.getClassEnvironments).mockClear();
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'selectHierarchyClass', className: 'NoSuchClass' });
+      await messageHandler({ command: 'selectHierarchyClass', className: 'NoSuchClass' });
 
       expect(queries.getClassEnvironments).not.toHaveBeenCalled();
     });
 
-    it('caches hierarchy data per class', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
-      messageHandler({ command: 'toggleViewMode', mode: 'category' });
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('caches hierarchy data per class', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'category' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
 
       expect(queries.getClassHierarchy).toHaveBeenCalledTimes(1);
     });
 
-    it('clears hierarchy cache on refresh', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
-      messageHandler({ command: 'refresh' });
+    it('clears hierarchy cache on refresh', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'refresh' });
 
       // Re-navigate to a class and toggle to hierarchy
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
 
       expect(queries.getClassHierarchy).toHaveBeenCalledTimes(2);
     });
 
-    it('refresh resets view mode to category', () => {
-      messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
+    it('refresh resets view mode to category', async () => {
+      await messageHandler({ command: 'toggleViewMode', mode: 'hierarchy' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'refresh' });
+      await messageHandler({ command: 'refresh' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'setViewMode',
@@ -1277,18 +1281,22 @@ describe('SystemBrowser', () => {
   });
 
   describe('dictionary context menu', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
     });
 
     it('adds a dictionary after input', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('NewDict');
       // After addDictionary, getDictionaryNames will be called again — return updated list
-      vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals', 'NewDict']);
+      vi.mocked(queries.getDictionaryNames).mockResolvedValue([
+        'UserGlobals',
+        'Globals',
+        'NewDict',
+      ]);
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'ctxAddDictionary' });
+      await messageHandler({ command: 'ctxAddDictionary' });
 
       await vi.waitFor(() =>
         expect(queries.addDictionary).toHaveBeenCalledWith(session, 'NewDict'),
@@ -1302,10 +1310,14 @@ describe('SystemBrowser', () => {
     it('records the create, so a new dictionary can be taken back off the list (#434)', async () => {
       resetUndoStacks();
       vi.mocked(window.showInputBox).mockResolvedValue('NewDict');
-      vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals', 'NewDict']);
-      vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'NewDict', index: 3 });
+      vi.mocked(queries.getDictionaryNames).mockResolvedValue([
+        'UserGlobals',
+        'Globals',
+        'NewDict',
+      ]);
+      vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'NewDict', index: 3 });
 
-      messageHandler({ command: 'ctxAddDictionary' });
+      await messageHandler({ command: 'ctxAddDictionary' });
 
       await vi.waitFor(() =>
         expect(peekUndoEntry(session.id)).toMatchObject({
@@ -1320,9 +1332,13 @@ describe('SystemBrowser', () => {
 
     it('reconciles the mirror via a debounced refresh for the new dictionary', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('NewDict');
-      vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals', 'NewDict']);
+      vi.mocked(queries.getDictionaryNames).mockResolvedValue([
+        'UserGlobals',
+        'Globals',
+        'NewDict',
+      ]);
 
-      messageHandler({ command: 'ctxAddDictionary' });
+      await messageHandler({ command: 'ctxAddDictionary' });
 
       await vi.waitFor(() => expect(exportManager.scheduleRefresh).toHaveBeenCalled());
       expect(fs.mkdirSync).not.toHaveBeenCalled();
@@ -1330,16 +1346,16 @@ describe('SystemBrowser', () => {
 
     it('does nothing when user cancels add dictionary', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue(undefined);
-      messageHandler({ command: 'ctxAddDictionary' });
+      await messageHandler({ command: 'ctxAddDictionary' });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(queries.addDictionary).not.toHaveBeenCalled();
     });
 
-    it('moves dictionary up', () => {
-      messageHandler({ command: 'selectDictionary', index: 2 });
+    it('moves dictionary up', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 2 });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'ctxMoveDictUp' });
+      await messageHandler({ command: 'ctxMoveDictUp' });
 
       expect(queries.moveDictionaryUp).toHaveBeenCalledWith(session, 2);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1352,17 +1368,17 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('does not move first dictionary up', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'ctxMoveDictUp' });
+    it('does not move first dictionary up', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'ctxMoveDictUp' });
       expect(queries.moveDictionaryUp).not.toHaveBeenCalled();
     });
 
-    it('moves dictionary down', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('moves dictionary down', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'ctxMoveDictDown' });
+      await messageHandler({ command: 'ctxMoveDictDown' });
 
       expect(queries.moveDictionaryDown).toHaveBeenCalledWith(session, 1);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1375,19 +1391,19 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('does not move last dictionary down', () => {
-      messageHandler({ command: 'selectDictionary', index: 2 });
-      messageHandler({ command: 'ctxMoveDictDown' });
+    it('does not move last dictionary down', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 2 });
+      await messageHandler({ command: 'ctxMoveDictDown' });
       expect(queries.moveDictionaryDown).not.toHaveBeenCalled();
     });
 
     it('removes dictionary after confirmation', async () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(window.showWarningMessage).mockResolvedValue('Remove');
-      vi.mocked(queries.getDictionaryNames).mockReturnValue(['Globals']);
+      vi.mocked(queries.getDictionaryNames).mockResolvedValue(['Globals']);
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'ctxRemoveDictionary' });
+      await messageHandler({ command: 'ctxRemoveDictionary' });
 
       await vi.waitFor(() => expect(queries.removeDictionary).toHaveBeenCalledWith(session, 1));
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -1401,32 +1417,32 @@ describe('SystemBrowser', () => {
     });
 
     it('does not remove dictionary when user cancels', async () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(window.showWarningMessage).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxRemoveDictionary' });
+      await messageHandler({ command: 'ctxRemoveDictionary' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(queries.removeDictionary).not.toHaveBeenCalled();
     });
 
     it('reconciles the mirror via a debounced refresh when removing a dictionary', async () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(window.showWarningMessage).mockResolvedValue('Remove');
-      vi.mocked(queries.getDictionaryNames).mockReturnValue(['Globals']);
+      vi.mocked(queries.getDictionaryNames).mockResolvedValue(['Globals']);
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      messageHandler({ command: 'ctxRemoveDictionary' });
+      await messageHandler({ command: 'ctxRemoveDictionary' });
 
       await vi.waitFor(() => expect(exportManager.scheduleRefresh).toHaveBeenCalled());
       expect(fs.rmSync).not.toHaveBeenCalled();
     });
 
-    it('runs SUnit tests for all classes in the selected dictionary', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
+    it('runs SUnit tests for all classes in the selected dictionary', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunDictionaryTests' });
+      await messageHandler({ command: 'ctxRunDictionaryTests' });
 
       expect(commands.executeCommand).toHaveBeenCalledWith(
         'gemstone.runSunitClasses',
@@ -1453,17 +1469,17 @@ describe('SystemBrowser', () => {
   });
 
   describe('class category context menu', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
     });
 
-    it('runs SUnit tests for all classes in the selected category', () => {
-      messageHandler({ command: 'selectCategory', name: 'Kernel' });
+    it('runs SUnit tests for all classes in the selected category', async () => {
+      await messageHandler({ command: 'selectCategory', name: 'Kernel' });
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunCategoryTests' });
+      await messageHandler({ command: 'ctxRunCategoryTests' });
 
       expect(commands.executeCommand).toHaveBeenCalledWith(
         'gemstone.runSunitClasses',
@@ -1472,10 +1488,10 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('does nothing when no category is selected', () => {
+    it('does nothing when no category is selected', async () => {
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunCategoryTests' });
+      await messageHandler({ command: 'ctxRunCategoryTests' });
 
       expect(commands.executeCommand).not.toHaveBeenCalledWith(
         'gemstone.runSunitClasses',
@@ -1485,20 +1501,20 @@ describe('SystemBrowser', () => {
   });
 
   describe('class context menu', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
     it('deletes class after confirmation', async () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue('Delete');
 
-      messageHandler({ command: 'ctxDeleteClass' });
+      await messageHandler({ command: 'ctxDeleteClass' });
 
       await vi.waitFor(() => expect(queries.deleteClass).toHaveBeenCalledWith(session, 1, 'Array'));
       // The class's mirror file + persisted hash are dropped.
@@ -1519,7 +1535,7 @@ describe('SystemBrowser', () => {
 
     it('does not delete class when user cancels', async () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue(undefined);
-      messageHandler({ command: 'ctxDeleteClass' });
+      await messageHandler({ command: 'ctxDeleteClass' });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(queries.deleteClass).not.toHaveBeenCalled();
     });
@@ -1527,7 +1543,7 @@ describe('SystemBrowser', () => {
     it('moves class to another dictionary', async () => {
       vi.mocked(window.showQuickPick).mockResolvedValue({ label: 'Globals', index: 2 });
 
-      messageHandler({ command: 'ctxMoveClass' });
+      await messageHandler({ command: 'ctxMoveClass' });
 
       await vi.waitFor(() =>
         expect(queries.moveClass).toHaveBeenCalledWith(session, 1, 2, 'Array'),
@@ -1540,7 +1556,7 @@ describe('SystemBrowser', () => {
       resetUndoStacks();
       vi.mocked(window.showQuickPick).mockResolvedValue({ label: 'Globals', index: 2 });
       let capture = 0;
-      vi.mocked(captureClassSlots).mockImplementation((_e, slots) => {
+      vi.mocked(captureClassSlots).mockImplementation(async (_e, slots) => {
         capture += 1;
         return slots.map((slot) =>
           capture === 1
@@ -1553,7 +1569,7 @@ describe('SystemBrowser', () => {
         );
       });
 
-      messageHandler({ command: 'ctxMoveClass' });
+      await messageHandler({ command: 'ctxMoveClass' });
 
       await vi.waitFor(() =>
         expect(peekUndoEntry(session.id)).toMatchObject({
@@ -1568,12 +1584,12 @@ describe('SystemBrowser', () => {
     it('records a move to another class category, per class (#434)', async () => {
       resetUndoStacks();
       vi.mocked(window.showQuickPick).mockResolvedValue('Printing');
-      vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Array');
+      vi.mocked(queries.recategorizeClass).mockResolvedValue('Recategorized: Array');
       vi.mocked(queries.getClassesWithCategory)
-        .mockReturnValueOnce([{ className: 'Array', category: 'Collections', hasComment: false }])
-        .mockReturnValueOnce([{ className: 'Array', category: 'Printing', hasComment: false }]);
+        .mockResolvedValueOnce([{ className: 'Array', category: 'Collections', hasComment: false }])
+        .mockResolvedValueOnce([{ className: 'Array', category: 'Printing', hasComment: false }]);
 
-      messageHandler({ command: 'ctxMoveClassToCategory' });
+      await messageHandler({ command: 'ctxMoveClassToCategory' });
 
       await vi.waitFor(() =>
         expect(peekUndoEntry(session.id)).toMatchObject({
@@ -1584,8 +1600,8 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('delegates run tests to command', () => {
-      messageHandler({ command: 'ctxRunTests' });
+    it('delegates run tests to command', async () => {
+      await messageHandler({ command: 'ctxRunTests' });
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.runSunitClass', {
         dictName: 'UserGlobals',
         className: 'Array',
@@ -1594,14 +1610,14 @@ describe('SystemBrowser', () => {
   });
 
   describe('file out', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       (workspace as unknown as { workspaceFolders: { uri: unknown }[] }).workspaceFolders = [
         { uri: Uri.file('/ws') },
       ];
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
     });
 
@@ -1610,11 +1626,11 @@ describe('SystemBrowser', () => {
     });
 
     it('writes the selected class file-out to the chosen path', async () => {
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      vi.mocked(queries.fileOutClass).mockReturnValue('! Array file-out');
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      vi.mocked(queries.fileOutClass).mockResolvedValue('! Array file-out');
       vi.mocked(window.showSaveDialog).mockResolvedValue(Uri.file('/out/Array.gs'));
 
-      messageHandler({ command: 'ctxFileOutClass' });
+      await messageHandler({ command: 'ctxFileOutClass' });
 
       await vi.waitFor(() =>
         expect(queries.fileOutClass).toHaveBeenCalledWith(session, 'Array', 1),
@@ -1627,10 +1643,10 @@ describe('SystemBrowser', () => {
     });
 
     it('defaults a test class file name to its subject', async () => {
-      messageHandler({ command: 'selectClass', name: 'AccountTestCase' });
+      await messageHandler({ command: 'selectClass', name: 'AccountTestCase' });
       vi.mocked(window.showSaveDialog).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxFileOutClass' });
+      await messageHandler({ command: 'ctxFileOutClass' });
 
       await vi.waitFor(() => expect(window.showSaveDialog).toHaveBeenCalled());
       const opts = vi.mocked(window.showSaveDialog).mock.calls[0][0]!;
@@ -1638,27 +1654,27 @@ describe('SystemBrowser', () => {
     });
 
     it('does not write a class file-out when the save dialog is cancelled', async () => {
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(window.showSaveDialog).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxFileOutClass' });
+      await messageHandler({ command: 'ctxFileOutClass' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
     it('writes one file per class plus a loader for a dictionary as many files', async () => {
-      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue([
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue([
         'Object',
         'Animal',
         'Dog',
       ]);
       vi.mocked(queries.fileOutClass).mockImplementation(
-        (_s, className) => `! ${className} file-out`,
+        async (_s, className) => `! ${className} file-out`,
       );
       vi.mocked(window.showSaveDialog).mockResolvedValue(Uri.file('/out/UserGlobals.gs'));
 
-      messageHandler({ command: 'ctxFileOutDictionaryMany' });
+      await messageHandler({ command: 'ctxFileOutDictionaryMany' });
 
       await vi.waitFor(() =>
         expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -1684,15 +1700,15 @@ describe('SystemBrowser', () => {
     });
 
     it('files out classes in the order their superclasses require, after forward references', async () => {
-      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue([
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue([
         'Object',
         'Animal',
         'Dog',
       ]);
-      vi.mocked(queries.fileOutClass).mockImplementation((_s, className) => `! ${className}`);
+      vi.mocked(queries.fileOutClass).mockImplementation(async (_s, className) => `! ${className}`);
       vi.mocked(window.showSaveDialog).mockResolvedValue(Uri.file('/out/UserGlobals.gs'));
 
-      messageHandler({ command: 'ctxFileOutDictionaryMany' });
+      await messageHandler({ command: 'ctxFileOutDictionaryMany' });
 
       await vi.waitFor(() =>
         expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -1712,10 +1728,10 @@ describe('SystemBrowser', () => {
     });
 
     it('warns and writes nothing when a dictionary has no classes', async () => {
-      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue([]);
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue([]);
       vi.mocked(window.showSaveDialog).mockResolvedValue(Uri.file('/out/UserGlobals.gs'));
 
-      messageHandler({ command: 'ctxFileOutDictionaryMany' });
+      await messageHandler({ command: 'ctxFileOutDictionaryMany' });
 
       await vi.waitFor(() => expect(window.showWarningMessage).toHaveBeenCalled());
       expect(fs.writeFileSync).not.toHaveBeenCalled();
@@ -1723,21 +1739,21 @@ describe('SystemBrowser', () => {
   });
 
   describe('method category context menu', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
     it('renames method category', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('Getters');
 
-      messageHandler({ command: 'ctxRenameCategory' });
+      await messageHandler({ command: 'ctxRenameCategory' });
 
       await vi.waitFor(() =>
         expect(queries.renameCategory).toHaveBeenCalledWith(
@@ -1753,15 +1769,15 @@ describe('SystemBrowser', () => {
 
     it('does not rename when user cancels', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue(undefined);
-      messageHandler({ command: 'ctxRenameCategory' });
+      await messageHandler({ command: 'ctxRenameCategory' });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(queries.renameCategory).not.toHaveBeenCalled();
     });
 
-    it('runs SUnit tests for all methods in the selected method category', () => {
+    it('runs SUnit tests for all methods in the selected method category', async () => {
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunMethodCategoryTests' });
+      await messageHandler({ command: 'ctxRunMethodCategoryTests' });
 
       expect(commands.executeCommand).toHaveBeenCalledWith(
         'gemstone.runSunitMethodCategory',
@@ -1771,12 +1787,12 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('does nothing when no method category is selected', () => {
+    it('does nothing when no method category is selected', async () => {
       // Deselect class entirely so selectedMethodCategory is also cleared
-      messageHandler({ command: 'selectDictionary', index: 2 });
+      await messageHandler({ command: 'selectDictionary', index: 2 });
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunMethodCategoryTests' });
+      await messageHandler({ command: 'ctxRunMethodCategoryTests' });
 
       expect(commands.executeCommand).not.toHaveBeenCalledWith(
         'gemstone.runSunitMethodCategory',
@@ -1786,22 +1802,22 @@ describe('SystemBrowser', () => {
   });
 
   describe('method context menu', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
-      messageHandler({ command: 'selectMethod', selector: 'name' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectMethod', selector: 'name' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
     it('deletes method after confirmation', async () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue('Delete');
 
-      messageHandler({ command: 'ctxDeleteMethod' });
+      await messageHandler({ command: 'ctxDeleteMethod' });
 
       await vi.waitFor(() =>
         expect(queries.deleteMethod).toHaveBeenCalledWith(session, 'Array', false, 'name', 1),
@@ -1814,7 +1830,7 @@ describe('SystemBrowser', () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue('Delete');
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'ctxDeleteMethod' });
+      await messageHandler({ command: 'ctxDeleteMethod' });
 
       await vi.waitFor(() =>
         expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
@@ -1828,20 +1844,20 @@ describe('SystemBrowser', () => {
 
     it('does not delete method when user cancels', async () => {
       vi.mocked(window.showWarningMessage).mockResolvedValue(undefined);
-      messageHandler({ command: 'ctxDeleteMethod' });
+      await messageHandler({ command: 'ctxDeleteMethod' });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(queries.deleteMethod).not.toHaveBeenCalled();
     });
 
     it('moves method to category', async () => {
-      vi.mocked(queries.getMethodCategories).mockReturnValue([
+      vi.mocked(queries.getMethodCategories).mockResolvedValue([
         'Accessing',
         'Comparing',
         'Printing',
       ]);
       vi.mocked(window.showQuickPick).mockResolvedValue('Printing');
 
-      messageHandler({ command: 'ctxMoveToCategory' });
+      await messageHandler({ command: 'ctxMoveToCategory' });
 
       await vi.waitFor(() =>
         expect(queries.recategorizeMethod).toHaveBeenCalledWith(
@@ -1859,10 +1875,10 @@ describe('SystemBrowser', () => {
       // A method slot's captured state carries its CATEGORY as well as its source, so the
       // ordinary method-edit reversal is all a category move needs.
       resetUndoStacks();
-      vi.mocked(queries.getMethodCategories).mockReturnValue(['Accessing', 'Printing']);
+      vi.mocked(queries.getMethodCategories).mockResolvedValue(['Accessing', 'Printing']);
       vi.mocked(window.showQuickPick).mockResolvedValue('Printing');
       let capture = 0;
-      vi.mocked(captureMethodSlots).mockImplementation((_e, slots) => {
+      vi.mocked(captureMethodSlots).mockImplementation(async (_e, slots) => {
         capture += 1;
         return slots.map(() => ({
           exists: true,
@@ -1871,7 +1887,7 @@ describe('SystemBrowser', () => {
         }));
       });
 
-      messageHandler({ command: 'ctxMoveToCategory' });
+      await messageHandler({ command: 'ctxMoveToCategory' });
 
       await vi.waitFor(() =>
         expect(peekUndoEntry(session.id)).toMatchObject({
@@ -1884,10 +1900,10 @@ describe('SystemBrowser', () => {
       expect(entry?.kind === 'methodEdit' && entry.after[0].category).toBe('Printing');
     });
 
-    it('delegates run single test to command', () => {
+    it('delegates run single test to command', async () => {
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunMethodTests' });
+      await messageHandler({ command: 'ctxRunMethodTests' });
 
       expect(commands.executeCommand).toHaveBeenCalledWith(
         'gemstone.runSunitMethods',
@@ -1897,11 +1913,11 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('does nothing for run single test when no method is selected', () => {
-      messageHandler({ command: 'selectDictionary', index: 2 });
+    it('does nothing for run single test when no method is selected', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 2 });
       vi.mocked(commands.executeCommand).mockClear();
 
-      messageHandler({ command: 'ctxRunMethodTests' });
+      await messageHandler({ command: 'ctxRunMethodTests' });
 
       expect(commands.executeCommand).not.toHaveBeenCalledWith(
         'gemstone.runSunitMethods',
@@ -1909,24 +1925,24 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('delegates senders to command', () => {
-      messageHandler({ command: 'ctxSendersOf' });
+    it('delegates senders to command', async () => {
+      await messageHandler({ command: 'ctxSendersOf' });
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.sendersOfSelector', {
         selector: 'name',
         sessionId: 1,
       });
     });
 
-    it('delegates implementors to command', () => {
-      messageHandler({ command: 'ctxImplementorsOf' });
+    it('delegates implementors to command', async () => {
+      await messageHandler({ command: 'ctxImplementorsOf' });
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.implementorsOfSelector', {
         selector: 'name',
         sessionId: 1,
       });
     });
 
-    it('delegates browse references to command', () => {
-      messageHandler({ command: 'ctxBrowseReferences', name: 'Array' });
+    it('delegates browse references to command', async () => {
+      await messageHandler({ command: 'ctxBrowseReferences', name: 'Array' });
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.browseReferences', {
         objectName: 'Array',
         sessionId: 1,
@@ -1937,7 +1953,7 @@ describe('SystemBrowser', () => {
 
     it('prompts for a selector and browses its senders', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('  printOn:  ');
-      messageHandler({ command: 'ctxBrowseSendersOfString' });
+      await messageHandler({ command: 'ctxBrowseSendersOfString' });
       await flush();
 
       expect(commands.executeCommand).toHaveBeenCalledWith(
@@ -1948,7 +1964,7 @@ describe('SystemBrowser', () => {
 
     it('prompts for a selector and browses its implementors', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('at:put:');
-      messageHandler({ command: 'ctxBrowseImplementorsOfString' });
+      await messageHandler({ command: 'ctxBrowseImplementorsOfString' });
       await flush();
 
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.implementorsOfSelector', {
@@ -1959,7 +1975,7 @@ describe('SystemBrowser', () => {
 
     it('prompts for a string and browses methods containing it', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue('asString');
-      messageHandler({ command: 'ctxBrowseMethodsContaining' });
+      await messageHandler({ command: 'ctxBrowseMethodsContaining' });
       await flush();
 
       expect(commands.executeCommand).toHaveBeenCalledWith('gemstone.searchMethodsFor', {
@@ -1970,7 +1986,7 @@ describe('SystemBrowser', () => {
 
     it('does nothing when the browse prompt is cancelled', async () => {
       vi.mocked(window.showInputBox).mockResolvedValue(undefined);
-      messageHandler({ command: 'ctxBrowseSendersOfString' });
+      await messageHandler({ command: 'ctxBrowseSendersOfString' });
       await flush();
 
       expect(commands.executeCommand).not.toHaveBeenCalledWith(
@@ -1983,7 +1999,7 @@ describe('SystemBrowser', () => {
       vi.mocked(workspace.openTextDocument).mockClear();
       vi.mocked(window.showTextDocument).mockClear();
       vi.mocked(commands.executeCommand).mockClear();
-      messageHandler({ command: 'ctxNewMethod' });
+      await messageHandler({ command: 'ctxNewMethod' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -2002,9 +2018,9 @@ describe('SystemBrowser', () => {
     });
 
     it('uses "as yet unclassified" for new method when ALL METHODS is selected', async () => {
-      messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
+      await messageHandler({ command: 'selectMethodCategory', name: ALL_METHODS_CATEGORY });
       vi.mocked(workspace.openTextDocument).mockClear();
-      messageHandler({ command: 'ctxNewMethod' });
+      await messageHandler({ command: 'ctxNewMethod' });
       await vi.waitFor(() => {
         expect(workspace.openTextDocument).toHaveBeenCalled();
       });
@@ -2018,22 +2034,22 @@ describe('SystemBrowser', () => {
   describe('move class to category / copy method to class', () => {
     const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
-      messageHandler({ command: 'selectMethod', selector: 'name' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectMethod', selector: 'name' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
     it('moves the class to the chosen category', async () => {
       vi.mocked(window.showQuickPick).mockResolvedValue('Collections');
 
-      messageHandler({ command: 'ctxMoveClassToCategory' });
+      await messageHandler({ command: 'ctxMoveClassToCategory' });
       await flush();
 
       expect(queries.recategorizeClass).toHaveBeenCalledWith(session, 'Array', 'Collections', 1);
@@ -2046,7 +2062,7 @@ describe('SystemBrowser', () => {
     it('offers the real class categories, excluding the "all classes" pseudo-entry', async () => {
       vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxMoveClassToCategory' });
+      await messageHandler({ command: 'ctxMoveClassToCategory' });
       await flush();
 
       const offered = vi.mocked(window.showQuickPick).mock.calls[0][0];
@@ -2056,17 +2072,17 @@ describe('SystemBrowser', () => {
     it('does nothing to the category when the quick pick is cancelled', async () => {
       vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxMoveClassToCategory' });
+      await messageHandler({ command: 'ctxMoveClassToCategory' });
       await flush();
 
       expect(queries.recategorizeClass).not.toHaveBeenCalled();
     });
 
     it('copies the selected method to the chosen class, preserving side and environment', async () => {
-      vi.mocked(queries.getClassNames).mockReturnValue(['Array', 'Bag', 'Set']);
+      vi.mocked(queries.getClassNames).mockResolvedValue(['Array', 'Bag', 'Set']);
       vi.mocked(window.showQuickPick).mockResolvedValue('Set');
 
-      messageHandler({ command: 'ctxCopyMethodToClass' });
+      await messageHandler({ command: 'ctxCopyMethodToClass' });
       await flush();
 
       expect(queries.copyMethodToClass).toHaveBeenCalledWith(
@@ -2083,19 +2099,19 @@ describe('SystemBrowser', () => {
     });
 
     it('excludes the source class from the copy targets', async () => {
-      vi.mocked(queries.getClassNames).mockReturnValue(['Array', 'Bag', 'Set']);
+      vi.mocked(queries.getClassNames).mockResolvedValue(['Array', 'Bag', 'Set']);
       vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
 
-      messageHandler({ command: 'ctxCopyMethodToClass' });
+      await messageHandler({ command: 'ctxCopyMethodToClass' });
       await flush();
 
       expect(vi.mocked(window.showQuickPick).mock.calls[0][0]).toEqual(['Bag', 'Set']);
     });
 
     it('reports when there is no other class to copy to', async () => {
-      vi.mocked(queries.getClassNames).mockReturnValue(['Array']);
+      vi.mocked(queries.getClassNames).mockResolvedValue(['Array']);
 
-      messageHandler({ command: 'ctxCopyMethodToClass' });
+      await messageHandler({ command: 'ctxCopyMethodToClass' });
       await flush();
 
       expect(window.showQuickPick).not.toHaveBeenCalled();
@@ -2107,10 +2123,10 @@ describe('SystemBrowser', () => {
   });
 
   describe('GlobalsBrowser and ClassBrowser integration', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
     });
 
     it('opens GlobalsBrowser when a dictionary is selected', () => {
@@ -2138,10 +2154,10 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('opens ClassBrowser with className when a class is selected', () => {
+    it('opens ClassBrowser with className when a class is selected', async () => {
       vi.mocked(ClassBrowser.showOrUpdate).mockClear();
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       expect(vi.mocked(ClassBrowser.showOrUpdate)).toHaveBeenCalledWith(
         session,
@@ -2154,8 +2170,8 @@ describe('SystemBrowser', () => {
     it('opens the Comment tab after the definition, for the selected class and dictionary', async () => {
       vi.mocked(ClassBrowser.showOrUpdate).mockClear();
       vi.mocked(CommentBrowser.showOrUpdate).mockClear();
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       // The comment is opened only after the definition resolves, so its tab sits
       // to the right — let the ClassBrowser→CommentBrowser chain flush first.
@@ -2175,16 +2191,16 @@ describe('SystemBrowser', () => {
   });
 
   describe('multi-environment', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       __setConfig('gemstone', 'maxEnvironment', 2);
-      vi.mocked(queries.getClassEnvironments).mockReturnValue([
+      vi.mocked(queries.getClassEnvironments).mockResolvedValue([
         { isMeta: false, envId: 0, category: 'Accessing', selectors: ['name', 'name:'] },
         { isMeta: false, envId: 0, category: 'Comparing', selectors: ['=', 'hash'] },
         { isMeta: false, envId: 1, category: 'Ruby', selectors: ['rb_name'] },
         { isMeta: true, envId: 0, category: 'Instance Creation', selectors: ['new', 'new:'] },
       ]);
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
     });
 
     afterEach(() => {
@@ -2213,20 +2229,20 @@ describe('SystemBrowser', () => {
       ).toBe(false);
     });
 
-    it('passes maxEnvironment to getClassEnvironments', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('passes maxEnvironment to getClassEnvironments', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       expect(queries.getClassEnvironments).toHaveBeenCalledWith(session, 1, 'Array', 2);
     });
 
-    it('shows env 0 method categories by default', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('shows env 0 method categories by default', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -2235,14 +2251,14 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('switches to env 1 method categories on toggleEnvironment', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('switches to env 1 method categories on toggleEnvironment', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -2251,14 +2267,14 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('shows empty categories for environment with no methods', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('shows empty categories for environment with no methods', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 2 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 2 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -2267,13 +2283,13 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('selects the "All classes" pseudo-category when no category was selected before environment toggle', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
-      messageHandler({ command: 'selectClass', name: 'Array' });
+    it('selects the "All classes" pseudo-category when no category was selected before environment toggle', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2283,32 +2299,32 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('preserves selected method category when it exists in the target environment', () => {
-      vi.mocked(queries.getClassEnvironments).mockReturnValue([
+    it('preserves selected method category when it exists in the target environment', async () => {
+      vi.mocked(queries.getClassEnvironments).mockResolvedValue([
         { isMeta: false, envId: 0, category: 'Accessing', selectors: ['name', 'name:'] },
         { isMeta: false, envId: 1, category: 'Accessing', selectors: ['rb_name'] },
       ]);
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadMethodCategories', selected: 'Accessing' }),
       );
     });
 
-    it('selects the "All classes" pseudo-category when selected category does not exist in target environment', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+    it('selects the "All classes" pseudo-category when selected category does not exist in target environment', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2318,14 +2334,14 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('loads methods for the auto-selected category on environment toggle', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('loads methods for the auto-selected category on environment toggle', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
@@ -2335,18 +2351,18 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('resets env to 0 on refresh', () => {
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+    it('resets env to 0 on refresh', async () => {
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleEnvironment', envId: 1 });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleEnvironment', envId: 1 });
 
-      messageHandler({ command: 'refresh' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'refresh' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -2357,12 +2373,13 @@ describe('SystemBrowser', () => {
   });
 
   describe('static refresh', () => {
-    it('refreshes the browser for a given session', () => {
+    it('refreshes the browser for a given session', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadDictionaries',
@@ -2370,14 +2387,15 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('restores dictionary and category selection after refresh', () => {
+    it('restores dictionary and category selection after refresh', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'selectDictionaryItem',
@@ -2394,21 +2412,22 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('does nothing when no browser exists for the session', () => {
+    it('does nothing when no browser exists for the session', async () => {
       // No browser has been created — should not throw
-      SystemBrowser.refresh(999);
+      await SystemBrowser.refresh(999);
     });
 
-    it('restores class selection after refresh', () => {
+    it('restores class selection after refresh', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadClasses',
@@ -2420,17 +2439,18 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('restores class-side toggle after refresh', () => {
+    it('restores class-side toggle after refresh', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'toggleSide', isMeta: true });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'toggleSide', isMeta: true });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'setSide',
@@ -2443,17 +2463,18 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('restores method category selection after refresh', () => {
+    it('restores method category selection after refresh', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethodCategories',
@@ -2468,21 +2489,22 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('does not restore class when it no longer exists after refresh', () => {
+    it('does not restore class when it no longer exists after refresh', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       // After refresh, the class no longer exists
-      vi.mocked(queries.getDictionaryEntries).mockReturnValue([
+      vi.mocked(queries.getDictionaryEntries).mockResolvedValue([
         { isClass: true, category: 'Kernel', name: 'Set' },
       ]);
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Should not try to select a class that no longer exists
       const calls = vi.mocked(mockPanel.webview.postMessage).mock.calls.map((c) => c[0]);
@@ -2501,21 +2523,21 @@ describe('SystemBrowser', () => {
   });
 
   describe('methodCompiled', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
-      messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectMethodCategory', name: 'Accessing' });
     });
 
-    it('refreshes method categories after a method is compiled', () => {
+    it('refreshes method categories after a method is compiled', async () => {
       vi.mocked(queries.getClassEnvironments).mockClear();
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.methodCompiled(session.id, 'Array');
+      await SystemBrowser.methodCompiled(session.id, 'Array');
 
       expect(queries.getClassEnvironments).toHaveBeenCalledWith(session, 1, 'Array', 0);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
@@ -2525,10 +2547,10 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('refreshes the method list for the selected category', () => {
+    it('refreshes the method list for the selected category', async () => {
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.methodCompiled(session.id, 'Array');
+      await SystemBrowser.methodCompiled(session.id, 'Array');
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
         command: 'loadMethods',
@@ -2538,18 +2560,18 @@ describe('SystemBrowser', () => {
       });
     });
 
-    it('does nothing when the compiled class is not selected', () => {
+    it('does nothing when the compiled class is not selected', async () => {
       vi.mocked(queries.getClassEnvironments).mockClear();
       vi.mocked(mockPanel.webview.postMessage).mockClear();
 
-      SystemBrowser.methodCompiled(session.id, 'String');
+      await SystemBrowser.methodCompiled(session.id, 'String');
 
       expect(queries.getClassEnvironments).not.toHaveBeenCalled();
       expect(mockPanel.webview.postMessage).not.toHaveBeenCalled();
     });
 
-    it('does nothing when no browser exists for the session', () => {
-      SystemBrowser.methodCompiled(999, 'Array');
+    it('does nothing when no browser exists for the session', async () => {
+      await SystemBrowser.methodCompiled(999, 'Array');
     });
   });
 
@@ -2563,46 +2585,46 @@ describe('SystemBrowser', () => {
       selector: 'name',
     };
 
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' }); // populates state.dictionaries
+      await messageHandler({ command: 'ready' }); // populates state.dictionaries
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
-    it('returns false when no browser is open for the session', () => {
-      expect(SystemBrowser.navigateTo(999, result)).toBe(false);
+    it('returns false when no browser is open for the session', async () => {
+      expect(await SystemBrowser.navigateTo(999, result)).toBe(false);
     });
 
-    it('returns true when a browser is open for the session', () => {
-      expect(SystemBrowser.navigateTo(session.id, result)).toBe(true);
+    it('returns true when a browser is open for the session', async () => {
+      expect(await SystemBrowser.navigateTo(session.id, result)).toBe(true);
     });
 
-    it('reveals the panel with preserveFocus so the editor keeps focus', () => {
-      SystemBrowser.navigateTo(session.id, result);
+    it('reveals the panel with preserveFocus so the editor keeps focus', async () => {
+      await SystemBrowser.navigateTo(session.id, result);
       expect(mockPanel.reveal).toHaveBeenCalledWith(undefined, true);
     });
 
-    it('does nothing when the dictName is not in the loaded dictionaries', () => {
+    it('does nothing when the dictName is not in the loaded dictionaries', async () => {
       const unknown = { ...result, dictName: 'UnknownDict' };
-      SystemBrowser.navigateTo(session.id, unknown);
+      await SystemBrowser.navigateTo(session.id, unknown);
       expect(mockPanel.reveal).not.toHaveBeenCalled();
       expect(workspace.openTextDocument).not.toHaveBeenCalled();
     });
 
-    it('updates the panel title to the selected class', () => {
-      SystemBrowser.navigateTo(session.id, result);
+    it('updates the panel title to the selected class', async () => {
+      await SystemBrowser.navigateTo(session.id, result);
       expect(mockPanel.title).toBe('Browser: Array');
     });
 
-    it('posts loadClasses with the selected class', () => {
-      SystemBrowser.navigateTo(session.id, result);
+    it('posts loadClasses with the selected class', async () => {
+      await SystemBrowser.navigateTo(session.id, result);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadClasses', selected: 'Array' }),
       );
     });
 
-    it("selects the method's own category, never a different one", () => {
-      SystemBrowser.navigateTo(session.id, result);
+    it("selects the method's own category, never a different one", async () => {
+      await SystemBrowser.navigateTo(session.id, result);
 
       const categorySelections = vi
         .mocked(mockPanel.webview.postMessage)
@@ -2616,15 +2638,15 @@ describe('SystemBrowser', () => {
       expect(categorySelections).toEqual([null, 'Accessing']);
     });
 
-    it('posts loadMethods with the selected selector', () => {
-      SystemBrowser.navigateTo(session.id, result);
+    it('posts loadMethods with the selected selector', async () => {
+      await SystemBrowser.navigateTo(session.id, result);
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadMethods', selected: 'name' }),
       );
     });
 
     it('opens the method in a gemstone:// preview tab', async () => {
-      SystemBrowser.navigateTo(session.id, result);
+      await SystemBrowser.navigateTo(session.id, result);
       await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
       const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as {
         scheme: string;
@@ -2641,7 +2663,7 @@ describe('SystemBrowser', () => {
 
     it('uses class side in the URI when isMeta is true', async () => {
       const classSide = { ...result, isMeta: true, category: 'Instance Creation', selector: 'new' };
-      SystemBrowser.navigateTo(session.id, classSide);
+      await SystemBrowser.navigateTo(session.id, classSide);
       await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
       const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as { path: string };
       expect(uri.path).toContain('/class/');
@@ -2663,7 +2685,7 @@ describe('SystemBrowser', () => {
 
       beforeEach(() => {
         __setConfig('gemstone', 'maxEnvironment', 2);
-        vi.mocked(queries.getClassEnvironments).mockReturnValue([
+        vi.mocked(queries.getClassEnvironments).mockResolvedValue([
           { isMeta: false, envId: 0, category: 'Accessing', selectors: ['name', 'name:'] },
           { isMeta: false, envId: 1, category: 'Ruby', selectors: ['rb_name'] },
           { isMeta: true, envId: 0, category: 'Instance Creation', selectors: ['new', 'new:'] },
@@ -2675,15 +2697,15 @@ describe('SystemBrowser', () => {
       });
 
       it("opens the row's environment, not the one the browser was showing", async () => {
-        SystemBrowser.navigateTo(session.id, inEnv1);
+        await SystemBrowser.navigateTo(session.id, inEnv1);
 
         await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
         const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as { query: string };
         expect(uri.query).toContain('env=1');
       });
 
-      it('checks the matching environment control so the browser says where it is', () => {
-        SystemBrowser.navigateTo(session.id, inEnv1);
+      it('checks the matching environment control so the browser says where it is', async () => {
+        await SystemBrowser.navigateTo(session.id, inEnv1);
 
         expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
           command: 'setEnvironment',
@@ -2691,8 +2713,8 @@ describe('SystemBrowser', () => {
         });
       });
 
-      it("selects the row's category, which only exists in that environment", () => {
-        SystemBrowser.navigateTo(session.id, inEnv1);
+      it("selects the row's category, which only exists in that environment", async () => {
+        await SystemBrowser.navigateTo(session.id, inEnv1);
 
         expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
           expect.objectContaining({ command: 'loadMethodCategories', selected: 'Ruby' }),
@@ -2700,7 +2722,7 @@ describe('SystemBrowser', () => {
       });
 
       it('leaves an environment-0 row opening environment 0, with no env in the URI', async () => {
-        SystemBrowser.navigateTo(session.id, result);
+        await SystemBrowser.navigateTo(session.id, result);
 
         await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
         const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as { query: string };
@@ -2714,9 +2736,9 @@ describe('SystemBrowser', () => {
       SystemBrowser.show(session, exportManager);
       const secondPanel = vi.mocked(window.createWebviewPanel).mock.results[1]
         .value as typeof mockPanel;
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
 
-      SystemBrowser.navigateTo(session.id, result);
+      await SystemBrowser.navigateTo(session.id, result);
       // First browser was created first so it is the default active target
       expect(firstPanel.reveal).toHaveBeenCalled();
       expect(secondPanel.reveal).not.toHaveBeenCalled();
@@ -2727,9 +2749,9 @@ describe('SystemBrowser', () => {
     // didn't refresh when an Implementors-of / Senders-of jump landed on
     // a different class. Now routed through applyClassSelection so the
     // Class Definition tracks the column-list selection.
-    it('refreshes the Class Definition panel when the selected class changes', () => {
+    it('refreshes the Class Definition panel when the selected class changes', async () => {
       vi.mocked(ClassBrowser.showOrUpdate).mockClear();
-      SystemBrowser.navigateTo(session.id, result);
+      await SystemBrowser.navigateTo(session.id, result);
       expect(ClassBrowser.showOrUpdate).toHaveBeenCalledWith(
         session,
         expect.any(Array),
@@ -2756,7 +2778,7 @@ describe('SystemBrowser', () => {
       vi.mocked(commands.executeCommand).mockClear();
       vi.mocked(window.showTextDocument).mockClear();
 
-      SystemBrowser.navigateTo(session.id, result);
+      await SystemBrowser.navigateTo(session.id, result);
       await vi.waitFor(() => expect(window.showTextDocument).toHaveBeenCalled());
 
       expect(commands.executeCommand).toHaveBeenCalledWith('workbench.action.newGroupBelow');
@@ -2772,7 +2794,7 @@ describe('SystemBrowser', () => {
       vi.mocked(window.showTextDocument).mockClear();
 
       // First navigation: this browser has opened nothing yet → new group below.
-      SystemBrowser.navigateTo(session.id, result);
+      await SystemBrowser.navigateTo(session.id, result);
       await vi.waitFor(() => expect(window.showTextDocument).toHaveBeenCalled());
       expect(commands.executeCommand).toHaveBeenCalledWith('workbench.action.newGroupBelow');
       expect(window.showTextDocument).toHaveBeenCalledWith(
@@ -2794,7 +2816,7 @@ describe('SystemBrowser', () => {
 
       // Second navigation to a different method reuses our own group, no new split.
       const result2 = { ...result, category: 'Comparing', selector: '=' };
-      SystemBrowser.navigateTo(session.id, result2);
+      await SystemBrowser.navigateTo(session.id, result2);
       await vi.waitFor(() => expect(window.showTextDocument).toHaveBeenCalled());
 
       expect(commands.executeCommand).not.toHaveBeenCalledWith('workbench.action.newGroupBelow');
@@ -2807,15 +2829,15 @@ describe('SystemBrowser', () => {
   });
 
   describe('navigateToClass', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' }); // dictionaries = ['UserGlobals', 'Globals']
+      await messageHandler({ command: 'ready' }); // dictionaries = ['UserGlobals', 'Globals']
       vi.mocked(ClassBrowser.showOrUpdate).mockClear();
     });
 
-    it('opens the class in the exact SymbolList index given, not the first name match', () => {
+    it('opens the class in the exact SymbolList index given, not the first name match', async () => {
       // Pass index 2 (Globals) explicitly; the definition opens scoped to it.
-      SystemBrowser.navigateToClass(session.id, 'Globals', 'Array', 2);
+      await SystemBrowser.navigateToClass(session.id, 'Globals', 'Array', 2);
 
       expect(ClassBrowser.showOrUpdate).toHaveBeenCalledWith(
         session,
@@ -2825,8 +2847,8 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('falls back to resolving the dictionary by name when no index is given', () => {
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+    it('falls back to resolving the dictionary by name when no index is given', async () => {
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
 
       expect(ClassBrowser.showOrUpdate).toHaveBeenCalledWith(
         session,
@@ -2836,8 +2858,8 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('returns false when no browser is open for the session', () => {
-      expect(SystemBrowser.navigateToClass(999, 'Globals', 'Array', 2)).toBe(false);
+    it('returns false when no browser is open for the session', async () => {
+      expect(await SystemBrowser.navigateToClass(999, 'Globals', 'Array', 2)).toBe(false);
     });
   });
 
@@ -2855,18 +2877,18 @@ describe('SystemBrowser', () => {
       SystemBrowser.setExportManager(exportManager);
     });
 
-    it('does nothing when no export manager has been set', () => {
+    it('does nothing when no export manager has been set', async () => {
       (SystemBrowser as unknown as { sharedExportManager: unknown }).sharedExportManager =
         undefined;
-      SystemBrowser.navigateBeside(session, result);
+      await SystemBrowser.navigateBeside(session, result);
       expect(window.createWebviewPanel).not.toHaveBeenCalled();
     });
 
-    it('selects all browser columns when the browser opens with pending navigation', () => {
-      SystemBrowser.navigateBeside(session, result);
+    it('selects all browser columns when the browser opens with pending navigation', async () => {
+      await SystemBrowser.navigateBeside(session, result);
       // navigateBeside called show() internally — mockPanel and messageHandler now point to the new browser
       vi.mocked(mockPanel.webview.postMessage).mockClear();
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
 
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadClassCategories', selected: ALL_CLASSES_CATEGORY }),
@@ -2887,13 +2909,13 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('navigates an existing browser directly without opening a new panel', () => {
+    it('navigates an existing browser directly without opening a new panel', async () => {
       // Open a browser first so navigateBeside finds it
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       vi.mocked(window.createWebviewPanel).mockClear();
 
-      SystemBrowser.navigateBeside(session, result);
+      await SystemBrowser.navigateBeside(session, result);
 
       expect(window.createWebviewPanel).not.toHaveBeenCalled();
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
@@ -2903,47 +2925,47 @@ describe('SystemBrowser', () => {
   });
 
   describe('navigateToClass updating the target panel', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       vi.mocked(mockPanel.webview.postMessage).mockClear();
     });
 
-    it('returns false when no browser is open for the session', () => {
-      expect(SystemBrowser.navigateToClass(999, 'UserGlobals', 'Array')).toBe(false);
+    it('returns false when no browser is open for the session', async () => {
+      expect(await SystemBrowser.navigateToClass(999, 'UserGlobals', 'Array')).toBe(false);
     });
 
-    it('returns true when a browser is open for the session', () => {
-      expect(SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array')).toBe(true);
+    it('returns true when a browser is open for the session', async () => {
+      expect(await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array')).toBe(true);
     });
 
-    it('reveals the panel with preserveFocus', () => {
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+    it('reveals the panel with preserveFocus', async () => {
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(mockPanel.reveal).toHaveBeenCalledWith(undefined, true);
     });
 
-    it('does nothing when the dictName is not in the loaded dictionaries', () => {
-      SystemBrowser.navigateToClass(session.id, 'UnknownDict', 'Array');
+    it('does nothing when the dictName is not in the loaded dictionaries', async () => {
+      await SystemBrowser.navigateToClass(session.id, 'UnknownDict', 'Array');
       expect(mockPanel.reveal).not.toHaveBeenCalled();
     });
 
-    it('updates the panel title to the selected class', () => {
+    it('updates the panel title to the selected class', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(mockPanel.title).toBe('Browser: Array');
     });
 
-    it('posts loadClasses with the selected class', () => {
+    it('posts loadClasses with the selected class', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'loadClasses', selected: 'Array' }),
       );
     });
 
-    it('auto-selects all methods so the Methods column fills', () => {
+    it('auto-selects all methods so the Methods column fills', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           command: 'loadMethods',
@@ -2953,9 +2975,9 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('posts loadMethodCategories with all-methods pre-selected', () => {
+    it('posts loadMethodCategories with all-methods pre-selected', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           command: 'loadMethodCategories',
@@ -2964,9 +2986,9 @@ describe('SystemBrowser', () => {
       );
     });
 
-    it('keeps method override markers when navigating to a class', () => {
+    it('keeps method override markers when navigating to a class', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(queries.getClassEnvironments).mockReturnValue([
+      vi.mocked(queries.getClassEnvironments).mockResolvedValue([
         {
           isMeta: false,
           envId: 0,
@@ -2983,7 +3005,7 @@ describe('SystemBrowser', () => {
         },
       ]);
 
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
 
       const calls = vi
         .mocked(mockPanel.webview.postMessage)
@@ -2995,26 +3017,26 @@ describe('SystemBrowser', () => {
       expect(last.methodOverrideBits).toEqual({ name: 1, '=': 3 });
     });
 
-    it('navigates only the most recently active browser', () => {
+    it('navigates only the most recently active browser', async () => {
       const firstPanel = mockPanel;
       SystemBrowser.show(session, exportManager);
       const secondPanel = vi.mocked(window.createWebviewPanel).mock.results[1]
         .value as typeof mockPanel;
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
 
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       // First browser was created first so it is the default active target
       expect(firstPanel.reveal).toHaveBeenCalled();
       expect(secondPanel.reveal).not.toHaveBeenCalled();
     });
 
-    it('switches target when onDidChangeViewState fires on another browser', () => {
+    it('switches target when onDidChangeViewState fires on another browser', async () => {
       const firstPanel = mockPanel;
       SystemBrowser.show(session, exportManager);
       const secondPanel = vi.mocked(window.createWebviewPanel).mock.results[1]
         .value as typeof mockPanel;
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
 
       // Simulate the second panel becoming active
       const viewStateHandler = secondPanel.onDidChangeViewState.mock.calls[0][0] as (e: {
@@ -3023,7 +3045,7 @@ describe('SystemBrowser', () => {
       viewStateHandler({ webviewPanel: { active: true } });
 
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
+      await SystemBrowser.navigateToClass(session.id, 'UserGlobals', 'Array');
       expect(secondPanel.reveal).toHaveBeenCalled();
       expect(firstPanel.reveal).not.toHaveBeenCalled();
     });
@@ -3034,19 +3056,19 @@ describe('SystemBrowser', () => {
       expect(SystemBrowser.getSelectedClassName(999)).toBeNull();
     });
 
-    it('returns null when no class is selected', () => {
+    it('returns null when no class is selected', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       expect(SystemBrowser.getSelectedClassName(session.id)).toBeNull();
     });
 
-    it('returns the selected class and dictionary name', () => {
+    it('returns the selected class and dictionary name', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
-      messageHandler({ command: 'selectDictionary', index: 1 });
-      messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
+      await messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'selectDictionary', index: 1 });
+      await messageHandler({ command: 'selectCategory', name: ALL_CLASSES_CATEGORY });
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      messageHandler({ command: 'selectClass', name: 'Array' });
+      await messageHandler({ command: 'selectClass', name: 'Array' });
 
       const result = SystemBrowser.getSelectedClassName(session.id);
       expect(result).toEqual({ dictName: 'UserGlobals', className: 'Array', dictIndex: 1 });
@@ -3054,9 +3076,9 @@ describe('SystemBrowser', () => {
   });
 
   describe('closing the browser closes its companion tabs', () => {
-    it('closes the Globals/Comment webviews and gemstone editor tabs when the last browser closes', () => {
+    it('closes the Globals/Comment webviews and gemstone editor tabs when the last browser closes', async () => {
       SystemBrowser.show(session, exportManager);
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       const closeHandler = vi.mocked(mockPanel.onDidDispose).mock.calls[0][0] as () => void;
       const editorTab = {
         input: new TabInputText(Uri.parse(`gemstone://${session.id}/Globals/Array/definition`)),
@@ -3074,11 +3096,11 @@ describe('SystemBrowser', () => {
       window.tabGroups.all = [];
     });
 
-    it('leaves companion tabs alone while another browser for the session remains open', () => {
+    it('leaves companion tabs alone while another browser for the session remains open', async () => {
       SystemBrowser.show(session, exportManager);
       const firstPanel = mockPanel;
       SystemBrowser.show(session, exportManager); // second browser for the same session
-      messageHandler({ command: 'ready' });
+      await messageHandler({ command: 'ready' });
       vi.mocked(GlobalsBrowser.disposeForSession).mockClear();
       vi.mocked(CommentBrowser.disposeForSession).mockClear();
 

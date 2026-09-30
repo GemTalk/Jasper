@@ -106,9 +106,9 @@ describe("Methods pane: VS Code's find box", () => {
   // The reads:/writes:/accesses: filters are the reason the pane keeps filter state at all:
   // they run a GemStone query no text search could, and are seeded from an instance variable's
   // context menu. VS Code's box then searches within the rows they picked.
-  it('leaves an instance-variable filter on the pane, for the find box to search within', () => {
+  it('leaves an instance-variable filter on the pane, for the find box to search within', async () => {
     const ctl = makeController();
-    ctl.filterMethodsByIvar('reads', 'count', 'Demo');
+    await ctl.filterMethodsByIvar('reads', 'count', 'Demo');
 
     expect(ctl.getFilter(METHODS)).toBe('reads:count');
   });

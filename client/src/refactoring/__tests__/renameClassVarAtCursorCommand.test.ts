@@ -61,9 +61,9 @@ const sessions = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(queries.getDefinedClassVarNames).mockReturnValue(['Registry']);
-  vi.mocked(queries.getVisibleClassVarNames).mockReturnValue(['Registry', 'SharedDefault']);
-  vi.mocked(queries.getDefiningClassOfClassVar).mockReturnValue({
+  vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue(['Registry']);
+  vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue(['Registry', 'SharedDefault']);
+  vi.mocked(queries.getDefiningClassOfClassVar).mockResolvedValue({
     className: 'BaseDemo',
     dictIndex: 2,
   });
@@ -86,8 +86,8 @@ describe('rename-class-variable at cursor', () => {
 
   it('retargets an inherited class variable to its defining class once confirmed', async () => {
     installEditor(new vscode.Position(1, 2)); // on `Registry`, declared on a superclass
-    vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
-    vi.mocked(queries.getDefiningClassOfClassVar).mockReturnValue({
+    vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue([]);
+    vi.mocked(queries.getDefiningClassOfClassVar).mockResolvedValue({
       className: 'BaseDemo',
       dictIndex: 5,
     });
@@ -108,7 +108,7 @@ describe('rename-class-variable at cursor', () => {
 
   it('does not rename when the retarget confirm is dismissed', async () => {
     installEditor(new vscode.Position(1, 2));
-    vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
+    vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined); // dismissed
     const beginRename = vi.fn(async () => false);
 
@@ -123,8 +123,8 @@ describe('rename-class-variable at cursor', () => {
     // name in the SUBCLASS's dictionary could land on a different class of the same
     // name and rename the wrong one — so the command must stop, not guess.
     installEditor(new vscode.Position(1, 2));
-    vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
-    vi.mocked(queries.getDefiningClassOfClassVar).mockReturnValue({
+    vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue([]);
+    vi.mocked(queries.getDefiningClassOfClassVar).mockResolvedValue({
       className: 'BaseDemo',
       dictIndex: 0,
     });
@@ -141,8 +141,8 @@ describe('rename-class-variable at cursor', () => {
 
   it('declines an inherited class variable whose defining class cannot be resolved', async () => {
     installEditor(new vscode.Position(1, 2));
-    vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
-    vi.mocked(queries.getDefiningClassOfClassVar).mockReturnValue(undefined);
+    vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue([]);
+    vi.mocked(queries.getDefiningClassOfClassVar).mockResolvedValue(undefined);
     const beginRename = vi.fn(async () => false);
 
     await renameClassVarAtCursorCommand(sessions, beginRename);
@@ -193,7 +193,7 @@ describe('rename-class-variable at cursor', () => {
     // stage a reference rewrite on a class that doesn't declare it — a broken method.
     // So a throw must stop with a retry message, not proceed.
     installEditor(new vscode.Position(1, 2)); // on `Registry`
-    vi.mocked(queries.getDefinedClassVarNames).mockImplementation(() => {
+    vi.mocked(queries.getDefinedClassVarNames).mockImplementation(async () => {
       throw new Error('GCI hiccup');
     });
     const beginRename = vi.fn(async () => false);

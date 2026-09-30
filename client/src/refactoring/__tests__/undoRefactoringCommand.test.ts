@@ -63,7 +63,7 @@ const noSession = (): SessionManager => sessionsWith(true, null);
 describe('undoLastRefactoringCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
     vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(START);
     vi.mocked(showUndoRefactoringPanel).mockResolvedValue({ applied: 2, failed: [] });
     vi.mocked(queries.applyUndoRefactoring).mockResolvedValue('{"applied":2,"failed":[]}');
@@ -106,7 +106,7 @@ describe('undoLastRefactoringCommand', () => {
   });
 
   it('refuses plainly when there is nothing to undo, without opening a panel', async () => {
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
 
     await undoLastRefactoringCommand(sessionsWith(true));
 

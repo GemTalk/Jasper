@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
 
-export function abortTransaction(execute: QueryExecutor): string {
-  return execute(`System abortTransaction. 'Transaction aborted'`);
+export async function abortTransaction(execute: QueryExecutor): Promise<string> {
+  return await execute(`System abortTransaction. 'Transaction aborted'`);
 }

@@ -4,7 +4,10 @@ import { splitLines, dictLookupExpr } from './util';
 // Accepts a dictionary by 1-based index (canonical for Jasper's IDE) or by
 // name (convenient for MCP clients that don't want to enumerate first).
 // With a name, returns [] if no dict by that name exists.
-export function getClassNames(execute: QueryExecutor, dict: number | string): string[] {
+export async function getClassNames(
+  execute: QueryExecutor,
+  dict: number | string,
+): Promise<string[]> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -13,5 +16,5 @@ ws := WriteStream on: String new.
 dict keysAndValuesDo: [:k :v |
   v isBehavior ifTrue: [ws nextPutAll: k; lf]].
 ws contents`;
-  return splitLines(execute(code)).sort();
+  return splitLines(await execute(code)).sort();
 }

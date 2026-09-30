@@ -44,22 +44,24 @@ describe('rename method (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   // The paginated query builders take an async executor; the GCI sync path is
   // fine here (small fixture), so wrap it in a resolved promise.
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const rbEnginePresent = (): boolean =>
-    exec(
-      "(System myUserProfile symbolList objectNamed: 'GsRenameMethodRefactoring') notNil printString",
+  const rbEnginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        "(System myUserProfile symbolList objectNamed: 'GsRenameMethodRefactoring') notNil printString",
+      )
     ).trim() === 'true';
 
-  it('reports rename-method engine availability matching the ivar engine probe', () => {
-    expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports rename-method engine availability matching the ivar engine probe', async () => {
+    expect(await rbEnginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the engine GS SUnit suites in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the engine GS SUnit suites in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     // File in the test classes (in-image compile — robust) then run every engine
     // suite, answering the total failure+error count across all of them.
@@ -72,11 +74,11 @@ failuresAndErrors := 0.
     failuresAndErrors := failuresAndErrors + r failures size + r errors size].
 failuresAndErrors printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
-  it('runs the rename-method suite alone and reports its test count', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the rename-method suite alone and reports its test count', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     // The class isn't defined at this doit's compile time (it is filed in at run
     // time), so resolve it via objectNamed: rather than as a bareword.
@@ -85,32 +87,32 @@ ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsRenameMethodRefactoringTest) suite run.
 r runCount printString, ' ', (r failures size + r errors size) printString`;
 
-    const [runCount, failed] = exec(code).trim().split(' ');
+    const [runCount, failed] = (await exec(code)).trim().split(' ');
     expect(Number(runCount)).toBeGreaterThanOrEqual(15);
     expect(failed).toBe('0');
   }, 60_000);
 
   const BASE = 'RMItBase';
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(
+    await q.compileMethod(
       session(),
       BASE,
       false,
       'moving',
       'movePointX: x y: y\n\t^Array with: x with: y',
     );
-    q.compileMethod(session(), BASE, false, 'moving', 'caller\n\t^self movePointX: 1 y: 2');
+    await q.compileMethod(session(), BASE, false, 'moving', 'caller\n\t^self movePointX: 1 y: 2');
   };
 
   it('previews a keyword rename+reorder through the paginated query, then applies it server-side', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `rmit-${BASE}`;
 
     const start = parseStartPreview(
@@ -141,21 +143,25 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
     expect(result.failed).toEqual([]);
     expect(result.applied).toBeGreaterThanOrEqual(2);
     expect(
-      exec(
-        `(${BASE} compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil printString`,
+      (
+        await exec(
+          `(${BASE} compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil printString`,
+        )
       ).trim(),
     ).toBe('true');
     expect(
-      exec(
-        `(${BASE} compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil printString`,
+      (
+        await exec(
+          `(${BASE} compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil printString`,
+        )
       ).trim(),
     ).toBe('true');
   });
 
   it('pages a preview and honours a deselected change on apply', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `rmit-page-${BASE}`;
 
     const start = parseStartPreview(
@@ -188,12 +194,16 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
 
     expect(result.failed).toEqual([]);
     expect(
-      exec(
-        `(${BASE} compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil printString`,
+      (
+        await exec(
+          `(${BASE} compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil printString`,
+        )
       ).trim(),
     ).toBe('true');
     expect(
-      exec(`(${BASE} compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString`),
+      await exec(
+        `(${BASE} compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString`,
+      ),
     ).toContain('movePointX: 1 y: 2');
   });
 });

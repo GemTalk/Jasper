@@ -40,15 +40,15 @@ describe('Explorer remove method (integration)', () => {
   const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
   const showInformationMessage = window.showInformationMessage as ReturnType<typeof vi.fn>;
 
-  const dictIndexOf = (name: string): number => {
-    const index = queries.getDictionaryNames(session()).indexOf(name) + 1;
+  const dictIndexOf = async (name: string): Promise<number> => {
+    const index = (await queries.getDictionaryNames(session())).indexOf(name) + 1;
     expect(index).toBeGreaterThan(0);
     return index;
   };
 
   /** A class carrying two instance methods: one nothing sends, and one a second class does. */
-  const fixtureWithMethod = (): void => {
-    const defined = queries.compileClassDefinition(
+  const fixtureWithMethod = async (): Promise<void> => {
+    const defined = await queries.compileClassDefinition(
       session(),
       `Object subclass: '${TEST_CLASS}'
   instVarNames: #()
@@ -59,7 +59,7 @@ describe('Explorer remove method (integration)', () => {
   options: #()`,
     );
     expect(defined).toBe(TEST_CLASS);
-    queries.compileClassDefinition(
+    await queries.compileClassDefinition(
       session(),
       `Object subclass: '${CALLER_CLASS}'
   instVarNames: #()
@@ -70,37 +70,37 @@ describe('Explorer remove method (integration)', () => {
   options: #()`,
     );
 
-    queries.compileMethod(
+    await queries.compileMethod(
       session(),
       TEST_CLASS,
       false,
       'test-vscode-extension',
       `${TEST_SELECTOR}\n  ^ 42`,
     );
-    queries.compileMethod(
+    await queries.compileMethod(
       session(),
       TEST_CLASS,
       false,
       'test-vscode-extension',
       `${SENT_SELECTOR}\n  ^ 43`,
     );
-    queries.compileMethod(
+    await queries.compileMethod(
       session(),
       CALLER_CLASS,
       false,
       'test-vscode-extension',
       `callsIt\n  ^ ${TEST_CLASS} new ${SENT_SELECTOR}`,
     );
-    expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(TEST_SELECTOR);
+    expect(await queries.getAllSelectors(session(), TEST_CLASS)).toContain(TEST_SELECTOR);
   };
 
-  const controllerOnFixture = (): ExplorerController => {
+  const controllerOnFixture = async (): Promise<ExplorerController> => {
     const sessionManager = {
       getSelectedSession: () => session(),
     } as unknown as SessionManager;
     const ctl = new ExplorerController(sessionManager);
     ctl.state.dictName = 'UserGlobals';
-    ctl.state.dictIndex = dictIndexOf('UserGlobals');
+    ctl.state.dictIndex = await dictIndexOf('UserGlobals');
     ctl.state.className = TEST_CLASS;
     return ctl;
   };
@@ -123,18 +123,18 @@ describe('Explorer remove method (integration)', () => {
   });
 
   it('removes a method nothing sends without asking', async () => {
-    fixtureWithMethod();
+    await fixtureWithMethod();
 
-    await controllerOnFixture().removeMethod(methodNode(TEST_SELECTOR));
+    await (await controllerOnFixture()).removeMethod(methodNode(TEST_SELECTOR));
 
     expect(showWarningMessage).not.toHaveBeenCalled();
-    expect(queries.getAllSelectors(session(), TEST_CLASS)).not.toContain(TEST_SELECTOR);
+    expect(await queries.getAllSelectors(session(), TEST_CLASS)).not.toContain(TEST_SELECTOR);
   });
 
   it('announces a removal it did not ask about', async () => {
-    fixtureWithMethod();
+    await fixtureWithMethod();
 
-    await controllerOnFixture().removeMethod(methodNode(TEST_SELECTOR));
+    await (await controllerOnFixture()).removeMethod(methodNode(TEST_SELECTOR));
 
     // Against a real stone the undo capture succeeds, so the safe-delete notice is also the
     // one that carries the way back — one notice for one deletion (#434).
@@ -145,30 +145,30 @@ describe('Explorer remove method (integration)', () => {
   });
 
   it('leaves a method with a live sender in place when the confirmation is dismissed', async () => {
-    fixtureWithMethod();
+    await fixtureWithMethod();
     showWarningMessage.mockResolvedValue(undefined);
 
-    await controllerOnFixture().removeMethod(methodNode(SENT_SELECTOR));
+    await (await controllerOnFixture()).removeMethod(methodNode(SENT_SELECTOR));
 
     expect(showWarningMessage).toHaveBeenCalled();
-    expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(SENT_SELECTOR);
+    expect(await queries.getAllSelectors(session(), TEST_CLASS)).toContain(SENT_SELECTOR);
   });
 
   it('names the sender in the confirmation it raises', async () => {
-    fixtureWithMethod();
+    await fixtureWithMethod();
     showWarningMessage.mockResolvedValue(undefined);
 
-    await controllerOnFixture().removeMethod(methodNode(SENT_SELECTOR));
+    await (await controllerOnFixture()).removeMethod(methodNode(SENT_SELECTOR));
 
     expect(showWarningMessage.mock.calls[0][1].detail).toContain(`${CALLER_CLASS} >> #callsIt`);
   });
 
   it('removes a method with a live sender when the user chooses to remove it anyway', async () => {
-    fixtureWithMethod();
+    await fixtureWithMethod();
     showWarningMessage.mockResolvedValue('Remove Anyway');
 
-    await controllerOnFixture().removeMethod(methodNode(SENT_SELECTOR));
+    await (await controllerOnFixture()).removeMethod(methodNode(SENT_SELECTOR));
 
-    expect(queries.getAllSelectors(session(), TEST_CLASS)).not.toContain(SENT_SELECTOR);
+    expect(await queries.getAllSelectors(session(), TEST_CLASS)).not.toContain(SENT_SELECTOR);
   });
 });

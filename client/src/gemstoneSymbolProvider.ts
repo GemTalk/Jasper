@@ -16,7 +16,7 @@ export class GemStoneWorkspaceSymbolProvider implements vscode.WorkspaceSymbolPr
     this.cachedSessionId = null;
   }
 
-  provideWorkspaceSymbols(query: string): vscode.SymbolInformation[] {
+  async provideWorkspaceSymbols(query: string): Promise<vscode.SymbolInformation[]> {
     if (!query) return [];
 
     const session = this.sessionManager.getSelectedSession();
@@ -24,7 +24,7 @@ export class GemStoneWorkspaceSymbolProvider implements vscode.WorkspaceSymbolPr
 
     try {
       if (this.cachedSessionId !== session.id || !this.cache) {
-        this.cache = queries.getAllClassNames(session);
+        this.cache = await queries.getAllClassNames(session);
         this.cachedSessionId = session.id;
       }
     } catch {

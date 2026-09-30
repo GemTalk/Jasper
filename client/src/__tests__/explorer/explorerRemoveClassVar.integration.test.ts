@@ -27,7 +27,8 @@ describe('Explorer remove class variable (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => queries.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> =>
+    await queries.executeFetchString(session(), code);
 
   const TEST_CLASS = 'VsCodeExplorerRemoveClassVarTest';
   const USED_VAR = 'VsCodeUsedVar';
@@ -36,14 +37,14 @@ describe('Explorer remove class variable (integration)', () => {
   const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
   const showInformationMessage = window.showInformationMessage as ReturnType<typeof vi.fn>;
 
-  const dictIndexOf = (name: string): number => {
-    const index = queries.getDictionaryNames(session()).indexOf(name) + 1;
+  const dictIndexOf = async (name: string): Promise<number> => {
+    const index = (await queries.getDictionaryNames(session())).indexOf(name) + 1;
     expect(index).toBeGreaterThan(0);
     return index;
   };
 
-  const defineFixture = (): void => {
-    queries.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await queries.compileClassDefinition(
       session(),
       `Object subclass: '${TEST_CLASS}'
   instVarNames: #()
@@ -53,7 +54,7 @@ describe('Explorer remove class variable (integration)', () => {
   inDictionary: UserGlobals
   options: #()`,
     );
-    queries.compileMethod(
+    await queries.compileMethod(
       session(),
       TEST_CLASS,
       false,
@@ -62,19 +63,19 @@ describe('Explorer remove class variable (integration)', () => {
     );
   };
 
-  const controllerOnFixture = (): ExplorerController => {
+  const controllerOnFixture = async (): Promise<ExplorerController> => {
     const sessionManager = {
       getSelectedSession: () => session(),
     } as unknown as SessionManager;
     const ctl = new ExplorerController(sessionManager);
     ctl.state.dictName = 'UserGlobals';
-    ctl.state.dictIndex = dictIndexOf('UserGlobals');
+    ctl.state.dictIndex = await dictIndexOf('UserGlobals');
     ctl.state.className = TEST_CLASS;
     return ctl;
   };
 
-  const classVarNames = (): string =>
-    exec(`${TEST_CLASS} classVarNames asSortedCollection asArray printString`);
+  const classVarNames = async (): Promise<string> =>
+    await exec(`${TEST_CLASS} classVarNames asSortedCollection asArray printString`);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,21 +83,25 @@ describe('Explorer remove class variable (integration)', () => {
   });
 
   it('removes a class variable no method reads without asking', async () => {
-    defineFixture();
+    await defineFixture();
 
-    await controllerOnFixture().removeClassVar({
+    await (
+      await controllerOnFixture()
+    ).removeClassVar({
       className: TEST_CLASS,
       classVarName: UNUSED_VAR,
     });
 
     expect(showWarningMessage).not.toHaveBeenCalled();
-    expect(classVarNames()).not.toContain(UNUSED_VAR);
+    expect(await classVarNames()).not.toContain(UNUSED_VAR);
   });
 
   it('announces a removal it did not ask about', async () => {
-    defineFixture();
+    await defineFixture();
 
-    await controllerOnFixture().removeClassVar({
+    await (
+      await controllerOnFixture()
+    ).removeClassVar({
       className: TEST_CLASS,
       classVarName: UNUSED_VAR,
     });
@@ -107,32 +112,38 @@ describe('Explorer remove class variable (integration)', () => {
   });
 
   it('leaves the variables a removal did not target in place', async () => {
-    defineFixture();
+    await defineFixture();
 
-    await controllerOnFixture().removeClassVar({
+    await (
+      await controllerOnFixture()
+    ).removeClassVar({
       className: TEST_CLASS,
       classVarName: UNUSED_VAR,
     });
 
-    expect(classVarNames()).toContain(USED_VAR);
+    expect(await classVarNames()).toContain(USED_VAR);
   });
 
   it('keeps a class variable a method reads when the confirmation is dismissed', async () => {
-    defineFixture();
+    await defineFixture();
     showWarningMessage.mockResolvedValue(undefined);
 
-    await controllerOnFixture().removeClassVar({ className: TEST_CLASS, classVarName: USED_VAR });
+    await (
+      await controllerOnFixture()
+    ).removeClassVar({ className: TEST_CLASS, classVarName: USED_VAR });
 
     expect(showWarningMessage).toHaveBeenCalled();
-    expect(classVarNames()).toContain(USED_VAR);
+    expect(await classVarNames()).toContain(USED_VAR);
   });
 
   it('removes a class variable a method reads when the user chooses to remove it anyway', async () => {
-    defineFixture();
+    await defineFixture();
     showWarningMessage.mockResolvedValue('Remove Anyway');
 
-    await controllerOnFixture().removeClassVar({ className: TEST_CLASS, classVarName: USED_VAR });
+    await (
+      await controllerOnFixture()
+    ).removeClassVar({ className: TEST_CLASS, classVarName: USED_VAR });
 
-    expect(classVarNames()).not.toContain(USED_VAR);
+    expect(await classVarNames()).not.toContain(USED_VAR);
   });
 });

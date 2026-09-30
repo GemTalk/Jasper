@@ -24,24 +24,27 @@ import { ClassVarOpKind, ClassVarSlot, ClassVarState, MethodSlot } from '../undo
 
 /** Whether the class declares the variable right now. A class that will not resolve reads as
  *  `defined: false` — which is what the planner needs to hear either way. */
-export function captureClassVar(execute: QueryExecutor, slot: ClassVarSlot): ClassVarState {
-  const declared = getDefinedClassVarNames(execute, slot.className, slot.dict);
+export async function captureClassVar(
+  execute: QueryExecutor,
+  slot: ClassVarSlot,
+): Promise<ClassVarState> {
+  const declared = await getDefinedClassVarNames(execute, slot.className, slot.dict);
   return { defined: declared.includes(slot.varName) };
 }
 
 /** Declare the name again, or take the declaration away. Answers null on success and the
  *  reason otherwise, so a failed reversal is reported rather than thrown past the caller. */
-export function applyClassVarOp(
+export async function applyClassVarOp(
   execute: QueryExecutor,
   slot: ClassVarSlot,
   kind: ClassVarOpKind,
-): string | null {
+): Promise<string | null> {
   let answer: string;
   try {
     answer =
       kind === 'declare'
-        ? addClassVariable(execute, slot.className, slot.varName, slot.dict)
-        : deleteClassVariable(execute, slot.className, slot.varName, slot.dict);
+        ? await addClassVariable(execute, slot.className, slot.varName, slot.dict)
+        : await deleteClassVariable(execute, slot.className, slot.varName, slot.dict);
   } catch (e: unknown) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -70,11 +73,11 @@ export function applyClassVarOp(
  * Environment 0 only, like the rest of this layer — see `beginMethodEdit` for why an edit in
  * another environment records no undo at all.
  */
-export function methodsReferencingClassVar(
+export async function methodsReferencingClassVar(
   execute: QueryExecutor,
   slot: ClassVarSlot,
-): MethodSlot[] {
-  return methodsAccessingClassVar(execute, slot.className, slot.varName, slot.dict, 0).map(
+): Promise<MethodSlot[]> {
+  return (await methodsAccessingClassVar(execute, slot.className, slot.varName, slot.dict, 0)).map(
     (row) => ({
       dict: slot.dict,
       className: row.className,

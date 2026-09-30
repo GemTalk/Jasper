@@ -81,7 +81,7 @@ async function performUninstall(
     sessionManager,
     'Enhanced inspector uninstalled.',
   );
-  if (refreshed) refreshEnhancedInspectorAvailable(base);
+  if (refreshed) await refreshEnhancedInspectorAvailable(base);
   // See the note in refactoringUninstallCommand: the answer is "did the stone change", which the
   // verified `result.success` above already establishes. The refresh latch only governs whether
   // THIS session has noticed yet, which is a different question and must not suppress the toast.

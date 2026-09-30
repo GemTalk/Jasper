@@ -61,23 +61,28 @@ describe('undo (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   // Distinctive names so nothing here can reach a same-named class elsewhere in the image.
   const CLS = 'JfpUndoItAccount';
   const SUB = 'JfpUndoItSavings';
   const DICT = 'UserGlobals';
 
-  const defineClass = (name: string, sup = 'Object', ivars = "'balance'"): void => {
-    q.compileClassDefinition(
+  const defineClass = async (name: string, sup = 'Object', ivars = "'balance'"): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `${sup} subclass: '${name}' instVarNames: #(${ivars}) classVars: #() ` +
         `classInstVars: #() poolDictionaries: #() inDictionary: ${DICT}`,
     );
   };
 
-  const compile = (name: string, source: string, category = 'accessing', meta = false): void => {
-    q.compileMethod(session(), name, meta, category, source, 0, DICT);
+  const compile = async (
+    name: string,
+    source: string,
+    category = 'accessing',
+    meta = false,
+  ): Promise<void> => {
+    await q.compileMethod(session(), name, meta, category, source, 0, DICT);
   };
 
   const slot = (selector: string, meta = false, className = CLS): MethodSlot => ({
@@ -96,61 +101,61 @@ describe('undo (integration)', () => {
     varName,
   });
 
-  const boundVersion = (className = CLS): string | null =>
-    captureClassSlots(exec, [classSlot(className)])[0].oop;
+  const boundVersion = async (className = CLS): Promise<string | null> =>
+    (await captureClassSlots(exec, [classSlot(className)]))[0].oop;
 
   // ── Layer 1: what the doits read and do ────────────────────────────────
 
   describe('capturing a method slot', () => {
-    it('reads a method that is there, with its source and its category', () => {
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 42', 'computing');
+    it('reads a method that is there, with its source and its category', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 42', 'computing');
 
-      const [state] = captureMethodSlots(exec, [slot('balance')]);
+      const [state] = await captureMethodSlots(exec, [slot('balance')]);
 
       expect(state.exists).toBe(true);
       expect(state.source).toBe('balance\n  ^ 42');
       expect(state.category).toBe('computing');
     });
 
-    it('reads a selector the class does not implement as absent', () => {
-      defineClass(CLS);
-      expect(captureMethodSlots(exec, [slot('nope')])[0]).toEqual({
+    it('reads a selector the class does not implement as absent', async () => {
+      await defineClass(CLS);
+      expect((await captureMethodSlots(exec, [slot('nope')]))[0]).toEqual({
         exists: false,
         source: null,
         category: null,
       });
     });
 
-    it('reads a class that does not exist as absent, rather than failing', () => {
-      expect(captureMethodSlots(exec, [slot('any', false, 'JfpNoSuchClassAtAll')])[0].exists).toBe(
-        false,
-      );
+    it('reads a class that does not exist as absent, rather than failing', async () => {
+      expect(
+        (await captureMethodSlots(exec, [slot('any', false, 'JfpNoSuchClassAtAll')]))[0].exists,
+      ).toBe(false);
     });
 
-    it('reads the metaclass side separately from the instance side', () => {
-      defineClass(CLS);
-      compile(CLS, 'make\n  ^ self new', 'instance creation', true);
+    it('reads the metaclass side separately from the instance side', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'make\n  ^ self new', 'instance creation', true);
 
-      const [instance, meta] = captureMethodSlots(exec, [slot('make'), slot('make', true)]);
+      const [instance, meta] = await captureMethodSlots(exec, [slot('make'), slot('make', true)]);
 
       expect(instance.exists).toBe(false);
       expect(meta.exists).toBe(true);
       expect(meta.source).toBe('make\n  ^ self new');
     });
 
-    it('round-trips a source with quotes, backslashes, tabs and newlines', () => {
+    it('round-trips a source with quotes, backslashes, tabs and newlines', async () => {
       // The escaping contract end to end over GCI rather than against a fixture string:
       // these are the characters a tab-delimited, line-oriented result cannot carry, and a
       // lossy escape would recompile the wrong source on the way back.
-      defineClass(CLS);
+      await defineClass(CLS);
       const source = 'tricky\n  "a \' quote, a \\ slash"\n\t^ 1';
-      compile(CLS, source, 'probing');
+      await compile(CLS, source, 'probing');
 
-      expect(captureMethodSlots(exec, [slot('tricky')])[0].source).toBe(source);
+      expect((await captureMethodSlots(exec, [slot('tricky')]))[0].source).toBe(source);
     });
 
-    it('escapes text above ASCII losslessly, which is why the payload stays a byte String', () => {
+    it('escapes text above ASCII losslessly, which is why the payload stays a byte String', async () => {
       // Tested through the escaper directly, NOT through a compiled method: on 3.6.x the
       // compiler rejects a doit whose own source carries non-ASCII, so a fixture method
       // cannot be written that way from here. The contract is the same either way — whatever
@@ -165,7 +170,7 @@ src := sws contents.
 esc value: src value: ws.
 ws contents`;
 
-      const escaped = exec(built);
+      const escaped = await exec(built);
 
       // Pure ASCII on the wire...
       expect(escaped).toMatch(/^[\x20-\x7e]*$/);
@@ -173,12 +178,12 @@ ws contents`;
       expect(decodeEscaped(escaped)).toBe('café ✓');
     });
 
-    it('reads several slots in one round trip, in order', () => {
-      defineClass(CLS);
-      compile(CLS, 'one\n  ^ 1');
-      compile(CLS, 'two\n  ^ 2');
+    it('reads several slots in one round trip, in order', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'one\n  ^ 1');
+      await compile(CLS, 'two\n  ^ 2');
 
-      const states = captureMethodSlots(exec, [slot('one'), slot('missing'), slot('two')]);
+      const states = await captureMethodSlots(exec, [slot('one'), slot('missing'), slot('two')]);
 
       expect(states.map((s) => s.exists)).toEqual([true, false, true]);
       expect(states[2].source).toBe('two\n  ^ 2');
@@ -186,40 +191,40 @@ ws contents`;
   });
 
   describe('applying method reversals', () => {
-    it('restores a method that is gone, with its category', () => {
-      defineClass(CLS);
+    it('restores a method that is gone, with its category', async () => {
+      await defineClass(CLS);
 
-      const [result] = applyMethodSlotOps(exec, [
+      const [result] = await applyMethodSlotOps(exec, [
         { kind: 'restore', slot: slot('brought'), source: 'brought\n  ^ 1', category: 'restored' },
       ]);
 
       expect(result.error).toBeNull();
-      const [state] = captureMethodSlots(exec, [slot('brought')]);
+      const [state] = await captureMethodSlots(exec, [slot('brought')]);
       expect(state.source).toBe('brought\n  ^ 1');
       expect(state.category).toBe('restored');
     });
 
-    it('removes a method', () => {
-      defineClass(CLS);
-      compile(CLS, 'goes\n  ^ 1');
+    it('removes a method', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'goes\n  ^ 1');
 
-      applyMethodSlotOps(exec, [
+      await applyMethodSlotOps(exec, [
         { kind: 'remove', slot: slot('goes'), source: null, category: null },
       ]);
 
-      expect(captureMethodSlots(exec, [slot('goes')])[0].exists).toBe(false);
+      expect((await captureMethodSlots(exec, [slot('goes')]))[0].exists).toBe(false);
     });
 
-    it('treats removing an absent method as done, not as an error', () => {
-      defineClass(CLS);
-      const [result] = applyMethodSlotOps(exec, [
+    it('treats removing an absent method as done, not as an error', async () => {
+      await defineClass(CLS);
+      const [result] = await applyMethodSlotOps(exec, [
         { kind: 'remove', slot: slot('neverThere'), source: null, category: null },
       ]);
       expect(result.error).toBeNull();
     });
 
-    it('reports a class it cannot find rather than throwing', () => {
-      const [result] = applyMethodSlotOps(exec, [
+    it('reports a class it cannot find rather than throwing', async () => {
+      const [result] = await applyMethodSlotOps(exec, [
         {
           kind: 'restore',
           slot: slot('x', false, 'JfpNoSuchClassAtAll'),
@@ -230,104 +235,107 @@ ws contents`;
       expect(result.error).toContain('no such class');
     });
 
-    it('reports a source that will not compile, and leaves the others alone', () => {
+    it('reports a source that will not compile, and leaves the others alone', async () => {
       // One bad operation must not abandon the reversals that would have worked.
-      defineClass(CLS);
-      const results = applyMethodSlotOps(exec, [
+      await defineClass(CLS);
+      const results = await applyMethodSlotOps(exec, [
         { kind: 'restore', slot: slot('good'), source: 'good\n  ^ 1', category: 'c' },
         { kind: 'restore', slot: slot('bad'), source: 'bad\n  ^ (((', category: 'c' },
       ]);
 
       expect(results[0].error).toBeNull();
       expect(results[1].error).not.toBeNull();
-      expect(captureMethodSlots(exec, [slot('good')])[0].exists).toBe(true);
+      expect((await captureMethodSlots(exec, [slot('good')]))[0].exists).toBe(true);
     });
   });
 
   // ── Layer 2: round trips ───────────────────────────────────────────────
 
   describe('a method edit, recorded and reversed', () => {
-    const reverse = (slots: MethodSlot[], before: ReturnType<typeof captureMethodSlots>) => {
-      const now = captureMethodSlots(exec, slots);
+    const reverse = async (
+      slots: MethodSlot[],
+      before: Awaited<ReturnType<typeof captureMethodSlots>>,
+    ) => {
+      const now = await captureMethodSlots(exec, slots);
       const ops = planReversal(slots, before, now);
-      return applyMethodSlotOps(exec, ops);
+      return await applyMethodSlotOps(exec, ops);
     };
 
-    it('puts an edited method back, source and category', () => {
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'computing');
+    it('puts an edited method back, source and category', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'computing');
       const slots = [slot('balance')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
 
-      compile(CLS, 'balance\n  ^ 2', 'accessing');
-      const results = reverse(slots, before);
+      await compile(CLS, 'balance\n  ^ 2', 'accessing');
+      const results = await reverse(slots, before);
 
       expect(results.every((r) => r.error === null)).toBe(true);
-      expect(captureMethodSlots(exec, slots)[0]).toEqual(before[0]);
+      expect((await captureMethodSlots(exec, slots))[0]).toEqual(before[0]);
     });
 
-    it('takes away a method that was created', () => {
-      defineClass(CLS);
+    it('takes away a method that was created', async () => {
+      await defineClass(CLS);
       const slots = [slot('fresh')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
       expect(before[0].exists).toBe(false);
 
-      compile(CLS, 'fresh\n  ^ 1');
-      reverse(slots, before);
+      await compile(CLS, 'fresh\n  ^ 1');
+      await reverse(slots, before);
 
-      expect(captureMethodSlots(exec, slots)[0].exists).toBe(false);
+      expect((await captureMethodSlots(exec, slots))[0].exists).toBe(false);
     });
 
-    it('brings back a deleted method exactly, category included', () => {
-      defineClass(CLS);
-      compile(CLS, 'gone\n  ^ 7', 'private');
+    it('brings back a deleted method exactly, category included', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'gone\n  ^ 7', 'private');
       const slots = [slot('gone')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
 
-      q.deleteMethod(session(), CLS, false, 'gone', DICT);
-      reverse(slots, before);
+      await q.deleteMethod(session(), CLS, false, 'gone', DICT);
+      await reverse(slots, before);
 
-      const [state] = captureMethodSlots(exec, slots);
+      const [state] = await captureMethodSlots(exec, slots);
       expect(state.source).toBe('gone\n  ^ 7');
       expect(state.category).toBe('private');
     });
 
-    it('restores the old selector and removes the new one when a pattern changed', () => {
+    it('restores the old selector and removes the new one when a pattern changed', async () => {
       // Editing an existing method's message pattern compiles a NEW method and leaves the
       // original. Reversing has to do both, and restore before it removes.
-      defineClass(CLS);
-      compile(CLS, 'total\n  ^ 1');
+      await defineClass(CLS);
+      await compile(CLS, 'total\n  ^ 1');
       const slots = [slot('total'), slot('sum')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
 
-      compile(CLS, 'sum\n  ^ 1');
-      q.deleteMethod(session(), CLS, false, 'total', DICT);
-      reverse(slots, before);
+      await compile(CLS, 'sum\n  ^ 1');
+      await q.deleteMethod(session(), CLS, false, 'total', DICT);
+      await reverse(slots, before);
 
-      const [total, sum] = captureMethodSlots(exec, slots);
+      const [total, sum] = await captureMethodSlots(exec, slots);
       expect(total.exists).toBe(true);
       expect(sum.exists).toBe(false);
     });
 
-    it('does nothing at all when the method is already back the way it was', () => {
-      defineClass(CLS);
-      compile(CLS, 'same\n  ^ 1');
+    it('does nothing at all when the method is already back the way it was', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'same\n  ^ 1');
       const slots = [slot('same')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
 
-      expect(planReversal(slots, before, captureMethodSlots(exec, slots))).toEqual([]);
+      expect(planReversal(slots, before, await captureMethodSlots(exec, slots))).toEqual([]);
     });
 
-    it('sees a method someone changed since as drift', () => {
-      defineClass(CLS);
-      compile(CLS, 'watched\n  ^ 1');
+    it('sees a method someone changed since as drift', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'watched\n  ^ 1');
       const slots = [slot('watched')];
-      const before = captureMethodSlots(exec, slots);
-      compile(CLS, 'watched\n  ^ 2');
-      const after = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
+      await compile(CLS, 'watched\n  ^ 2');
+      const after = await captureMethodSlots(exec, slots);
 
-      compile(CLS, 'watched\n  ^ 3');
-      const now = captureMethodSlots(exec, slots);
+      await compile(CLS, 'watched\n  ^ 3');
+      const now = await captureMethodSlots(exec, slots);
 
       expect(driftedSlots(slots, after, now)).toHaveLength(1);
       // Drift does not change what the reversal is FOR: it still puts `before` back.
@@ -338,195 +346,195 @@ ws contents`;
   // ── Layer 3: the GemStone facts the class design rests on ──────────────
 
   describe('what GemStone does to a class on redefinition', () => {
-    it('answers a NEW version with NO methods when the shape changes', () => {
+    it('answers a NEW version with NO methods when the shape changes', async () => {
       // The reason a class revert binds the earlier OBJECT back rather than recompiling a
       // saved definition: recompiling would restore the shape and lose every method.
-      defineClass(CLS);
-      compile(CLS, 'kept\n  ^ 1');
-      const first = boundVersion();
+      await defineClass(CLS);
+      await compile(CLS, 'kept\n  ^ 1');
+      const first = await boundVersion();
 
-      defineClass(CLS, 'Object', "'balance' 'extra'");
+      await defineClass(CLS, 'Object', "'balance' 'extra'");
 
-      const [state] = captureClassSlots(exec, [classSlot()]);
+      const [state] = await captureClassSlots(exec, [classSlot()]);
       expect(state.oop).not.toBe(first);
       expect(state.selectors).toEqual([]);
     });
 
-    it('answers the SAME version, methods intact, when the definition is unchanged', () => {
+    it('answers the SAME version, methods intact, when the definition is unchanged', async () => {
       // Which is why saving an unedited definition records nothing.
-      defineClass(CLS);
-      compile(CLS, 'kept\n  ^ 1');
-      const first = boundVersion();
+      await defineClass(CLS);
+      await compile(CLS, 'kept\n  ^ 1');
+      const first = await boundVersion();
 
-      defineClass(CLS);
+      await defineClass(CLS);
 
-      const [state] = captureClassSlots(exec, [classSlot()]);
+      const [state] = await captureClassSlots(exec, [classSlot()]);
       expect(state.oop).toBe(first);
       expect(state.selectors).toEqual(['kept']);
     });
 
-    it('leaves a removed class usable, so the same version can be bound again', () => {
+    it('leaves a removed class usable, so the same version can be bound again', async () => {
       // The reason removing a class is the one exact reversal here.
-      defineClass(CLS);
-      compile(CLS, 'kept\n  ^ 1');
+      await defineClass(CLS);
+      await compile(CLS, 'kept\n  ^ 1');
       const key = newStashKey(1);
-      const before = captureClassSlots(exec, [classSlot()], [key]);
+      const before = await captureClassSlots(exec, [classSlot()], [key]);
 
-      q.deleteClass(session(), DICT, CLS);
-      expect(captureClassSlots(exec, [classSlot()])[0].bound).toBe(false);
+      await q.deleteClass(session(), DICT, CLS);
+      expect((await captureClassSlots(exec, [classSlot()]))[0].bound).toBe(false);
 
-      applyClassSlotOps(exec, [
+      await applyClassSlotOps(exec, [
         { kind: 'rebind', slot: classSlot(), stashKey: key, discarded: [] },
       ]);
 
-      expect(captureClassSlots(exec, [classSlot()])[0]).toEqual(before[0]);
+      expect((await captureClassSlots(exec, [classSlot()]))[0]).toEqual(before[0]);
     });
   });
 
   describe('capturing a class slot', () => {
-    it('reads the bound version and both sides of its method list', () => {
-      defineClass(CLS);
-      compile(CLS, 'inst\n  ^ 1');
-      compile(CLS, 'make\n  ^ self new', 'instance creation', true);
+    it('reads the bound version and both sides of its method list', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'inst\n  ^ 1');
+      await compile(CLS, 'make\n  ^ self new', 'instance creation', true);
 
-      const [state] = captureClassSlots(exec, [classSlot()]);
+      const [state] = await captureClassSlots(exec, [classSlot()]);
 
       expect(state.bound).toBe(true);
       expect(state.oop).toMatch(/^\d+$/);
       expect(state.selectors).toEqual(['inst', 'class>>make']);
     });
 
-    it('reads an unbound name as unbound', () => {
-      expect(captureClassSlots(exec, [classSlot('JfpNoSuchClassAtAll')])[0]).toEqual({
+    it('reads an unbound name as unbound', async () => {
+      expect((await captureClassSlots(exec, [classSlot('JfpNoSuchClassAtAll')]))[0]).toEqual({
         bound: false,
         oop: null,
         selectors: [],
       });
     });
 
-    it('stashes the bound version only when asked to', () => {
-      defineClass(CLS);
+    it('stashes the bound version only when asked to', async () => {
+      await defineClass(CLS);
       const key = newStashKey(1);
-      captureClassSlots(exec, [classSlot()], [key]);
-      expect(exec(`(SessionTemps current at: #'${key}' ifAbsent: [nil]) isNil printString`)).toBe(
-        'false',
-      );
+      await captureClassSlots(exec, [classSlot()], [key]);
+      expect(
+        await exec(`(SessionTemps current at: #'${key}' ifAbsent: [nil]) isNil printString`),
+      ).toBe('false');
 
       const unused = newStashKey(1);
-      captureClassSlots(exec, [classSlot()]);
+      await captureClassSlots(exec, [classSlot()]);
       expect(
-        exec(`(SessionTemps current at: #'${unused}' ifAbsent: [nil]) isNil printString`),
+        await exec(`(SessionTemps current at: #'${unused}' ifAbsent: [nil]) isNil printString`),
       ).toBe('true');
     });
 
-    it('lets the stashed version go again, so the pin follows the stack rather than the session', () => {
-      defineClass(CLS);
+    it('lets the stashed version go again, so the pin follows the stack rather than the session', async () => {
+      await defineClass(CLS);
       const key = newStashKey(1);
       const missing = newStashKey(1);
-      captureClassSlots(exec, [classSlot()], [key]);
+      await captureClassSlots(exec, [classSlot()], [key]);
 
-      releaseStashKeys(exec, [key, missing]);
+      await releaseStashKeys(exec, [key, missing]);
 
-      expect(exec(`(SessionTemps current includesKey: #'${key}') printString`)).toBe('false');
+      expect(await exec(`(SessionTemps current includesKey: #'${key}') printString`)).toBe('false');
     });
   });
 
   describe('a class edit, recorded and reverted', () => {
-    it('binds the earlier version back, with every method on both sides', () => {
-      defineClass(CLS);
-      compile(CLS, 'inst\n  ^ 1');
-      compile(CLS, 'make\n  ^ self new', 'instance creation', true);
+    it('binds the earlier version back, with every method on both sides', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'inst\n  ^ 1');
+      await compile(CLS, 'make\n  ^ self new', 'instance creation', true);
       const slots = [classSlot()];
       const key = newStashKey(1);
-      const before = captureClassSlots(exec, slots, [key]);
+      const before = await captureClassSlots(exec, slots, [key]);
 
-      defineClass(CLS, 'Object', "'balance' 'extra'");
-      const ops = planClassReversal(slots, before, captureClassSlots(exec, slots), [key]);
-      const results = applyClassSlotOps(exec, ops);
+      await defineClass(CLS, 'Object', "'balance' 'extra'");
+      const ops = planClassReversal(slots, before, await captureClassSlots(exec, slots), [key]);
+      const results = await applyClassSlotOps(exec, ops);
 
       expect(results.every((r) => r.error === null)).toBe(true);
-      expect(captureClassSlots(exec, slots)[0]).toEqual(before[0]);
+      expect((await captureClassSlots(exec, slots))[0]).toEqual(before[0]);
       expect(
-        captureMethodSlots(exec, [slot('inst'), slot('make', true)]).map((s) => s.exists),
+        (await captureMethodSlots(exec, [slot('inst'), slot('make', true)])).map((s) => s.exists),
       ).toEqual([true, true]);
     });
 
-    it('names the methods written on the newer version that a revert would leave behind', () => {
-      defineClass(CLS);
-      compile(CLS, 'original\n  ^ 1');
+    it('names the methods written on the newer version that a revert would leave behind', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'original\n  ^ 1');
       const slots = [classSlot()];
       const key = newStashKey(1);
-      const before = captureClassSlots(exec, slots, [key]);
+      const before = await captureClassSlots(exec, slots, [key]);
 
-      defineClass(CLS, 'Object', "'balance' 'extra'");
-      compile(CLS, 'writtenLater\n  ^ 2');
+      await defineClass(CLS, 'Object', "'balance' 'extra'");
+      await compile(CLS, 'writtenLater\n  ^ 2');
 
-      const ops = planClassReversal(slots, before, captureClassSlots(exec, slots), [key]);
+      const ops = planClassReversal(slots, before, await captureClassSlots(exec, slots), [key]);
       expect(discardedByReversal(ops)).toEqual([`${CLS}>>#writtenLater`]);
     });
 
-    it('unbinds a class that was created', () => {
+    it('unbinds a class that was created', async () => {
       const slots = [classSlot()];
-      const before = captureClassSlots(exec, slots, [newStashKey(1)]);
+      const before = await captureClassSlots(exec, slots, [newStashKey(1)]);
       expect(before[0].bound).toBe(false);
 
-      defineClass(CLS);
-      expect(captureClassSlots(exec, slots)[0].bound).toBe(true);
-      const ops = planClassReversal(slots, before, captureClassSlots(exec, slots), [null]);
-      applyClassSlotOps(exec, ops);
+      await defineClass(CLS);
+      expect((await captureClassSlots(exec, slots))[0].bound).toBe(true);
+      const ops = planClassReversal(slots, before, await captureClassSlots(exec, slots), [null]);
+      await applyClassSlotOps(exec, ops);
 
-      expect(captureClassSlots(exec, slots)[0].bound).toBe(false);
+      expect((await captureClassSlots(exec, slots))[0].bound).toBe(false);
     });
 
-    it('puts a whole removed subtree back, in one plan', () => {
-      defineClass(CLS);
-      defineClass(SUB, CLS, "'rate'");
-      compile(SUB, 'rate\n  ^ 1');
+    it('puts a whole removed subtree back, in one plan', async () => {
+      await defineClass(CLS);
+      await defineClass(SUB, CLS, "'rate'");
+      await compile(SUB, 'rate\n  ^ 1');
       const slots = [classSlot(CLS), classSlot(SUB)];
       const keys = [newStashKey(1), newStashKey(1)];
-      const before = captureClassSlots(exec, slots, keys);
+      const before = await captureClassSlots(exec, slots, keys);
 
-      q.deleteClass(session(), DICT, SUB);
-      q.deleteClass(session(), DICT, CLS);
+      await q.deleteClass(session(), DICT, SUB);
+      await q.deleteClass(session(), DICT, CLS);
 
-      const ops = planClassReversal(slots, before, captureClassSlots(exec, slots), keys);
-      const results = applyClassSlotOps(exec, ops);
+      const ops = planClassReversal(slots, before, await captureClassSlots(exec, slots), keys);
+      const results = await applyClassSlotOps(exec, ops);
 
       expect(results.every((r) => r.error === null)).toBe(true);
-      expect(captureClassSlots(exec, slots).map((s) => s.bound)).toEqual([true, true]);
-      expect(captureMethodSlots(exec, [slot('rate', false, SUB)])[0].exists).toBe(true);
+      expect((await captureClassSlots(exec, slots)).map((s) => s.bound)).toEqual([true, true]);
+      expect((await captureMethodSlots(exec, [slot('rate', false, SUB)]))[0].exists).toBe(true);
     });
 
-    it('sees a class rebound since the edit as drift', () => {
-      defineClass(CLS);
+    it('sees a class rebound since the edit as drift', async () => {
+      await defineClass(CLS);
       const slots = [classSlot()];
       const key = newStashKey(1);
-      const before = captureClassSlots(exec, slots, [key]);
-      defineClass(CLS, 'Object', "'balance' 'extra'");
-      const after = captureClassSlots(exec, slots);
+      const before = await captureClassSlots(exec, slots, [key]);
+      await defineClass(CLS, 'Object', "'balance' 'extra'");
+      const after = await captureClassSlots(exec, slots);
 
-      defineClass(CLS, 'Object', "'balance' 'extra' 'third'");
-      const now = captureClassSlots(exec, slots);
+      await defineClass(CLS, 'Object', "'balance' 'extra' 'third'");
+      const now = await captureClassSlots(exec, slots);
 
       expect(driftedClassSlots(slots, after, now)).toHaveLength(1);
       // And the reversal still targets the version from before the FIRST edit.
       expect(planClassReversal(slots, before, now, [key])[0].stashKey).toBe(key);
     });
 
-    it('reports a stash the session no longer holds rather than binding nil', () => {
+    it('reports a stash the session no longer holds rather than binding nil', async () => {
       // The failure mode that matters: a key that resolves to nothing must refuse, not put
       // an empty binding into the dictionary.
-      defineClass(CLS);
-      const [result] = applyClassSlotOps(exec, [
+      await defineClass(CLS);
+      const [result] = await applyClassSlotOps(exec, [
         { kind: 'rebind', slot: classSlot(), stashKey: 'JfpNoSuchStashKey', discarded: [] },
       ]);
 
       expect(result.error).toContain('no longer holds');
-      expect(captureClassSlots(exec, [classSlot()])[0].bound).toBe(true);
+      expect((await captureClassSlots(exec, [classSlot()]))[0].bound).toBe(true);
     });
 
-    it('reports a dictionary it cannot find', () => {
-      const [result] = applyClassSlotOps(exec, [
+    it('reports a dictionary it cannot find', async () => {
+      const [result] = await applyClassSlotOps(exec, [
         {
           kind: 'unbind',
           slot: { dict: 'JfpNoSuchDictionary', className: CLS },
@@ -545,44 +553,44 @@ ws contents`;
     // `getClassComment` synthesises "No class-specific documentation for …" for a
     // class with none, so a round trip measured with it would pass by writing that
     // boilerplate in as a real comment — the exact thing this has to prove it doesn't do.
-    it('puts the earlier comment back', () => {
-      defineClass(CLS);
-      q.setClassComment(session(), CLS, 'the first comment', DICT);
-      const before = q.getStoredClassComment(session(), CLS, DICT);
+    it('puts the earlier comment back', async () => {
+      await defineClass(CLS);
+      await q.setClassComment(session(), CLS, 'the first comment', DICT);
+      const before = await q.getStoredClassComment(session(), CLS, DICT);
 
-      q.setClassComment(session(), CLS, 'a second comment', DICT);
-      expect(q.setClassComment(session(), CLS, before, DICT)).toContain('Comment set:');
+      await q.setClassComment(session(), CLS, 'a second comment', DICT);
+      expect(await q.setClassComment(session(), CLS, before, DICT)).toContain('Comment set:');
 
-      expect(q.getStoredClassComment(session(), CLS, DICT)).toBe(before);
+      expect(await q.getStoredClassComment(session(), CLS, DICT)).toBe(before);
     });
 
-    it('leaves a class that had no comment with no comment', () => {
-      defineClass(CLS);
-      const before = q.getStoredClassComment(session(), CLS, DICT);
+    it('leaves a class that had no comment with no comment', async () => {
+      await defineClass(CLS);
+      const before = await q.getStoredClassComment(session(), CLS, DICT);
       expect(before).toBe('');
 
-      q.setClassComment(session(), CLS, 'a first comment', DICT);
-      q.setClassComment(session(), CLS, before, DICT);
+      await q.setClassComment(session(), CLS, 'a first comment', DICT);
+      await q.setClassComment(session(), CLS, before, DICT);
 
-      expect(q.getStoredClassComment(session(), CLS, DICT)).toBe('');
+      expect(await q.getStoredClassComment(session(), CLS, DICT)).toBe('');
       // Not an empty comment but no comment: the key is gone, so `comment` answers
       // the synthesised placeholder again, exactly as it did before the save.
-      expect(exec(`(${CLS} _extraDictAt: #comment) isNil printString`).trim()).toBe('true');
+      expect((await exec(`(${CLS} _extraDictAt: #comment) isNil printString`)).trim()).toBe('true');
     });
 
-    it('does not re-version the class, which is why it is an undo and not a revert', () => {
-      defineClass(CLS);
-      const version = boundVersion();
-      const history = exec(`${CLS} classHistory size printString`).trim();
+    it('does not re-version the class, which is why it is an undo and not a revert', async () => {
+      await defineClass(CLS);
+      const version = await boundVersion();
+      const history = (await exec(`${CLS} classHistory size printString`)).trim();
 
-      q.setClassComment(session(), CLS, 'a comment', DICT);
+      await q.setClassComment(session(), CLS, 'a comment', DICT);
 
-      expect(boundVersion()).toBe(version);
-      expect(exec(`${CLS} classHistory size printString`).trim()).toBe(history);
+      expect(await boundVersion()).toBe(version);
+      expect((await exec(`${CLS} classHistory size printString`)).trim()).toBe(history);
     });
 
-    it('reports a class it cannot resolve rather than throwing', () => {
-      expect(q.setClassComment(session(), 'JfpNoSuchClassForComment', 'x', DICT)).toContain(
+    it('reports a class it cannot resolve rather than throwing', async () => {
+      expect(await q.setClassComment(session(), 'JfpNoSuchClassForComment', 'x', DICT)).toContain(
         'Class not found',
       );
     });
@@ -591,209 +599,220 @@ ws contents`;
   // ── A class variable, recorded and reversed ────────────────────────────
 
   describe('an added class variable, recorded and reversed', () => {
-    it('takes the declaration away again', () => {
-      defineClass(CLS);
-      const before = captureClassVar(exec, varSlot('Registry'));
+    it('takes the declaration away again', async () => {
+      await defineClass(CLS);
+      const before = await captureClassVar(exec, varSlot('Registry'));
       expect(before.defined).toBe(false);
 
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
-      const now = captureClassVar(exec, varSlot('Registry'));
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
+      const now = await captureClassVar(exec, varSlot('Registry'));
       expect(now.defined).toBe(true);
 
       const op = planClassVarReversal(before, now);
       expect(op).toBe('undeclare');
-      expect(applyClassVarOp(exec, varSlot('Registry'), op!)).toBeNull();
-      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(false);
+      expect(await applyClassVarOp(exec, varSlot('Registry'), op!)).toBeNull();
+      expect((await captureClassVar(exec, varSlot('Registry'))).defined).toBe(false);
     });
 
-    it('does not re-version the class in either direction', () => {
+    it('does not re-version the class in either direction', async () => {
       // The whole reason this is an undo rather than a revert: a class variable is not part
       // of instance layout, so neither adding nor removing one gives the class a new version.
-      defineClass(CLS);
-      const version = boundVersion();
+      await defineClass(CLS);
+      const version = await boundVersion();
 
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
-      expect(boundVersion()).toBe(version);
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
+      expect(await boundVersion()).toBe(version);
 
-      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
-      expect(boundVersion()).toBe(version);
+      await applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+      expect(await boundVersion()).toBe(version);
     });
 
-    it('only removes a name the class DECLARES, never one it inherits', () => {
+    it('only removes a name the class DECLARES, never one it inherits', async () => {
       // Removing an inherited name would take the variable away from every other subclass.
-      defineClass(CLS);
-      defineClass(SUB, CLS, "'rate'");
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      await defineClass(CLS);
+      await defineClass(SUB, CLS, "'rate'");
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
 
-      expect(applyClassVarOp(exec, varSlot('Registry', SUB), 'undeclare')).toBeNull();
+      expect(await applyClassVarOp(exec, varSlot('Registry', SUB), 'undeclare')).toBeNull();
 
-      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(true);
-      expect(q.getVisibleClassVarNames(session(), SUB, DICT)).toContain('Registry');
+      expect((await captureClassVar(exec, varSlot('Registry'))).defined).toBe(true);
+      expect(await q.getVisibleClassVarNames(session(), SUB, DICT)).toContain('Registry');
     });
 
-    it('reads a name the class only inherits as NOT declared here', () => {
-      defineClass(CLS);
-      defineClass(SUB, CLS, "'rate'");
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
+    it('reads a name the class only inherits as NOT declared here', async () => {
+      await defineClass(CLS);
+      await defineClass(SUB, CLS, "'rate'");
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
 
-      expect(captureClassVar(exec, varSlot('Registry', SUB)).defined).toBe(false);
+      expect((await captureClassVar(exec, varSlot('Registry', SUB))).defined).toBe(false);
     });
 
-    it('reports a class it cannot resolve', () => {
-      expect(applyClassVarOp(exec, varSlot('Registry', 'JfpNoSuchClassForVar'), 'undeclare')).toBe(
-        'JfpNoSuchClassForVar could not be resolved',
-      );
+    it('reports a class it cannot resolve', async () => {
+      expect(
+        await applyClassVarOp(exec, varSlot('Registry', 'JfpNoSuchClassForVar'), 'undeclare'),
+      ).toBe('JfpNoSuchClassForVar could not be resolved');
     });
 
-    it('finds every method that references it — both sides, whole subtree', () => {
-      defineClass(CLS);
-      defineClass(SUB, CLS, "'rate'");
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
-      compile(CLS, 'registry\n  ^ Registry', 'accessing', true); // class side, declaring class
-      compile(CLS, 'peek\n  ^ Registry', 'accessing'); // instance side, declaring class
-      compile(SUB, 'subPeek\n  ^ Registry'); // instance side, subclass
-      compile(CLS, 'unrelated\n  ^ 1', 'accessing'); // references nothing
+    it('finds every method that references it — both sides, whole subtree', async () => {
+      await defineClass(CLS);
+      await defineClass(SUB, CLS, "'rate'");
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
+      await compile(CLS, 'registry\n  ^ Registry', 'accessing', true); // class side, declaring class
+      await compile(CLS, 'peek\n  ^ Registry', 'accessing'); // instance side, declaring class
+      await compile(SUB, 'subPeek\n  ^ Registry'); // instance side, subclass
+      await compile(CLS, 'unrelated\n  ^ 1', 'accessing'); // references nothing
 
-      const found = methodsReferencingClassVar(exec, varSlot('Registry'))
+      const found = (await methodsReferencingClassVar(exec, varSlot('Registry')))
         .map((m) => `${m.className}${m.isMeta ? ' class' : ''}>>#${m.selector}`)
         .sort();
 
       expect(found).toEqual([`${CLS} class>>#registry`, `${CLS}>>#peek`, `${SUB}>>#subPeek`]);
     });
 
-    it('does not report a same-named GLOBAL, which is a different association', () => {
-      defineClass(CLS);
-      exec(`${DICT} at: #JfpUndoItStray put: 42. true printString`);
-      q.addClassVariable(session(), CLS, 'JfpUndoItStray2', DICT);
-      compile(CLS, 'usesGlobal\n  ^ JfpUndoItStray', 'accessing');
+    it('does not report a same-named GLOBAL, which is a different association', async () => {
+      await defineClass(CLS);
+      await exec(`${DICT} at: #JfpUndoItStray put: 42. true printString`);
+      await q.addClassVariable(session(), CLS, 'JfpUndoItStray2', DICT);
+      await compile(CLS, 'usesGlobal\n  ^ JfpUndoItStray', 'accessing');
 
-      expect(methodsReferencingClassVar(exec, varSlot('JfpUndoItStray2'))).toEqual([]);
+      expect(await methodsReferencingClassVar(exec, varSlot('JfpUndoItStray2'))).toEqual([]);
     });
 
-    it('answers nothing for a class that declares no class variables at all', () => {
+    it('answers nothing for a class that declares no class variables at all', async () => {
       // `_classVars` itself answers nil there, which the scan has to survive.
-      defineClass(CLS);
+      await defineClass(CLS);
 
-      expect(methodsReferencingClassVar(exec, varSlot('Registry'))).toEqual([]);
+      expect(await methodsReferencingClassVar(exec, varSlot('Registry'))).toEqual([]);
     });
 
-    it('SEVERS a referencing method rather than removing it — it reads nil and will not recompile', () => {
+    it('SEVERS a referencing method rather than removing it — it reads nil and will not recompile', async () => {
       // This is the fact the warning exists for, pinned so it cannot change underneath it.
-      defineClass(CLS);
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
-      compile(CLS, 'peek\n  ^ Registry', 'accessing');
-      exec(`(${CLS} _classVars associationAt: #Registry) value: 99. true printString`);
-      expect(exec(`${CLS} new peek printString`).trim()).toBe('99');
+      await defineClass(CLS);
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
+      await compile(CLS, 'peek\n  ^ Registry', 'accessing');
+      await exec(`(${CLS} _classVars associationAt: #Registry) value: 99. true printString`);
+      expect((await exec(`${CLS} new peek printString`)).trim()).toBe('99');
 
-      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+      await applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
 
-      expect(exec(`(${CLS} includesSelector: #peek) printString`).trim()).toBe('true');
-      expect(exec(`${CLS} new peek printString`).trim()).toBe('nil');
+      expect((await exec(`(${CLS} includesSelector: #peek) printString`)).trim()).toBe('true');
+      expect((await exec(`${CLS} new peek printString`)).trim()).toBe('nil');
       expect(
-        exec(
-          `[${CLS} compileMethod: 'peek\n  ^ Registry' dictionaries: System myUserProfile symbolList ` +
-            `category: 'accessing' environmentId: 0. 'compiled'] on: Error do: [:e | 'refused']`,
+        (
+          await exec(
+            `[${CLS} compileMethod: 'peek\n  ^ Registry' dictionaries: System myUserProfile symbolList ` +
+              `category: 'accessing' environmentId: 0. 'compiled'] on: Error do: [:e | 'refused']`,
+          )
         ).trim(),
       ).toBe('refused');
     });
 
-    it('declares the name again, for the reversal in the other direction', () => {
-      defineClass(CLS);
-      q.addClassVariable(session(), CLS, 'Registry', DICT);
-      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+    it('declares the name again, for the reversal in the other direction', async () => {
+      await defineClass(CLS);
+      await q.addClassVariable(session(), CLS, 'Registry', DICT);
+      await applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
 
-      expect(applyClassVarOp(exec, varSlot('Registry'), 'declare')).toBeNull();
-      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(true);
+      expect(await applyClassVarOp(exec, varSlot('Registry'), 'declare')).toBeNull();
+      expect((await captureClassVar(exec, varSlot('Registry'))).defined).toBe(true);
     });
   });
 
   // ── A method category, renamed and renamed back ────────────────────────
 
   describe('a method-category rename, recorded and reversed', () => {
-    it('renames back, carrying the same methods', () => {
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'accessing');
-      compile(CLS, 'total\n  ^ 2', 'accessing');
+    it('renames back, carrying the same methods', async () => {
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'accessing');
+      await compile(CLS, 'total\n  ^ 2', 'accessing');
 
-      q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
-      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('reading');
+      await q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
+      expect(await q.getMethodCategories(session(), CLS, false, DICT)).toContain('reading');
 
-      q.renameCategory(session(), CLS, false, 'reading', 'accessing', DICT);
+      await q.renameCategory(session(), CLS, false, 'reading', 'accessing', DICT);
 
-      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('accessing');
-      expect(q.getMethodCategories(session(), CLS, false, DICT)).not.toContain('reading');
+      expect(await q.getMethodCategories(session(), CLS, false, DICT)).toContain('accessing');
+      expect(await q.getMethodCategories(session(), CLS, false, DICT)).not.toContain('reading');
       expect(
-        exec(`(${CLS} categoryOfSelector: #balance environmentId: 0) printString`).trim(),
+        (await exec(`(${CLS} categoryOfSelector: #balance environmentId: 0) printString`)).trim(),
       ).toBe("#'accessing'");
-      expect(exec(`(${CLS} categoryOfSelector: #total environmentId: 0) printString`).trim()).toBe(
-        "#'accessing'",
-      );
+      expect(
+        (await exec(`(${CLS} categoryOfSelector: #total environmentId: 0) printString`)).trim(),
+      ).toBe("#'accessing'");
     });
 
-    it('puts a MOVED method back in the category it came from', () => {
+    it('puts a MOVED method back in the category it came from', async () => {
       // A category move is recorded as an ordinary method edit, because a captured slot
       // carries its category as well as its source -- so the ordinary reversal is all it
       // needs, and it puts the category back along with the source.
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'accessing');
       const slots = [slot('balance')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
       expect(before[0].category).toBe('accessing');
 
-      q.recategorizeMethod(session(), CLS, false, 'balance', 'computing', DICT);
-      expect(captureMethodSlots(exec, slots)[0].category).toBe('computing');
+      await q.recategorizeMethod(session(), CLS, false, 'balance', 'computing', DICT);
+      expect((await captureMethodSlots(exec, slots))[0].category).toBe('computing');
 
-      const ops = planReversal(slots, before, captureMethodSlots(exec, slots));
+      const ops = planReversal(slots, before, await captureMethodSlots(exec, slots));
       expect(ops.map((o) => o.kind)).toEqual(['recompile']);
-      expect(applyMethodSlotOps(exec, ops).every((r) => r.error === null)).toBe(true);
+      expect((await applyMethodSlotOps(exec, ops)).every((r) => r.error === null)).toBe(true);
 
-      expect(captureMethodSlots(exec, slots)[0]).toEqual(before[0]);
+      expect((await captureMethodSlots(exec, slots))[0]).toEqual(before[0]);
     });
 
-    it('leaves the category a move CREATED behind, empty, for its own entry to remove', () => {
+    it('leaves the category a move CREATED behind, empty, for its own entry to remove', async () => {
       // Undoing the move and undoing the create are two entries, in that order: the move
       // first, because that is what the user did last.
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'accessing');
       const slots = [slot('balance')];
-      const before = captureMethodSlots(exec, slots);
+      const before = await captureMethodSlots(exec, slots);
 
-      q.recategorizeMethod(session(), CLS, false, 'balance', 'brand-new', DICT);
-      applyMethodSlotOps(exec, planReversal(slots, before, captureMethodSlots(exec, slots)));
+      await q.recategorizeMethod(session(), CLS, false, 'balance', 'brand-new', DICT);
+      await applyMethodSlotOps(
+        exec,
+        planReversal(slots, before, await captureMethodSlots(exec, slots)),
+      );
 
       // The method is home; the category the move made is still there and now empty, which
       // is exactly the state the create's own reversal can remove.
-      expect(captureMethodSlots(exec, slots)[0].category).toBe('accessing');
-      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('brand-new');
-      expect(q.removeMethodCategory(session(), CLS, false, 'brand-new', DICT).trim()).toBe('ok');
+      expect((await captureMethodSlots(exec, slots))[0].category).toBe('accessing');
+      expect(await q.getMethodCategories(session(), CLS, false, DICT)).toContain('brand-new');
+      expect((await q.removeMethodCategory(session(), CLS, false, 'brand-new', DICT)).trim()).toBe(
+        'ok',
+      );
     });
 
-    it('REFUSES a rename onto a category that already exists', () => {
+    it('REFUSES a rename onto a category that already exists', async () => {
       // This is what makes the reversal exact: a rename is one name becoming another, never
       // two categories merging. The reverser checks for the collision so the user gets a
       // sentence rather than error 2032.
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'accessing');
-      compile(CLS, 'total\n  ^ 2', 'reading');
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'accessing');
+      await compile(CLS, 'total\n  ^ 2', 'reading');
 
       expect(
-        exec(
-          `[${CLS} renameCategory: 'accessing' to: 'reading'. 'ok'] on: Error do: [:e | 'refused']`,
+        (
+          await exec(
+            `[${CLS} renameCategory: 'accessing' to: 'reading'. 'ok'] on: Error do: [:e | 'refused']`,
+          )
         ).trim(),
       ).toBe('refused');
     });
 
-    it('does not recompile the methods it moves', () => {
+    it('does not recompile the methods it moves', async () => {
       // Which is why this is a rename rather than N method edits.
-      defineClass(CLS);
-      compile(CLS, 'balance\n  ^ 1', 'accessing');
-      const before = exec(`(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`);
-
-      q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
-
-      expect(exec(`(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`)).toBe(
-        before,
+      await defineClass(CLS);
+      await compile(CLS, 'balance\n  ^ 1', 'accessing');
+      const before = await exec(
+        `(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`,
       );
+
+      await q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
+
+      expect(
+        await exec(`(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`),
+      ).toBe(before);
     });
   });
 
@@ -803,117 +822,121 @@ ws contents`;
     const DICT_NAME = 'JfpUndoItDict';
     const KEY = 'JfpUndoItDictStash';
 
-    const makeDictionaryAt = (position: number): void => {
-      exec(
+    const makeDictionaryAt = async (position: number): Promise<void> => {
+      await exec(
         `| d | d := SymbolDictionary new. d name: #'${DICT_NAME}'. ` +
           `System myUserProfile insertDictionary: d at: ${position}. 'ok'`,
       );
     };
 
-    it('reads a dictionary POSITION, and pins the dictionary when asked', () => {
-      makeDictionaryAt(2);
+    it('reads a dictionary POSITION, and pins the dictionary when asked', async () => {
+      await makeDictionaryAt(2);
 
-      const state = captureDictionary(exec, DICT_NAME, KEY);
+      const state = await captureDictionary(exec, DICT_NAME, KEY);
 
       expect(state).toEqual({ present: true, name: DICT_NAME, index: 2 });
       expect(
-        exec(`(SessionTemps current at: #'${KEY}' ifAbsent: [nil]) isNil printString`).trim(),
+        (
+          await exec(`(SessionTemps current at: #'${KEY}' ifAbsent: [nil]) isNil printString`)
+        ).trim(),
       ).toBe('false');
     });
 
-    it('reads an absent dictionary as absent rather than raising', () => {
-      expect(captureDictionary(exec, 'JfpNoSuchDictionaryAtAll')).toEqual({
+    it('reads an absent dictionary as absent rather than raising', async () => {
+      expect(await captureDictionary(exec, 'JfpNoSuchDictionaryAtAll')).toEqual({
         present: false,
         name: 'JfpNoSuchDictionaryAtAll',
         index: 0,
       });
     });
 
-    it('puts a removed dictionary back at its old position, with what it held', () => {
-      makeDictionaryAt(2);
-      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItMarker put: 42. 'ok'`);
-      captureDictionary(exec, DICT_NAME, KEY);
-      exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
-      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
+    it('puts a removed dictionary back at its old position, with what it held', async () => {
+      await makeDictionaryAt(2);
+      await exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItMarker put: 42. 'ok'`);
+      await captureDictionary(exec, DICT_NAME, KEY);
+      await exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
+      expect((await captureDictionary(exec, DICT_NAME)).present).toBe(false);
 
-      expect(reinsertDictionary(exec, KEY, 2)).toBeNull();
+      expect(await reinsertDictionary(exec, KEY, 2)).toBeNull();
 
-      expect(captureDictionary(exec, DICT_NAME)).toEqual({
+      expect(await captureDictionary(exec, DICT_NAME)).toEqual({
         present: true,
         name: DICT_NAME,
         index: 2,
       });
       expect(
-        exec(`((System myUserProfile symbolList at: 2) at: #JfpUndoItMarker) printString`).trim(),
+        (
+          await exec(`((System myUserProfile symbolList at: 2) at: #JfpUndoItMarker) printString`)
+        ).trim(),
       ).toBe('42');
     });
 
-    it('refuses rather than listing the same dictionary twice', () => {
+    it('refuses rather than listing the same dictionary twice', async () => {
       // `insertDictionary:at:` happily allows it, which would leave the symbol list holding
       // the dictionary in two places.
-      makeDictionaryAt(2);
-      captureDictionary(exec, DICT_NAME, KEY);
+      await makeDictionaryAt(2);
+      await captureDictionary(exec, DICT_NAME, KEY);
 
-      expect(reinsertDictionary(exec, KEY, 2)).toContain('already on the symbol list');
+      expect(await reinsertDictionary(exec, KEY, 2)).toContain('already on the symbol list');
     });
 
-    it('clamps a position past the end of a list that has since got shorter', () => {
+    it('clamps a position past the end of a list that has since got shorter', async () => {
       // `insertDictionary:at:` raises an OffsetError rather than appending.
-      makeDictionaryAt(2);
-      captureDictionary(exec, DICT_NAME, KEY);
-      exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
+      await makeDictionaryAt(2);
+      await captureDictionary(exec, DICT_NAME, KEY);
+      await exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
 
-      expect(reinsertDictionary(exec, KEY, 99)).toBeNull();
-      expect(captureDictionary(exec, DICT_NAME).present).toBe(true);
+      expect(await reinsertDictionary(exec, KEY, 99)).toBeNull();
+      expect((await captureDictionary(exec, DICT_NAME)).present).toBe(true);
     });
 
-    it('reports a stash this session no longer holds', () => {
-      expect(reinsertDictionary(exec, 'JfpNoSuchStashAtAll', 2)).toContain('no longer holds');
+    it('reports a stash this session no longer holds', async () => {
+      expect(await reinsertDictionary(exec, 'JfpNoSuchStashAtAll', 2)).toContain('no longer holds');
     });
 
-    it('counts a FRESH dictionary as empty, self-referential entry and all', () => {
+    it('counts a FRESH dictionary as empty, self-referential entry and all', async () => {
       // A SymbolDictionary holds its own name by identity (`#Name -> theDict`), so a
       // genuinely empty one reports a size of ONE. Counting that would tell the user their
       // new dictionary holds something.
-      makeDictionaryAt(2);
+      await makeDictionaryAt(2);
 
-      expect(dictionaryEntryCount(exec, DICT_NAME)).toBe(0);
+      expect(await dictionaryEntryCount(exec, DICT_NAME)).toBe(0);
     });
 
-    it('counts what has been filed into it since', () => {
-      makeDictionaryAt(2);
-      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
+    it('counts what has been filed into it since', async () => {
+      await makeDictionaryAt(2);
+      await exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
 
-      expect(dictionaryEntryCount(exec, DICT_NAME)).toBe(1);
+      expect(await dictionaryEntryCount(exec, DICT_NAME)).toBe(1);
     });
 
-    it('counts a dictionary that is not on the symbol list as empty', () => {
-      expect(dictionaryEntryCount(exec, 'JfpNoSuchDictionaryAtAll')).toBe(0);
+    it('counts a dictionary that is not on the symbol list as empty', async () => {
+      expect(await dictionaryEntryCount(exec, 'JfpNoSuchDictionaryAtAll')).toBe(0);
     });
 
-    it('takes a created dictionary back off the list, without destroying what it held', () => {
+    it('takes a created dictionary back off the list, without destroying what it held', async () => {
       // Undoing a create unlists rather than deletes -- the names simply stop resolving,
       // which is what the warning says.
-      makeDictionaryAt(2);
-      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
+      await makeDictionaryAt(2);
+      await exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
 
-      expect(q.removeDictionary(session(), DICT_NAME)).toContain('Removed dictionary:');
+      expect(await q.removeDictionary(session(), DICT_NAME)).toContain('Removed dictionary:');
 
-      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
-      expect(exec(`(System myUserProfile objectNamed: #JfpUndoItThing) printString`).trim()).toBe(
-        'nil',
-      );
+      expect((await captureDictionary(exec, DICT_NAME)).present).toBe(false);
+      expect(
+        (await exec(`(System myUserProfile objectNamed: #JfpUndoItThing) printString`)).trim(),
+      ).toBe('nil');
     });
 
-    it('renames a dictionary back by its NEW name', () => {
-      makeDictionaryAt(2);
-      expect(q.renameDictionary(session(), DICT_NAME, 'JfpUndoItRenamed')).toBe('ok');
-      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
+    it('renames a dictionary back by its NEW name', async () => {
+      await makeDictionaryAt(2);
+      expect(await q.renameDictionary(session(), DICT_NAME, 'JfpUndoItRenamed')).toBe('ok');
+      expect((await captureDictionary(exec, DICT_NAME)).present).toBe(false);
 
-      expect(q.renameDictionary(session(), 'JfpUndoItRenamed', DICT_NAME)).toBe('ok');
+      expect(await q.renameDictionary(session(), 'JfpUndoItRenamed', DICT_NAME)).toBe('ok');
 
       // Back under its old name, and at the position it never left.
-      expect(captureDictionary(exec, DICT_NAME)).toEqual({
+      expect(await captureDictionary(exec, DICT_NAME)).toEqual({
         present: true,
         name: DICT_NAME,
         index: 2,

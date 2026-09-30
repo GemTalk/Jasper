@@ -31,82 +31,87 @@ describe('transaction modes on a live stone', () => {
   useIntegrationTest(({ gciLibrary, session: s }) => {
     gci = gciLibrary;
     session = s;
-    execute = (code) => gci.executeAndFetchString(session, code);
+    execute = async (code) => gci.executeAndFetchString(session, code);
   });
 
   // Every test here moves the session's mode, and the mode outlives the
   // harness's per-test transaction — it is session state, not transactional
   // state. Put it back so the next test starts where the harness expects.
-  afterEach(() => {
-    setTransactionMode(execute, 'autoBegin');
+  afterEach(async () => {
+    await setTransactionMode(execute, 'autoBegin');
   });
 
   // Read through the one query production uses, so this suite's evidence is
   // evidence about that query too.
-  const currentMode = () => getTransactionState(execute).mode;
-  const inTransaction = () => getTransactionState(execute).inTransaction;
+  const currentMode = async () => (await getTransactionState(execute)).mode;
+  const inTransaction = async () => (await getTransactionState(execute)).inTransaction;
 
   /** The error number `code` raises, or 0 when it raises nothing. */
-  function errorNumberFrom(code: string): number {
-    return Number(execute(`([${code}. 0] on: Error do: [:ex | ex number]) printString`).trim());
+  async function errorNumberFrom(code: string): Promise<number> {
+    return Number(
+      (await execute(`([${code}. 0] on: Error do: [:ex | ex number]) printString`)).trim(),
+    );
   }
 
-  it('reads back every mode it sets, exactly as GemStone spells it', () => {
+  it('reads back every mode it sets, exactly as GemStone spells it', async () => {
     for (const mode of TRANSACTION_MODES) {
-      expect(setTransactionMode(execute, mode)).toBe(mode);
-      expect(currentMode()).toBe(mode);
+      expect(await setTransactionMode(execute, mode)).toBe(mode);
+      expect(await currentMode()).toBe(mode);
     }
   });
 
-  it('logs in somewhere a mode is set, rather than nowhere', () => {
+  it('logs in somewhere a mode is set, rather than nowhere', async () => {
     // Not asserted to be autoBegin: STN_GEM_INITIAL_TRANSACTION_MODE can hand
     // out any of the three, which is exactly why Jasper reads it rather than
     // assuming. What must hold is that the answer is one Jasper recognizes.
-    expect(TRANSACTION_MODES).toContain(currentMode());
+    expect(TRANSACTION_MODES).toContain(await currentMode());
   });
 
-  it('leaves the session outside a transaction under manualBegin, and a begin puts it back in', () => {
-    setTransactionMode(execute, 'manualBegin');
-    expect(inTransaction()).toBe(false);
+  it('leaves the session outside a transaction under manualBegin, and a begin puts it back in', async () => {
+    await setTransactionMode(execute, 'manualBegin');
+    expect(await inTransaction()).toBe(false);
 
     gci.beginTransaction(session);
-    expect(inTransaction()).toBe(true);
+    expect(await inTransaction()).toBe(true);
 
     gci.abortTransaction(session);
-    expect(inTransaction()).toBe(false);
+    expect(await inTransaction()).toBe(false);
   });
 
-  it('keeps the session inside a transaction under autoBegin, whatever it does', () => {
-    setTransactionMode(execute, 'autoBegin');
-    expect(inTransaction()).toBe(true);
+  it('keeps the session inside a transaction under autoBegin, whatever it does', async () => {
+    await setTransactionMode(execute, 'autoBegin');
+    expect(await inTransaction()).toBe(true);
 
     // An abort under autoBegin immediately opens the next transaction, which is
     // why Commit is always available there.
     gci.abortTransaction(session);
-    expect(inTransaction()).toBe(true);
+    expect(await inTransaction()).toBe(true);
   });
 
-  it('reads the mode and the transaction state together consistently', () => {
-    setTransactionMode(execute, 'manualBegin');
+  it('reads the mode and the transaction state together consistently', async () => {
+    await setTransactionMode(execute, 'manualBegin');
 
-    expect(getTransactionState(execute)).toEqual({ mode: 'manualBegin', inTransaction: false });
+    expect(await getTransactionState(execute)).toEqual({
+      mode: 'manualBegin',
+      inTransaction: false,
+    });
   });
 
   // This is the rule `canCommit` encodes, and the reason it is written against
   // `inTransaction` instead of the mode: the stone refuses a commit on exactly
   // this condition, in every mode.
-  it('refuses a commit outside a transaction, in every mode that allows being outside one', () => {
+  it('refuses a commit outside a transaction, in every mode that allows being outside one', async () => {
     for (const mode of ['manualBegin', 'transactionless'] as TransactionMode[]) {
-      setTransactionMode(execute, mode);
-      expect(inTransaction()).toBe(false);
-      expect(errorNumberFrom('System commitTransaction')).toBe(ERR_NOT_IN_TRANSACTION);
+      await setTransactionMode(execute, mode);
+      expect(await inTransaction()).toBe(false);
+      expect(await errorNumberFrom('System commitTransaction')).toBe(ERR_NOT_IN_TRANSACTION);
     }
   });
 
-  it('allows an abort outside a transaction — which is why Abort is never hidden', () => {
-    setTransactionMode(execute, 'manualBegin');
+  it('allows an abort outside a transaction — which is why Abort is never hidden', async () => {
+    await setTransactionMode(execute, 'manualBegin');
 
-    expect(errorNumberFrom('System abortTransaction')).toBe(0);
+    expect(await errorNumberFrom('System abortTransaction')).toBe(0);
   });
 
   // Not what the mode's name or the manual implies, and the reason Jadeite's
@@ -114,16 +119,16 @@ describe('transaction modes on a live stone', () => {
   // explicit begin really does enter a transaction, and a commit from inside it
   // is accepted. `canCommit` follows the session's state, so it says yes; the
   // UI still does not *offer* Begin there (see canBegin).
-  it('still enters a transaction on an explicit begin under transactionless', () => {
-    setTransactionMode(execute, 'transactionless');
-    expect(inTransaction()).toBe(false);
+  it('still enters a transaction on an explicit begin under transactionless', async () => {
+    await setTransactionMode(execute, 'transactionless');
+    expect(await inTransaction()).toBe(false);
 
     gci.beginTransaction(session);
 
-    expect(inTransaction()).toBe(true);
+    expect(await inTransaction()).toBe(true);
     // ...and the stone agrees: no 2030 from a commit attempt in this state. The
     // harness's own commit guard stops it going further, which is its job.
-    expect(errorNumberFrom('System commitTransaction')).not.toBe(ERR_NOT_IN_TRANSACTION);
+    expect(await errorNumberFrom('System commitTransaction')).not.toBe(ERR_NOT_IN_TRANSACTION);
   });
 
   // What is deliberately NOT covered here: an end-to-end SigAbort, where the stone
@@ -135,53 +140,57 @@ describe('transaction modes on a live stone', () => {
   // the expensive half cheap. Covered instead: that the option arms, that the
   // session is the remote client the option requires, and (as a unit test, in
   // gciLibraryError.test.ts) that 3007 and 3008 read as a refreshed view.
-  it('is a remote client, which is what makes GemAutoServiceSigAbort apply', () => {
+  it('is a remote client, which is what makes GemAutoServiceSigAbort apply', async () => {
     // The whole SigAbort answer rests on this: the option is documented to apply
     // only where System clientIsRemote is true. Jasper logs in through a netldi
     // gemnetobject task, so it does — but a linked login would not, and this is
     // where that would be noticed.
-    expect(execute('System clientIsRemote printString').trim()).toBe('true');
+    expect((await execute('System clientIsRemote printString')).trim()).toBe('true');
   });
 
-  it('arms the gem’s own SigAbort servicing, and reads it back', () => {
-    setGemAutoServiceSigAbort(execute, true);
-    expect(getGemAutoServiceSigAbort(execute)).toBe(true);
+  it('arms the gem’s own SigAbort servicing, and reads it back', async () => {
+    await setGemAutoServiceSigAbort(execute, true);
+    expect(await getGemAutoServiceSigAbort(execute)).toBe(true);
 
-    setGemAutoServiceSigAbort(execute, false);
-    expect(getGemAutoServiceSigAbort(execute)).toBe(false);
+    await setGemAutoServiceSigAbort(execute, false);
+    expect(await getGemAutoServiceSigAbort(execute)).toBe(false);
   });
 
   describe('the view refresh Jasper’s background reads use', () => {
-    it('aborts to refresh when the session is clean and in an autoBegin transaction', () => {
-      setTransactionMode(execute, 'autoBegin');
+    it('aborts to refresh when the session is clean and in an autoBegin transaction', async () => {
+      await setTransactionMode(execute, 'autoBegin');
 
-      expect(execute(VIEW_REFRESH_CODE).trim()).toBe('refreshed');
+      expect((await execute(VIEW_REFRESH_CODE)).trim()).toBe('refreshed');
     });
 
     it.each(['manualBegin', 'transactionless'] as const)(
       'stands down inside a transaction the user began by hand under %s',
-      (mode) => {
-        setTransactionMode(execute, mode);
+      async (mode) => {
+        await setTransactionMode(execute, mode);
         gci.beginTransaction(session);
 
-        expect(execute(VIEW_REFRESH_CODE).trim()).toBe(
+        expect((await execute(VIEW_REFRESH_CODE)).trim()).toBe(
           'skipped: session is inside a transaction begun by hand',
         );
         // ...and really did not end it.
-        expect(inTransaction()).toBe(true);
+        expect(await inTransaction()).toBe(true);
       },
     );
 
-    it('stands down when the session holds uncommitted changes', () => {
-      setTransactionMode(execute, 'autoBegin');
-      execute("UserGlobals at: #jasperTransactionModeProbe put: 1. 'written'");
-      expect(execute('System needsCommit printString').trim()).toBe('true');
+    it('stands down when the session holds uncommitted changes', async () => {
+      await setTransactionMode(execute, 'autoBegin');
+      await execute("UserGlobals at: #jasperTransactionModeProbe put: 1. 'written'");
+      expect((await execute('System needsCommit printString')).trim()).toBe('true');
 
-      expect(execute(VIEW_REFRESH_CODE).trim()).toBe('skipped: uncommitted changes present');
+      expect((await execute(VIEW_REFRESH_CODE)).trim()).toBe(
+        'skipped: uncommitted changes present',
+      );
       // The write is still there — nothing was discarded. (The harness's abort
       // takes it away at the end of the test; it was never committed.)
       expect(
-        execute('(UserGlobals includesKey: #jasperTransactionModeProbe) printString').trim(),
+        (
+          await execute('(UserGlobals includesKey: #jasperTransactionModeProbe) printString')
+        ).trim(),
       ).toBe('true');
     });
   });

@@ -47,9 +47,9 @@ export function toLocalGemPath(path: string): string {
 }
 
 /** Whether the gem process can read the file at `serverPath`. */
-export function gemCanRead(session: ActiveSession, serverPath: string): boolean {
+export async function gemCanRead(session: ActiveSession, serverPath: string): Promise<boolean> {
   try {
-    const r = executeFetchString(
+    const r = await executeFetchString(
       session,
       `[(GsFile existsOnServer: ${gsStringLiteral(serverPath)}) printString] ` +
         "on: Error do: [:e | 'false']",

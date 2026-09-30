@@ -66,21 +66,21 @@ export class FileInManager {
   ) {}
 
   register(context: vscode.ExtensionContext): void {
-    const createSub = vscode.workspace.onDidCreateFiles((e) => {
+    const createSub = vscode.workspace.onDidCreateFiles(async (e) => {
       for (const file of e.files) {
-        this.handleFileCreate(file);
+        await this.handleFileCreate(file);
       }
     });
-    const deleteSub = vscode.workspace.onDidDeleteFiles((e) => {
+    const deleteSub = vscode.workspace.onDidDeleteFiles(async (e) => {
       for (const file of e.files) {
-        this.handleFileDelete(file);
+        await this.handleFileDelete(file);
       }
     });
     this.disposables.push(createSub, deleteSub);
     context.subscriptions.push(createSub, deleteSub);
   }
 
-  private handleFileCreate(uri: vscode.Uri): void {
+  private async handleFileCreate(uri: vscode.Uri): Promise<void> {
     if (uri.scheme !== 'file') return;
     if (this.exportManager.isWriting) return;
 
@@ -116,10 +116,10 @@ export class FileInManager {
     // File in the template so the class exists in GemStone
     const session = this.resolveSessionFromPath(filePath);
     if (session) {
-      fileInClass(session, template);
+      await fileInClass(session, template);
       // Reconcile the mirror so the new class is filed under canonical source.
       this.exportManager.scheduleRefresh(session);
-      SystemBrowser.refresh(session.id);
+      await SystemBrowser.refresh(session.id);
     }
 
     if (filePath !== uri.fsPath) {
@@ -137,7 +137,7 @@ export class FileInManager {
     }
   }
 
-  private handleFileDelete(uri: vscode.Uri): void {
+  private async handleFileDelete(uri: vscode.Uri): Promise<void> {
     if (uri.scheme !== 'file') return;
     if (this.exportManager.isWriting) return;
 
@@ -150,15 +150,15 @@ export class FileInManager {
 
     if (uri.fsPath.endsWith('.gs') && parts.length >= 2) {
       // Deleting a .gs file → remove class from GemStone
-      const dictIndex = this.parseDictIndex(parts[0], session);
+      const dictIndex = await this.parseDictIndex(parts[0], session);
       if (!dictIndex) return;
       const className = path.basename(uri.fsPath, '.gs');
       try {
-        queries.deleteClass(session, dictIndex, className);
+        await queries.deleteClass(session, dictIndex, className);
         // The .gs is already gone; drop it from the persisted mirror state too.
         const dictName = parts[0].replace(/^\d+-/, '');
         this.exportManager.removeClassFile(session, dictIndex, dictName, className);
-        SystemBrowser.refresh(session.id);
+        await SystemBrowser.refresh(session.id);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(
@@ -167,18 +167,18 @@ export class FileInManager {
       }
     } else if (parts.length === 1) {
       // Deleting a dictionary directory → remove dictionary from symbol list
-      const dictIndex = this.parseDictIndex(parts[0], session);
+      const dictIndex = await this.parseDictIndex(parts[0], session);
       if (!dictIndex) return;
       const dictName = parts[0].replace(/^\d+-/, '');
       // Stash the dictionary and its POSITION before unlisting it, so Undo can put it back
       // with every class it holds (#434). Deleting the mirror directory is the same
       // destructive act as the Explorer's Remove Dictionary, and gets the same way back.
-      const recording = beginDictionaryRemoval(session, dictName);
+      const recording = await beginDictionaryRemoval(session, dictName);
       try {
-        queries.removeDictionary(session, dictIndex);
+        await queries.removeDictionary(session, dictIndex);
         // Reconcile the mirror (the dir is gone; drop its classes from state).
         this.exportManager.scheduleRefresh(session);
-        SystemBrowser.refresh(session.id);
+        await SystemBrowser.refresh(session.id);
         notifyUndoable(`Removed dictionary ${dictName}`, recording?.commit());
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -191,10 +191,13 @@ export class FileInManager {
    * Extract dictionary index from a directory name.
    * Handles both "{index}-{dictName}" and plain "{dictName}" formats.
    */
-  private parseDictIndex(dictDir: string, session: ActiveSession): number | undefined {
+  private async parseDictIndex(
+    dictDir: string,
+    session: ActiveSession,
+  ): Promise<number | undefined> {
     const match = dictDir.match(/^(\d+)-(.*)/);
     if (match) return parseInt(match[1], 10);
-    const dictNames = queries.getDictionaryNames(session);
+    const dictNames = await queries.getDictionaryNames(session);
     const idx = dictNames.indexOf(dictDir) + 1;
     return idx > 0 ? idx : undefined;
   }

@@ -77,7 +77,7 @@ beforeEach(() => {
   vi.mocked(vscode.window.showQuickPick).mockResolvedValue('No accessors' as never);
   // clearAllMocks drops call history but keeps implementations, so restore the two a
   // remove test overrides — otherwise the override leaks into a shuffled neighbour.
-  vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([]);
+  vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue([]);
   vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 });
 
@@ -288,7 +288,7 @@ describe('ExplorerController remove instance variable', () => {
   });
 
   it('asks before removing a variable methods still access', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue([accessor('total')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const { ctl } = makeController({} as ActiveSession);
 
@@ -299,7 +299,7 @@ describe('ExplorerController remove instance variable', () => {
   });
 
   it('names the accessing methods in the confirmation', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue([accessor('total')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const { ctl } = makeController({} as ActiveSession);
 
@@ -312,7 +312,7 @@ describe('ExplorerController remove instance variable', () => {
   });
 
   it('opens the preview once the user chooses to remove an accessed variable anyway', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue([accessor('total')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove Anyway' as never);
     vi.mocked(runInstVarRefactor).mockResolvedValue(outcome({ autoApplied: false }));
     const { ctl } = makeController({} as ActiveSession);
@@ -334,7 +334,7 @@ describe('ExplorerController remove instance variable', () => {
   });
 
   it('asks rather than removing unasked when the access scan fails', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockImplementation(() => {
+    vi.mocked(queries.methodsAccessingInstVar).mockImplementation(async () => {
       throw new Error('a SecurityError occurred');
     });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
@@ -367,7 +367,7 @@ describe('ExplorerController.removeInstVar — reporting a scan that came back f
   });
 
   it('states the count as a floor and says the list is incomplete', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue(
+    vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue(
       Array.from({ length: CAP }, (_, i) => accessorRow(`C${i}`, 'usesIt')),
     );
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
@@ -383,7 +383,7 @@ describe('ExplorerController.removeInstVar — reporting a scan that came back f
   });
 
   it('states a short count plainly, with no hedge', async () => {
-    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessorRow('Foo', 'total')]);
+    vi.mocked(queries.methodsAccessingInstVar).mockResolvedValue([accessorRow('Foo', 'total')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const { ctl } = makeController({} as ActiveSession);
 

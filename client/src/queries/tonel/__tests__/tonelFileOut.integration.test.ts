@@ -61,7 +61,7 @@ describe('tonel class file out (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const rowan3 = useRowan3Stone(() => exec);
 
   /** The shipped `.class.st` this class was written from. */
@@ -89,9 +89,11 @@ describe('tonel class file out (integration)', () => {
    * Trait-provided methods are excluded, matching the file-out: traits are not a
    * supported Jasper feature and a trait's methods are not the class's own code.
    */
-  const imageSelectors = (className: string): { instance: string[]; meta: string[] } => {
-    const read = (receiver: string): string[] => {
-      const raw = exec(
+  const imageSelectors = async (
+    className: string,
+  ): Promise<{ instance: string[]; meta: string[] }> => {
+    const read = async (receiver: string): Promise<string[]> => {
+      const raw = await exec(
         `| c ws | c := System myUserProfile symbolList objectNamed: #'${className}'. ` +
           `ws := WriteStream on: String new. ` +
           `${receiver} selectors do: [:s | | m | ` +
@@ -105,24 +107,24 @@ describe('tonel class file out (integration)', () => {
         .filter((s) => s.length > 0)
         .sort();
     };
-    return { instance: read('c'), meta: read('c class') };
+    return { instance: await read('c'), meta: await read('c class') };
   };
 
-  const fileOut = (className: string): string => {
-    const tonel = fileOutClassTonel(exec, className);
+  const fileOut = async (className: string): Promise<string> => {
+    const tonel = await fileOutClassTonel(exec, className);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
     return tonel;
   };
 
   describe.each(FIXTURES)('$className', (fixture) => {
-    it('writes a header byte-identical to the shipped file', (ctx) => {
+    it('writes a header byte-identical to the shipped file', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      expect(headerOf(fileOut(fixture.className))).toBe(headerOf(referenceFor(fixture)));
+      expect(headerOf(await fileOut(fixture.className))).toBe(headerOf(referenceFor(fixture)));
     });
 
-    it('carries every shipped method verbatim', (ctx) => {
+    it('carries every shipped method verbatim', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      const ours = methodBlocksOf(fileOut(fixture.className));
+      const ours = methodBlocksOf(await fileOut(fixture.className));
       const shipped = methodBlocksOf(referenceFor(fixture));
       expect(shipped.size).toBeGreaterThan(0);
       for (const [declaration, block] of shipped) {
@@ -130,14 +132,14 @@ describe('tonel class file out (integration)', () => {
       }
     });
 
-    it('emits each method exactly once', (ctx) => {
+    it('emits each method exactly once', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // Every other comparison here answers a Map or a sorted set and therefore
       // cannot see a doubled method. This is the only one that can.
-      expect(duplicateDeclarationsOf(fileOut(fixture.className))).toEqual([]);
+      expect(duplicateDeclarationsOf(await fileOut(fixture.className))).toEqual([]);
     });
 
-    it('emits the shipped methods in the shipped order', (ctx) => {
+    it('emits the shipped methods in the shipped order', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // Order matters because these files go into git: a different — or merely
       // unstable — order turns every later diff into noise. Our file is a
@@ -145,27 +147,29 @@ describe('tonel class file out (integration)', () => {
       // order among ours; the extra methods may interleave.
       const shipped = declarationSequenceOf(referenceFor(fixture));
       const shippedSet = new Set(shipped);
-      const ours = declarationSequenceOf(fileOut(fixture.className)).filter((d) =>
+      const ours = declarationSequenceOf(await fileOut(fixture.className)).filter((d) =>
         shippedSet.has(d),
       );
       expect(shipped.length).toBeGreaterThan(0);
       expect(ours).toEqual(shipped);
     });
 
-    it('writes the same bytes when run twice', (ctx) => {
+    it('writes the same bytes when run twice', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // Determinism is the other half of a usable git diff. Selectors come out of
       // a Set in the image, so anything that let that iteration order reach the
       // file would make an unchanged class look modified on every file-out.
-      expect(fileOut(fixture.className)).toBe(fileOut(fixture.className));
+      expect(await fileOut(fixture.className)).toBe(await fileOut(fixture.className));
     });
 
-    it('exports every selector the Explorer would show', (ctx) => {
+    it('exports every selector the Explorer would show', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // The actual product requirement, and the one the corpus cannot express:
       // a Jasper user sees every method on the class, so the file carries them —
       // including the ones Rowan files into other packages' .extension.st.
-      expect(declarationsOf(fileOut(fixture.className))).toEqual(imageSelectors(fixture.className));
+      expect(declarationsOf(await fileOut(fixture.className))).toEqual(
+        await imageSelectors(fixture.className),
+      );
     });
   });
 
@@ -181,20 +185,20 @@ describe('tonel class file out (integration)', () => {
   describe.each(['Array', 'Behavior', 'Class', 'Object', 'System', 'CharacterCollection'])(
     '%s',
     (className) => {
-      it('emits each method exactly once', (ctx) => {
+      it('emits each method exactly once', async (ctx) => {
         rowan3.skipUnlessAvailable(ctx);
-        const tonel = fileOutClassTonel(exec, className);
+        const tonel = await fileOutClassTonel(exec, className);
         expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
         expect(duplicateDeclarationsOf(tonel)).toEqual([]);
       });
 
-      it('matches the image selector for selector', (ctx) => {
+      it('matches the image selector for selector', async (ctx) => {
         rowan3.skipUnlessAvailable(ctx);
         // Counting, not set comparison: the point is that the number of method
         // blocks equals the number of selectors, which a duplicate breaks and a
         // Map-keyed comparison cannot see.
-        const tonel = fileOutClassTonel(exec, className);
-        const image = imageSelectors(className);
+        const tonel = await fileOutClassTonel(exec, className);
+        const image = await imageSelectors(className);
         expect(declarationSequenceOf(tonel).length).toBe(image.instance.length + image.meta.length);
       });
     },
@@ -215,12 +219,12 @@ describe('tonel class file out (integration)', () => {
   // send removed. The case the send exists for is an UNLOADED class, whose
   // definition comes back with `gs_options` empty; that is covered by
   // `#gs_options survives the round trip` in tonelFileInFidelity.
-  it('every class in Globals answers _rwOptionsArray', (ctx) => {
+  it('every class in Globals answers _rwOptionsArray', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Unguarded on purpose: if the send raises, this doit fails and the test does
     // too, which is the whole point. 1127 classes, 138 of them carrying options,
     // measured on 3.7.5.
-    const counts = exec(`| answered withOptions |
+    const counts = await exec(`| answered withOptions |
 answered := 0. withOptions := 0.
 (Globals select: [:e | e isBehavior and: [e isClass]]) do: [:c | | o |
   o := c _rwOptionsArray.
@@ -235,9 +239,9 @@ answered printString, ' ', withOptions printString`);
     expect(withOptions).toBeGreaterThan(100);
   });
 
-  it('reports a class that does not resolve instead of writing a file', (ctx) => {
+  it('reports a class that does not resolve instead of writing a file', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    const answer = fileOutClassTonel(exec, 'JasperNoSuchClassAnywhere');
+    const answer = await fileOutClassTonel(exec, 'JasperNoSuchClassAnywhere');
     expect(isTonelFileOutError(answer)).toBe(true);
     expect(answer).toContain('Class not found');
   });
@@ -250,21 +254,21 @@ answered printString, ' ', withOptions printString`);
     // everything here is something the file-out has to supply itself.
     const PROBE = 'JasperUnloadedProbe';
 
-    const defineProbe = (): void => {
-      q.compileClassDefinition(
+    const defineProbe = async (): Promise<void> => {
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${PROBE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
-      q.compileMethod(session(), PROBE, false, 'accessing', 'a\n\t^a');
-      q.compileMethod(session(), PROBE, false, 'accessing', 'a: x\n\ta := x');
-      q.compileMethod(session(), PROBE, true, 'instance creation', 'make\n\t^self new');
+      await q.compileMethod(session(), PROBE, false, 'accessing', 'a\n\t^a');
+      await q.compileMethod(session(), PROBE, false, 'accessing', 'a: x\n\ta := x');
+      await q.compileMethod(session(), PROBE, true, 'instance creation', 'make\n\t^self new');
     };
 
-    it('exports all its methods, which the definition alone carries none of', (ctx) => {
+    it('exports all its methods, which the definition alone carries none of', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      defineProbe();
-      const tonel = fileOutClassTonel(exec, PROBE);
+      await defineProbe();
+      const tonel = await fileOutClassTonel(exec, PROBE);
       expect(isTonelFileOutError(tonel)).toBe(false);
 
       const declared = declarationSequenceOf(tonel);
@@ -274,22 +278,22 @@ answered printString, ' ', withOptions printString`);
       expect(tonel).toContain(`${PROBE} class >> make [`);
     });
 
-    it('emits a real category, never #category : nil', (ctx) => {
+    it('emits a real category, never #category : nil', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // An unloaded class with no class category set answers nil, and
       // "#category : nil" is not valid Tonel — the file would not read back at all.
-      defineProbe();
-      const tonel = fileOutClassTonel(exec, PROBE);
+      await defineProbe();
+      const tonel = await fileOutClassTonel(exec, PROBE);
       expect(tonel).not.toContain('#category : nil');
       // Falls back to the dictionary the class lives in.
       expect(tonel).toContain("#category : 'UserGlobals'");
     });
 
-    it('prefers the class category over the dictionary when one is set', (ctx) => {
+    it('prefers the class category over the dictionary when one is set', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      defineProbe();
-      q.recategorizeClass(session(), PROBE, 'Jasper-Unloaded-Cat');
-      expect(fileOutClassTonel(exec, PROBE)).toContain("#category : 'Jasper-Unloaded-Cat'");
+      await defineProbe();
+      await q.recategorizeClass(session(), PROBE, 'Jasper-Unloaded-Cat');
+      expect(await fileOutClassTonel(exec, PROBE)).toContain("#category : 'Jasper-Unloaded-Cat'");
     });
   });
 });

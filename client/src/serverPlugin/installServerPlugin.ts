@@ -67,7 +67,7 @@ export async function installServerPlugin(
   const problems: string[] = [];
   for (const feature of PLUGIN_FEATURES) {
     const expected = feature.isApplicable(version);
-    const installed = feature.probe(session);
+    const installed = await feature.probe(session);
     if (installed !== expected) {
       problems.push(
         `${feature.label} installed=${installed} but version ${version} expects installed=${expected}`,

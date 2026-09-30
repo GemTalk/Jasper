@@ -28,69 +28,69 @@ describe('class-variable Explorer queries (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'JasperCvItBase';
   const SUB = 'JasperCvItSub';
 
   // A base class with two class variables and a subclass declaring none, so the
   // "defined here, not inherited" semantics are observable.
-  const defineFixture = (): void => {
-    exec(
+  const defineFixture = async (): Promise<void> => {
+    await exec(
       `Object subclass: '${BASE}' instVarNames: #() classVars: #(Alpha Beta) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
-    exec(
+    await exec(
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
   };
 
-  it('lists a class its own class variables', () => {
-    defineFixture();
+  it('lists a class its own class variables', async () => {
+    await defineFixture();
 
-    const names = getDefinedClassVarNames(exec, BASE);
+    const names = await getDefinedClassVarNames(exec, BASE);
 
     expect(names).toContain('Alpha');
     expect(names).toContain('Beta');
   });
 
-  it('does not list inherited class variables on a subclass', () => {
-    defineFixture();
+  it('does not list inherited class variables on a subclass', async () => {
+    await defineFixture();
 
-    const names = getDefinedClassVarNames(exec, SUB);
+    const names = await getDefinedClassVarNames(exec, SUB);
 
     expect(names).not.toContain('Alpha');
     expect(names).toHaveLength(0);
   });
 
-  it('counts the class variables defined in each class of a dictionary', () => {
-    defineFixture();
+  it('counts the class variables defined in each class of a dictionary', async () => {
+    await defineFixture();
 
-    const counts = getDefinedClassVarCounts(exec, userIndex());
+    const counts = await getDefinedClassVarCounts(exec, await userIndex());
 
     expect(counts.get(BASE)).toBe(2);
     expect(counts.get(SUB)).toBe(0);
   });
 
-  it('reads class-variable names as strings, never leaving the transaction dirtier than found', () => {
-    defineFixture();
-    const before = exec('System needsCommit printString').trim();
+  it('reads class-variable names as strings, never leaving the transaction dirtier than found', async () => {
+    await defineFixture();
+    const before = (await exec('System needsCommit printString')).trim();
 
-    getDefinedClassVarNames(exec, BASE);
-    getDefinedClassVarCounts(exec, userIndex());
+    await getDefinedClassVarNames(exec, BASE);
+    await getDefinedClassVarCounts(exec, await userIndex());
 
-    expect(exec('System needsCommit printString').trim()).toBe(before);
+    expect((await exec('System needsCommit printString')).trim()).toBe(before);
   });
 });

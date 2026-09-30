@@ -21,14 +21,14 @@ export function isClassNotFound(source: string): boolean {
   return source.startsWith(CLASS_NOT_FOUND_PREFIX);
 }
 
-export function fileOutClass(
+export async function fileOutClass(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ '${CLASS_NOT_FOUND_PREFIX}${escapeString(className)}'].
 cls fileOutClass`;
-  return execute(code);
+  return await execute(code);
 }

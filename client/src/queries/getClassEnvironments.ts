@@ -18,12 +18,12 @@ export interface EnvCategoryLine {
   sessionMethodBits?: Record<string, number>;
 }
 
-export function getClassEnvironments(
+export async function getClassEnvironments(
   execute: QueryExecutor,
   dictIndex: number,
   className: string,
   maxEnv: number,
-): EnvCategoryLine[] {
+): Promise<EnvCategoryLine[]> {
   // Each emitted selector token is prefixed with a fixed 2-digit flag byte
   // (00..15) so the indicators ride along on the existing method-list round
   // trip: bit 1 = overrides super (▲), bit 2 = overridden in a subclass (▼),
@@ -82,7 +82,7 @@ stream := WriteStream on: Unicode7 new.
 ].
 stream contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: EnvCategoryLine[] = [];
   for (const line of raw.split('\n')) {

@@ -147,9 +147,11 @@ stream contents`;
  * read must not turn a refused commit into a thrown error: the refusal is what is
  * worth reporting, and the conflict list is detail on top of it.
  */
-export function tryTransactionConflicts(execute: QueryExecutor): TransactionConflicts | undefined {
+export async function tryTransactionConflicts(
+  execute: QueryExecutor,
+): Promise<TransactionConflicts | undefined> {
   try {
-    return transactionConflicts(execute);
+    return await transactionConflicts(execute);
   } catch {
     return undefined;
   }
@@ -162,8 +164,8 @@ export function tryTransactionConflicts(execute: QueryExecutor): TransactionConf
  * the conflict set, be sure to clear this reference to avoid making the conflict
  * set persistent" (§9.2).
  */
-export function transactionConflicts(execute: QueryExecutor): TransactionConflicts {
-  return parseTransactionConflicts(execute(conflictsCode()));
+export async function transactionConflicts(execute: QueryExecutor): Promise<TransactionConflicts> {
+  return parseTransactionConflicts(await execute(conflictsCode()));
 }
 
 /** Exported for tests: the pure half of {@link transactionConflicts}. */

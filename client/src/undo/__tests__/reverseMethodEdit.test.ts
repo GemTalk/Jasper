@@ -56,14 +56,14 @@ function entry(before: MethodSlotState[], after: MethodSlotState[]): MethodEditU
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+  vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) =>
     ops.map((op) => ({ op, error: null })),
   );
 });
 
 describe('reverseMethodEdit', () => {
   it('puts the earlier source back and says it did not commit', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^2')]);
 
     const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
 
@@ -76,7 +76,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('asks before discarding a change made since, and backs out if refused', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^99')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^99')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
@@ -88,7 +88,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('names every drifted method when there is more than one', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('a ^9'), has('b ^9')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('a ^9'), has('b ^9')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const multi: MethodEditUndoEntry = {
       ...entry([has('a ^1'), has('b ^1')], [has('a ^2'), has('b ^2')]),
@@ -106,7 +106,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('goes ahead when the drift is accepted — drift is a warning, not a refusal', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^99')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^99')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
@@ -116,7 +116,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('says so quietly when the method is already as it was, and uses the entry up', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^1')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^1')]);
 
     const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^1')]));
 
@@ -128,7 +128,7 @@ describe('reverseMethodEdit', () => {
   it('lands the Explorer on a method it brought back, in the dictionary it came back to', async () => {
     // Without the dictionary the Explorer takes the first class of that name on the symbol
     // list, which for a name bound twice is the one the undo never touched.
-    vi.mocked(captureMethodSlots).mockReturnValue([gone]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([gone]);
 
     await reverseMethodEdit(session, entry([has('balance ^1')], [gone]));
 
@@ -136,7 +136,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('does not go looking for a method it just removed', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^1')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^1')]);
 
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
@@ -146,7 +146,7 @@ describe('reverseMethodEdit', () => {
   it('closes the editors for a method it removed, naming the slot it removed', async () => {
     // Undoing a method you had just added deletes it, and a tab left open over it is one
     // save away from compiling it straight back.
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^1')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^1')]);
 
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
@@ -158,7 +158,7 @@ describe('reverseMethodEdit', () => {
   it('closes nothing when the reversal only put source back', async () => {
     // A restored or recompiled method still has source to read, so its editor is reloaded
     // rather than closed.
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^2')]);
 
     await reverseMethodEdit(session, entry([has('balance ^1')], [has('balance ^2')]));
 
@@ -169,8 +169,8 @@ describe('reverseMethodEdit', () => {
     // A throw means nothing was attempted, unlike a reversal the stone refused per slot —
     // which is reported and still uses the entry up, because the recorded "before" no
     // longer describes anything.
-    vi.mocked(captureMethodSlots).mockReturnValue([gone]);
-    vi.mocked(applyMethodSlotOps).mockImplementation(() => {
+    vi.mocked(captureMethodSlots).mockResolvedValue([gone]);
+    vi.mocked(applyMethodSlotOps).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -184,7 +184,7 @@ describe('reverseMethodEdit', () => {
   it('resyncs GemStone Search, which caches what it searches', async () => {
     // A method the undo took away, or put back, changes what a source or selector search
     // should find. Search caches; it has to be told.
-    vi.mocked(captureMethodSlots).mockReturnValue([gone]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([gone]);
 
     await reverseMethodEdit(session, entry([has('balance ^1')], [gone]));
 
@@ -195,8 +195,8 @@ describe('reverseMethodEdit', () => {
     // Nothing landed, so the stone holds exactly what the entry describes. Using the entry up
     // there showed as the button moving on to the previous change the moment the failure was
     // reported, which reads as the undo having been silently spent.
-    vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^2')]);
-    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+    vi.mocked(captureMethodSlots).mockResolvedValue([has('balance ^2')]);
+    vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) =>
       ops.map((op) => ({ op, error: 'not writable' })),
     );
 
@@ -216,8 +216,8 @@ describe('reverseMethodEdit', () => {
         { className: 'Account', isMeta: false, selector: 'rate', environmentId: 0 },
       ],
     };
-    vi.mocked(captureMethodSlots).mockReturnValue([gone, has('rate ^2')]);
-    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+    vi.mocked(captureMethodSlots).mockResolvedValue([gone, has('rate ^2')]);
+    vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) =>
       ops.map((op, i) => ({ op, error: i === 0 ? null : 'not writable' })),
     );
 
@@ -228,7 +228,7 @@ describe('reverseMethodEdit', () => {
   });
 
   it('keeps the entry when the current state could not even be read', async () => {
-    vi.mocked(captureMethodSlots).mockImplementation(() => {
+    vi.mocked(captureMethodSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 

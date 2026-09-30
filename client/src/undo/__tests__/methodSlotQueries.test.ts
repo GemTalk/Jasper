@@ -31,14 +31,14 @@ const slot = (selector: string): MethodSlot => ({
 });
 
 describe('the undo doits', () => {
-  it('never mention the refactoring engine, so they run on any stone', () => {
+  it('never mention the refactoring engine, so they run on any stone', async () => {
     const seen: string[] = [];
-    const execute = (code: string) => {
+    const execute = async (code: string) => {
       seen.push(code);
       return '0\n';
     };
-    captureMethodSlots(execute, [slot('balance')]);
-    applyMethodSlotOps(execute, [
+    await captureMethodSlots(execute, [slot('balance')]);
+    await applyMethodSlotOps(execute, [
       { kind: 'restore', slot: slot('balance'), source: 'balance ^1', category: 'accessing' },
     ]);
 
@@ -47,19 +47,19 @@ describe('the undo doits', () => {
     }
   });
 
-  it('asks for nothing when there are no slots', () => {
+  it('asks for nothing when there are no slots', async () => {
     const execute = vi.fn();
-    expect(captureMethodSlots(execute, [])).toEqual([]);
-    expect(applyMethodSlotOps(execute, [])).toEqual([]);
+    expect(await captureMethodSlots(execute, [])).toEqual([]);
+    expect(await applyMethodSlotOps(execute, [])).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('resolves the class before taking its metaclass', () => {
+  it('resolves the class before taking its metaclass', async () => {
     // `nil class` is UndefinedObject, so a bare `X class` would turn "no such class" into a
     // snapshot of the wrong object.
     let code = '';
-    captureMethodSlots(
-      (c) => {
+    await captureMethodSlots(
+      async (c) => {
         code = c;
         return '0\n';
       },

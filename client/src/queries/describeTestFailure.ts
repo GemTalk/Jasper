@@ -33,11 +33,11 @@ export interface TestFailureDetails {
   stackReport?: string;
 }
 
-export function describeTestFailure(
+export async function describeTestFailure(
   execute: QueryExecutor,
   className: string,
   selector: string,
-): TestFailureDetails {
+): Promise<TestFailureDetails> {
   const cls = escapeString(className);
   const sel = escapeString(selector);
   // Why AbstractException (not Exception): GemStone's Exception class can be
@@ -117,7 +117,7 @@ captured isNil ifTrue: [
     ws nextPutAll: s]].
 ws contents`;
 
-  const data = execute(code);
+  const data = await execute(code);
   return parseDetails(data);
 }
 

@@ -134,9 +134,9 @@ describe('parseTransactionConflicts', () => {
 });
 
 describe('transactionConflicts', () => {
-  it('asks the stone once and parses what comes back', () => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    const result = transactionConflicts(execute);
+  it('asks the stone once and parses what comes back', async () => {
+    const execute = vi.fn(async (_code: string) => WRITE_WRITE);
+    const result = await transactionConflicts(execute);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(result.categories[0].key).toBe('Write-Write');
   });
@@ -163,9 +163,9 @@ describe('transactionConflicts', () => {
     ['caps how many objects come back', `shown <= ${CONFLICT_OBJECT_LIMIT}`],
     // 3.7.5 answers an empty #RcReadSet for a transaction with no conflicts.
     ['skips a kind that names no objects', 'value isEmpty ifFalse:'],
-  ])('%s', (_why, fragment) => {
-    const execute = vi.fn((_code: string) => WRITE_WRITE);
-    transactionConflicts(execute);
+  ])('%s', async (_why, fragment) => {
+    const execute = vi.fn(async (_code: string) => WRITE_WRITE);
+    await transactionConflicts(execute);
     expect(execute.mock.calls[0][0]).toContain(fragment);
   });
 });

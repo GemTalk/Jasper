@@ -63,7 +63,7 @@ async function performInstall(
     return false;
   }
 
-  const reinstall = isEnhancedInspectorInstalled(base);
+  const reinstall = await isEnhancedInspectorInstalled(base);
 
   const sys = await obtainSystemUserSession(base, interactive, 'enhanced inspector support');
   if (!sys) {
@@ -115,7 +115,7 @@ async function performInstall(
     sessionManager,
     'Enhanced inspector installed.',
   );
-  if (refreshed) refreshEnhancedInspectorAvailable(base);
+  if (refreshed) await refreshEnhancedInspectorAvailable(base);
   // Report the verified server-side result, not the refresh latch: a deferred ("Later") refresh
   // leaves `enhancedInspectorAvailable` stale, and keying the answer on it would suppress the
   // success toast for a completed install. The latch still governs whether THIS session sees it.

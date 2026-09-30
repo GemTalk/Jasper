@@ -83,7 +83,7 @@ async function performUninstall(
     'Refactoring engine uninstalled.',
   );
   if (refreshed) {
-    refreshRefactoringSupportAvailable(base);
+    await refreshRefactoringSupportAvailable(base);
     void vscode.commands.executeCommand(
       'setContext',
       'gemstone.rbSupportAvailable',

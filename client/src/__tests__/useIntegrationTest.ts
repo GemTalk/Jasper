@@ -11,7 +11,7 @@ export type GciTestContext = {
   session: unknown;
   login: (options?: LoginOptions) => void;
   logout: () => unknown;
-  withTransientSession: (callback: (transientSession: unknown) => void) => void;
+  withTransientSession: (callback: (transientSession: unknown) => unknown) => Promise<void>;
 };
 
 type UseIntegrationTestCallback = (testContext: GciTestContext) => void;
@@ -334,7 +334,9 @@ export function useIntegrationTest(
    *   logged out once this returns, whether it throws or not.
    * @throws {GciLibraryError} If logging into the transient session fails.
    */
-  function withTransientSession(callback: (transientSession: unknown) => void) {
+  async function withTransientSession(
+    callback: (transientSession: unknown) => unknown,
+  ): Promise<void> {
     const transientSession = gciLibrary.login(
       process.env.VITE_GEMSTONE_STONE_NRS!,
       process.env.VITE_GEMSTONE_GEM_NRS!,
@@ -344,7 +346,7 @@ export function useIntegrationTest(
 
     try {
       armCommitGuard(transientSession);
-      callback(transientSession);
+      await callback(transientSession);
     } finally {
       gciLibrary.logout(transientSession);
     }

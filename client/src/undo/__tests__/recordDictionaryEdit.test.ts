@@ -32,10 +32,10 @@ beforeEach(() => {
 });
 
 describe('beginDictionaryRemoval', () => {
-  it('records the position and pins the dictionary in SessionTemps', () => {
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 2 });
+  it('records the position and pins the dictionary in SessionTemps', async () => {
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 2 });
 
-    const entry = beginDictionaryRemoval(session, 'Reports')?.commit();
+    const entry = (await beginDictionaryRemoval(session, 'Reports'))?.commit();
 
     expect(entry).toMatchObject({
       kind: 'dictionaryEdit',
@@ -54,28 +54,28 @@ describe('beginDictionaryRemoval', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('records nothing when there is no such dictionary on the symbol list', () => {
-    vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
+  it('records nothing when there is no such dictionary on the symbol list', async () => {
+    vi.mocked(captureDictionary).mockResolvedValue({ present: false, name: 'Reports', index: 0 });
 
-    expect(beginDictionaryRemoval(session, 'Reports')).toBeUndefined();
+    expect(await beginDictionaryRemoval(session, 'Reports')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing — and does not throw — when the symbol list cannot be read', () => {
-    vi.mocked(captureDictionary).mockImplementation(() => {
+  it('records nothing — and does not throw — when the symbol list cannot be read', async () => {
+    vi.mocked(captureDictionary).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginDictionaryRemoval(session, 'Reports')).toBeUndefined();
+    expect(await beginDictionaryRemoval(session, 'Reports')).toBeUndefined();
   });
 });
 
 describe('beginDictionaryRename', () => {
-  it('records both names and keeps NO stash', () => {
+  it('records both names and keeps NO stash', async () => {
     // The dictionary never leaves the symbol list, so the reversal finds it by its new name.
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 2 });
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 2 });
 
-    const entry = beginDictionaryRename(session, 'Reports')?.commit('Reporting');
+    const entry = (await beginDictionaryRename(session, 'Reports'))?.commit('Reporting');
 
     expect(entry).toMatchObject({
       kind: 'dictionaryEdit',
@@ -87,19 +87,19 @@ describe('beginDictionaryRename', () => {
     expect(captureDictionary).toHaveBeenCalledWith(expect.anything(), 'Reports', undefined);
   });
 
-  it('records nothing when the name did not change', () => {
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 2 });
+  it('records nothing when the name did not change', async () => {
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 2 });
 
-    expect(beginDictionaryRename(session, 'Reports')?.commit('Reports')).toBeUndefined();
+    expect((await beginDictionaryRename(session, 'Reports'))?.commit('Reports')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 });
 
 describe('recordDictionaryAdd', () => {
-  it('records an absent `before`, which is what makes the reversal a removal', () => {
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 4 });
+  it('records an absent `before`, which is what makes the reversal a removal', async () => {
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 4 });
 
-    const entry = recordDictionaryAdd(session, 'Reports');
+    const entry = await recordDictionaryAdd(session, 'Reports');
 
     expect(entry).toMatchObject({
       kind: 'dictionaryEdit',
@@ -112,28 +112,28 @@ describe('recordDictionaryAdd', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('reads the position AFTER the fact, since that is the only time it is knowable', () => {
-    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 4 });
+  it('reads the position AFTER the fact, since that is the only time it is knowable', async () => {
+    vi.mocked(captureDictionary).mockResolvedValue({ present: true, name: 'Reports', index: 4 });
 
-    recordDictionaryAdd(session, 'Reports');
+    await recordDictionaryAdd(session, 'Reports');
 
     // No stash key is asked for, unlike a removal.
     expect(captureDictionary).toHaveBeenCalledWith(expect.anything(), 'Reports', undefined);
   });
 
-  it('records nothing when the dictionary is not on the symbol list', () => {
+  it('records nothing when the dictionary is not on the symbol list', async () => {
     // A create that did not happen.
-    vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
+    vi.mocked(captureDictionary).mockResolvedValue({ present: false, name: 'Reports', index: 0 });
 
-    expect(recordDictionaryAdd(session, 'Reports')).toBeUndefined();
+    expect(await recordDictionaryAdd(session, 'Reports')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing — and does not throw — when the symbol list cannot be read', () => {
-    vi.mocked(captureDictionary).mockImplementation(() => {
+  it('records nothing — and does not throw — when the symbol list cannot be read', async () => {
+    vi.mocked(captureDictionary).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(recordDictionaryAdd(session, 'Reports')).toBeUndefined();
+    expect(await recordDictionaryAdd(session, 'Reports')).toBeUndefined();
   });
 });

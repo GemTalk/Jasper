@@ -118,10 +118,10 @@ describe('FunctionBreakpointResolver', () => {
     removed().mockClear();
     warn().mockClear();
     vi.mocked(window.showQuickPick).mockReset();
-    mockImplementors.mockReset().mockReturnValue([]);
+    mockImplementors.mockReset().mockResolvedValue([]);
     // 'balance\n^total' — first step point at 1-based 9, i.e. line 2 column 0.
-    mockOffsets.mockReset().mockReturnValue([9]);
-    mockSource.mockReset().mockReturnValue('balance\n^total');
+    mockOffsets.mockReset().mockResolvedValue([9]);
+    mockSource.mockReset().mockResolvedValue('balance\n^total');
   });
 
   /** The SourceBreakpoint the resolver added, if any. */
@@ -129,7 +129,7 @@ describe('FunctionBreakpointResolver', () => {
     added().mock.calls.at(-1)?.[0]?.[0] as SourceBreakpoint | undefined;
 
   it('converts a single implementor into a located breakpoint on entry', async () => {
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockResolvedValue([account]);
     const bp = new FunctionBreakpoint('balance');
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
@@ -146,7 +146,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('does not prompt when only one class implements the selector', async () => {
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockResolvedValue([account]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
@@ -154,7 +154,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('asks which class when several implement the selector', async () => {
-    mockImplementors.mockReturnValue([savings, account]);
+    mockImplementors.mockResolvedValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue({ target: savings });
     const bp = new FunctionBreakpoint('balance');
     // The resolver only ever sees breakpoints VS Code holds — the event fires
@@ -170,7 +170,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('drops the breakpoint when the class picker is dismissed', async () => {
-    mockImplementors.mockReturnValue([savings, account]);
+    mockImplementors.mockResolvedValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
     const bp = new FunctionBreakpoint('balance');
     debug.breakpoints = [bp];
@@ -187,7 +187,7 @@ describe('FunctionBreakpointResolver', () => {
     // The picker is the only point where this waits, so it is the only window in
     // which the developer can delete the row out from under it. Answering the
     // picker afterwards must not put back what they just removed.
-    mockImplementors.mockReturnValue([savings, account]);
+    mockImplementors.mockResolvedValue([savings, account]);
     const bp = new FunctionBreakpoint('balance');
     debug.breakpoints = [bp];
 
@@ -211,7 +211,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('takes a qualified name at its word without prompting', async () => {
-    mockImplementors.mockReturnValue([savings, account]);
+    mockImplementors.mockResolvedValue([savings, account]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('Account>>balance'),
     ]);
@@ -223,7 +223,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('resolves a class-side qualified name to the metaclass', async () => {
     const meta = { ...account, isMeta: true, selector: 'new', category: 'instance creation' };
-    mockImplementors.mockReturnValue([meta]);
+    mockImplementors.mockResolvedValue([meta]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('Account class>>new'),
     ]);
@@ -232,7 +232,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('refuses a qualified name whose class does not implement it', async () => {
     // Trusting the typing would set a breakpoint that silently never fires.
-    mockImplementors.mockReturnValue([savings]);
+    mockImplementors.mockResolvedValue([savings]);
     const bp = new FunctionBreakpoint('Account>>balance');
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
@@ -243,7 +243,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('says nothing implements an unknown selector', async () => {
-    mockImplementors.mockReturnValue([]);
+    mockImplementors.mockResolvedValue([]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('noSuchThing'),
     ]);
@@ -265,8 +265,8 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('refuses a method with no step points', async () => {
-    mockImplementors.mockReturnValue([account]);
-    mockOffsets.mockReturnValue([]);
+    mockImplementors.mockResolvedValue([account]);
+    mockOffsets.mockResolvedValue([]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
@@ -286,7 +286,7 @@ describe('FunctionBreakpointResolver', () => {
   it('refuses a class whose dictionary could not be determined', async () => {
     // implementorsOf reports '' for a class not bound under its own name; an
     // empty dictionary segment builds a URI that resolves to nothing.
-    mockImplementors.mockReturnValue([{ ...account, dictName: '' }]);
+    mockImplementors.mockResolvedValue([{ ...account, dictName: '' }]);
     const bp = new FunctionBreakpoint('balance');
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
@@ -299,7 +299,7 @@ describe('FunctionBreakpointResolver', () => {
   it('reports rather than swallows an unexpected failure', async () => {
     // handleAdded is fired without await, so a rejection would otherwise vanish
     // and leave the breakpoint sitting there doing nothing.
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockResolvedValue([account]);
     mockSource.mockImplementation(() => {
       throw new Error('boom');
     });
@@ -335,7 +335,7 @@ describe('FunctionBreakpointResolver', () => {
   it('resolves the name that arrives as a change, not an addition', async () => {
     // The typed name reaches us through onDidChangeBreakpoints' `changed` list;
     // the manager passes added and changed together, so `handle` sees both.
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockResolvedValue([account]);
     const typed = new FunctionBreakpoint('balance');
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([typed]);
@@ -349,7 +349,7 @@ describe('FunctionBreakpointResolver', () => {
     // number skipped environment 0, where practically every method lives, so on
     // such a stone nothing was ever found.
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockImplementation((_session, _selector, env) =>
+    mockImplementors.mockImplementation(async (_session, _selector, env) =>
       env === 0 ? [{ ...account, environmentId: env }] : [],
     );
 
@@ -364,7 +364,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('sets the breakpoint against the environment the method was found in', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockImplementation((_session, _selector, env) =>
+    mockImplementors.mockImplementation(async (_session, _selector, env) =>
       env === 1 ? [{ ...account, environmentId: env }] : [],
     );
 
@@ -382,7 +382,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('does not offer the same class twice when it appears in two environments', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockImplementation((_session, _selector, env) => [
+    mockImplementors.mockImplementation(async (_session, _selector, env) => [
       { ...account, environmentId: env ?? 0 },
     ]);
 
@@ -397,7 +397,7 @@ describe('FunctionBreakpointResolver', () => {
   });
 
   it('carries the enabled flag across the conversion', async () => {
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockResolvedValue([account]);
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance', false),
     ]);
@@ -414,7 +414,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('resolves the same name once when events overlap', async () => {
     // Choosing a class is a prompt, so a second event can land mid-await.
-    mockImplementors.mockReturnValue([savings, account]);
+    mockImplementors.mockResolvedValue([savings, account]);
     let release: (v: unknown) => void = () => {};
     vi.mocked(window.showQuickPick).mockReturnValue(
       new Promise((resolve) => {

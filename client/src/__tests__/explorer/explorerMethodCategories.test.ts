@@ -71,9 +71,9 @@ const openTextDocument = vi.mocked(vscode.workspace.openTextDocument);
 beforeEach(() => {
   vi.clearAllMocks();
   __resetConfig();
-  vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
-  vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
-  vi.mocked(queries.removeCategory).mockReturnValue('ok');
+  vi.mocked(queries.canClassBeWritten).mockResolvedValue(true);
+  vi.mocked(queries.getClassEnvironments).mockResolvedValue([]);
+  vi.mocked(queries.removeCategory).mockResolvedValue('ok');
 });
 
 describe('ExplorerController.newMethodCategory', () => {
@@ -83,7 +83,7 @@ describe('ExplorerController.newMethodCategory', () => {
 
     await ctl.newMethodCategory(false);
 
-    expect(ctl.methodCategories(false).some((c) => c.category === 'accessing')).toBe(true);
+    expect((await ctl.methodCategories(false)).some((c) => c.category === 'accessing')).toBe(true);
     expect(ctl.state.selectedIsMeta).toBe(false);
     expect(ctl.state.selectedMethodCategory).toBe('accessing');
     expect(methodView.reveal).toHaveBeenCalledTimes(1);
@@ -98,8 +98,8 @@ describe('ExplorerController.newMethodCategory', () => {
 
     await ctl.newMethodCategory(true);
 
-    expect(ctl.methodCategories(true).some((c) => c.category === 'printing')).toBe(true);
-    expect(ctl.methodCategories(false).some((c) => c.category === 'printing')).toBe(false);
+    expect((await ctl.methodCategories(true)).some((c) => c.category === 'printing')).toBe(true);
+    expect((await ctl.methodCategories(false)).some((c) => c.category === 'printing')).toBe(false);
   });
 
   // Creating a category also raises an "undoable" toast offering to put it back, which is a
@@ -129,7 +129,7 @@ describe('ExplorerController.newMethodCategory', () => {
     const revealed = methodView.reveal.mock.calls[0][0] as MethodCategoryItem;
     expect(revealed.category).toBe('accessing');
     // And the category itself is there, as it always was.
-    expect(ctl.methodCategories(false).some((c) => c.category === 'accessing')).toBe(true);
+    expect((await ctl.methodCategories(false)).some((c) => c.category === 'accessing')).toBe(true);
   });
 
   // The switch writes a GLOBAL preference, so a user who deliberately turned grouping
@@ -188,9 +188,9 @@ describe('ExplorerController.newMethodCategory', () => {
 
     await ctl.newMethodCategory(false);
 
-    expect(ctl.methodCategories(false).some((c) => c.category !== ALL_METHODS_CATEGORY)).toBe(
-      false,
-    );
+    expect(
+      (await ctl.methodCategories(false)).some((c) => c.category !== ALL_METHODS_CATEGORY),
+    ).toBe(false);
     expect(methodView.reveal).not.toHaveBeenCalled();
   });
 });
@@ -205,7 +205,7 @@ describe('ExplorerController.renameMethodCategory', () => {
     await ctl.renameMethodCategory(new MethodCategoryItem(true, 'class method category', false));
 
     expect(queries.renameCategory).not.toHaveBeenCalled();
-    const names = ctl.methodCategories(true).map((c) => c.category);
+    const names = (await ctl.methodCategories(true)).map((c) => c.category);
     expect(names).toContain('renamed category');
     expect(names).not.toContain('class method category');
   });
@@ -323,7 +323,7 @@ describe('ExplorerController.removeOverlayMethodCategory', () => {
 
     expect(ctl.removeOverlayMethodCategory(slot(), 'fresh')).toBe('ok');
 
-    expect(ctl.methodCategories(true).map((c) => c.category)).not.toContain('fresh');
+    expect((await ctl.methodCategories(true)).map((c) => c.category)).not.toContain('fresh');
   });
 
   it('clears a selection that pointed at the row it just removed', async () => {
@@ -373,7 +373,7 @@ describe('ExplorerController.renameOverlayMethodCategory', () => {
 
     expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'fresher')).toBe('ok');
 
-    const names = ctl.methodCategories(true).map((c) => c.category);
+    const names = (await ctl.methodCategories(true)).map((c) => c.category);
     expect(names).toContain('fresher');
     expect(names).not.toContain('fresh');
   });
@@ -496,11 +496,11 @@ describe('ExplorerController — selecting a freshly created method', () => {
     const { ctl, methodView } = makeController();
     await ctl.newInstanceMethod(); // arms the pending-reveal with the side's current selectors
     methodView.reveal.mockClear();
-    vi.mocked(queries.getClassEnvironments).mockReturnValue([
+    vi.mocked(queries.getClassEnvironments).mockResolvedValue([
       envLine(false, 'as yet unclassified', ['zap']),
     ]);
 
-    ctl.onExternalMethodCompiled(1, 'M4Demo');
+    await ctl.onExternalMethodCompiled(1, 'M4Demo');
 
     expect(methodView.reveal).toHaveBeenCalledTimes(1);
     const revealed = methodView.reveal.mock.calls[0][0] as MethodItem;
@@ -514,9 +514,11 @@ describe('ExplorerController — selecting a freshly created method', () => {
     setEnvLines(ctl, [envLine(false, 'accessing', ['bar'])]);
     await ctl.newInstanceMethod();
     methodView.reveal.mockClear();
-    vi.mocked(queries.getClassEnvironments).mockReturnValue([envLine(false, 'accessing', ['bar'])]);
+    vi.mocked(queries.getClassEnvironments).mockResolvedValue([
+      envLine(false, 'accessing', ['bar']),
+    ]);
 
-    ctl.onExternalMethodCompiled(1, 'M4Demo');
+    await ctl.onExternalMethodCompiled(1, 'M4Demo');
 
     expect(methodView.reveal).not.toHaveBeenCalled();
   });
@@ -637,7 +639,7 @@ describe('ExplorerController.removeMethodCategory', () => {
     // It was never on the server, so asking would only answer 'no-category' —
     // and with nothing changed there, nothing to refetch either.
     expect(queries.removeCategory).not.toHaveBeenCalled();
-    expect(ctl.methodCategories(false).map((c) => c.category)).not.toContain('scratch');
+    expect((await ctl.methodCategories(false)).map((c) => c.category)).not.toContain('scratch');
     expect(refetches()).toBe(0);
   });
 
@@ -653,7 +655,7 @@ describe('ExplorerController.removeMethodCategory', () => {
   it('reports the server refusing when a method arrived after the click', async () => {
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue('has-methods:2');
+    vi.mocked(queries.removeCategory).mockResolvedValue('has-methods:2');
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -676,7 +678,7 @@ describe('ExplorerController.removeMethodCategory', () => {
     // as it was would show the user something the last round trip disproved.
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue(answer);
+    vi.mocked(queries.removeCategory).mockResolvedValue(answer);
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -688,7 +690,7 @@ describe('ExplorerController.removeMethodCategory', () => {
     // read the reply. The raw text rides along — it is what a bug report needs.
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue('a GsProcess');
+    vi.mocked(queries.removeCategory).mockResolvedValue('a GsProcess');
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -701,7 +703,7 @@ describe('ExplorerController.removeMethodCategory', () => {
   it('reports GemStone keeping the category instead of claiming a removal', async () => {
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue('not-removed');
+    vi.mocked(queries.removeCategory).mockResolvedValue('not-removed');
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -713,7 +715,7 @@ describe('ExplorerController.removeMethodCategory', () => {
   it('reports a class that no longer resolves', async () => {
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue('no-class');
+    vi.mocked(queries.removeCategory).mockResolvedValue('no-class');
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -723,7 +725,7 @@ describe('ExplorerController.removeMethodCategory', () => {
   it('reports a category that is already gone', async () => {
     const { ctl } = makeController();
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
-    vi.mocked(queries.removeCategory).mockReturnValue('no-category');
+    vi.mocked(queries.removeCategory).mockResolvedValue('no-category');
 
     await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
@@ -737,7 +739,7 @@ describe('ExplorerController.removeMethodCategory', () => {
     setEnvLines(ctl, [envLine(false, 'accessing', [])]);
     ctl.state.selectedIsMeta = false;
     ctl.state.selectedMethodCategory = 'accessing';
-    vi.mocked(queries.removeCategory).mockImplementation(() => {
+    vi.mocked(queries.removeCategory).mockImplementation(async () => {
       throw new Error('GemStone said no');
     });
 

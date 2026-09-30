@@ -51,26 +51,26 @@ function makeController(dictVisible: boolean) {
     method: { reveal: vi.fn(), description: '', selection: [], visible: false },
   } as never);
   const autoSelect = () =>
-    (ctl as unknown as { autoSelectDefaultDict: () => void }).autoSelectDefaultDict();
+    (ctl as unknown as { autoSelectDefaultDict: () => Promise<void> }).autoSelectDefaultDict();
   return { ctl, dict, autoSelect };
 }
 
 describe('auto-selecting a dictionary on a session switch', () => {
-  it('does not reveal while the Dictionaries pane is off screen', () => {
+  it('does not reveal while the Dictionaries pane is off screen', async () => {
     const { dict, autoSelect } = makeController(false);
-    autoSelect();
+    await autoSelect();
     expect(dict.reveal).not.toHaveBeenCalled();
   });
 
-  it('still reveals for someone already looking at the Explorer', () => {
+  it('still reveals for someone already looking at the Explorer', async () => {
     const { dict, autoSelect } = makeController(true);
-    autoSelect();
+    await autoSelect();
     expect(dict.reveal).toHaveBeenCalled();
   });
 
-  it('populates the panes either way, which is what the auto-select is for', () => {
+  it('populates the panes either way, which is what the auto-select is for', async () => {
     const { ctl, autoSelect } = makeController(false);
-    autoSelect();
+    await autoSelect();
     expect((ctl as unknown as { state: { dictName?: string } }).state.dictName).toBe('UserGlobals');
   });
 });

@@ -24,16 +24,16 @@ import { pushUndoEntry } from './undoStack';
 import { ClassCategoryChange, UndoEntry } from './undoTypes';
 
 export interface ClassCategoryRecording {
-  commit(label: string): UndoEntry | undefined;
+  commit(label: string): Promise<UndoEntry | undefined>;
 }
 
 /** Category per class name, as the dictionary reads right now. */
-function readCategories(
+async function readCategories(
   session: ActiveSession,
   dict: number | string,
-): Map<string, string> | undefined {
+): Promise<Map<string, string> | undefined> {
   try {
-    const entries = getClassesWithCategory(session, dict);
+    const entries = await getClassesWithCategory(session, dict);
     return new Map(entries.map((e) => [e.className, e.category]));
   } catch (e: unknown) {
     logInfo(
@@ -44,16 +44,16 @@ function readCategories(
   }
 }
 
-export function beginClassCategoryEdit(
+export async function beginClassCategoryEdit(
   session: ActiveSession,
   dict: number | string,
-): ClassCategoryRecording | undefined {
-  const before = readCategories(session, dict);
+): Promise<ClassCategoryRecording | undefined> {
+  const before = await readCategories(session, dict);
   if (!before) return undefined;
 
   return {
-    commit(label: string): UndoEntry | undefined {
-      const after = readCategories(session, dict);
+    async commit(label: string): Promise<UndoEntry | undefined> {
+      const after = await readCategories(session, dict);
       if (!after) {
         logInfo(`[undo] not recording "${label}": could not read the result`);
         return undefined;

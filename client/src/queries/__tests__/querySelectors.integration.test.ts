@@ -39,15 +39,15 @@ interface SelectorClaim {
 // Verify a GemStone selector exists on the given class (or class-side method
 // dictionary if `meta` is true). Used below as a regression guard for the
 // `asUtf8` / `encodeAsUTF8` family of typos.
-function selectorExists(
+async function selectorExists(
   exec: QueryExecutor,
   className: string,
   selector: string,
   meta = false,
-): boolean {
+): Promise<boolean> {
   const receiver = meta ? `${className} class` : className;
   const code = `(${receiver} canUnderstand: #'${selector.replace(/'/g, "''")}') printString`;
-  return exec(code).trim() === 'true';
+  return (await exec(code)).trim() === 'true';
 }
 
 // Curated from a grep of `client/src/queries/*.ts` for non-obvious
@@ -167,10 +167,10 @@ describe('selectors used by shared queries (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  it.each(claims)('$label', ({ className, selector, meta }) => {
-    const exists = selectorExists(exec, className, selector, meta ?? false);
+  it.each(claims)('$label', async ({ className, selector, meta }) => {
+    const exists = await selectorExists(exec, className, selector, meta ?? false);
     expect(
       exists,
       `${meta ? `${className} class` : className} >> #${selector} not found in this stone`,

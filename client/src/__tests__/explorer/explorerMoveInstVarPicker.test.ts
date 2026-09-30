@@ -47,7 +47,7 @@ describe('ExplorerController move-ivar destination picker', () => {
   describe('▲ up', () => {
     it('lists ancestors with the immediate superclass first', async () => {
       // getClassHierarchy returns superclasses root-first; the picker must reverse them.
-      vi.mocked(queries.getClassHierarchy).mockReturnValue([
+      vi.mocked(queries.getClassHierarchy).mockResolvedValue([
         { kind: 'superclass', className: 'Object' },
         { kind: 'superclass', className: 'Animal' },
         { kind: 'superclass', className: 'Mid' },
@@ -67,7 +67,7 @@ describe('ExplorerController move-ivar destination picker', () => {
     });
 
     it('resolves the hierarchy dict-scoped and single-select (no canPickMany)', async () => {
-      vi.mocked(queries.getClassHierarchy).mockReturnValue([
+      vi.mocked(queries.getClassHierarchy).mockResolvedValue([
         { kind: 'superclass', className: 'Mid' },
       ] as never);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue({ label: 'Mid' });
@@ -82,7 +82,7 @@ describe('ExplorerController move-ivar destination picker', () => {
     });
 
     it('returns undefined when the user cancels', async () => {
-      vi.mocked(queries.getClassHierarchy).mockReturnValue([
+      vi.mocked(queries.getClassHierarchy).mockResolvedValue([
         { kind: 'superclass', className: 'Mid' },
       ] as never);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
@@ -91,7 +91,7 @@ describe('ExplorerController move-ivar destination picker', () => {
     });
 
     it('tells the user and picks nothing when the class has no superclass', async () => {
-      vi.mocked(queries.getClassHierarchy).mockReturnValue([] as never);
+      vi.mocked(queries.getClassHierarchy).mockResolvedValue([] as never);
 
       const result = await pick(makeController(), 'up');
 
@@ -105,7 +105,7 @@ describe('ExplorerController move-ivar destination picker', () => {
 
   describe('▼ down', () => {
     it('offers every descendant as a multi-select and returns all chosen labels', async () => {
-      vi.mocked(queries.getClassDescendantNames).mockReturnValue([
+      vi.mocked(queries.getClassDescendantNames).mockResolvedValue([
         { className: 'LeafA', parentName: 'Mid' },
         { className: 'LeafB', parentName: 'Mid' },
       ] as never);
@@ -124,7 +124,7 @@ describe('ExplorerController move-ivar destination picker', () => {
     });
 
     it('returns undefined when the user picks nothing', async () => {
-      vi.mocked(queries.getClassDescendantNames).mockReturnValue([
+      vi.mocked(queries.getClassDescendantNames).mockResolvedValue([
         { className: 'LeafA', parentName: 'Mid' },
       ] as never);
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
@@ -133,7 +133,7 @@ describe('ExplorerController move-ivar destination picker', () => {
     });
 
     it('tells the user and picks nothing when the class has no subclasses', async () => {
-      vi.mocked(queries.getClassDescendantNames).mockReturnValue([] as never);
+      vi.mocked(queries.getClassDescendantNames).mockResolvedValue([] as never);
 
       const result = await pick(makeController(), 'down');
 

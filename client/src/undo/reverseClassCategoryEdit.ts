@@ -33,7 +33,7 @@ export async function reverseClassCategoryEdit(
   let now: Map<string, string>;
   try {
     now = new Map(
-      getClassesWithCategory(session, entry.dict).map((e) => [e.className, e.category]),
+      (await getClassesWithCategory(session, entry.dict)).map((e) => [e.className, e.category]),
     );
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
@@ -66,7 +66,7 @@ export async function reverseClassCategoryEdit(
   const failures: string[] = [];
   for (const c of todo) {
     try {
-      const answer = recategorizeClass(session, c.className, c.before, entry.dict);
+      const answer = await recategorizeClass(session, c.className, c.before, entry.dict);
       // recategorizeClass reports a class it cannot resolve or write by RETURNING a status
       // string rather than raising, so a bare call would read as success over a class nothing
       // refiled.

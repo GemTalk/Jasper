@@ -157,6 +157,9 @@ export function applyInstVarStructure(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearInstVarStructurePreview(execute: QueryExecutor, token: string): string {
-  return execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
+export async function clearInstVarStructurePreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
 }

@@ -146,10 +146,10 @@ export class GemStoneDebugSession extends DebugSession {
 
   // ── Breakpoints ────────────────────────────────────────
 
-  protected setBreakpointsRequest(
+  protected async setBreakpointsRequest(
     response: DebugProtocol.SetBreakpointsResponse,
     args: DebugProtocol.SetBreakpointsArguments,
-  ): void {
+  ): Promise<void> {
     const breakpoints: DebugProtocol.Breakpoint[] = [];
 
     if (!this.session || !args.breakpoints) {
@@ -181,7 +181,7 @@ export class GemStoneDebugSession extends DebugSession {
             query: parsed[3] || '',
             toString: () => args.source.path!,
           } as unknown as vscode.Uri;
-          const results = this.breakpointManager.setBreakpointsForSource(
+          const results = await this.breakpointManager.setBreakpointsForSource(
             this.session,
             actualUri,
             requestedLines,

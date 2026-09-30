@@ -85,7 +85,7 @@ function fakeGci(answers: StoneAnswers = {}) {
     stoneReport: answers.stoneReport ?? STONE_REPORT,
     gemReport: answers.gemReport ?? GEM_REPORT,
   };
-  const execute = vi.fn((code: string): string => {
+  const execute = vi.fn(async (code: string): Promise<string> => {
     if (code.includes('AllUsers userWithId')) return answers.isSystemUser ? 'true' : 'false';
     if (code.includes('stoneConfigurationReport')) return state.stoneReport;
     if (code.includes('gemConfigurationReport')) return state.gemReport;
@@ -164,11 +164,11 @@ function lastPanel(): MockPanel {
 }
 
 /** Deliver a message from the webview to its host. */
-function sendMessage(panel: MockPanel, msg: unknown): void {
+async function sendMessage(panel: MockPanel, msg: unknown): Promise<void> {
   const handler = vi.mocked(panel.webview.onDidReceiveMessage).mock.calls[0][0] as (
     m: unknown,
-  ) => void;
-  handler(msg);
+  ) => Promise<void>;
+  await handler(msg);
 }
 
 /** All payloads a panel posted with the given command, oldest first. */
@@ -206,10 +206,10 @@ type ConfigPayload = {
 };
 
 /** Open a panel for a session and drive it to its first load. */
-function open(h: Harness, sessionId: number): MockPanel {
+async function open(h: Harness, sessionId: number): Promise<MockPanel> {
   ConfigurationPanel.show({ sessionManager: h.sessionManager, storage: h.storage }, sessionId);
   const panel = lastPanel();
-  sendMessage(panel, { command: 'ready' });
+  await sendMessage(panel, { command: 'ready' });
   return panel;
 }
 
@@ -241,15 +241,15 @@ afterEach(() => {
 // ── Which session a panel belongs to ────────────────────────────────────────
 
 describe('a panel belongs to one session', () => {
-  it('titles the panel with the session it was opened for', () => {
+  it('titles the panel with the session it was opened for', async () => {
     const h = harness([makeSession(1), makeSession(2, makeLogin({ gs_user: 'SystemUser' }))]);
-    open(h, 2);
+    await open(h, 2);
     expect(lastPanel().title).toContain('SystemUser on gs64stone');
   });
 
-  it('reveals the existing panel rather than opening a second for the same session', () => {
+  it('reveals the existing panel rather than opening a second for the same session', async () => {
     const h = harness([makeSession(1)]);
-    open(h, 1);
+    await open(h, 1);
     const first = lastPanel();
 
     ConfigurationPanel.show({ sessionManager: h.sessionManager, storage: h.storage }, 1);
@@ -258,18 +258,18 @@ describe('a panel belongs to one session', () => {
     expect(first.reveal).toHaveBeenCalled();
   });
 
-  it('opens a separate panel per session, so two can be compared side by side', () => {
+  it('opens a separate panel per session, so two can be compared side by side', async () => {
     const h = harness([makeSession(1), makeSession(2)]);
-    open(h, 1);
-    open(h, 2);
+    await open(h, 1);
+    await open(h, 2);
     expect(panels()).toHaveLength(2);
   });
 
-  it('reads over its own session, not whichever session is selected', () => {
+  it('reads over its own session, not whichever session is selected', async () => {
     const h = harness([makeSession(1), makeSession(2)], {
       2: { gemReport: line('GemHaltOnError', 'SmallInteger', '7') },
     });
-    const panel = open(h, 2);
+    const panel = await open(h, 2);
 
     expect(config(panel).sessionId).toBe(2);
     expect(paramNamed(config(panel).gemParams, 'GemHaltOnError').value).toBe('7');
@@ -277,10 +277,10 @@ describe('a panel belongs to one session', () => {
     expect(h.gciFor(1).execute).not.toHaveBeenCalled();
   });
 
-  it('closes itself when its session logs out', () => {
+  it('closes itself when its session logs out', async () => {
     const h = harness([makeSession(1), makeSession(2)]);
-    const one = open(h, 1);
-    const two = open(h, 2);
+    const one = await open(h, 1);
+    const two = await open(h, 2);
 
     h.removeSession(1);
 
@@ -288,12 +288,12 @@ describe('a panel belongs to one session', () => {
     expect(two.dispose).not.toHaveBeenCalled();
   });
 
-  it('lets a session open a fresh panel after its first one was closed', () => {
+  it('lets a session open a fresh panel after its first one was closed', async () => {
     const h = harness([makeSession(1)]);
-    const first = open(h, 1);
+    const first = await open(h, 1);
     first.dispose();
 
-    open(h, 1);
+    await open(h, 1);
 
     expect(panels()).toHaveLength(2);
     // Identity compared as a boolean: a disposed panel throws when a matcher
@@ -305,9 +305,9 @@ describe('a panel belongs to one session', () => {
 // ── Loading ─────────────────────────────────────────────────────────────────
 
 describe('loading a session configuration', () => {
-  it('posts both reports when the webview reports ready', () => {
+  it('posts both reports when the webview reports ready', async () => {
     const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
     const cfg = config(panel);
     expect(cfg.stoneParams.map((p) => p.key)).toContain('StnGemTimeout');
@@ -316,21 +316,21 @@ describe('loading a session configuration', () => {
     expect(cfg.version).toBe('3.6.2');
   });
 
-  it('re-reads on Refresh', () => {
+  it('re-reads on Refresh', async () => {
     const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
     h.gciFor(1).state.gemReport = line('GemHaltOnError', 'SmallInteger', '3');
 
-    sendMessage(panel, { command: 'loadConfiguration' });
+    await sendMessage(panel, { command: 'loadConfiguration' });
 
     expect(paramNamed(config(panel).gemParams, 'GemHaltOnError').value).toBe('3');
   });
 
-  it('reports a failing report as an error the panel can show, not a throw', () => {
+  it('reports a failing report as an error the panel can show, not a throw', async () => {
     const h = harness([makeSession(1)], {
       1: { stoneReport: 'GS-ERROR: the session is busy' },
     });
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
     expect(lastPosted(panel, 'configurationError')).toMatchObject({
       message: 'the session is busy',
@@ -338,12 +338,12 @@ describe('loading a session configuration', () => {
     expect(posted(panel, 'configuration')).toHaveLength(0);
   });
 
-  it('says so when the session has gone away before the load', () => {
+  it('says so when the session has gone away before the load', async () => {
     const h = harness([makeSession(1)]);
     ConfigurationPanel.show({ sessionManager: h.sessionManager, storage: h.storage }, 99);
     const panel = lastPanel();
 
-    sendMessage(panel, { command: 'ready' });
+    await sendMessage(panel, { command: 'ready' });
 
     expect(lastPosted<{ message: string }>(panel, 'configurationError')?.message).toMatch(
       /No GemStone session/,
@@ -354,9 +354,9 @@ describe('loading a session configuration', () => {
 // ── Who may edit what ───────────────────────────────────────────────────────
 
 describe('what this session is offered an editor for', () => {
-  it('does not offer a stone parameter to a user who is not SystemUser', () => {
+  it('does not offer a stone parameter to a user who is not SystemUser', async () => {
     const h = harness([makeSession(1)], { 1: { isSystemUser: false } });
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     const stn = paramNamed(cfg.stoneParams, 'StnGemTimeout');
     // It IS a runtime parameter — the panel says why it cannot be changed here
@@ -366,32 +366,32 @@ describe('what this session is offered an editor for', () => {
     expect(cfg.isSystemUser).toBe(false);
   });
 
-  it('offers the same stone parameter to SystemUser', () => {
+  it('offers the same stone parameter to SystemUser', async () => {
     const h = harness([makeSession(1)], { 1: { isSystemUser: true } });
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(paramNamed(cfg.stoneParams, 'StnGemTimeout').editable).toBe(true);
     expect(cfg.isSystemUser).toBe(true);
   });
 
-  it('offers a gem parameter to any user, and lets the stone be the authority', () => {
+  it('offers a gem parameter to any user, and lets the stone be the authority', async () => {
     const h = harness([makeSession(1)], { 1: { isSystemUser: false } });
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(paramNamed(cfg.gemParams, 'GemHaltOnError').editable).toBe(true);
   });
 
-  it('never offers an ALL_CAPS config-file parameter, in either scope', () => {
+  it('never offers an ALL_CAPS config-file parameter, in either scope', async () => {
     const h = harness([makeSession(1)], { 1: { isSystemUser: true } });
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(paramNamed(cfg.stoneParams, 'SHR_PAGE_CACHE_SIZE_KB').editable).toBe(false);
     expect(paramNamed(cfg.gemParams, 'GEM_TEMPOBJ_CACHE_SIZE').editable).toBe(false);
   });
 
-  it('never offers a value it has no literal for, even to SystemUser', () => {
+  it('never offers a value it has no literal for, even to SystemUser', async () => {
     const h = harness([makeSession(1)], { 1: { isSystemUser: true } });
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     const array = paramNamed(cfg.stoneParams, 'StnTranLogDirectories');
     expect(array.type).toBe('other');
@@ -432,11 +432,11 @@ describe('setting a value', () => {
       value,
     });
 
-  it('confirms a change the session now reports', () => {
+  it('confirms a change the session now reports', async () => {
     const h = settableHarness(true);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
 
     const result = lastPosted<{ tone: string; message: string; key: string; scope: string }>(
       panel,
@@ -448,13 +448,13 @@ describe('setting a value', () => {
     expect(paramNamed(config(panel).gemParams, 'GemHaltOnError').value).toBe('2');
   });
 
-  it('reports a value the stone accepted and then ignored', () => {
+  it('reports a value the stone accepted and then ignored', async () => {
     // The headline safety claim: 'OK' came back, but the session still reports
     // the old value — so it did not take, and the panel must not say it did.
     const h = settableHarness(false);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
 
     const result = lastPosted<{ tone: string; message: string }>(panel, 'setResult');
     expect(result!.tone).toBe('warn');
@@ -462,15 +462,15 @@ describe('setting a value', () => {
     expect(result!.message).toContain('still reports 0');
   });
 
-  it('treats a differently-spelled but equal value as having taken', () => {
+  it('treats a differently-spelled but equal value as having taken', async () => {
     // The stone answers `true`; the user typed `True`. Same value — a warning
     // here would be a false alarm on every boolean.
     const h = harness([makeSession(1)], {
       1: { gemReport: line('GemConvertArrayBuilder', 'Boolean', 'true') },
     });
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    sendMessage(panel, {
+    await sendMessage(panel, {
       command: 'setConfiguration',
       scope: 'gem',
       key: 'GemConvertArrayBuilder',
@@ -481,16 +481,16 @@ describe('setting a value', () => {
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('ok');
   });
 
-  it('shows the stone own words when it refuses, beside the row that was edited', () => {
+  it('shows the stone own words when it refuses, beside the row that was edited', async () => {
     const h = harness([makeSession(1)], {
       1: {
         onSet: () =>
           'GS-ERROR: a SecurityError occurred (error 2213), An operation that may only be performed by SystemUser.',
       },
     });
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    sendMessage(panel, {
+    await sendMessage(panel, {
       command: 'setConfiguration',
       scope: 'stone',
       key: 'StnGemTimeout',
@@ -509,12 +509,12 @@ describe('setting a value', () => {
     expect(posted(panel, 'configuration')).toHaveLength(1);
   });
 
-  it('refuses a value it cannot spell in Smalltalk without going to the stone', () => {
+  it('refuses a value it cannot spell in Smalltalk without going to the stone', async () => {
     const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
     const callsBefore = h.gciFor(1).execute.mock.calls.length;
 
-    sendMessage(panel, {
+    await sendMessage(panel, {
       command: 'setConfiguration',
       scope: 'gem',
       key: 'GemHaltOnError',
@@ -528,11 +528,11 @@ describe('setting a value', () => {
     expect(h.gciFor(1).execute.mock.calls.length).toBe(callsBefore);
   });
 
-  it('logs a change and a failure to the sysadmin channel', () => {
+  it('logs a change and a failure to the sysadmin channel', async () => {
     const h = settableHarness(true);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
     const logged = vi.mocked(appendSysadmin).mock.calls.map((c) => c[0]);
     expect(
       logged.some((m) =>
@@ -541,9 +541,9 @@ describe('setting a value', () => {
     ).toBe(true);
   });
 
-  it('says so when the session went away before the set', () => {
+  it('says so when the session went away before the set', async () => {
     const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
     h.removeSession(1);
     // The panel is gone with the session; a set arriving from a webview that
     // had not yet closed must not throw.
@@ -654,18 +654,18 @@ describe('undoing a configuration change', () => {
   const stoneValue = (panel: MockPanel) =>
     paramNamed(config(panel).stoneParams, 'StnGemTimeout').value;
 
-  it('offers nothing to undo until something has been changed', () => {
+  it('offers nothing to undo until something has been changed', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
     expect(history(panel)).toMatchObject({ undo: null, redo: null });
   });
 
-  it('offers the change just made, naming what it would put back', () => {
+  it('offers the change just made, naming what it would put back', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
 
     expect(history(panel)!.undo).toEqual({
       scope: 'gem',
@@ -676,33 +676,33 @@ describe('undoing a configuration change', () => {
     expect(history(panel)!.redo).toBeNull();
   });
 
-  it('puts the value back, and then offers to re-apply it', () => {
+  it('puts the value back, and then offers to re-apply it', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(gemValue(panel)).toBe('0');
     expect(history(panel)!.undo).toBeNull();
     expect(history(panel)!.redo).toMatchObject({ key: 'GemHaltOnError', from: '0', to: '2' });
 
-    sendMessage(panel, { command: 'redoConfiguration' });
+    await sendMessage(panel, { command: 'redoConfiguration' });
 
     expect(gemValue(panel)).toBe('2');
     expect(history(panel)!.undo).toMatchObject({ key: 'GemHaltOnError', from: '0', to: '2' });
     expect(history(panel)!.redo).toBeNull();
   });
 
-  it('puts a stone setting back, looking its value up in the stone report', () => {
+  it('puts a stone setting back, looking its value up in the stone report', async () => {
     // The scope decides which of the two reports the panel's last-read value
     // comes out of. Reading a stone key from the gem report finds nothing, and
     // "nothing" is indistinguishable from a change that did not move: the entry
     // would never be recorded, and an Undo would have nothing to offer.
     const h = stoneTrackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setStnGemTimeout(panel, '90');
+    await setStnGemTimeout(panel, '90');
 
     expect(history(panel)!.undo).toEqual({
       scope: 'stone',
@@ -711,7 +711,7 @@ describe('undoing a configuration change', () => {
       to: '90',
     });
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(stoneValue(panel)).toBe('60');
     expect(history(panel)!.undo).toBeNull();
@@ -722,18 +722,18 @@ describe('undoing a configuration change', () => {
       to: '90',
     });
 
-    sendMessage(panel, { command: 'redoConfiguration' });
+    await sendMessage(panel, { command: 'redoConfiguration' });
 
     expect(stoneValue(panel)).toBe('90');
     expect(history(panel)!.undo).toMatchObject({ scope: 'stone', key: 'StnGemTimeout' });
   });
 
-  it('unwinds a run of changes one at a time, newest first', () => {
+  it('unwinds a run of changes one at a time, newest first', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '1');
-    setHaltOnError(panel, '2');
-    setHaltOnError(panel, '3');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '1');
+    await setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '3');
 
     // The button has to NAME the change it is about to make — with a run of them
     // on the history, offering any other one means the tooltip describes a write
@@ -741,12 +741,12 @@ describe('undoing a configuration change', () => {
     // live session is written to.
     expect(history(panel)!.undo).toMatchObject({ from: '2', to: '3' });
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('2');
     expect(history(panel)!.undo).toMatchObject({ from: '1', to: '2' });
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('1');
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
     expect(gemValue(panel)).toBe('0');
     expect(history(panel)!.undo).toBeNull();
   });
@@ -754,12 +754,12 @@ describe('undoing a configuration change', () => {
   // A stone is free to accept a value and store a nearby one. That change is
   // just as much a change, and leaving it with no way back is the one thing the
   // feature exists to prevent.
-  it('records a change the stone accepted but landed elsewhere', () => {
+  it('records a change the stone accepted but landed elsewhere', async () => {
     // Anything asked for lands on the next multiple of 16 — 0 stays 0.
     const h = clampingHarness((asked) => Math.ceil(asked / 16) * 16);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '5');
+    await setHaltOnError(panel, '5');
 
     expect(gemValue(panel)).toBe('16');
     expect(history(panel)!.undo).toEqual({
@@ -779,35 +779,35 @@ describe('undoing a configuration change', () => {
   // The entry the other history gets has to describe the step that actually
   // happened, or the next press meets the staleness check and blames an outside
   // session for this panel's own partial reversal.
-  it('offers a redo of where an undo actually landed, not where it aimed', () => {
+  it('offers a redo of where an undo actually landed, not where it aimed', async () => {
     // Undoing back to 0 is clamped, and lands on 16 instead.
     const h = clampingHarness((asked) => (asked === 0 ? 16 : asked));
-    const panel = open(h, 1);
-    setHaltOnError(panel, '32');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '32');
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(gemValue(panel)).toBe('16');
     expect(history(panel)!.undo).toBeNull();
     expect(history(panel)!.redo).toMatchObject({ from: '16', to: '32' });
 
     // And that redo has to work from where the value actually is.
-    sendMessage(panel, { command: 'redoConfiguration' });
+    await sendMessage(panel, { command: 'redoConfiguration' });
     expect(gemValue(panel)).toBe('32');
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('ok');
   });
 
   // Once a parameter has moved underneath the panel, every entry for it steps
   // through values it no longer holds — not just the one on top.
-  it('drops the whole history for a parameter that changed since, not one entry', () => {
+  it('drops the whole history for a parameter that changed since, not one entry', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
-    setHaltOnError(panel, '5');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '5');
     h.gciFor(1).state.gemReport = line('GemHaltOnError', 'SmallInteger', '9');
-    sendMessage(panel, { command: 'loadConfiguration' });
+    await sendMessage(panel, { command: 'loadConfiguration' });
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
     // Not the next entry down, which the same check would refuse again.
@@ -818,14 +818,14 @@ describe('undoing a configuration change', () => {
 
   // The cap exists so a panel left open all day cannot grow an unbounded
   // history; what it costs is that the oldest change stops being reversible.
-  it('keeps the newest 50 changes reversible and drops the oldest', () => {
+  it('keeps the newest 50 changes reversible and drops the oldest', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
     // 51 changes — 0 → 1, 1 → 2, … 50 → 51 — so the first step is the one
     // pushed off the end.
-    for (let i = 1; i <= 51; i += 1) setHaltOnError(panel, String(i));
+    for (let i = 1; i <= 51; i += 1) await setHaltOnError(panel, String(i));
 
-    for (let i = 0; i < 50; i += 1) sendMessage(panel, { command: 'undoConfiguration' });
+    for (let i = 0; i < 50; i += 1) await sendMessage(panel, { command: 'undoConfiguration' });
 
     // Wound back to where the OLDEST surviving change started, not to the 0 the
     // panel first read: that step is gone, and nothing is left to undo.
@@ -833,85 +833,85 @@ describe('undoing a configuration change', () => {
     expect(history(panel)!.undo).toBeNull();
   });
 
-  it('drops the redo history once a new change is made', () => {
+  it('drops the redo history once a new change is made', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
-    sendMessage(panel, { command: 'undoConfiguration' });
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
+    await sendMessage(panel, { command: 'undoConfiguration' });
     expect(history(panel)!.redo).not.toBeNull();
 
-    setHaltOnError(panel, '5');
+    await setHaltOnError(panel, '5');
 
     // The branch that was undone is no longer the one the session is on.
     expect(history(panel)!.redo).toBeNull();
     expect(history(panel)!.undo).toMatchObject({ from: '0', to: '5' });
   });
 
-  it('records nothing for a change the stone accepted and then ignored', () => {
+  it('records nothing for a change the stone accepted and then ignored', async () => {
     // The headline safety claim for the history: 'OK' came back and the value
     // did not move, so there is nothing to put back — and Undo must not pretend
     // otherwise.
     const h = trackingHarness(false);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
 
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
     expect(history(panel)!.undo).toBeNull();
   });
 
-  it('records nothing for a change the stone refused', () => {
+  it('records nothing for a change the stone refused', async () => {
     const h = harness([makeSession(1)], {
       1: { onSet: () => 'GS-ERROR: not while the stone is running' },
     });
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '2');
+    await setHaltOnError(panel, '2');
 
     expect(history(panel)!.undo).toBeNull();
   });
 
-  it('records nothing for a set of the value already there', () => {
+  it('records nothing for a set of the value already there', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    setHaltOnError(panel, '0');
+    await setHaltOnError(panel, '0');
 
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('ok');
     expect(history(panel)!.undo).toBeNull();
   });
 
-  it('keeps the entry when the undo itself does not take', () => {
+  it('keeps the entry when the undo itself does not take', async () => {
     // An undo is a set like any other, so it can be refused — and a refused
     // undo has changed nothing, which leaves the original change still the
     // thing to undo.
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
-    h.gciFor(1).execute.mockImplementation((code: string) => {
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
+    h.gciFor(1).execute.mockImplementation(async (code: string) => {
       if (code.includes('ConfigurationAt:')) return 'GS-ERROR: refused';
       if (code.includes('AllUsers userWithId')) return 'false';
       if (code.includes('stoneConfigurationReport')) return STONE_REPORT;
       return line('GemHaltOnError', 'SmallInteger', '2');
     });
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(lastPosted<{ tone: string }>(panel, 'setResult')!.tone).toBe('warn');
     expect(history(panel)!.undo).toMatchObject({ from: '0', to: '2' });
     expect(history(panel)!.redo).toBeNull();
   });
 
-  it('refuses to overwrite a value that has been changed since', () => {
+  it('refuses to overwrite a value that has been changed since', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
     // Somebody else moved it, and a Refresh picked that up. Undoing now would
     // discard their change rather than reverse this panel's.
     h.gciFor(1).state.gemReport = line('GemHaltOnError', 'SmallInteger', '9');
-    sendMessage(panel, { command: 'loadConfiguration' });
+    await sendMessage(panel, { command: 'loadConfiguration' });
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     const result = lastPosted<{ tone: string; message: string }>(panel, 'setResult');
     expect(result!.tone).toBe('warn');
@@ -920,45 +920,45 @@ describe('undoing a configuration change', () => {
     expect(history(panel)!.undo).toBeNull();
   });
 
-  it('survives a Refresh — re-reading values undoes nothing', () => {
+  it('survives a Refresh — re-reading values undoes nothing', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
 
-    sendMessage(panel, { command: 'loadConfiguration' });
+    await sendMessage(panel, { command: 'loadConfiguration' });
 
     expect(history(panel)!.undo).toMatchObject({ from: '0', to: '2' });
   });
 
-  it('does nothing when asked to undo with an empty history', () => {
+  it('does nothing when asked to undo with an empty history', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
     expect(() => sendMessage(panel, { command: 'undoConfiguration' })).not.toThrow();
     expect(posted(panel, 'setResult')).toHaveLength(0);
   });
 
-  it('starts a fresh history when the session logs out and a new panel opens', () => {
+  it('starts a fresh history when the session logs out and a new panel opens', async () => {
     // The history describes a live gem's state, so it has no meaning past the
     // login — and the panel closing with the session is what enforces that.
     const h = trackingHarness();
-    const first = open(h, 1);
-    setHaltOnError(first, '2');
+    const first = await open(h, 1);
+    await setHaltOnError(first, '2');
     expect(history(first)!.undo).not.toBeNull();
 
     h.removeSession(1);
     const h2 = trackingHarness();
-    const second = open(h2, 1);
+    const second = await open(h2, 1);
 
     expect(history(second)).toMatchObject({ undo: null, redo: null });
   });
 
-  it('names an undo as an undo in the sysadmin log and in the banner', () => {
+  it('names an undo as an undo in the sysadmin log and in the banner', async () => {
     const h = trackingHarness();
-    const panel = open(h, 1);
-    setHaltOnError(panel, '2');
+    const panel = await open(h, 1);
+    await setHaltOnError(panel, '2');
 
-    sendMessage(panel, { command: 'undoConfiguration' });
+    await sendMessage(panel, { command: 'undoConfiguration' });
 
     expect(lastPosted<{ message: string }>(panel, 'setResult')!.message).toContain('Undid');
     expect(
@@ -973,11 +973,11 @@ describe('undoing a configuration change', () => {
 // ── Ping ────────────────────────────────────────────────────────────────────
 
 describe('copy', () => {
-  it('puts the requested text on the clipboard', () => {
+  it('puts the requested text on the clipboard', async () => {
     const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
 
-    sendMessage(panel, { command: 'copyText', text: 'a failure message' });
+    await sendMessage(panel, { command: 'copyText', text: 'a failure message' });
 
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('a failure message');
   });
@@ -993,20 +993,20 @@ describe('parameter descriptions', () => {
 #=========================================================================
 `;
 
-  it('says descriptions are unavailable when the version product tree is not here', () => {
+  it('says descriptions are unavailable when the version product tree is not here', async () => {
     const h = harness([makeSession(1)]);
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(cfg.descriptionsAvailable).toBe(false);
     expect(paramNamed(cfg.stoneParams, 'StnGemTimeout').description).toBeUndefined();
   });
 
-  it('attaches the purpose text from system.conf, matching a CamelCase key to its file name', () => {
+  it('attaches the purpose text from system.conf, matching a CamelCase key to its file name', async () => {
     const h = harness([makeSession(1)]);
     vi.mocked(h.storage.getGemstonePath).mockReturnValue('/gs');
     vi.mocked(fs.readFileSync).mockReturnValue(SYSTEM_CONF);
 
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(cfg.descriptionsAvailable).toBe(true);
     expect(paramNamed(cfg.stoneParams, 'StnGemTimeout').description).toContain(
@@ -1014,26 +1014,26 @@ describe('parameter descriptions', () => {
     );
   });
 
-  it('reads system.conf once per version, not on every load', () => {
+  it('reads system.conf once per version, not on every load', async () => {
     const h = harness([makeSession(1)]);
     vi.mocked(h.storage.getGemstonePath).mockReturnValue('/gs');
     vi.mocked(fs.readFileSync).mockReturnValue(SYSTEM_CONF);
-    const panel = open(h, 1);
+    const panel = await open(h, 1);
     const readsAfterFirstLoad = vi.mocked(fs.readFileSync).mock.calls.length;
 
-    sendMessage(panel, { command: 'loadConfiguration' });
+    await sendMessage(panel, { command: 'loadConfiguration' });
 
     expect(vi.mocked(fs.readFileSync).mock.calls.length).toBe(readsAfterFirstLoad);
   });
 
-  it('carries on without descriptions when system.conf cannot be read', () => {
+  it('carries on without descriptions when system.conf cannot be read', async () => {
     const h = harness([makeSession(1)]);
     vi.mocked(h.storage.getGemstonePath).mockReturnValue('/gs');
     vi.mocked(fs.readFileSync).mockImplementation(() => {
       throw new Error('ENOENT');
     });
 
-    const cfg = config(open(h, 1));
+    const cfg = config(await open(h, 1));
 
     expect(cfg.descriptionsAvailable).toBe(false);
     expect(cfg.stoneParams.length).toBeGreaterThan(0);
@@ -1054,7 +1054,7 @@ describe('the Session Configuration command', () => {
     await showConfigurationCommand(deps(h), new GemStoneSessionItem(makeSession(2, login), false));
 
     expect(panels()).toHaveLength(1);
-    sendMessage(lastPanel(), { command: 'ready' });
+    await sendMessage(lastPanel(), { command: 'ready' });
     expect(config(lastPanel()).sessionId).toBe(2);
   });
 
@@ -1069,7 +1069,7 @@ describe('the Session Configuration command', () => {
 
     await showConfigurationCommand(deps(h), new GemStoneSessionItem(makeSession(2, twin), false));
 
-    sendMessage(lastPanel(), { command: 'ready' });
+    await sendMessage(lastPanel(), { command: 'ready' });
     expect(config(lastPanel()).sessionId).toBe(2);
   });
 
@@ -1091,7 +1091,7 @@ describe('the Session Configuration command', () => {
 
     await showConfigurationCommand(deps(h));
 
-    sendMessage(lastPanel(), { command: 'ready' });
+    await sendMessage(lastPanel(), { command: 'ready' });
     expect(config(lastPanel()).sessionId).toBe(1);
   });
 

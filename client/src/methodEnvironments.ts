@@ -20,11 +20,13 @@ export function maxEnvironment(): number {
  * go. `query` owns its error policy too — a throw propagates, so a caller that has to survive
  * one bad environment catches inside the callback and answers `[]` for it.
  */
-export function sweepEnvironments<T>(query: (environmentId: number) => T[]): T[] {
+export async function sweepEnvironments<T>(
+  query: (environmentId: number) => Promise<T[]>,
+): Promise<T[]> {
   const maxEnv = maxEnvironment();
   const found: T[] = [];
   for (let environmentId = 0; environmentId <= maxEnv; environmentId++) {
-    found.push(...query(environmentId));
+    found.push(...(await query(environmentId)));
   }
   return found;
 }

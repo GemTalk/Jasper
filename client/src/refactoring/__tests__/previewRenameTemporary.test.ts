@@ -87,10 +87,10 @@ describe('rename-temporary preview queries', () => {
     expect(code).toContain('atOffset: 9');
   });
 
-  it('builds a clear query by token', () => {
+  it('builds a clear query by token', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    clearRenameTemporaryPreview(exec, 'tok');
+    await clearRenameTemporaryPreview(exec, 'tok');
 
     expect(exec.mock.calls[0][0]).toBe("GsRenameTemporaryRefactoring clearToken: 'tok'");
   });

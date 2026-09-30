@@ -5,17 +5,17 @@ import { classLookupExpr } from './util';
 // the lookup to a specific dictionary so the same key registered in two
 // dictionaries resolves to the intended class; without it, the class name is
 // resolved as a bare global (first match in the symbol list).
-export function getClassComment(
+export async function getClassComment(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   if (dict === undefined) {
-    return execute(`${className} comment`);
+    return await execute(`${className} comment`);
   }
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ ''].
 cls comment`;
-  return execute(code);
+  return await execute(code);
 }

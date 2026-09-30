@@ -26,14 +26,14 @@ export interface StepPointBundle {
  * then that many rows, and **everything after them is the source verbatim** —
  * newlines, tabs and all.
  */
-export function getStepPointBundle(
+export async function getStepPointBundle(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): StepPointBundle {
+): Promise<StepPointBundle> {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   // _sourceOffsets is 1-based; selectorOffset is emitted 0-based for JS callers,
   // matching what getStepPointSelectorRanges has always returned.
@@ -70,7 +70,7 @@ ws nextPutAll: rows contents.
 ws nextPutAll: source.
 ws contents`;
 
-  return parseStepPointBundle(execute(code));
+  return parseStepPointBundle(await execute(code));
 }
 
 /**

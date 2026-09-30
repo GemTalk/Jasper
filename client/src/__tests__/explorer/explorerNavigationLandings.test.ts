@@ -122,8 +122,8 @@ describe('the Explorer records a landing where the panes actually land', () => {
   it('folds a drill-down from dictionary to class to method into the one place it reached', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
 
     // Three clicks, one destination: the two coarser records are the cascade
@@ -141,8 +141,8 @@ describe('the Explorer records a landing where the panes actually land', () => {
   it('records a second method in the same class as a landing of its own', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     await openMethod('deposit:');
 
@@ -157,8 +157,8 @@ describe('the Explorer records a landing where the panes actually land', () => {
       { isMeta: true, envId: 0, category: 'instance creation', selectors: ['new'] },
     ]);
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('new', false);
     await openMethod('new', true);
 
@@ -169,22 +169,22 @@ describe('the Explorer records a landing where the panes actually land', () => {
   it('does not record a category click that leaves the selected class where it is', async () => {
     const { ctl, clickDict, clickClass, clickCategory, openMethod } = makeController();
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     // The class stays selected (it lives under this category), so the panes are
     // showing the same method afterwards — pinning the category pane is not a move.
-    clickCategory('Kernel');
+    await clickCategory('Kernel');
 
     expect(ctl.history.entries()).toHaveLength(1);
     expect(ctl.history.current()).toMatchObject({ selector: 'balance' });
   });
 
-  it('records nothing while no session is selected', () => {
+  it('records nothing while no session is selected', async () => {
     const { ctl, holder, clickDict } = makeController();
     holder.session = undefined;
 
-    clickDict();
+    await clickDict();
 
     expect(ctl.history.entries()).toHaveLength(0);
   });
@@ -194,8 +194,8 @@ describe('Go Back puts the panes back on a landing, recomputed against the stone
   /** Drill in and open two methods, leaving a two-landing chain sat on the second. */
   async function seedTwoMethods() {
     const h = makeController();
-    h.clickDict();
-    h.clickClass();
+    await h.clickDict();
+    await h.clickClass();
     await h.openMethod('balance');
     await h.openMethod('deposit:');
     expect(h.ctl.history.entries()).toHaveLength(2);
@@ -316,8 +316,8 @@ describe('Recent Locations lists the trail', () => {
 
   it('lists the trail newest first and marks the landing being shown', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     await openMethod('deposit:');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
@@ -336,8 +336,8 @@ describe('Recent Locations lists the trail', () => {
 
   it('jumps to the landing that was picked', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     await openMethod('deposit:');
     // Pick the older of the two — the last row in a newest-first list.
@@ -435,22 +435,22 @@ describe('the navigation commands are actually registered, not just contributed'
 });
 
 describe('the pane draws methods; the dictionaries and classes stay on one pinned line', () => {
-  it('leaves a dictionary out of the trail and names it on the pinned line', () => {
+  it('leaves a dictionary out of the trail and names it on the pinned line', async () => {
     const { ctl, clickDict } = makeController();
     const pane = watchPane(ctl);
 
-    clickDict();
+    await clickDict();
 
     expect(pane.latest().trail).toEqual([]);
     expect(pane.latest().location).toBe(DICT);
   });
 
-  it('puts the class on the pinned line, still with no row of its own', () => {
+  it('puts the class on the pinned line, still with no row of its own', async () => {
     const { ctl, clickDict, clickClass } = makeController();
     const pane = watchPane(ctl);
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
 
     expect(pane.latest().trail).toEqual([]);
     expect(pane.latest().location).toBe(`${DICT} · ${CLASS}`);
@@ -460,8 +460,8 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
     const { ctl, clickDict, clickClass, openMethod } = makeController();
     const pane = watchPane(ctl);
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
 
     expect(pane.latest().trail).toEqual([
@@ -474,12 +474,12 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
     const { ctl, clickDict, clickClass, openMethod } = makeController();
     const pane = watchPane(ctl);
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     await openMethod('deposit:');
     dictNames.mockReturnValue([DICT, 'Globals']);
-    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+    await ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
 
     // Three landings in the chain — Recent Locations lists all three — but only the
     // two methods get a row, and none of them is current, because the place we are
@@ -494,14 +494,14 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
     expect(pane.latest().location).toBe('Globals');
   });
 
-  it('flips between two dictionaries without stacking a row each', () => {
+  it('flips between two dictionaries without stacking a row each', async () => {
     const { ctl, clickDict } = makeController();
     const pane = watchPane(ctl);
 
-    clickDict();
+    await clickDict();
     dictNames.mockReturnValue([DICT, 'Globals']);
-    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
-    ctl.selectDict({ dictName: DICT, dictIndex: 1 });
+    await ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+    await ctl.selectDict({ dictName: DICT, dictIndex: 1 });
 
     expect(ctl.history.entries()).toHaveLength(1);
     expect(pane.latest().location).toBe(DICT);
@@ -513,8 +513,8 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
     const pane = watchPane(ctl);
     expect(pane.latest().clear).toBe(false);
 
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     expect(pane.latest().clear).toBe(true);
 
@@ -527,8 +527,8 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
   it('empties the trail when the session it belongs to logs out', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
     const pane = watchPane(ctl);
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
 
     ctl.history.dropSession(1);
@@ -540,8 +540,8 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
   it('swaps the trail when the selected session changes', async () => {
     const { ctl, holder, clickDict, clickClass, openMethod } = makeController();
     const pane = watchPane(ctl);
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
 
     holder.session = { id: 2 } as ActiveSession;
@@ -556,8 +556,8 @@ describe('the pane draws methods; the dictionaries and classes stay on one pinne
 describe('Go Back and the editor', () => {
   it('reopens the method’s tab, so walking back shows the source again', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     await openMethod('deposit:');
     vi.mocked(vscode.workspace.openTextDocument).mockClear();
@@ -573,8 +573,8 @@ describe('Go Back and the editor', () => {
   it('follows VS Code’s Back onto an earlier method instead of appending it again', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
     const opened = vi.mocked(vscode.workspace.openTextDocument);
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     const balanceUri = opened.mock.calls.at(-1)![0] as vscode.Uri;
     // Each open fires the editor-change event that clears its own self-open mark.
@@ -594,8 +594,8 @@ describe('Go Back and the editor', () => {
 
   it('hands a press with nowhere of ours to go to VS Code’s own history', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     vi.mocked(vscode.commands.executeCommand).mockClear();
 
@@ -612,11 +612,11 @@ describe('Go Back and the editor', () => {
 describe('Recent Locations lists what the trail leaves out', () => {
   it('includes the dictionary and class landings, each spelled out in full', async () => {
     const { ctl, clickDict, clickClass, openMethod } = makeController();
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
     dictNames.mockReturnValue([DICT, 'Globals']);
-    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+    await ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
     await ctl.showHistory();
@@ -633,8 +633,8 @@ describe('Recent Locations lists what the trail leaves out', () => {
 describe('the trail label mode is a setting, not just a button', () => {
   async function readTwoMethods() {
     const h = makeController();
-    h.clickDict();
-    h.clickClass();
+    await h.clickDict();
+    await h.clickClass();
     await h.openMethod('balance');
     await h.openMethod('deposit:');
     return h;
@@ -696,10 +696,10 @@ describe('Go Back gives up on a class the stone no longer has', () => {
       { className: CLASS, category: 'Kernel', hasComment: false },
       { className: 'Ledger', category: 'Kernel', hasComment: false },
     ]);
-    clickDict();
-    clickClass();
+    await clickDict();
+    await clickClass();
     await openMethod('balance');
-    clickClass('Ledger');
+    await clickClass('Ledger');
     await openMethod('balance');
 
     // The class cannot be resolved in that dictionary any more. revealClass fetches

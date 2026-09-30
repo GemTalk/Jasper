@@ -39,6 +39,6 @@ export const SUNIT_PROBE_PASSING_SELECTOR = 'testPasses';
 export const SUNIT_PROBE_FAILING_SELECTOR = 'testFails';
 export const SUNIT_PROBE_ERRORING_SELECTOR = 'testErrors';
 
-export function installSunitProbeFixture(exec: QueryExecutor): void {
-  exec(SETUP_SOURCE);
+export async function installSunitProbeFixture(exec: QueryExecutor): Promise<void> {
+  await exec(SETUP_SOURCE);
 }

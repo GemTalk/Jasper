@@ -184,8 +184,11 @@ export class SystemBrowser {
   /** Navigate an existing browser, or open a new one in ViewColumn.One and navigate once ready.
    *  Layout-disruptive side effects (setEditorLayout, ClassBrowser, GlobalsBrowser) are
    *  suppressed during the programmatic navigation so the inspector panel is not displaced. */
-  static navigateBeside(session: ActiveSession, result: queries.MethodSearchResult): void {
-    if (SystemBrowser.navigateTo(session.id, result, true, true)) return;
+  static async navigateBeside(
+    session: ActiveSession,
+    result: queries.MethodSearchResult,
+  ): Promise<void> {
+    if (await SystemBrowser.navigateTo(session.id, result, true, true)) return;
     if (!SystemBrowser.sharedExportManager) return;
     SystemBrowser.pendingNavigation.set(session.id, result);
     SystemBrowser.show(session, SystemBrowser.sharedExportManager, vscode.ViewColumn.One);
@@ -253,10 +256,10 @@ export class SystemBrowser {
   /**
    * Refresh the browser for a given session (e.g. after abort or commit).
    */
-  static refresh(sessionId: number): void {
+  static async refresh(sessionId: number): Promise<void> {
     const browsers = SystemBrowser.panels.get(sessionId);
     if (browsers) {
-      for (const browser of browsers) browser.handleRefresh();
+      for (const browser of browsers) await browser.handleRefresh();
     }
   }
 
@@ -264,12 +267,12 @@ export class SystemBrowser {
    * Notify browsers that a method was compiled (new or existing) so the
    * method list can be refreshed without a full browser reset.
    */
-  static methodCompiled(sessionId: number, className: string): void {
+  static async methodCompiled(sessionId: number, className: string): Promise<void> {
     const browsers = SystemBrowser.panels.get(sessionId);
     if (!browsers) return;
     for (const browser of browsers) {
       if (browser.state.selectedClass === className) {
-        browser.refreshMethodList();
+        await browser.refreshMethodList();
       }
     }
   }
@@ -308,15 +311,15 @@ export class SystemBrowser {
    * was found and navigated (meaning the caller does NOT need to open the file
    * separately), false if no browser is open for this session.
    */
-  static navigateTo(
+  static async navigateTo(
     sessionId: number,
     result: queries.MethodSearchResult,
     openFile = true,
     skipClassBrowser = false,
-  ): boolean {
+  ): Promise<boolean> {
     const browser = SystemBrowser.activeBrowser(sessionId);
     if (!browser) return false;
-    browser.handleNavigateTo(result, openFile, skipClassBrowser);
+    await browser.handleNavigateTo(result, openFile, skipClassBrowser);
     return true;
   }
 
@@ -324,15 +327,15 @@ export class SystemBrowser {
    * Navigate the browser to a specific class (no method selected).
    * Returns true if a browser was found and navigated.
    */
-  static navigateToClass(
+  static async navigateToClass(
     sessionId: number,
     dictName: string,
     className: string,
     dictIndex?: number,
-  ): boolean {
+  ): Promise<boolean> {
     const browser = SystemBrowser.activeBrowser(sessionId);
     if (!browser) return false;
-    browser.handleNavigateToClass(dictName, className, dictIndex);
+    await browser.handleNavigateToClass(dictName, className, dictIndex);
     return true;
   }
 
@@ -432,15 +435,15 @@ export class SystemBrowser {
     this.disposables.push(editorSub);
 
     // Sync browser webview when cursor moves in a session file
-    const selSub = vscode.window.onDidChangeTextEditorSelection((e) => {
-      this.handleCursorSync(e);
+    const selSub = vscode.window.onDidChangeTextEditorSelection(async (e) => {
+      await this.handleCursorSync(e);
     });
     this.disposables.push(selSub);
   }
 
   // ── Cursor-based browser sync ──────────────────────────────
 
-  private handleCursorSync(e: vscode.TextEditorSelectionChangeEvent): void {
+  private async handleCursorSync(e: vscode.TextEditorSelectionChangeEvent): Promise<void> {
     if (this.syncingFromBrowser) return;
 
     const filePath = e.textEditor.document.uri.fsPath;
@@ -486,7 +489,7 @@ export class SystemBrowser {
 
     // Update dictionary if changed
     if (this.state.selectedDictIndex !== dictIndex) {
-      this.handleSelectDictionary(dictIndex).catch((e) => this.postError(e));
+      await this.handleSelectDictionary(dictIndex);
       this.panel.webview.postMessage({
         command: 'selectDictionaryItem',
         index: dictIndex,
@@ -497,21 +500,21 @@ export class SystemBrowser {
     // this class, switch to the "All classes" pseudo-category
     if (this.state.selectedClass !== className) {
       if (!this.state.classes.includes(className)) {
-        this.handleSelectCategory(ALL_CLASSES_CATEGORY);
+        await this.handleSelectCategory(ALL_CLASSES_CATEGORY);
       }
       this.state.selectedClass = className;
       this.state.selectedMethodCategory = null;
       this.state.selectedMethod = null;
-      this.loadMethodCategories();
+      await this.loadMethodCategories();
     }
 
     if (isMeta !== this.state.isMeta) {
-      this.handleToggleSide(isMeta);
+      await this.handleToggleSide(isMeta);
     }
 
     // Find the method category containing this selector and load its methods
     if (selector) {
-      const envData = this.getCachedEnvData(dictIndex, className);
+      const envData = await this.getCachedEnvData(dictIndex, className);
       const matchingEnv = envData.find(
         (entry) =>
           entry.isMeta === this.state.isMeta &&
@@ -519,7 +522,7 @@ export class SystemBrowser {
           entry.selectors.includes(selector),
       );
       if (matchingEnv && matchingEnv.category !== this.state.selectedMethodCategory) {
-        this.handleSelectMethodCategory(matchingEnv.category);
+        await this.handleSelectMethodCategory(matchingEnv.category);
       }
       this.state.selectedMethod = selector;
     } else {
@@ -542,7 +545,7 @@ export class SystemBrowser {
       items: this.state.methodCategories,
       selected: this.state.selectedMethodCategory,
     });
-    this.postMethods(this.state.methods, selector);
+    await this.postMethods(this.state.methods, selector);
 
     // Update dimming to highlight the current method
     if (cursorRegion) {
@@ -579,28 +582,26 @@ export class SystemBrowser {
 
   // ── Message dispatch ──────────────────────────────────────
 
-  private handleMessage(message: { command: string; [key: string]: unknown }): void {
+  private async handleMessage(message: { command: string; [key: string]: unknown }): Promise<void> {
     try {
       switch (message.command) {
         case 'ready':
-          this.handleReady();
+          await this.handleReady();
           break;
         case 'selectDictionary':
-          this.handleSelectDictionary(message.index as number, false, true).catch((e) =>
-            this.postError(e),
-          );
+          await this.handleSelectDictionary(message.index as number, false, true);
           break;
         case 'selectCategory':
-          this.handleSelectCategory(message.name as string);
+          await this.handleSelectCategory(message.name as string);
           break;
         case 'selectClass':
-          this.applyClassSelection(message.name as string, false, true);
+          await this.applyClassSelection(message.name as string, false, true);
           break;
         case 'toggleSide':
-          this.handleToggleSide(message.isMeta as boolean, true);
+          await this.handleToggleSide(message.isMeta as boolean, true);
           break;
         case 'selectMethodCategory':
-          this.handleSelectMethodCategory(message.name as string);
+          await this.handleSelectMethodCategory(message.name as string);
           break;
         case 'selectMethod':
           this.handleSelectMethod(message.selector as string);
@@ -611,26 +612,26 @@ export class SystemBrowser {
           );
           break;
         case 'refresh':
-          this.handleRefresh();
+          await this.handleRefresh();
           break;
         case 'toggleViewMode':
-          this.handleToggleViewMode(message.mode as string);
+          await this.handleToggleViewMode(message.mode as string);
           break;
         case 'selectHierarchyClass':
-          this.handleSelectHierarchyClass(message.className as string);
+          await this.handleSelectHierarchyClass(message.className as string);
           break;
         case 'toggleEnvironment':
-          this.handleToggleEnvironment(message.envId as number);
+          await this.handleToggleEnvironment(message.envId as number);
           break;
         // Context menu commands
         case 'ctxAddDictionary':
           this.handleAddDictionary().catch((e) => this.postError(e));
           break;
         case 'ctxMoveDictUp':
-          this.handleMoveDictUp();
+          await this.handleMoveDictUp();
           break;
         case 'ctxMoveDictDown':
-          this.handleMoveDictDown();
+          await this.handleMoveDictDown();
           break;
         case 'ctxRemoveDictionary':
           this.handleRemoveDictionary().catch((e) => this.postError(e));
@@ -726,7 +727,7 @@ export class SystemBrowser {
 
   // ── Handlers ──────────────────────────────────────────────
 
-  private handleReady(): void {
+  private async handleReady(): Promise<void> {
     const maxEnv = this.getMaxEnvironment();
     if (maxEnv > 0) {
       this.panel.webview.postMessage({
@@ -734,7 +735,7 @@ export class SystemBrowser {
         maxEnv,
       });
     }
-    this.state.dictionaries = queries.getDictionaryNames(this.session);
+    this.state.dictionaries = await queries.getDictionaryNames(this.session);
     this.panel.webview.postMessage({
       command: 'loadDictionaries',
       items: this.state.dictionaries,
@@ -742,7 +743,7 @@ export class SystemBrowser {
     const pending = SystemBrowser.pendingNavigation.get(this.session.id);
     if (pending) {
       SystemBrowser.pendingNavigation.delete(this.session.id);
-      this.handleNavigateTo(pending, true, true);
+      await this.handleNavigateTo(pending, true, true);
     }
   }
 
@@ -755,11 +756,29 @@ export class SystemBrowser {
    * `autoSelectAllClassesCategory` auto-selects the "all classes"
    * pseudo-category so the Classes column fills immediately instead of
    * staying blank until the user clicks a category.
+   *
+   * Resolves once the categories are loaded, since callers go on to read and
+   * post them; the panels keep opening in the background. A failure is posted
+   * to the webview rather than thrown.
    */
   private async handleSelectDictionary(
     dictIndex: number,
     skipPanels = false,
     autoSelectAllClassesCategory = false,
+  ): Promise<void> {
+    try {
+      await this.loadDictionaryCategories(dictIndex, autoSelectAllClassesCategory);
+    } catch (e) {
+      this.postError(e);
+      return;
+    }
+    if (skipPanels) return;
+    this.openDictionaryPanels(dictIndex).catch((e) => this.postError(e));
+  }
+
+  private async loadDictionaryCategories(
+    dictIndex: number,
+    autoSelectAllClassesCategory: boolean,
   ): Promise<void> {
     this.state.selectedDictIndex = dictIndex;
     this.state.selectedCategory = null;
@@ -768,7 +787,7 @@ export class SystemBrowser {
     this.state.selectedMethod = null;
     this.clearDimming();
 
-    const entries = this.getCachedDictEntries(dictIndex);
+    const entries = await this.getCachedDictEntries(dictIndex);
 
     // Build unique class categories, sorted
     const categorySet = new Set<string>();
@@ -787,11 +806,11 @@ export class SystemBrowser {
     });
 
     if (autoSelectAllClassesCategory) {
-      this.handleSelectCategory(ALL_CLASSES_CATEGORY);
+      await this.handleSelectCategory(ALL_CLASSES_CATEGORY);
     }
+  }
 
-    if (skipPanels) return;
-
+  private async openDictionaryPanels(dictIndex: number): Promise<void> {
     const dictName = this.state.dictionaries[dictIndex - 1];
     // Set the editor layout before creating panels so they appear in the right order
     await vscode.commands.executeCommand('vscode.setEditorLayout', {
@@ -808,7 +827,7 @@ export class SystemBrowser {
     );
   }
 
-  private handleSelectCategory(category: string): void {
+  private async handleSelectCategory(category: string): Promise<void> {
     this.state.selectedCategory = category;
     this.state.selectedClass = null;
     this.state.selectedMethodCategory = null;
@@ -818,7 +837,7 @@ export class SystemBrowser {
     const dictIndex = this.state.selectedDictIndex;
     if (!dictIndex) return;
 
-    const entries = this.getCachedDictEntries(dictIndex);
+    const entries = await this.getCachedDictEntries(dictIndex);
     let names: string[];
     if (category === ALL_CLASSES_CATEGORY) {
       names = entries.filter((e) => e.isClass).map((e) => e.name);
@@ -836,9 +855,9 @@ export class SystemBrowser {
   }
 
   // Loads method categories and auto-selects the "all methods" pseudo-category.
-  private selectAllMethods(): void {
-    this.loadMethodCategories(ALL_METHODS_CATEGORY);
-    this.handleSelectMethodCategory(ALL_METHODS_CATEGORY);
+  private async selectAllMethods(): Promise<void> {
+    await this.loadMethodCategories(ALL_METHODS_CATEGORY);
+    await this.handleSelectMethodCategory(ALL_METHODS_CATEGORY);
   }
 
   /**
@@ -863,11 +882,11 @@ export class SystemBrowser {
    * pseudo-category so the Methods column fills immediately; when false, only
    * the method-category list is loaded with no category pre-selected.
    */
-  private applyClassSelection(
+  private async applyClassSelection(
     className: string,
     skipClassBrowser = false,
     autoSelectAllMethodsCategory = false,
-  ): void {
+  ): Promise<void> {
     void this.closeComparisonDiff();
     this.state.selectedClass = className;
     this.state.selectedMethodCategory = null;
@@ -875,9 +894,9 @@ export class SystemBrowser {
     this.panel.title = `Browser: ${className}`;
 
     if (autoSelectAllMethodsCategory) {
-      this.selectAllMethods();
+      await this.selectAllMethods();
     } else {
-      this.loadMethodCategories();
+      await this.loadMethodCategories();
     }
 
     if (!skipClassBrowser) {
@@ -912,7 +931,10 @@ export class SystemBrowser {
    * re-fills for the newly toggled side; otherwise it just reloads the method
    * categories.
    */
-  private handleToggleSide(isMeta: boolean, autoSelectAllMethodsCategory = false): void {
+  private async handleToggleSide(
+    isMeta: boolean,
+    autoSelectAllMethodsCategory = false,
+  ): Promise<void> {
     void this.closeComparisonDiff();
     this.state.isMeta = isMeta;
     this.state.selectedMethodCategory = null;
@@ -920,14 +942,14 @@ export class SystemBrowser {
 
     if (this.state.selectedClass) {
       if (autoSelectAllMethodsCategory) {
-        this.selectAllMethods();
+        await this.selectAllMethods();
       } else {
-        this.loadMethodCategories();
+        await this.loadMethodCategories();
       }
     }
   }
 
-  private handleSelectMethodCategory(category: string): void {
+  private async handleSelectMethodCategory(category: string): Promise<void> {
     void this.closeComparisonDiff();
     this.state.selectedMethodCategory = category;
     this.state.selectedMethod = null;
@@ -937,7 +959,7 @@ export class SystemBrowser {
     const className = this.state.selectedClass;
     if (!dictIndex || !className) return;
 
-    const envData = this.getCachedEnvData(dictIndex, className);
+    const envData = await this.getCachedEnvData(dictIndex, className);
     const filtered = envData.filter(
       (e) => e.isMeta === this.state.isMeta && e.envId === this.state.selectedEnvId,
     );
@@ -957,7 +979,7 @@ export class SystemBrowser {
     }
     this.state.methods = methods;
 
-    this.postMethods(this.state.methods);
+    await this.postMethods(this.state.methods);
   }
 
   private handleSelectMethod(selector: string): void {
@@ -987,7 +1009,7 @@ export class SystemBrowser {
     try {
       const isMeta = this.state.isMeta;
       const dictName = this.state.dictionaries[dictIndex - 1];
-      const category = this.methodCategoryFor(className, isMeta, selector);
+      const category = await this.methodCategoryFor(className, isMeta, selector);
       const environmentId = this.state.selectedEnvId;
       const common = {
         kind: 'method' as const,
@@ -1058,11 +1080,11 @@ export class SystemBrowser {
     if (tab) await vscode.window.tabGroups.close(tab);
   }
 
-  private handleNavigateTo(
+  private async handleNavigateTo(
     result: queries.MethodSearchResult,
     openFile = true,
     skipClassBrowser = false,
-  ): void {
+  ): Promise<void> {
     const { dictName, className, isMeta, category, selector, environmentId } = result;
 
     // Find 1-based dict index
@@ -1074,13 +1096,13 @@ export class SystemBrowser {
 
     // Update dictionary if changed
     if (this.state.selectedDictIndex !== dictIndex) {
-      void this.handleSelectDictionary(dictIndex, skipClassBrowser);
+      await this.handleSelectDictionary(dictIndex, skipClassBrowser);
       this.panel.webview.postMessage({ command: 'selectDictionaryItem', index: dictIndex });
     }
 
     // Ensure the class is visible — switch to the "All classes" pseudo-category if needed
     if (!this.state.classes.includes(className)) {
-      this.handleSelectCategory(ALL_CLASSES_CATEGORY);
+      await this.handleSelectCategory(ALL_CLASSES_CATEGORY);
       this.panel.webview.postMessage({ command: 'selectCategoryItem', name: ALL_CLASSES_CATEGORY });
     }
 
@@ -1089,12 +1111,12 @@ export class SystemBrowser {
     // earlier inline mutation here skipped that update, leaving the
     // Class Definition stale relative to whatever method we navigated to.
     if (this.state.selectedClass !== className) {
-      this.applyClassSelection(className, skipClassBrowser);
+      await this.applyClassSelection(className, skipClassBrowser);
     }
 
     // Update instance/class side if changed
     if (this.state.isMeta !== isMeta) {
-      this.handleToggleSide(isMeta);
+      await this.handleToggleSide(isMeta);
       this.panel.webview.postMessage({ command: 'setSide', isMeta });
     }
 
@@ -1110,13 +1132,13 @@ export class SystemBrowser {
     // categories for the current side, and before the category switch because those are the
     // categories the category step then chooses from.
     if (this.state.selectedEnvId !== environmentId) {
-      this.handleToggleEnvironment(environmentId);
+      await this.handleToggleEnvironment(environmentId);
       this.panel.webview.postMessage({ command: 'setEnvironment', envId: environmentId });
     }
 
     // Update method category if changed
     if (this.state.selectedMethodCategory !== category) {
-      this.handleSelectMethodCategory(category);
+      await this.handleSelectMethodCategory(category);
     }
 
     // Select the method and refresh all webview columns
@@ -1136,7 +1158,7 @@ export class SystemBrowser {
       items: this.state.methodCategories,
       selected: category,
     });
-    this.postMethods(this.state.methods, selector);
+    await this.postMethods(this.state.methods, selector);
 
     if (openFile) this.openClassFile(className, selector, isMeta).catch((e) => this.postError(e));
   }
@@ -1146,11 +1168,11 @@ export class SystemBrowser {
    * Auto-selects "all methods" so the Methods column fills immediately —
    * distinguishing it from `handleNavigateTo`, which navigates to a specific method.
    */
-  private handleNavigateToClass(
+  private async handleNavigateToClass(
     dictName: string,
     className: string,
     explicitDictIndex?: number,
-  ): void {
+  ): Promise<void> {
     // Prefer the caller's exact SymbolList index (unambiguous even when two
     // dictionaries share a name); fall back to resolving by name.
     const dictIndex = explicitDictIndex ?? this.state.dictionaries.indexOf(dictName) + 1;
@@ -1159,12 +1181,12 @@ export class SystemBrowser {
     this.panel.reveal(undefined, true);
 
     if (this.state.selectedDictIndex !== dictIndex) {
-      this.handleSelectDictionary(dictIndex).catch((e) => this.postError(e));
+      await this.handleSelectDictionary(dictIndex);
       this.panel.webview.postMessage({ command: 'selectDictionaryItem', index: dictIndex });
     }
 
     if (!this.state.classes.includes(className)) {
-      this.handleSelectCategory(ALL_CLASSES_CATEGORY);
+      await this.handleSelectCategory(ALL_CLASSES_CATEGORY);
       this.panel.webview.postMessage({ command: 'selectCategoryItem', name: ALL_CLASSES_CATEGORY });
     }
 
@@ -1174,10 +1196,10 @@ export class SystemBrowser {
       selected: className,
     });
 
-    this.applyClassSelection(className, false, true);
+    await this.applyClassSelection(className, false, true);
   }
 
-  private handleRefresh(): void {
+  private async handleRefresh(): Promise<void> {
     const prev = { ...this.state };
 
     this.dictEntryCache.clear();
@@ -1205,12 +1227,12 @@ export class SystemBrowser {
 
     this.panel.title = 'Browser';
     this.panel.webview.postMessage({ command: 'setViewMode', mode: 'category' });
-    this.handleReady();
+    await this.handleReady();
 
     // Restore previous selections when the items still exist after refresh
     if (!prev.selectedDictIndex || prev.selectedDictIndex > this.state.dictionaries.length) return;
 
-    this.handleSelectDictionary(prev.selectedDictIndex).catch((e) => this.postError(e));
+    await this.handleSelectDictionary(prev.selectedDictIndex);
     this.panel.webview.postMessage({
       command: 'selectDictionaryItem',
       index: prev.selectedDictIndex,
@@ -1221,7 +1243,7 @@ export class SystemBrowser {
         ? prev.selectedCategory
         : null;
     if (prevCategory) {
-      this.handleSelectCategory(prevCategory);
+      await this.handleSelectCategory(prevCategory);
     }
 
     if (prev.selectedClass && this.state.classes.includes(prev.selectedClass)) {
@@ -1240,11 +1262,11 @@ export class SystemBrowser {
         selected: prev.selectedClass,
       });
       this.panel.webview.postMessage({ command: 'setSide', isMeta: this.state.isMeta });
-      this.loadMethodCategories(prev.selectedMethodCategory);
+      await this.loadMethodCategories(prev.selectedMethodCategory);
 
       if (prev.selectedMethodCategory) {
         this.state.selectedMethodCategory = prev.selectedMethodCategory;
-        this.handleSelectMethodCategory(prev.selectedMethodCategory);
+        await this.handleSelectMethodCategory(prev.selectedMethodCategory);
       }
 
       // Capture into locals: the narrowing of prev.selectedDictIndex to a number
@@ -1275,12 +1297,12 @@ export class SystemBrowser {
     }
   }
 
-  private handleToggleViewMode(mode: string): void {
+  private async handleToggleViewMode(mode: string): Promise<void> {
     this.state.viewMode = mode as 'category' | 'hierarchy';
 
     if (mode === 'hierarchy') {
       if (this.state.selectedClass) {
-        this.sendHierarchy(this.state.selectedClass);
+        await this.sendHierarchy(this.state.selectedClass);
       } else {
         this.panel.webview.postMessage({ command: 'setViewMode', mode: 'hierarchy' });
         this.panel.webview.postMessage({
@@ -1305,9 +1327,9 @@ export class SystemBrowser {
             selected: this.state.selectedClass,
           });
           if (this.state.selectedClass) {
-            this.loadMethodCategories(this.state.selectedMethodCategory);
+            await this.loadMethodCategories(this.state.selectedMethodCategory);
             if (this.state.selectedMethodCategory) {
-              this.postMethods(this.state.methods, this.state.selectedMethod);
+              await this.postMethods(this.state.methods, this.state.selectedMethod);
             }
           }
         }
@@ -1315,7 +1337,7 @@ export class SystemBrowser {
     }
   }
 
-  private handleSelectHierarchyClass(className: string): void {
+  private async handleSelectHierarchyClass(className: string): Promise<void> {
     void this.closeComparisonDiff();
     // Find which dictionary contains this class from the hierarchy entries
     const entry = this.state.hierarchyEntries.find((e) => e.className === className);
@@ -1329,10 +1351,10 @@ export class SystemBrowser {
     // Definition panel updates too — the earlier inline mutations did
     // not, so a hierarchy-view click left Class Definition stale. This
     // mirrors the column click: definition-only, no source-file reveal.
-    this.applyClassSelection(className, false, true);
+    await this.applyClassSelection(className, false, true);
   }
 
-  private handleToggleEnvironment(envId: number): void {
+  private async handleToggleEnvironment(envId: number): Promise<void> {
     void this.closeComparisonDiff();
     const previousCategory = this.state.selectedMethodCategory;
     this.state.selectedEnvId = envId;
@@ -1340,7 +1362,7 @@ export class SystemBrowser {
 
     if (this.state.selectedClass) {
       const dictIndex = this.state.selectedDictIndex!;
-      const envData = this.getCachedEnvData(dictIndex, this.state.selectedClass);
+      const envData = await this.getCachedEnvData(dictIndex, this.state.selectedClass);
       const availableInNewEnv = new Set(
         envData
           .filter((e) => e.isMeta === this.state.isMeta && e.envId === envId)
@@ -1351,8 +1373,8 @@ export class SystemBrowser {
           ? previousCategory
           : ALL_METHODS_CATEGORY;
       this.state.selectedMethodCategory = categoryToSelect;
-      this.loadMethodCategories(categoryToSelect);
-      this.handleSelectMethodCategory(categoryToSelect);
+      await this.loadMethodCategories(categoryToSelect);
+      await this.handleSelectMethodCategory(categoryToSelect);
     }
   }
 
@@ -1373,12 +1395,12 @@ export class SystemBrowser {
     });
     if (!name) return;
 
-    queries.addDictionary(this.session, name);
+    await queries.addDictionary(this.session, name);
     this.dictEntryCache.clear();
-    this.state.dictionaries = queries.getDictionaryNames(this.session);
+    this.state.dictionaries = await queries.getDictionaryNames(this.session);
     // Recorded after the fact: there is nothing to capture before a dictionary exists, and
     // the position it landed at is only knowable afterwards (#434).
-    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(this.session, name));
+    notifyUndoable(`Added dictionary ${name}`, await recordDictionaryAdd(this.session, name));
 
     // Reconcile the mirror (creates the new dir, updates state) via the manifest
     // diff rather than poking the filesystem directly.
@@ -1390,11 +1412,11 @@ export class SystemBrowser {
     });
   }
 
-  private handleMoveDictUp(): void {
+  private async handleMoveDictUp(): Promise<void> {
     const idx = this.state.selectedDictIndex;
     if (!idx || idx <= 1) return;
 
-    queries.moveDictionaryUp(this.session, idx);
+    await queries.moveDictionaryUp(this.session, idx);
     this.exportManager.scheduleRefresh(this.session);
     const dicts = this.state.dictionaries;
     [dicts[idx - 1], dicts[idx - 2]] = [dicts[idx - 2], dicts[idx - 1]];
@@ -1412,11 +1434,11 @@ export class SystemBrowser {
     });
   }
 
-  private handleMoveDictDown(): void {
+  private async handleMoveDictDown(): Promise<void> {
     const idx = this.state.selectedDictIndex;
     if (!idx || idx >= this.state.dictionaries.length) return;
 
-    queries.moveDictionaryDown(this.session, idx);
+    await queries.moveDictionaryDown(this.session, idx);
     this.exportManager.scheduleRefresh(this.session);
     const dicts = this.state.dictionaries;
     [dicts[idx - 1], dicts[idx]] = [dicts[idx], dicts[idx - 1]];
@@ -1447,7 +1469,7 @@ export class SystemBrowser {
     );
     if (confirmed !== 'Remove') return;
 
-    queries.removeDictionary(this.session, dictIndex);
+    await queries.removeDictionary(this.session, dictIndex);
 
     // Reconcile the mirror (prunes the dir, drops its classes from state, fixes
     // shifted indices) via the manifest diff.
@@ -1457,7 +1479,7 @@ export class SystemBrowser {
     this.dictEntryCache.clear();
     this.envCache.clear();
     this.hierarchyCache.clear();
-    this.state.dictionaries = queries.getDictionaryNames(this.session);
+    this.state.dictionaries = await queries.getDictionaryNames(this.session);
     this.state.selectedDictIndex = null;
     this.state.selectedCategory = null;
     this.state.selectedClass = null;
@@ -1499,7 +1521,7 @@ export class SystemBrowser {
       command: 'loadClassCategories',
       items: this.state.classCategories,
     });
-    this.handleSelectCategory(name);
+    await this.handleSelectCategory(name);
   }
 
   private handleNewClass(): void {
@@ -1535,9 +1557,9 @@ export class SystemBrowser {
 
     // Snapshot before removing: deleteClass unbinds the name, and the class version is only
     // reachable afterwards while something holds it (#434).
-    const recording = beginClassDeletion(this.session, [{ dict: dictIndex, className }]);
-    queries.deleteClass(this.session, dictIndex, className);
-    notifyUndoable(`Deleted class ${className}`, recording?.commit());
+    const recording = await beginClassDeletion(this.session, [{ dict: dictIndex, className }]);
+    await queries.deleteClass(this.session, dictIndex, className);
+    notifyUndoable(`Deleted class ${className}`, await recording?.commit());
     this.exportManager.removeClassFile(
       this.session,
       dictIndex,
@@ -1551,7 +1573,7 @@ export class SystemBrowser {
     this.state.selectedMethod = null;
     this.clearDimming();
 
-    const entries = this.getCachedDictEntries(dictIndex);
+    const entries = await this.getCachedDictEntries(dictIndex);
     const category = this.state.selectedCategory;
     let classes: string[];
     if (!category || category === ALL_CLASSES_CATEGORY) {
@@ -1586,12 +1608,12 @@ export class SystemBrowser {
     // one, `at:put:` into the other -- so it is an ordinary class edit over two slots: the name
     // it left and the name it arrived under. The reversal rebinds the first and unbinds the
     // second (#434).
-    const recording = beginClassEdit(this.session, [
+    const recording = await beginClassEdit(this.session, [
       { dict: srcIndex, className },
       { dict: picked.index, className },
     ]);
 
-    queries.moveClass(this.session, srcIndex, picked.index, className);
+    await queries.moveClass(this.session, srcIndex, picked.index, className);
     this.exportManager.removeClassFile(
       this.session,
       srcIndex,
@@ -1607,10 +1629,10 @@ export class SystemBrowser {
     this.state.selectedMethod = null;
     this.clearDimming();
 
-    this.handleSelectCategory(this.state.selectedCategory || ALL_CLASSES_CATEGORY);
+    await this.handleSelectCategory(this.state.selectedCategory || ALL_CLASSES_CATEGORY);
     notifyUndoable(
       `Moved ${className} to ${picked.label}.`,
-      recording?.commit(`Move class ${className} to ${picked.label}`),
+      await recording?.commit(`Move class ${className} to ${picked.label}`),
     );
   }
 
@@ -1632,7 +1654,7 @@ export class SystemBrowser {
     });
     if (!uri) return;
 
-    const source = queries.fileOutClass(this.session, className, dictIndex);
+    const source = await queries.fileOutClass(this.session, className, dictIndex);
     fs.writeFileSync(uri.fsPath, source, 'utf8');
     void vscode.window.showTextDocument(uri);
   }
@@ -1665,7 +1687,7 @@ export class SystemBrowser {
     });
     if (!uri) return;
 
-    const ordered = queries.getDictionaryClassFileOutOrder(this.session, dictIndex);
+    const ordered = await queries.getDictionaryClassFileOutOrder(this.session, dictIndex);
     if (ordered.length === 0) {
       vscode.window.showWarningMessage(`Dictionary "${dictName}" has no classes to file out.`);
       return;
@@ -1674,7 +1696,7 @@ export class SystemBrowser {
     const plan = planDictionaryFileOut(dictName, ordered);
     const dir = path.dirname(uri.fsPath);
     for (const file of plan.files) {
-      const source = queries.fileOutClass(this.session, file.className, dictIndex);
+      const source = await queries.fileOutClass(this.session, file.className, dictIndex);
       fs.writeFileSync(path.join(dir, file.fileName), source, 'utf8');
     }
     fs.writeFileSync(uri.fsPath, plan.indexContent, 'utf8');
@@ -1715,7 +1737,7 @@ export class SystemBrowser {
     const dictName = this.dictNameForIndex(dictIndex);
     if (!dictIndex || !dictName) return;
 
-    const entries = this.getCachedDictEntries(dictIndex);
+    const entries = await this.getCachedDictEntries(dictIndex);
     const classNames = entries.filter((e) => e.isClass).map((e) => e.name);
     if (classNames.length === 0) return;
 
@@ -1788,7 +1810,7 @@ export class SystemBrowser {
     });
     if (!newName || newName === oldCategory) return;
 
-    queries.renameCategory(
+    await queries.renameCategory(
       this.session,
       className,
       this.state.isMeta,
@@ -1799,7 +1821,7 @@ export class SystemBrowser {
     this.syncSelectedClass(className);
     this.envCache.delete(`${dictIndex}/${className}`);
     this.state.selectedMethodCategory = newName;
-    this.loadMethodCategories();
+    await this.loadMethodCategories();
   }
 
   private async handleDeleteMethod(): Promise<void> {
@@ -1816,14 +1838,14 @@ export class SystemBrowser {
     if (confirmed !== 'Delete') return;
 
     // Snapshot before removing: the source only exists until the removal lands (#434).
-    const recording = beginMethodDeletion(this.session, {
+    const recording = await beginMethodDeletion(this.session, {
       dict: dictIndex,
       className,
       isMeta: this.state.isMeta,
       selector,
       environmentId: 0,
     });
-    queries.deleteMethod(this.session, className, this.state.isMeta, selector, dictIndex);
+    await queries.deleteMethod(this.session, className, this.state.isMeta, selector, dictIndex);
     notifyUndoable(
       `Deleted ${className}${this.state.isMeta ? ' class' : ''}>>#${selector}`,
       recording?.commit(),
@@ -1832,9 +1854,9 @@ export class SystemBrowser {
     this.envCache.delete(`${dictIndex}/${className}`);
     this.state.selectedMethod = null;
     this.clearDimming();
-    this.loadMethodCategories();
+    await this.loadMethodCategories();
     if (this.state.selectedMethodCategory) {
-      this.handleSelectMethodCategory(this.state.selectedMethodCategory);
+      await this.handleSelectMethodCategory(this.state.selectedMethodCategory);
     }
   }
 
@@ -1844,7 +1866,7 @@ export class SystemBrowser {
     const dictIndex = this.state.selectedDictIndex;
     if (!className || !selector || !dictIndex) return;
 
-    const categories = queries.getMethodCategories(
+    const categories = await queries.getMethodCategories(
       this.session,
       className,
       this.state.isMeta,
@@ -1864,9 +1886,9 @@ export class SystemBrowser {
       selector,
       environmentId: 0,
     };
-    const recording = beginMethodEdit(this.session, [slot]);
+    const recording = await beginMethodEdit(this.session, [slot]);
 
-    queries.recategorizeMethod(
+    await queries.recategorizeMethod(
       this.session,
       className,
       this.state.isMeta,
@@ -1876,12 +1898,12 @@ export class SystemBrowser {
     );
     this.syncSelectedClass(className);
     this.envCache.delete(`${dictIndex}/${className}`);
-    this.loadMethodCategories();
+    await this.loadMethodCategories();
     if (this.state.selectedMethodCategory) {
-      this.handleSelectMethodCategory(this.state.selectedMethodCategory);
+      await this.handleSelectMethodCategory(this.state.selectedMethodCategory);
     }
 
-    const after = recording ? readMethodSlotState(this.session, [slot]) : undefined;
+    const after = recording ? await readMethodSlotState(this.session, [slot]) : undefined;
     notifyUndoable(
       `Moved #${selector} to '${picked}'.`,
       after && recording
@@ -1981,9 +2003,9 @@ export class SystemBrowser {
 
     // Recorded per CLASS, the same shape a class-category rename uses: what matters is the
     // label this class carried, not the name of a category (#434).
-    const recording = beginClassCategoryEdit(this.session, dictIndex);
+    const recording = await beginClassCategoryEdit(this.session, dictIndex);
 
-    queries.recategorizeClass(this.session, className, picked, dictIndex);
+    await queries.recategorizeClass(this.session, className, picked, dictIndex);
     void this.exportManager.syncClass(
       this.session,
       this.state.dictionaries[dictIndex - 1],
@@ -1992,10 +2014,10 @@ export class SystemBrowser {
     // The class may leave its old category — re-read the dictionary and rebuild
     // the categories column and class list.
     this.dictEntryCache.delete(dictIndex);
-    this.rebuildClassCategories();
+    await this.rebuildClassCategories();
     notifyUndoable(
       `Moved ${className} to category '${picked}'.`,
-      recording?.commit(`Move class ${className} to category ${picked}`),
+      await recording?.commit(`Move class ${className} to category ${picked}`),
     );
   }
 
@@ -2006,8 +2028,7 @@ export class SystemBrowser {
     const dictIndex = this.state.selectedDictIndex;
     if (!sourceClass || !selector || !dictIndex) return;
 
-    const targets = queries
-      .getClassNames(this.session, dictIndex)
+    const targets = (await queries.getClassNames(this.session, dictIndex))
       .filter((name) => name !== sourceClass)
       .sort();
     if (targets.length === 0) {
@@ -2019,7 +2040,7 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
-    queries.copyMethodToClass(
+    await queries.copyMethodToClass(
       this.session,
       sourceClass,
       picked,
@@ -2035,11 +2056,11 @@ export class SystemBrowser {
 
   // Recompute the class categories from the (freshly-read) dictionary entries and
   // reload the categories column + the current category's class list.
-  private rebuildClassCategories(): void {
+  private async rebuildClassCategories(): Promise<void> {
     const dictIndex = this.state.selectedDictIndex;
     if (!dictIndex) return;
 
-    const entries = this.getCachedDictEntries(dictIndex);
+    const entries = await this.getCachedDictEntries(dictIndex);
     const categorySet = new Set<string>();
     for (const entry of entries) {
       if (entry.isClass) categorySet.add(entry.category || '');
@@ -2052,15 +2073,15 @@ export class SystemBrowser {
       items: this.state.classCategories,
       selected,
     });
-    this.handleSelectCategory(selected);
+    await this.handleSelectCategory(selected);
   }
 
   // ── Data helpers ──────────────────────────────────────────
 
-  private getCachedDictEntries(dictIndex: number): queries.DictEntry[] {
+  private async getCachedDictEntries(dictIndex: number): Promise<queries.DictEntry[]> {
     let entries = this.dictEntryCache.get(dictIndex);
     if (!entries) {
-      entries = queries.getDictionaryEntries(this.session, dictIndex);
+      entries = await queries.getDictionaryEntries(this.session, dictIndex);
       this.dictEntryCache.set(dictIndex, entries);
     }
     return entries;
@@ -2070,11 +2091,14 @@ export class SystemBrowser {
     return vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
   }
 
-  private getCachedEnvData(dictIndex: number, className: string): queries.EnvCategoryLine[] {
+  private async getCachedEnvData(
+    dictIndex: number,
+    className: string,
+  ): Promise<queries.EnvCategoryLine[]> {
     const key = `${dictIndex}/${className}`;
     let data = this.envCache.get(key);
     if (!data) {
-      data = queries.getClassEnvironments(
+      data = await queries.getClassEnvironments(
         this.session,
         dictIndex,
         className,
@@ -2088,13 +2112,13 @@ export class SystemBrowser {
   // Override indicators (▲ overrides super, ▼ overridden in subclass) for the
   // currently displayed selectors on the current side. Derived from the cached
   // env data so it costs no extra round trip.
-  private methodOverrideBitsFor(items: string[]): Record<string, number> {
+  private async methodOverrideBitsFor(items: string[]): Promise<Record<string, number>> {
     const dictIndex = this.state.selectedDictIndex;
     const className = this.state.selectedClass;
     if (!dictIndex || !className || items.length === 0) return {};
     const itemSet = new Set(items);
     const bits: Record<string, number> = {};
-    for (const line of this.getCachedEnvData(dictIndex, className)) {
+    for (const line of await this.getCachedEnvData(dictIndex, className)) {
       if (line.isMeta !== this.state.isMeta || !line.methodOverrideBits) continue;
       for (const sel of Object.keys(line.methodOverrideBits)) {
         if (itemSet.has(sel)) bits[sel] = line.methodOverrideBits[sel];
@@ -2120,13 +2144,13 @@ export class SystemBrowser {
   // Per-selector session-method flag (1 = extension, 2 = override) for the
   // currently displayed selectors on the current side. Same cheap derivation as
   // methodOverrideBitsFor — no extra round trip.
-  private sessionMethodBitsFor(items: string[]): Record<string, number> {
+  private async sessionMethodBitsFor(items: string[]): Promise<Record<string, number>> {
     const dictIndex = this.state.selectedDictIndex;
     const className = this.state.selectedClass;
     if (!dictIndex || !className || items.length === 0) return {};
     const itemSet = new Set(items);
     const bits: Record<string, number> = {};
-    for (const line of this.getCachedEnvData(dictIndex, className)) {
+    for (const line of await this.getCachedEnvData(dictIndex, className)) {
       if (line.isMeta !== this.state.isMeta || !line.sessionMethodBits) continue;
       for (const sel of Object.keys(line.sessionMethodBits)) {
         if (itemSet.has(sel)) bits[sel] = line.sessionMethodBits[sel];
@@ -2136,34 +2160,34 @@ export class SystemBrowser {
   }
 
   // Post the methods column to the webview with override bits attached.
-  private postMethods(items: string[], selected?: string | null): void {
+  private async postMethods(items: string[], selected?: string | null): Promise<void> {
     this.panel.webview.postMessage({
       command: 'loadMethods',
       items,
       selected: selected ?? undefined,
-      methodOverrideBits: this.methodOverrideBitsFor(items),
-      sessionMethodBits: this.sessionMethodBitsFor(items),
+      methodOverrideBits: await this.methodOverrideBitsFor(items),
+      sessionMethodBits: await this.sessionMethodBitsFor(items),
     });
   }
 
-  private refreshMethodList(): void {
+  private async refreshMethodList(): Promise<void> {
     const dictIndex = this.state.selectedDictIndex;
     const className = this.state.selectedClass;
     if (!dictIndex || !className) return;
 
     this.envCache.delete(`${dictIndex}/${className}`);
-    this.loadMethodCategories(this.state.selectedMethodCategory);
+    await this.loadMethodCategories(this.state.selectedMethodCategory);
     if (this.state.selectedMethodCategory) {
-      this.handleSelectMethodCategory(this.state.selectedMethodCategory);
+      await this.handleSelectMethodCategory(this.state.selectedMethodCategory);
     }
   }
 
-  private loadMethodCategories(selected?: string | null): void {
+  private async loadMethodCategories(selected?: string | null): Promise<void> {
     const dictIndex = this.state.selectedDictIndex;
     const className = this.state.selectedClass;
     if (!dictIndex || !className) return;
 
-    const envData = this.getCachedEnvData(dictIndex, className);
+    const envData = await this.getCachedEnvData(dictIndex, className);
     const filtered = envData.filter(
       (e) => e.isMeta === this.state.isMeta && e.envId === this.state.selectedEnvId,
     );
@@ -2185,10 +2209,10 @@ export class SystemBrowser {
     });
   }
 
-  private sendHierarchy(className: string): void {
+  private async sendHierarchy(className: string): Promise<void> {
     let entries = this.hierarchyCache.get(className);
     if (!entries) {
-      entries = queries.getClassHierarchy(this.session, className);
+      entries = await queries.getClassHierarchy(this.session, className);
       this.hierarchyCache.set(className, entries);
     }
     this.state.hierarchyEntries = entries;
@@ -2218,10 +2242,14 @@ export class SystemBrowser {
   // pseudo "** ALL METHODS **" / "** SESSION METHODS **" selection (which would
   // otherwise fall back to 'as yet unclassified' and silently recategorize the
   // method when saved).
-  private methodCategoryFor(className: string, isMeta: boolean, selector: string): string {
+  private async methodCategoryFor(
+    className: string,
+    isMeta: boolean,
+    selector: string,
+  ): Promise<string> {
     const dictIndex = this.state.selectedDictIndex;
     if (dictIndex) {
-      const entry = this.getCachedEnvData(dictIndex, className).find(
+      const entry = (await this.getCachedEnvData(dictIndex, className)).find(
         (e) =>
           e.isMeta === isMeta &&
           e.envId === this.state.selectedEnvId &&
@@ -2263,7 +2291,7 @@ export class SystemBrowser {
 
     // Open the method in a gemstone:// editor tab (editable, one method at a time)
     const side = isMeta ? 'class' : 'instance';
-    const category = this.methodCategoryFor(className, !!isMeta, selector);
+    const category = await this.methodCategoryFor(className, !!isMeta, selector);
     // ?dict=<index> scopes the method's class lookup to this exact dictionary,
     // disambiguating the same key in two dictionaries (which can share a name).
     const params = [`dict=${dictIndex}`];

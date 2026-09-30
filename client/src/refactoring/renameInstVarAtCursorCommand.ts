@@ -65,16 +65,16 @@ export async function renameInstVarAtCursorCommand(
   // empty preview.
   let inherited: DefiningClass | undefined;
   try {
-    const defined = queries.getDefinedInstVarNames(session, parsed.className, dict);
+    const defined = await queries.getDefinedInstVarNames(session, parsed.className, dict);
     if (!defined.includes(name)) {
-      const all = queries.getInstVarNames(session, parsed.className, dict);
+      const all = await queries.getInstVarNames(session, parsed.className, dict);
       if (!all.includes(name)) {
         refuse(
           `'${name}' is not an instance variable of ${parsed.className}. For a temporary or argument, use Rename Temporary/Argument.`,
         );
         return;
       }
-      inherited = queries.getDefiningClassOfInstVar(session, parsed.className, name, dict);
+      inherited = await queries.getDefiningClassOfInstVar(session, parsed.className, name, dict);
       if (!inherited) {
         refuse(
           `'${name}' is inherited by ${parsed.className}, but its defining class could not be resolved — rename it from that class's ivar row in the Explorer.`,

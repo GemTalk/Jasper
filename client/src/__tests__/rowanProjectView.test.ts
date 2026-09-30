@@ -46,8 +46,10 @@ function makeProjectDir(packages: string[] = [], specName?: string): string {
   return dir;
 }
 
-function dependencyGroup(provider: RowanProjectTreeProvider): RowanDependencyGroupItem {
-  const group = provider.getChildren().find((r) => r instanceof RowanDependencyGroupItem);
+async function dependencyGroup(
+  provider: RowanProjectTreeProvider,
+): Promise<RowanDependencyGroupItem> {
+  const group = (await provider.getChildren()).find((r) => r instanceof RowanDependencyGroupItem);
   if (!group) throw new Error('the project declares no dependencies');
   return group;
 }
@@ -58,39 +60,39 @@ afterEach(() => {
 });
 
 describe('RowanProjectTreeProvider', () => {
-  it('lists the project packages, sorted', () => {
+  it('lists the project packages, sorted', async () => {
     __setWorkspaceFolders([makeProjectDir(['Zeta-Core', 'Alpha-Core'])]);
     const provider = new RowanProjectTreeProvider();
 
-    const rows = provider.getChildren();
+    const rows = await provider.getChildren();
 
     expect(rows.every((r) => r instanceof RowanProjectPackageItem)).toBe(true);
     expect(rows.map((r) => r.label)).toEqual(['Alpha-Core', 'Zeta-Core']);
   });
 
-  it('shows a placeholder when the project has no packages', () => {
+  it('shows a placeholder when the project has no packages', async () => {
     __setWorkspaceFolders([makeProjectDir([])]);
     const provider = new RowanProjectTreeProvider();
 
-    const rows = provider.getChildren();
+    const rows = await provider.getChildren();
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toBeInstanceOf(RowanProjectMessageItem);
     expect((rows[0] as RowanProjectMessageItem).kind).toBe('rowanProjectEmpty');
   });
 
-  it('shows nothing when the open folder is not a Rowan project', () => {
+  it('shows nothing when the open folder is not a Rowan project', async () => {
     __setWorkspaceFolders([os.tmpdir()]);
     const provider = new RowanProjectTreeProvider();
 
-    expect(provider.getChildren()).toEqual([]);
+    expect(await provider.getChildren()).toEqual([]);
   });
 
-  it('shows nothing when no folder is open', () => {
+  it('shows nothing when no folder is open', async () => {
     __setWorkspaceFolders(undefined);
     const provider = new RowanProjectTreeProvider();
 
-    expect(provider.getChildren()).toEqual([]);
+    expect(await provider.getChildren()).toEqual([]);
   });
 
   it('exposes the project name for the section description', () => {
@@ -100,50 +102,50 @@ describe('RowanProjectTreeProvider', () => {
     expect(provider.projectName()).toBe('Seaside');
   });
 
-  it('groups the dependencies below the packages', () => {
+  it('groups the dependencies below the packages', async () => {
     const dir = makeProjectDir(['One-Core']);
     addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider();
 
-    const rows = provider.getChildren();
+    const rows = await provider.getChildren();
 
     expect(rows.map((r) => r.label)).toEqual(['One-Core', 'Dependencies']);
   });
 
-  it('offers no dependency group when the project depends on nothing', () => {
+  it('offers no dependency group when the project depends on nothing', async () => {
     __setWorkspaceFolders([makeProjectDir(['One-Core'])]);
     const provider = new RowanProjectTreeProvider();
 
-    expect(provider.getChildren().map((r) => r.label)).toEqual(['One-Core']);
+    expect((await provider.getChildren()).map((r) => r.label)).toEqual(['One-Core']);
   });
 
-  it('lists each dependency under the group', () => {
+  it('lists each dependency under the group', async () => {
     const dir = makeProjectDir([]);
     addProjectDependency(dir, { kind: 'disk', name: 'Zebra', diskUrl: '/work/Zebra' });
     addProjectDependency(dir, { kind: 'disk', name: 'Alpha', diskUrl: '/work/Alpha' });
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider();
 
-    const rows = provider.getChildren(dependencyGroup(provider));
+    const rows = await provider.getChildren(await dependencyGroup(provider));
 
     expect(rows.map((r) => r.label)).toEqual(['Alpha', 'Zebra']);
   });
 
-  it('points a dependency row at its reference spec', () => {
+  it('points a dependency row at its reference spec', async () => {
     const dir = makeProjectDir([]);
     addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider();
 
-    const [row] = provider.getChildren(dependencyGroup(provider));
+    const [row] = await provider.getChildren(await dependencyGroup(provider));
 
     expect(row.resourceUri?.fsPath).toBe(
       uriFsPath(path.join(dir, 'rowan', 'projects', 'SharedKit.ston')),
     );
   });
 
-  it('shows the revision a git dependency is pinned to', () => {
+  it('shows the revision a git dependency is pinned to', async () => {
     const dir = makeProjectDir([]);
     addProjectDependency(dir, {
       kind: 'git',
@@ -154,55 +156,57 @@ describe('RowanProjectTreeProvider', () => {
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider();
 
-    const [row] = provider.getChildren(dependencyGroup(provider));
+    const [row] = await provider.getChildren(await dependencyGroup(provider));
 
     expect(row.description).toBe('v1.0.0');
   });
 
-  it('says nothing about the image when no database is connected', () => {
+  it('says nothing about the image when no database is connected', async () => {
     const dir = makeProjectDir([]);
     addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
     __setWorkspaceFolders([dir]);
-    const provider = new RowanProjectTreeProvider({ loadedProjectNames: () => undefined });
+    const provider = new RowanProjectTreeProvider({ loadedProjectNames: async () => undefined });
 
-    const [row] = provider.getChildren(dependencyGroup(provider));
+    const [row] = await provider.getChildren(await dependencyGroup(provider));
 
     expect(row.description).toBe('/work/SharedKit');
   });
 
-  it('marks a dependency the connected database does not have', () => {
-    const dir = makeProjectDir([]);
-    addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
-    __setWorkspaceFolders([dir]);
-    const provider = new RowanProjectTreeProvider({ loadedProjectNames: () => new Set<string>() });
-
-    const [row] = provider.getChildren(dependencyGroup(provider));
-
-    expect(row.description).toBe('/work/SharedKit · not loaded');
-  });
-
-  it('marks a dependency the connected database has', () => {
+  it('marks a dependency the connected database does not have', async () => {
     const dir = makeProjectDir([]);
     addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider({
-      loadedProjectNames: () => new Set(['SharedKit']),
+      loadedProjectNames: async () => new Set<string>(),
     });
 
-    const [row] = provider.getChildren(dependencyGroup(provider));
+    const [row] = await provider.getChildren(await dependencyGroup(provider));
+
+    expect(row.description).toBe('/work/SharedKit · not loaded');
+  });
+
+  it('marks a dependency the connected database has', async () => {
+    const dir = makeProjectDir([]);
+    addProjectDependency(dir, { kind: 'disk', name: 'SharedKit', diskUrl: '/work/SharedKit' });
+    __setWorkspaceFolders([dir]);
+    const provider = new RowanProjectTreeProvider({
+      loadedProjectNames: async () => new Set(['SharedKit']),
+    });
+
+    const [row] = await provider.getChildren(await dependencyGroup(provider));
 
     expect(row.description).toBe('/work/SharedKit · loaded');
   });
 
-  it('re-reads packages after refresh', () => {
+  it('re-reads packages after refresh', async () => {
     const dir = makeProjectDir(['One']);
     __setWorkspaceFolders([dir]);
     const provider = new RowanProjectTreeProvider();
-    expect(provider.getChildren().map((r) => r.label)).toEqual(['One']);
+    expect((await provider.getChildren()).map((r) => r.label)).toEqual(['One']);
 
     fs.mkdirSync(path.join(dir, 'src', 'Two'));
     provider.refresh();
 
-    expect(provider.getChildren().map((r) => r.label)).toEqual(['One', 'Two']);
+    expect((await provider.getChildren()).map((r) => r.label)).toEqual(['One', 'Two']);
   });
 });

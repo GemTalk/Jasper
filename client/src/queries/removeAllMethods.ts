@@ -21,16 +21,16 @@ import { classLookupExpr, escapeString } from './util';
  * reports it against the directive's line rather than removing nothing and calling it
  * done.
  */
-export function removeAllMethods(
+export async function removeAllMethods(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ Error signal: 'Class not found: ${escapeString(className)}'].
 cls isBehavior ifFalse: [^ Error signal: 'Not a class: ${escapeString(className)}'].
 ${isMeta ? 'cls class' : 'cls'} removeAllMethods. 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

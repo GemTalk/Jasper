@@ -39,10 +39,10 @@ export const PAGE_SIZE = 100;
  * Every tab in this inspector degrades to "nothing to show" on failure — one
  * unprintable object must not cost the user the whole column.
  */
-function inspectorExecute(execute: QueryExecutor, code: string): string | null {
+async function inspectorExecute(execute: QueryExecutor, code: string): Promise<string | null> {
   const wrapped = `[${code}] on: AbstractException do: [:e | 'BIError:', e messageText asString]`;
   try {
-    const result = execute(wrapped);
+    const result = await execute(wrapped);
     return result.startsWith('BIError:') ? null : result;
   } catch {
     return null;
@@ -103,7 +103,10 @@ const IS_DICTIONARY = `(dictCls isNil
  * never appears for structure the object doesn't have — the tabbed equivalent of
  * the old tree's "expandable only when it has slots" rule.
  */
-export function fetchObjectHeader(execute: QueryExecutor, oop: bigint): ObjectHeader | null {
+export async function fetchObjectHeader(
+  execute: QueryExecutor,
+  oop: bigint,
+): Promise<ObjectHeader | null> {
   const code = `| obj cls dictCls out ${DUMP_PAYLOAD_TEMPS} isDict named items entries bytes bsize unit |
 obj := Object _objectForOop: ${oop}.
 cls := obj class.
@@ -134,7 +137,7 @@ out nextPutAll: (esc value: cls name asString); nextPutAll: tab;
     nextPutAll: (psOf value: obj); nextPutAll: tab;
     nextPutAll: unit.
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   if (data === null) return null;
   return parseObjectHeader(data);
 }
@@ -311,7 +314,7 @@ export function parseRows(data: string): InspectorRow[] {
  * Named instance variables, by name. Unpaged — a class with more named slots
  * than fit in one payload doesn't exist in practice.
  */
-export function fetchSlots(execute: QueryExecutor, oop: bigint): InspectorRow[] {
+export async function fetchSlots(execute: QueryExecutor, oop: bigint): Promise<InspectorRow[]> {
   const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row names owners chain k i |
 obj := Object _objectForOop: ${oop}.
 out := WriteStream on: String new.
@@ -322,7 +325,7 @@ ${SLOT_OWNERS}1 to: names size do: [:j |
       value: j
       value: (owners at: j)].
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   return data === null ? [] : parseSlotRows(data);
 }
 
@@ -337,12 +340,12 @@ out contents`;
  * carry no write index, since there is no positional write to make. Anything
  * else falls back to the physical indexable region, read with `_basicAt:`.
  */
-export function fetchItems(
+export async function fetchItems(
   execute: QueryExecutor,
   oop: bigint,
   from: number,
   count: number,
-): InspectorRow[] {
+): Promise<InspectorRow[]> {
   if (!Number.isInteger(from) || from < 1) return [];
   if (!Number.isInteger(count) || count < 1) return [];
   const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row snapshot last elems |
@@ -371,7 +374,7 @@ ${dumpPayloadPrelude()}${ROW_BLOCK}${PAGE_SNAPSHOT}last := ${from} + ${count} - 
               value: ([obj _basicAt: i] on: Error do: [:e | nil])
               value: i]]].
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   return data === null ? [] : parseRows(data);
 }
 
@@ -385,12 +388,12 @@ out contents`;
  * dictionary sorts it once rather than once per page. Each row carries the key's
  * OOP as well as the value's, so an edit can `at:put:` it.
  */
-export function fetchEntries(
+export async function fetchEntries(
   execute: QueryExecutor,
   oop: bigint,
   from: number,
   count: number,
-): InspectorRow[] {
+): Promise<InspectorRow[]> {
   if (!Number.isInteger(from) || from < 1) return [];
   if (!Number.isInteger(count) || count < 1) return [];
   const code = `| obj out ${DUMP_PAYLOAD_TEMPS} snapshot keys k v |
@@ -411,7 +414,7 @@ ${from} to: (${from} + ${count} - 1 min: keys size) do: [:i |
       nextPutAll: (esc value: ([v class name asString] on: Error do: [:e | '?'])); nextPutAll: tab;
       nextPutAll: k asOop printString; nextPut: Character lf].
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   return data === null ? [] : parseEntries(data);
 }
 
@@ -435,12 +438,12 @@ export function parseEntries(data: string): InspectorRow[] {
  * renders the hex + ASCII dump; the server just streams the numbers, so a byte
  * that isn't printable text can't corrupt the payload.
  */
-export function fetchBytes(
+export async function fetchBytes(
   execute: QueryExecutor,
   oop: bigint,
   from: number,
   count: number,
-): number[] {
+): Promise<number[]> {
   if (!Number.isInteger(from) || from < 1) return [];
   if (!Number.isInteger(count) || count < 1) return [];
   const code = `| obj out |
@@ -450,7 +453,7 @@ ${from} to: (${from} + ${count} - 1 min: obj _basicSize) do: [:i |
   out nextPutAll: ([(obj _basicAt: i) asInteger] on: Error do: [:e | 0]) printString;
       nextPut: Character lf].
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   if (data === null) return [];
   return data
     .split('\n')
@@ -480,7 +483,10 @@ export interface ObjectMeta {
  * Records are `kind \t value`, so a multi-line comment or definition (escaped)
  * stays one record and the sections can arrive in any order.
  */
-export function fetchObjectMeta(execute: QueryExecutor, oop: bigint): ObjectMeta | null {
+export async function fetchObjectMeta(
+  execute: QueryExecutor,
+  oop: bigint,
+): Promise<ObjectMeta | null> {
   const code = `| obj cls out ${DUMP_PAYLOAD_TEMPS} put sels |
 obj := Object _objectForOop: ${oop}.
 cls := obj class theNonMetaClass.
@@ -498,7 +504,7 @@ sels do: [:s | put value: 'inst' value: s].
 sels := [cls class selectors asSortedCollection asArray] on: Error do: [:e | #()].
 sels do: [:s | put value: 'meta' value: s].
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   if (data === null) return null;
   return parseObjectMeta(data);
 }
@@ -544,17 +550,17 @@ export function parseObjectMeta(data: string): ObjectMeta {
 }
 
 /** Source of one method on the inspected object's class. */
-export function fetchMethodSource(
+export async function fetchMethodSource(
   execute: QueryExecutor,
   oop: bigint,
   selector: string,
   isClassSide: boolean,
-): string | null {
+): Promise<string | null> {
   if (!isValidSelector(selector)) return null;
   const cls = isClassSide
     ? `(Object _objectForOop: ${oop}) class theNonMetaClass class`
     : `(Object _objectForOop: ${oop}) class theNonMetaClass`;
-  return inspectorExecute(execute, `${cls} sourceCodeAt: #'${escapeString(selector)}'`);
+  return await inspectorExecute(execute, `${cls} sourceCodeAt: #'${escapeString(selector)}'`);
 }
 
 // ── Browse ─────────────────────────────────────────────
@@ -579,7 +585,10 @@ export interface BrowseLocation {
  * the debugger's Browse also ask, so there is one rule for which dictionary owns
  * a class.
  */
-export function fetchBrowseLocation(execute: QueryExecutor, oop: bigint): BrowseLocation | null {
+export async function fetchBrowseLocation(
+  execute: QueryExecutor,
+  oop: bigint,
+): Promise<BrowseLocation | null> {
   const code = `| obj cls dictName out ${DUMP_PAYLOAD_TEMPS} |
 obj := Object _objectForOop: ${oop}.
 cls := obj class theNonMetaClass.
@@ -589,7 +598,7 @@ out nextPutAll: (esc value: dictName);
     nextPutAll: tab;
     nextPutAll: (esc value: cls name asString).
 out contents`;
-  const data = inspectorExecute(execute, code);
+  const data = await inspectorExecute(execute, code);
   if (data === null) return null;
   const [f] = splitDumpRows(data, 2);
   if (!f) return null;

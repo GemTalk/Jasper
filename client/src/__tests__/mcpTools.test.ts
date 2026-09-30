@@ -205,7 +205,7 @@ describe('registerMcpTools', () => {
     });
 
     it('says so even when the tool failed — the session still ended up somewhere', async () => {
-      vi.mocked(queries.executeFetchString).mockImplementation(() => {
+      vi.mocked(queries.executeFetchString).mockImplementation(async () => {
         throw new Error('stone went away');
       });
 
@@ -231,7 +231,7 @@ describe('registerMcpTools', () => {
      * the same behaviour behind a different error shape.
      */
     it('get_method_source reports a method that does not exist rather than answering empty', async () => {
-      vi.mocked(queries.getMethodSource).mockReturnValue('');
+      vi.mocked(queries.getMethodSource).mockResolvedValue('');
 
       const result = await server.getTool('get_method_source')!.handler({
         className: 'Ghost',
@@ -245,7 +245,7 @@ describe('registerMcpTools', () => {
     });
 
     it('get_method_source says which side it looked on', async () => {
-      vi.mocked(queries.getMethodSource).mockReturnValue('');
+      vi.mocked(queries.getMethodSource).mockResolvedValue('');
 
       const instanceSide = await server.getTool('get_method_source')!.handler({
         className: 'Ghost',
@@ -268,7 +268,7 @@ describe('registerMcpTools', () => {
      * so the thrown text starts lower-case to compose into `Error: no class-side …`.
      */
     it('get_method_source words the miss exactly as the mcp-server twin does', async () => {
-      vi.mocked(queries.getMethodSource).mockReturnValue('');
+      vi.mocked(queries.getMethodSource).mockResolvedValue('');
 
       const result = await server.getTool('get_method_source')!.handler({
         className: 'Ghost',
@@ -283,7 +283,7 @@ describe('registerMcpTools', () => {
     });
 
     it('execute_code wraps the code with printString', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('42');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('42');
       const result = await server.getTool('execute_code')!.handler({ code: '6 * 7' });
 
       expect(result.isError).toBeUndefined();
@@ -298,7 +298,7 @@ describe('registerMcpTools', () => {
     // declarations (`| x | x := 42. x + 1`) errored with "expected start of a
     // statement". Block-wrap accepts both shapes.
     it('execute_code block-wraps the input so multi-statement bodies parse', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('43');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('43');
       await server.getTool('execute_code')!.handler({ code: '| x | x := 42. x + 1' });
 
       const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -310,7 +310,7 @@ describe('registerMcpTools', () => {
     // is signaled with ~30 frames of headroom — a minimal handler unwinds
     // cleanly and returns a string the agent can read.
     it('execute_code wraps user code with an AlmostOutOfStack handler', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('ok');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('ok');
       await server.getTool('execute_code')!.handler({ code: '1 + 1' });
 
       const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -318,7 +318,7 @@ describe('registerMcpTools', () => {
     });
 
     it('execute_code wraps user code with an AbstractException handler', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('ok');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('ok');
       await server.getTool('execute_code')!.handler({ code: '1 + 1' });
 
       const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -326,7 +326,7 @@ describe('registerMcpTools', () => {
     });
 
     it('get_class_definition delegates to queries.getClassDefinition', async () => {
-      vi.mocked(queries.getClassDefinition).mockReturnValue('Array definition');
+      vi.mocked(queries.getClassDefinition).mockResolvedValue('Array definition');
       const result = await server.getTool('get_class_definition')!.handler({ className: 'Array' });
 
       expect(queries.getClassDefinition).toHaveBeenCalledWith(session, 'Array');
@@ -334,7 +334,7 @@ describe('registerMcpTools', () => {
     });
 
     it('find_implementors formats results as tab-separated lines', async () => {
-      vi.mocked(queries.implementorsOf).mockReturnValue([
+      vi.mocked(queries.implementorsOf).mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -355,7 +355,7 @@ describe('registerMcpTools', () => {
     // user code in env 1; the env-0-only default left agents staring at
     // "No implementors found" when the method existed all along.
     it('find_implementors auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(queries.implementorsOf).mockReturnValue([]);
+      vi.mocked(queries.implementorsOf).mockResolvedValue([]);
       const result = await server.getTool('find_implementors')!.handler({ selector: 'xyz' });
 
       // Both envs were tried — env 0 first, then env 1 as fallback.
@@ -365,7 +365,7 @@ describe('registerMcpTools', () => {
     });
 
     it('find_implementors short-circuits when env 0 has results (no env-1 call)', async () => {
-      vi.mocked(queries.implementorsOf).mockReturnValueOnce([
+      vi.mocked(queries.implementorsOf).mockResolvedValueOnce([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -383,7 +383,7 @@ describe('registerMcpTools', () => {
     });
 
     it('find_implementors gives a plain empty message when an explicit non-zero env is empty', async () => {
-      vi.mocked(queries.implementorsOf).mockReturnValue([]);
+      vi.mocked(queries.implementorsOf).mockResolvedValue([]);
       const result = await server
         .getTool('find_implementors')!
         .handler({ selector: 'xyz', environmentId: 1 });
@@ -395,7 +395,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_classes delegates to getClassNames with the dictionary name', async () => {
-      vi.mocked(queries.getClassNames).mockReturnValue(['Array', 'String']);
+      vi.mocked(queries.getClassNames).mockResolvedValue(['Array', 'String']);
       const result = await server
         .getTool('list_classes')!
         .handler({ dictionaryName: 'UserGlobals' });
@@ -405,7 +405,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_class passes through the combined text and forwards dictionaryName', async () => {
-      vi.mocked(queries.describeClass).mockReturnValue(
+      vi.mocked(queries.describeClass).mockResolvedValue(
         '=== Definition ===\nObject subclass: #Foo\n',
       );
       const result = await server.getTool('describe_class')!.handler({ className: 'Foo' });
@@ -415,7 +415,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_class scopes to a specific dictionary when provided', async () => {
-      vi.mocked(queries.describeClass).mockReturnValue('');
+      vi.mocked(queries.describeClass).mockResolvedValue('');
       await server.getTool('describe_class')!.handler({
         className: 'Customer',
         dictionaryName: 'UserGlobals',
@@ -425,7 +425,7 @@ describe('registerMcpTools', () => {
     });
 
     it('export_class_source delegates to fileOutClass', async () => {
-      vi.mocked(queries.fileOutClass).mockReturnValue('! file-out source');
+      vi.mocked(queries.fileOutClass).mockResolvedValue('! file-out source');
       const result = await server.getTool('export_class_source')!.handler({ className: 'Foo' });
 
       expect(queries.fileOutClass).toHaveBeenCalledWith(session, 'Foo', undefined);
@@ -433,7 +433,7 @@ describe('registerMcpTools', () => {
     });
 
     it('export_class_source scopes to a specific dictionary when provided', async () => {
-      vi.mocked(queries.fileOutClass).mockReturnValue('');
+      vi.mocked(queries.fileOutClass).mockResolvedValue('');
       await server.getTool('export_class_source')!.handler({
         className: 'Customer',
         dictionaryName: 'UserGlobals',
@@ -443,7 +443,7 @@ describe('registerMcpTools', () => {
     });
 
     it('find_references_to formats results and defaults environmentId to 0', async () => {
-      vi.mocked(queries.referencesToObject).mockReturnValue([
+      vi.mocked(queries.referencesToObject).mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Foo',
@@ -462,7 +462,7 @@ describe('registerMcpTools', () => {
     });
 
     it('find_references_to auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(queries.referencesToObject).mockReturnValue([]);
+      vi.mocked(queries.referencesToObject).mockResolvedValue([]);
       const result = await server.getTool('find_references_to')!.handler({ objectName: 'Missing' });
 
       expect(queries.referencesToObject).toHaveBeenCalledWith(session, 'Missing', 0);
@@ -474,7 +474,7 @@ describe('registerMcpTools', () => {
     // same fallback semantics. Without this assertion a refactor could
     // regress only the senders branch.
     it('find_senders auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(queries.sendersOf).mockReturnValue([]);
+      vi.mocked(queries.sendersOf).mockResolvedValue([]);
       const result = await server.getTool('find_senders')!.handler({ selector: 'unused' });
 
       expect(queries.sendersOf).toHaveBeenCalledWith(session, 'unused', 0);
@@ -483,7 +483,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_all_classes emits dictIndex\\tdictName\\tclassName rows', async () => {
-      vi.mocked(queries.getAllClassNames).mockReturnValue([
+      vi.mocked(queries.getAllClassNames).mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
         { dictIndex: 2, dictName: 'UserGlobals', className: 'MyClass' },
       ]);
@@ -493,7 +493,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_dictionary_entries emits kind\\tcategory\\tname rows', async () => {
-      vi.mocked(queries.getDictionaryEntries).mockReturnValue([
+      vi.mocked(queries.getDictionaryEntries).mockResolvedValue([
         { isClass: true, category: 'accessing', name: 'Array' },
         { isClass: false, category: '', name: 'MyVar' },
       ]);
@@ -506,7 +506,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_dictionary_entries reports empty dictionary with a friendly message', async () => {
-      vi.mocked(queries.getDictionaryEntries).mockReturnValue([]);
+      vi.mocked(queries.getDictionaryEntries).mockResolvedValue([]);
       const result = await server
         .getTool('list_dictionary_entries')!
         .handler({ dictionaryName: 'NoSuchDict' });
@@ -515,14 +515,14 @@ describe('registerMcpTools', () => {
     });
 
     it('list_classes reports unknown/empty dictionary', async () => {
-      vi.mocked(queries.getClassNames).mockReturnValue([]);
+      vi.mocked(queries.getClassNames).mockResolvedValue([]);
       const result = await server.getTool('list_classes')!.handler({ dictionaryName: 'Missing' });
 
       expect(result.content[0].text).toBe('Dictionary not found or empty: Missing');
     });
 
     it('abort runs System abortTransaction', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('Transaction aborted');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('Transaction aborted');
       const result = await server.getTool('abort')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -531,7 +531,7 @@ describe('registerMcpTools', () => {
     });
 
     it('commit runs System commitTransaction', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('committed');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('committed');
       const result = await server.getTool('commit')!.handler({});
 
       const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -543,8 +543,8 @@ describe('registerMcpTools', () => {
     // on both surfaces rather than 'possible conflict'.
     it('commit names what conflicted when the stone refuses', async () => {
       vi.mocked(queries.executeFetchString)
-        .mockReturnValueOnce('refused')
-        .mockReturnValueOnce(WRITE_WRITE_ANSWER);
+        .mockResolvedValueOnce('refused')
+        .mockResolvedValueOnce(WRITE_WRITE_ANSWER);
       const result = await server.getTool('commit')!.handler({});
 
       expect(result.content[0].text).toContain('Commit refused — Write-Write on 2 objects');
@@ -552,7 +552,7 @@ describe('registerMcpTools', () => {
     });
 
     it('compile_method forwards args (escaping happens inside the shared query)', async () => {
-      vi.mocked(queries.compileMethod).mockReturnValue('Compiled: MyClass >> greeting');
+      vi.mocked(queries.compileMethod).mockResolvedValue('Compiled: MyClass >> greeting');
       await server.getTool('compile_method')!.handler({
         className: 'MyClass',
         isMeta: false,
@@ -572,12 +572,12 @@ describe('registerMcpTools', () => {
     });
 
     it('add_dictionary / remove_dictionary / set_class_comment / delete_class / delete_method delegate to queries', async () => {
-      vi.mocked(queries.addDictionary).mockReturnValue('Added dictionary: X');
-      vi.mocked(queries.removeDictionary).mockReturnValue('Removed dictionary: X');
-      vi.mocked(queries.setClassComment).mockReturnValue('Comment set: Foo');
-      vi.mocked(queries.deleteClass).mockReturnValue('Deleted class: Foo');
-      vi.mocked(queries.deleteMethod).mockReturnValue('Deleted: Foo >> bar');
-      vi.mocked(queries.compileClassDefinition).mockReturnValue('Foo');
+      vi.mocked(queries.addDictionary).mockResolvedValue('Added dictionary: X');
+      vi.mocked(queries.removeDictionary).mockResolvedValue('Removed dictionary: X');
+      vi.mocked(queries.setClassComment).mockResolvedValue('Comment set: Foo');
+      vi.mocked(queries.deleteClass).mockResolvedValue('Deleted class: Foo');
+      vi.mocked(queries.deleteMethod).mockResolvedValue('Deleted: Foo >> bar');
+      vi.mocked(queries.compileClassDefinition).mockResolvedValue('Foo');
 
       const adr = await server.getTool('add_dictionary')!.handler({ dictionaryName: 'X' });
       expect(queries.addDictionary).toHaveBeenCalledWith(session, 'X');
@@ -613,10 +613,10 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_method auto-discovers the dictionary and passes it through', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([
         { dictName: 'Globals', className: 'ArrayTest', testCount: 5 },
       ]);
-      vi.mocked(sunit.runTestMethod).mockReturnValue({
+      vi.mocked(sunit.runTestMethod).mockResolvedValue({
         className: 'ArrayTest',
         selector: 'testSize',
         status: 'passed',
@@ -633,7 +633,7 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_method uses an explicit dictionary without discovery', async () => {
-      vi.mocked(sunit.runTestMethod).mockReturnValue({
+      vi.mocked(sunit.runTestMethod).mockResolvedValue({
         className: 'AnnouncerTest',
         selector: 'testFoo',
         status: 'passed',
@@ -656,7 +656,7 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_method auto-refreshes the session view before running', async () => {
-      vi.mocked(sunit.runTestMethod).mockReturnValue({
+      vi.mocked(sunit.runTestMethod).mockResolvedValue({
         className: 'ArrayTest',
         selector: 'testSize',
         status: 'passed',
@@ -673,10 +673,10 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_class auto-discovers the dictionary and formats results', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([
         { dictName: 'Globals', className: 'ArrayTest', testCount: 5 },
       ]);
-      vi.mocked(sunit.runTestClass).mockReturnValue([
+      vi.mocked(sunit.runTestClass).mockResolvedValue([
         {
           className: 'ArrayTest',
           selector: 'testSize',
@@ -701,7 +701,7 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_class refuses to guess when a name is in multiple dictionaries', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([
         { dictName: 'UserGlobals', className: 'AnnouncerTest', testCount: 7 },
         { dictName: 'Globals', className: 'AnnouncerTest', testCount: 19 },
       ]);
@@ -716,7 +716,7 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_class reports when no such test class exists', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([]);
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([]);
       const result = await server.getTool('run_test_class')!.handler({ className: 'NoSuchTest' });
 
       expect(sunit.runTestClass).not.toHaveBeenCalled();
@@ -724,7 +724,7 @@ describe('registerMcpTools', () => {
     });
 
     it('run_test_class auto-refreshes the session view before running', async () => {
-      vi.mocked(sunit.runTestClass).mockReturnValue([]);
+      vi.mocked(sunit.runTestClass).mockResolvedValue([]);
       await server.getTool('run_test_class')!.handler({ className: 'ArrayTest' });
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -732,14 +732,14 @@ describe('registerMcpTools', () => {
     });
 
     it('list_failing_tests returns "All tests passed." when nothing failed', async () => {
-      vi.mocked(sunit.runFailingTests).mockReturnValue([]);
+      vi.mocked(sunit.runFailingTests).mockResolvedValue([]);
       const result = await server.getTool('list_failing_tests')!.handler({});
 
       expect(result.content[0].text).toBe('All tests passed.');
     });
 
     it('list_failing_tests formats failures and errors with status\\tclass\\tselector\\tmessage', async () => {
-      vi.mocked(sunit.runFailingTests).mockReturnValue([
+      vi.mocked(sunit.runFailingTests).mockResolvedValue([
         {
           className: 'MyTest',
           selector: 'testBad',
@@ -762,7 +762,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_failing_tests forwards classNames to the underlying query', async () => {
-      vi.mocked(sunit.runFailingTests).mockReturnValue([]);
+      vi.mocked(sunit.runFailingTests).mockResolvedValue([]);
       await server
         .getTool('list_failing_tests')!
         .handler({ classNames: ['ArrayTest', 'StringTest'] });
@@ -779,14 +779,14 @@ describe('registerMcpTools', () => {
     // forwarded to the shared query, which expands it server-side via
     // GemStone's `String match:` so we still hit the suite in one round-trip.
     it('list_failing_tests forwards classNamePattern to the underlying query', async () => {
-      vi.mocked(sunit.runFailingTests).mockReturnValue([]);
+      vi.mocked(sunit.runFailingTests).mockResolvedValue([]);
       await server.getTool('list_failing_tests')!.handler({ classNamePattern: 'Bytes*TestCase' });
 
       expect(sunit.runFailingTests).toHaveBeenCalledWith(session, undefined, 'Bytes*TestCase');
     });
 
     it('list_failing_tests auto-refreshes the session view before the suite runs', async () => {
-      vi.mocked(sunit.runFailingTests).mockReturnValue([]);
+      vi.mocked(sunit.runFailingTests).mockResolvedValue([]);
       await server.getTool('list_failing_tests')!.handler({});
 
       const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
@@ -794,7 +794,7 @@ describe('registerMcpTools', () => {
     });
 
     it('list_test_classes returns dictName\\tclassName rows', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([
         { dictName: 'UserGlobals', className: 'ArrayTest', testCount: 5 },
         { dictName: 'UserGlobals', className: 'StringTest', testCount: 8 },
       ]);
@@ -804,14 +804,14 @@ describe('registerMcpTools', () => {
     });
 
     it('list_test_classes returns a friendly message when no TestCase subclasses are found', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValue([]);
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValue([]);
       const result = await server.getTool('list_test_classes')!.handler({});
 
       expect(result.content[0].text).toBe('No TestCase subclasses found.');
     });
 
     it('eval_python delegates to python.evalPython with the source string', async () => {
-      vi.mocked(python.evalPython).mockReturnValue('3');
+      vi.mocked(python.evalPython).mockResolvedValue('3');
       const result = await server.getTool('eval_python')!.handler({ source: '1 + 2' });
 
       expect(python.evalPython).toHaveBeenCalledWith(session, '1 + 2');
@@ -821,7 +821,7 @@ describe('registerMcpTools', () => {
     // Tool registers unconditionally; the "Grail not loaded" message comes
     // back from the Smalltalk side as ordinary result text.
     it('eval_python passes the "Grail not detected" hint through verbatim', async () => {
-      vi.mocked(python.evalPython).mockReturnValue(
+      vi.mocked(python.evalPython).mockResolvedValue(
         'Grail (GemStone-Python) not detected: class ModuleAst not found in symbolList. ...',
       );
       const result = await server.getTool('eval_python')!.handler({ source: 'x = 1' });
@@ -831,7 +831,7 @@ describe('registerMcpTools', () => {
     });
 
     it('compile_python delegates to python.compilePython with the source string', async () => {
-      vi.mocked(python.compilePython).mockReturnValue('x := 1');
+      vi.mocked(python.compilePython).mockResolvedValue('x := 1');
       const result = await server.getTool('compile_python')!.handler({ source: 'x = 1' });
 
       expect(python.compilePython).toHaveBeenCalledWith(session, 'x = 1');
@@ -839,7 +839,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_test_failure formats TestFailure output with exceptionClass + messageText', async () => {
-      vi.mocked(sunit.describeTestFailure).mockReturnValue({
+      vi.mocked(sunit.describeTestFailure).mockResolvedValue({
         status: 'failed',
         exceptionClass: 'TestFailure',
         errorNumber: 2751,
@@ -857,7 +857,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_test_failure surfaces mnuReceiver and mnuSelector for MessageNotUnderstood', async () => {
-      vi.mocked(sunit.describeTestFailure).mockReturnValue({
+      vi.mocked(sunit.describeTestFailure).mockResolvedValue({
         status: 'error',
         exceptionClass: 'MessageNotUnderstood',
         errorNumber: 2010,
@@ -875,7 +875,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_test_failure returns "PASSED" when the re-run actually passed', async () => {
-      vi.mocked(sunit.describeTestFailure).mockReturnValue({ status: 'passed' });
+      vi.mocked(sunit.describeTestFailure).mockResolvedValue({ status: 'passed' });
       const result = await server
         .getTool('describe_test_failure')!
         .handler({ className: 'ArrayTest', selector: 'testGood' });
@@ -884,7 +884,7 @@ describe('registerMcpTools', () => {
     });
 
     it('describe_test_failure formats stackReport under a header preserving newlines', async () => {
-      vi.mocked(sunit.describeTestFailure).mockReturnValue({
+      vi.mocked(sunit.describeTestFailure).mockResolvedValue({
         status: 'failed',
         exceptionClass: 'TestFailure',
         errorNumber: 2751,
@@ -905,7 +905,7 @@ describe('registerMcpTools', () => {
     });
 
     it('refresh sends VIEW_REFRESH_CODE and returns what it answered', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('refreshed');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('refreshed');
       const result = await server.getTool('refresh')!.handler({});
 
       expect(vi.mocked(queries.executeFetchString).mock.calls[0][1]).toBe(VIEW_REFRESH_CODE);
@@ -915,7 +915,7 @@ describe('registerMcpTools', () => {
     // What the report contains is pinned once, next to the constant, in
     // mcpSharedText.test.ts; the contract here is only that this server sends it.
     it('status sends SESSION_STATUS_CODE and returns what it answered', async () => {
-      vi.mocked(queries.executeFetchString).mockReturnValue('User: DataCurator\n...');
+      vi.mocked(queries.executeFetchString).mockResolvedValue('User: DataCurator\n...');
       const result = await server.getTool('status')!.handler({});
 
       expect(vi.mocked(queries.executeFetchString).mock.calls[0][1]).toBe(SESSION_STATUS_CODE);
@@ -923,7 +923,7 @@ describe('registerMcpTools', () => {
     });
 
     it('catches errors from queries and returns isError responses', async () => {
-      vi.mocked(queries.executeFetchString).mockImplementation(() => {
+      vi.mocked(queries.executeFetchString).mockImplementation(async () => {
         throw new Error('MessageNotUnderstood');
       });
       const result = await server.getTool('execute_code')!.handler({ code: 'bad code' });
@@ -939,7 +939,7 @@ describe('registerMcpTools', () => {
     expect(missing.isError).toBe(true);
 
     session = makeSession();
-    vi.mocked(queries.executeFetchString).mockReturnValue('1');
+    vi.mocked(queries.executeFetchString).mockResolvedValue('1');
     const present = await server.getTool('execute_code')!.handler({ code: '1' });
     expect(present.isError).toBeUndefined();
   });

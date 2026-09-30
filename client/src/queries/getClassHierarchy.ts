@@ -8,11 +8,11 @@ export interface ClassHierarchyEntry {
   kind: 'superclass' | 'self' | 'subclass';
 }
 
-export function getClassHierarchy(
+export async function getClassHierarchy(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): ClassHierarchyEntry[] {
+): Promise<ClassHierarchyEntry[]> {
   /**
    * In the Smalltalk code below, allSuperclassesOf: returns root-first ([Object, Collection, ...]),
    *  which is the order we want to render — Object at indent 0, the
@@ -45,7 +45,7 @@ stream nextPutAll: (classDict at: class ifAbsent: ['']); tab;
     nextPutAll: each name; tab; nextPutAll: 'subclass'; lf].
 stream contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: ClassHierarchyEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

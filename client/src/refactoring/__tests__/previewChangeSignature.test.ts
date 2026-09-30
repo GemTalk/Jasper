@@ -14,7 +14,7 @@ import {
  */
 
 const asyncExec = () => vi.fn(async (_label: string, code: string) => code);
-const syncExec = () => vi.fn((code: string) => code);
+const syncExec = () => vi.fn(async (code: string) => code);
 
 describe('change-signature query builders', () => {
   it('builds a pre-flight that analyses the method by class, selector, and side', async () => {
@@ -95,10 +95,10 @@ describe('change-signature query builders', () => {
     expect(code).toContain("deselected: #('2' '5')");
   });
 
-  it('clears a finished preview by token', () => {
+  it('clears a finished preview by token', async () => {
     const exec = syncExec();
 
-    const code = clearChangeSignaturePreview(exec, 'tok');
+    const code = await clearChangeSignaturePreview(exec, 'tok');
 
     expect(code).toContain("clearToken: 'tok'");
   });

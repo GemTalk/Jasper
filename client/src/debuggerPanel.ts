@@ -3144,9 +3144,9 @@ export class DebuggerPanel {
     const userOwns = target.byName
       ? this.userBreakAt(target.byName.uri, target.byName.actualLine)
       : false;
-    const setBreak = (): void => {
+    const setBreak = async (): Promise<void> => {
       if (target.byName) {
-        queries.setBreakAtStepPoint(
+        await queries.setBreakAtStepPoint(
           this.session,
           target.byName.className,
           target.byName.isMeta,
@@ -3157,9 +3157,9 @@ export class DebuggerPanel {
         debug.setBreakAtStepPointByOop(this.session, target.homeMethodOop, target.stepPoint);
       }
     };
-    const clearBreak = (): void => {
+    const clearBreak = async (): Promise<void> => {
       if (target.byName) {
-        queries.clearBreakAtStepPoint(
+        await queries.clearBreakAtStepPoint(
           this.session,
           target.byName.className,
           target.byName.isMeta,
@@ -3172,7 +3172,7 @@ export class DebuggerPanel {
     };
 
     try {
-      setBreak();
+      await setBreak();
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.flash('Run to Cursor: could not set a temporary breakpoint — resuming instead.');
@@ -3188,7 +3188,7 @@ export class DebuggerPanel {
     } finally {
       if (!userOwns) {
         try {
-          clearBreak();
+          await clearBreak();
         } catch (e: unknown) {
           logError(this.sessionId, e instanceof Error ? e.message : String(e));
         }
@@ -3764,9 +3764,14 @@ export class DebuggerPanel {
       // Highlight the current step point: from class>>selector offsets for an
       // editable method, or from the method OOP for a read-only doit.
       const range = methodForOffsets
-        ? this.stepPointRange(editor.document, highlightInfo, highlightLevel, methodForOffsets)
+        ? await this.stepPointRange(
+            editor.document,
+            highlightInfo,
+            highlightLevel,
+            methodForOffsets,
+          )
         : readOnlyOffsetMethodOop !== undefined
-          ? this.stepPointRange(
+          ? await this.stepPointRange(
               editor.document,
               highlightInfo,
               highlightLevel,
@@ -4325,13 +4330,13 @@ export class DebuggerPanel {
    * back to the start of the IP's source line when offsets aren't available
    * (e.g. executed-code frames). Returns undefined when there's nothing to mark.
    */
-  private stepPointRange(
+  private async stepPointRange(
     doc: vscode.TextDocument,
     info: debug.FrameInfo,
     level: number,
     method: { className: string; isMeta: boolean; selector: string } | undefined,
     readOnlyMethodOop?: bigint,
-  ): vscode.Range | undefined {
+  ): Promise<vscode.Range | undefined> {
     let pos: vscode.Position | undefined;
 
     // Exact step-point offset → the precise sub-expression start. The offsets
@@ -4346,7 +4351,7 @@ export class DebuggerPanel {
           // 1-BASED (see getStepPointSelectorRanges.ts). doc.positionAt is
           // 0-based, so convert — otherwise the highlight sits one char too far.
           const offsets = method
-            ? queries.getSourceOffsets(
+            ? await queries.getSourceOffsets(
                 this.session,
                 method.className,
                 method.isMeta,

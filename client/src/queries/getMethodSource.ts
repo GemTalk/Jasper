@@ -31,14 +31,14 @@ import { classLookupExpr, escapeString } from './util';
  * themselves are closed by the abort resync (see `afterAbort.ts`); this is the
  * net under everything else that can remove a method.
  */
-export function getMethodSource(
+export async function getMethodSource(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const at =
     environmentId === 0
       ? `compiledMethodAt: #'${escapeString(selector)}' otherwise: nil`
@@ -51,5 +51,5 @@ cls ifNil: [^ ''].
 m := [${isMeta ? 'cls class' : 'cls'} ${at}] on: Error do: [:e | nil].
 m ifNil: [^ ''].
 m sourceString`;
-  return execute(code);
+  return await execute(code);
 }

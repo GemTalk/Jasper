@@ -48,10 +48,10 @@ describe('previewRenameClassVar queries', () => {
     expect(code).toContain('deselected: #()');
   });
 
-  it('clears a finished preview by token', () => {
+  it('clears a finished preview by token', async () => {
     const execute = vi.fn().mockReturnValue('ok');
 
-    clearRenameClassVarPreview(execute, 'tok');
+    await clearRenameClassVarPreview(execute, 'tok');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain("clearToken: 'tok'");

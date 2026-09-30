@@ -115,6 +115,9 @@ export function applyExtractSuperclass(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearExtractSuperclassPreview(execute: QueryExecutor, token: string): string {
-  return execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
+export async function clearExtractSuperclassPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
 }

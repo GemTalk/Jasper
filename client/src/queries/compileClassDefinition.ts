@@ -4,7 +4,10 @@ import { clearClassOrganizerStatement } from './classOrganizer';
 // Execute a class-definition expression (e.g. "Object subclass: 'Foo' ... inDictionary: 'Globals'").
 // The source embeds its own dictionary target, so no dict parameter is needed.
 // Returns the class name on success. Not committed automatically.
-export function compileClassDefinition(execute: QueryExecutor, source: string): string {
+export async function compileClassDefinition(
+  execute: QueryExecutor,
+  source: string,
+): Promise<string> {
   // Wrap so the result is a String (the class name) — GciTsExecuteFetchBytes
   // requires a byte-object result, but class definitions return a Class.
   //
@@ -17,5 +20,5 @@ export function compileClassDefinition(execute: QueryExecutor, source: string): 
 cls := (${source}).
 ${clearClassOrganizerStatement()}
 cls name`;
-  return execute(code);
+  return await execute(code);
 }

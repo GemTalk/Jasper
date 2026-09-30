@@ -54,8 +54,8 @@ export async function reverseClassVarEdit(
   let nowVar;
   let nowAccessors;
   try {
-    nowVar = captureClassVar(execute, entry.slot);
-    nowAccessors = captureMethodSlots(execute, entry.accessorSlots);
+    nowVar = await captureClassVar(execute, entry.slot);
+    nowAccessors = await captureMethodSlots(execute, entry.accessorSlots);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the current state of ${entry.label} ` +
@@ -88,7 +88,7 @@ export async function reverseClassVarEdit(
   // itself — a method that is going anyway is not left behind by it.
   const stranded =
     varOp === 'undeclare'
-      ? strandedMethods(
+      ? await strandedMethods(
           execute,
           entry,
           accessorOps.map((op) => op.slot),
@@ -102,9 +102,9 @@ export async function reverseClassVarEdit(
   const failures: string[] = [];
   const done: string[] = [];
 
-  const reverseVariable = (): void => {
+  const reverseVariable = async (): Promise<void> => {
     if (varOp === null) return;
-    const error = applyClassVarOp(execute, entry.slot, varOp);
+    const error = await applyClassVarOp(execute, entry.slot, varOp);
     if (error !== null) failures.push(`${classVarSlotLabel(entry.slot)}: ${error}`);
     else done.push(varOp === 'declare' ? 'declared the variable again' : 'removed the variable');
   };
@@ -112,11 +112,11 @@ export async function reverseClassVarEdit(
   // Undoing an ADD takes the generated accessors away again, and an editor left open on one
   // of them is a view of a method that is gone -- collected here so its tab can be closed.
   const removedAccessors: MethodSlot[] = [];
-  const reverseAccessors = (): void => {
+  const reverseAccessors = async (): Promise<void> => {
     if (accessorOps.length === 0) return;
     let results;
     try {
-      results = applyMethodSlotOps(execute, accessorOps);
+      results = await applyMethodSlotOps(execute, accessorOps);
     } catch (e: unknown) {
       failures.push(`accessors: ${e instanceof Error ? e.message : String(e)}`);
       return;
@@ -130,11 +130,11 @@ export async function reverseClassVarEdit(
   };
 
   if (varOp === 'declare') {
-    reverseVariable();
-    reverseAccessors();
+    await reverseVariable();
+    await reverseAccessors();
   } else {
-    reverseAccessors();
-    reverseVariable();
+    await reverseAccessors();
+    await reverseVariable();
   }
 
   await refreshExplorer();
@@ -181,14 +181,14 @@ export async function reverseClassVarEdit(
  * both hold to the rule that undo must not be the reason an operation cannot run. The cost
  * of a missed warning is the state the user is already in without this check at all.
  */
-function strandedMethods(
+async function strandedMethods(
   execute: ReturnType<typeof defaultQueryExecutorUsing>,
   entry: ClassVarEditUndoEntry,
   removing: MethodSlot[],
-): MethodSlot[] {
+): Promise<MethodSlot[]> {
   let referencing: MethodSlot[];
   try {
-    referencing = methodsReferencingClassVar(execute, entry.slot);
+    referencing = await methodsReferencingClassVar(execute, entry.slot);
   } catch (e: unknown) {
     logInfo(
       `[undo] could not scan for methods referencing ${classVarSlotLabel(entry.slot)}: ` +

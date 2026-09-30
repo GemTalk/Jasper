@@ -337,7 +337,7 @@ describe('onMethodCompiled event subscription (functional)', () => {
   });
 
   it('handleMethodCompiled is invoked when new-method is compiled', async () => {
-    vi.mocked(queries.compileMethod).mockReturnValueOnce('Compiled: Array >> foo');
+    vi.mocked(queries.compileMethod).mockResolvedValueOnce('Compiled: Array >> foo');
 
     const makeSession = (id = 1) => ({
       id,
@@ -362,7 +362,7 @@ describe('onMethodCompiled event subscription (functional)', () => {
     );
     const source = 'foo\n  ^42';
 
-    provider.writeFile(newMethodUri, new TextEncoder().encode(source), {
+    await provider.writeFile(newMethodUri, new TextEncoder().encode(source), {
       create: true,
       overwrite: true,
     });
@@ -535,7 +535,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
     );
-    const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+    const commit = vi.fn(async () => ({ success: true, err: { number: 0, message: '' } }));
 
     const decision = await extension.confirmLogoutWithUncommittedChanges(
       3,
@@ -552,7 +552,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
     );
-    const commit = vi.fn(() => ({
+    const commit = vi.fn(async () => ({
       success: false,
       err: { number: 4001, message: 'no privilege' },
     }));
@@ -580,7 +580,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
     );
-    const commit = vi.fn(() => ({
+    const commit = vi.fn(async () => ({
       success: false,
       err: {
         number: 2738,
@@ -686,7 +686,7 @@ describe('confirmLogoutWithUncommittedChanges', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Commit & Logout' as unknown as vscode.MessageItem,
     );
-    const commit = vi.fn(() => ({ success: true, err: { number: 0, message: '' } }));
+    const commit = vi.fn(async () => ({ success: true, err: { number: 0, message: '' } }));
 
     const decision = await extension.confirmLogoutWithUncommittedChanges(
       3,

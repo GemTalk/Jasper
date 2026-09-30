@@ -113,7 +113,7 @@ export class CodeExecutor {
     this.clearOverlay();
   }
 
-  private setExecuting(sessionId: number, busy: boolean): void {
+  private async setExecuting(sessionId: number, busy: boolean): Promise<void> {
     if (busy) {
       this.executing.add(sessionId);
     } else {
@@ -126,7 +126,7 @@ export class CodeExecutor {
       // session rows are not left describing the session as it was before the
       // expression ran. One small doit per execution, against a session that has
       // just paid for a round trip of its own.
-      this.sessionManager.refreshTransactionState(sessionId);
+      await this.sessionManager.refreshTransactionState(sessionId);
     }
     const isExecuting = this.executing.size > 0;
     vscode.commands.executeCommand('setContext', 'gemstone.executing', isExecuting);
@@ -186,7 +186,7 @@ export class CodeExecutor {
     const execRange = new vscode.Range(selection.start, selection.end);
     editor.setDecorations(executingDecorationType, [execRange]);
 
-    this.setExecuting(session.id, true);
+    await this.setExecuting(session.id, true);
     // Run interpreted (native code off) so a halt/error is steppable in the
     // debugger — GemStone can't step native code (error 6014), and the process
     // must START interpreted. Debug It adds the single-step flag so the server
@@ -284,7 +284,7 @@ export class CodeExecutor {
       // fails quietly, and runs again once the call is collected; see
       // pollForCompletion.)
       appendTranscriptOutput(await endClientForwarderMode(session));
-      this.setExecuting(session.id, false);
+      await this.setExecuting(session.id, false);
     }
   }
 
@@ -514,7 +514,7 @@ export class CodeExecutor {
     }
 
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
-    this.setExecuting(session.id, true);
+    await this.setExecuting(session.id, true);
     appendTranscriptOutput(await startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
@@ -554,7 +554,7 @@ export class CodeExecutor {
       throw e instanceof Error ? e : new Error(msg);
     } finally {
       appendTranscriptOutput(await endClientForwarderMode(session));
-      this.setExecuting(session.id, false);
+      await this.setExecuting(session.id, false);
     }
   }
 
@@ -824,7 +824,7 @@ export class CodeExecutor {
       editor.setDecorations(executingDecorationType, [editor.selection]);
     }
 
-    this.setExecuting(session.id, true);
+    await this.setExecuting(session.id, true);
     // clientForwarder mode for the duration; see execute() above.
     appendTranscriptOutput(await startClientForwarderMode(session, code));
     try {
@@ -868,7 +868,7 @@ export class CodeExecutor {
         editor.setDecorations(executingDecorationType, []);
       }
       appendTranscriptOutput(await endClientForwarderMode(session));
-      this.setExecuting(session.id, false);
+      await this.setExecuting(session.id, false);
     }
   }
 }

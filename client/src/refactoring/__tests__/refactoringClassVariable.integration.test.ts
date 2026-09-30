@@ -38,24 +38,26 @@ describe('rename class variable (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const rbEnginePresent = (): boolean =>
-    exec(
-      "(System myUserProfile symbolList objectNamed: 'GsRenameClassVariableRefactoring') notNil printString",
+  const rbEnginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        "(System myUserProfile symbolList objectNamed: 'GsRenameClassVariableRefactoring') notNil printString",
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'RCVItBase';
   const SUB = 'RCVItSub';
@@ -64,23 +66,23 @@ describe('rename class variable (integration)', () => {
   // A base class owning the `Rate` class variable, referenced from an instance
   // method, a class-side method, and a subclass method — so the rename must reach
   // both sides across the hierarchy — with a non-nil shared value set on it.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #(Rate) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', 'accrue\n\t^Rate');
-    q.compileMethod(session(), BASE, true, 'defaults', 'resetRate\n\tRate := 0');
-    q.compileClassDefinition(
+    await q.compileMethod(session(), BASE, false, 'accessing', 'accrue\n\t^Rate');
+    await q.compileMethod(session(), BASE, true, 'defaults', 'resetRate\n\tRate := 0');
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), SUB, false, 'accessing', 'useRate\n\t^Rate');
+    await q.compileMethod(session(), SUB, false, 'accessing', 'useRate\n\t^Rate');
     // End with a byte-object (String) result: executeFetchString fetches the result
     // as bytes, and `value: 42` answers the association, which is not a byte object.
-    exec(`(${BASE} _classVars associationAt: #Rate) value: 42. 'ok'`);
+    await exec(`(${BASE} _classVars associationAt: #Rate) value: 42. 'ok'`);
   };
 
   // A separate fixture proving the SHADOWING exclusion: a class owning `Counter`
@@ -88,43 +90,43 @@ describe('rename class variable (integration)', () => {
   // captured by a same-named method temporary (`shadow`) — which must NOT be
   // rewritten. A non-nil shared value is set so an apply can be checked to leave
   // the shadowing method's source untouched.
-  const defineShadowFixture = (): void => {
-    exec(
+  const defineShadowFixture = async (): Promise<void> => {
+    await exec(
       `Object subclass: '${SHADOW_BASE}' instVarNames: #() classVars: #(Counter) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
-    exec(
+    await exec(
       `${SHADOW_BASE} compileMethod: 'bump Counter := (Counter ifNil: [0]) + 1' ` +
         "dictionaries: System myUserProfile symbolList category: 'accessing'. true printString",
     );
     // Resume the shadow warning so the fixture still installs.
-    exec(
+    await exec(
       `[${SHADOW_BASE} compileMethod: 'shadow | Counter | Counter := 5. ^Counter' ` +
         "dictionaries: System myUserProfile symbolList category: 'accessing'] " +
         'on: CompileWarning do: [:ex | ex resume: nil]. true printString',
     );
-    exec(`(${SHADOW_BASE} _classVars associationAt: #Counter) value: 7. true printString`);
+    await exec(`(${SHADOW_BASE} _classVars associationAt: #Counter) value: 7. true printString`);
   };
 
-  it('reports rename-class-variable engine availability matching the shared refactoring probe', () => {
-    expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports rename-class-variable engine availability matching the shared refactoring probe', async () => {
+    expect(await rbEnginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the rename-class-variable GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the rename-class-variable GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('previews the rename across both sides and the subclass, and stages the class-def edit', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const start = parseStartPreview(
       await startRenameClassVarPreview(
@@ -134,7 +136,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
         'Multiplier',
         `rcvit-${BASE}`,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -152,11 +154,11 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('applies the rename server-side, preserving the value and creating no new version', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `rcvit-apply-${BASE}`;
-    const historyBefore = exec(`${BASE} classHistory size printString`).trim();
+    const historyBefore = (await exec(`${BASE} classHistory size printString`)).trim();
 
     await startRenameClassVarPreview(
       asyncExec,
@@ -165,32 +167,40 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
       'Multiplier',
       token,
       PREVIEW_PAGE_BYTES,
-      userIndex(),
+      await userIndex(),
     );
     const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
 
     expect(result.failed).toEqual([]);
-    expect(exec(`(${BASE} classVarNames includes: #Multiplier) printString`).trim()).toBe('true');
-    expect(exec(`(${BASE} classVarNames includes: #Rate) printString`).trim()).toBe('false');
-    // The shared value carried across (a naive class-def recompile would drop it).
-    expect(exec(`(${BASE} _classVars associationAt: #Multiplier) value printString`).trim()).toBe(
-      '42',
+    expect((await exec(`(${BASE} classVarNames includes: #Multiplier) printString`)).trim()).toBe(
+      'true',
     );
+    expect((await exec(`(${BASE} classVarNames includes: #Rate) printString`)).trim()).toBe(
+      'false',
+    );
+    // The shared value carried across (a naive class-def recompile would drop it).
+    expect(
+      (await exec(`(${BASE} _classVars associationAt: #Multiplier) value printString`)).trim(),
+    ).toBe('42');
     // A class-variable change makes no new class version — the [n] tag is unchanged.
-    expect(exec(`${BASE} classHistory size printString`).trim()).toBe(historyBefore);
+    expect((await exec(`${BASE} classHistory size printString`)).trim()).toBe(historyBefore);
     // References were rewritten, both sides and in the subclass.
     expect(
-      exec(`(${BASE} compiledMethodAt: #accrue environmentId: 0 otherwise: nil) sourceString`),
+      await exec(
+        `(${BASE} compiledMethodAt: #accrue environmentId: 0 otherwise: nil) sourceString`,
+      ),
     ).toContain('Multiplier');
     expect(
-      exec(`(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`),
+      await exec(
+        `(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`,
+      ),
     ).toContain('Multiplier');
   });
 
   it('rewrites a genuine reference but leaves a shadowing method temporary unstaged in the preview', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineShadowFixture();
+    await defineShadowFixture();
 
     const start = parseStartPreview(
       await startRenameClassVarPreview(
@@ -200,7 +210,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
         'Tally',
         `rcvit-shadow-${SHADOW_BASE}`,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -211,9 +221,9 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('leaves the shadowing method source unchanged after applying the rename', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineShadowFixture();
+    await defineShadowFixture();
     const token = `rcvit-shadow-apply-${SHADOW_BASE}`;
 
     await startRenameClassVarPreview(
@@ -223,14 +233,14 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
       'Tally',
       token,
       PREVIEW_PAGE_BYTES,
-      userIndex(),
+      await userIndex(),
     );
     const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
 
     expect(result.failed).toEqual([]);
     // The shadowing method was never rewritten, so it still names its own temporary.
     expect(
-      exec(
+      await exec(
         `(${SHADOW_BASE} compiledMethodAt: #shadow environmentId: 0 otherwise: nil) sourceString`,
       ),
     ).toContain('Counter');
@@ -244,38 +254,38 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   // probes are pure base image (classVarNames / superclass / symbolList), so they
   // are NOT gated on the refactoring engine — they run in both CI passes.
 
-  it('resolves a class variable inherited by a subclass to its defining class and dictionary', () => {
-    defineFixture();
+  it('resolves a class variable inherited by a subclass to its defining class and dictionary', async () => {
+    await defineFixture();
 
-    expect(q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex())).toEqual({
+    expect(await q.getDefiningClassOfClassVar(session(), SUB, 'Rate', await userIndex())).toEqual({
       className: BASE,
-      dictIndex: userIndex(),
+      dictIndex: await userIndex(),
     });
   });
 
-  it('resolves a class variable to its declaring class even when asked from that class', () => {
-    defineFixture();
-
-    expect(q.getDefiningClassOfClassVar(session(), BASE, 'Rate', userIndex())?.className).toBe(
-      BASE,
-    );
-  });
-
-  it('answers undefined for a word that is not a visible class variable', () => {
-    defineFixture();
+  it('resolves a class variable to its declaring class even when asked from that class', async () => {
+    await defineFixture();
 
     expect(
-      q.getDefiningClassOfClassVar(session(), SUB, 'NotAClassVar', userIndex()),
+      (await q.getDefiningClassOfClassVar(session(), BASE, 'Rate', await userIndex()))?.className,
+    ).toBe(BASE);
+  });
+
+  it('answers undefined for a word that is not a visible class variable', async () => {
+    await defineFixture();
+
+    expect(
+      await q.getDefiningClassOfClassVar(session(), SUB, 'NotAClassVar', await userIndex()),
     ).toBeUndefined();
   });
 
   it('renames an inherited class variable across the hierarchy when retargeted to its defining class', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     // Resolve the defining class the way the editor command does when the cursor is
     // on `Rate` in a SUB method, then run the rename against THAT class.
-    const defining = q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex());
+    const defining = await q.getDefiningClassOfClassVar(session(), SUB, 'Rate', await userIndex());
     if (!defining) throw new Error('expected Rate to resolve to its defining class');
     const token = `rcvit-retarget-${BASE}`;
 
@@ -291,10 +301,14 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
     const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
 
     expect(result.failed).toEqual([]);
-    expect(exec(`(${BASE} classVarNames includes: #Multiplier) printString`).trim()).toBe('true');
+    expect((await exec(`(${BASE} classVarNames includes: #Multiplier) printString`)).trim()).toBe(
+      'true',
+    );
     // The inherited-referencing subclass method now reads the renamed class variable.
     expect(
-      exec(`(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`),
+      await exec(
+        `(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`,
+      ),
     ).toContain('Multiplier');
   });
 });

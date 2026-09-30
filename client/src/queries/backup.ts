@@ -16,24 +16,25 @@ export const GEMSTONE_BACKUP_EXTENSION = '.dbf';
 
 // `fullBackupTo:` requires the FileControl privilege; without it the stone
 // raises a raw GCI error. Pre-flighting lets us stop with a clear message.
-export function hasFileControlPrivilege(execute: QueryExecutor): boolean {
+export async function hasFileControlPrivilege(execute: QueryExecutor): Promise<boolean> {
   return (
-    execute('(System myUserProfile privileges includes: #FileControl) printString').trim() ===
-    'true'
+    (
+      await execute('(System myUserProfile privileges includes: #FileControl) printString')
+    ).trim() === 'true'
   );
 }
 
 // A logical backup aborts the session; `fullBackupTo:` refuses outright
 // (rtErrAbortWouldLoseData) when the session holds uncommitted changes. Pre-flight
 // so we can warn the user before anything is discarded.
-export function sessionNeedsCommit(execute: QueryExecutor): boolean {
-  return execute('System needsCommit printString').trim() === 'true';
+export async function sessionNeedsCommit(execute: QueryExecutor): Promise<boolean> {
+  return (await execute('System needsCommit printString')).trim() === 'true';
 }
 
 // Discard the session's uncommitted changes so the subsequent backup won't be
 // refused. Only call this after the user has explicitly consented to lose them.
-export function abortTransaction(execute: QueryExecutor): void {
-  execute("System abortTransaction. 'aborted'");
+export async function abortTransaction(execute: QueryExecutor): Promise<void> {
+  await execute("System abortTransaction. 'aborted'");
 }
 
 /**
@@ -51,12 +52,14 @@ export function abortTransaction(execute: QueryExecutor): void {
  *   an explicit error: there's nothing this function can do with an answer it
  *   doesn't understand.
  */
-export function serverFileExists(execute: QueryExecutor, filePath: string): boolean {
+export async function serverFileExists(execute: QueryExecutor, filePath: string): Promise<boolean> {
   return (
-    execute(
-      `(GsFile existsOnServer: '${escapeString(filePath)}')
+    (
+      await execute(
+        `(GsFile existsOnServer: '${escapeString(filePath)}')
        ifNil: [ self error: 'Failed to check if a file exists on the server' ]
        ifNotNil: [ :exists | exists printString ]`,
+      )
     ).trim() === 'true'
   );
 }
@@ -109,7 +112,10 @@ ok ifTrue: ['OK'] ifFalse: ['fullBackupTo: returned false']`;
  * @param execute - runs the query synchronously against the session.
  * @param folder - the server-side backups directory, as from backupFolderInServer.
  */
-export function serverBackupFilePaths(execute: QueryExecutor, folder: string): string[] {
+export async function serverBackupFilePaths(
+  execute: QueryExecutor,
+  folder: string,
+): Promise<string[]> {
   const code = `
     | backupPaths backupFiles result |
      backupPaths := (GsFile contentsOfDirectory: '${escapeString(folder)}' onClient: false)
@@ -124,5 +130,5 @@ export function serverBackupFilePaths(execute: QueryExecutor, folder: string): s
 
      result contents`;
 
-  return splitLines(execute(code));
+  return splitLines(await execute(code));
 }

@@ -42,24 +42,26 @@ describe('rename temporary/argument (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const rbEnginePresent = (): boolean =>
-    exec(
-      "(System myUserProfile symbolList objectNamed: 'GsRenameTemporaryRefactoring') notNil printString",
+  const rbEnginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        "(System myUserProfile symbolList objectNamed: 'GsRenameTemporaryRefactoring') notNil printString",
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'RTItBase';
 
@@ -68,42 +70,42 @@ describe('rename temporary/argument (integration)', () => {
   // Renaming the outer temporary must rewrite its own occurrences (x := 1,
   // value: x + x) and leave the block parameter (:x, x + 1) alone.
   const SOURCE = 'shadowTemp\n\t| x |\n\tx := 1.\n\t^[:x | x + 1] value: x + x';
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
+    await q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
   };
 
   // The 1-based source offset of the OUTER temporary (its `x := 1` occurrence).
-  const outerOffset = (): number => {
-    const src = exec(
+  const outerOffset = async (): Promise<number> => {
+    const src = await exec(
       `(${BASE} compiledMethodAt: #shadowTemp environmentId: 0 otherwise: nil) sourceString`,
     );
     return src.indexOf('x :=') + 1;
   };
 
-  it('reports rename-temporary engine availability matching the shared refactoring probe', () => {
-    expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports rename-temporary engine availability matching the shared refactoring probe', async () => {
+    expect(await rbEnginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the rename-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the rename-temporary GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('previews the single method recompile, renaming the outer temporary only', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const start = parseStartPreview(
       await startRenameTemporaryPreview(
@@ -113,10 +115,10 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
         false,
         'x',
         'y',
-        outerOffset(),
+        await outerOffset(),
         `rtit-${BASE}`,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -133,9 +135,9 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
   });
 
   it('applies the rename server-side, rewriting only the outer temporary', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `rtit-apply-${BASE}`;
 
     await startRenameTemporaryPreview(
@@ -145,16 +147,16 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
       false,
       'x',
       'y',
-      outerOffset(),
+      await outerOffset(),
       token,
       PREVIEW_PAGE_BYTES,
-      userIndex(),
+      await userIndex(),
     );
     const result = parseApplyResult(await applyRenameTemporary(asyncExec, token, 'test undo'));
 
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
-    const src = exec(
+    const src = await exec(
       `(${BASE} compiledMethodAt: #shadowTemp environmentId: 0 otherwise: nil) sourceString`,
     );
     expect(src).toContain('y := 1');

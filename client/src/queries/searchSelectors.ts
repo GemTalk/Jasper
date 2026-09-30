@@ -130,14 +130,17 @@ export function parseSelectorSearchResults(raw: string): SelectorSearchResult[] 
   return results;
 }
 
-export function searchSelectors(
+export async function searchSelectors(
   execute: QueryExecutor,
   term: string,
   opts: SelectorSearchOptions,
-): SelectorSearchResult[] {
+): Promise<SelectorSearchResult[]> {
   // The server caps each TIER at `limit`, so up to 3 × `limit` rows can come back. Keep the first
   // `limit` of them: the rows arrive best tier first, so this drops the least relevant matches rather
   // than the last-visited ones, and `limit` keeps its documented meaning for every caller.
   const limit = Math.max(1, Math.trunc(opts.limit));
-  return parseSelectorSearchResults(execute(buildSelectorSearchCode(term, opts))).slice(0, limit);
+  return parseSelectorSearchResults(await execute(buildSelectorSearchCode(term, opts))).slice(
+    0,
+    limit,
+  );
 }

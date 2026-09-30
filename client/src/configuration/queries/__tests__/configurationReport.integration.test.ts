@@ -26,7 +26,7 @@ describe('configuration report round-trip (integration)', () => {
     session = ctx.session;
   });
 
-  const execute = (code: string) => gci.executeAndFetchString(session, code);
+  const execute = async (code: string) => gci.executeAndFetchString(session, code);
   const TYPES = ['boolean', 'integer', 'string', 'other'];
 
   const assertWellFormed = (entries: ConfigEntry[]) => {
@@ -43,20 +43,20 @@ describe('configuration report round-trip (integration)', () => {
     }
   };
 
-  it('reads and parses the live stone report', () => {
-    const entries = parseConfigReport(execute(buildStoneReportCode()));
+  it('reads and parses the live stone report', async () => {
+    const entries = parseConfigReport(await execute(buildStoneReportCode()));
     assertWellFormed(entries);
     // Every stone report carries this runtime parameter.
     expect(entries.some((e) => e.key === 'StnMaxSessions')).toBe(true);
   });
 
-  it('reads and parses the live gem report', () => {
-    const entries = parseConfigReport(execute(buildGemReportCode()));
+  it('reads and parses the live gem report', async () => {
+    const entries = parseConfigReport(await execute(buildGemReportCode()));
     assertWellFormed(entries);
   });
 
-  it('answers whether the session is SystemUser as a real boolean', () => {
-    expect(typeof sessionIsSystemUser(execute)).toBe('boolean');
+  it('answers whether the session is SystemUser as a real boolean', async () => {
+    expect(typeof (await sessionIsSystemUser(execute))).toBe('boolean');
   });
 
   // The tests below run the *setter* doit on the stone. Nothing here is
@@ -65,32 +65,40 @@ describe('configuration report round-trip (integration)', () => {
   // `messageText` behind the error sentinel, is the stone's answer to give.
 
   /** The gem's current value for a key, read back through the real report. */
-  const gemValue = (key: string): string => {
-    const entry = parseConfigReport(execute(buildGemReportCode())).find((e) => e.key === key);
+  const gemValue = async (key: string): Promise<string> => {
+    const entry = parseConfigReport(await execute(buildGemReportCode())).find((e) => e.key === key);
     expect(entry, `the gem report should carry ${key}`).toBeDefined();
     return entry!.value;
   };
 
-  it('sets a gem parameter and is told OK by the stone', () => {
+  it('sets a gem parameter and is told OK by the stone', async () => {
     // Set the parameter to the value it already holds, so a green run changes
     // nothing about the gem it borrowed. What is under test is that the emitted
     // doit compiles and evaluates — not that the number moves.
     const before = gemValue('GemHaltOnError');
-    expect(setConfiguration(execute, 'gem', 'GemHaltOnError', 'integer', before)).toEqual({
+    expect(
+      await setConfiguration(execute, 'gem', 'GemHaltOnError', 'integer', await before),
+    ).toEqual({
       ok: true,
     });
-    expect(gemValue('GemHaltOnError')).toBe(before);
+    expect(await gemValue('GemHaltOnError')).toBe(await before);
   });
 
-  it('reports the stone refusing a stone parameter, in the stone words', () => {
+  it('reports the stone refusing a stone parameter, in the stone words', async () => {
     // Stone parameters are SystemUser-only, and the harness logs in as
     // DataCurator — so this is the refusal path the panel shows beside the row,
     // end to end: the doit catches the SecurityError, the sentinel carries its
     // messageText back, and setConfiguration unwraps it.
-    expect(sessionIsSystemUser(execute)).toBe(false);
-    const entries = parseConfigReport(execute(buildStoneReportCode()));
+    expect(await sessionIsSystemUser(execute)).toBe(false);
+    const entries = parseConfigReport(await execute(buildStoneReportCode()));
     const timeout = entries.find((e) => e.key === 'StnGemTimeout')!;
-    const result = setConfiguration(execute, 'stone', 'StnGemTimeout', 'integer', timeout.value);
+    const result = await setConfiguration(
+      execute,
+      'stone',
+      'StnGemTimeout',
+      'integer',
+      timeout.value,
+    );
     expect(result.ok).toBe(false);
     expect(result.message).toBeDefined();
     expect(result.message).not.toBe('');

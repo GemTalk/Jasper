@@ -300,20 +300,20 @@ export class ConfigurationPanel {
     );
   }
 
-  private handleMessage(msg: Inbound): void {
+  private async handleMessage(msg: Inbound): Promise<void> {
     switch (msg.command) {
       case 'ready':
       case 'loadConfiguration':
-        this.loadConfiguration();
+        await this.loadConfiguration();
         return;
       case 'setConfiguration':
-        this.setConfiguration(msg.scope, msg.key, msg.valueType, msg.value);
+        await this.setConfiguration(msg.scope, msg.key, msg.valueType, msg.value);
         return;
       case 'undoConfiguration':
-        this.stepHistory('undo');
+        await this.stepHistory('undo');
         return;
       case 'redoConfiguration':
-        this.stepHistory('redo');
+        await this.stepHistory('redo');
         return;
       case 'copyText':
         void vscode.env.clipboard.writeText(msg.text);
@@ -326,14 +326,14 @@ export class ConfigurationPanel {
    * panel. A busy or dropped session, or a report that raises, becomes a
    * `configurationError` the panel can show rather than a thrown rejection.
    */
-  private loadConfiguration(): void {
+  private async loadConfiguration(): Promise<void> {
     const session = this.deps.sessionManager.getSession(this.sessionId);
     if (!session) {
       this.configurationError('No GemStone session is selected. Log in and try again.');
       return;
     }
     try {
-      this.postConfiguration(this.readConfiguration(session));
+      this.postConfiguration(await this.readConfiguration(session));
       // A reopened-then-reloaded panel draws its own buttons from this, so the
       // state travels with every load rather than only with a change.
       this.postHistory();
@@ -365,11 +365,11 @@ export class ConfigurationPanel {
   }
 
   /** Read both reports for a session and shape them for the panel. */
-  private readConfiguration(session: ActiveSession): ConfigurationPayload {
+  private async readConfiguration(session: ActiveSession): Promise<ConfigurationPayload> {
     const execute = defaultQueryExecutorUsing(session);
-    const isSystemUser = sessionIsSystemUser(execute);
-    const stone = stoneConfiguration(execute);
-    const gem = gemConfiguration(execute);
+    const isSystemUser = await sessionIsSystemUser(execute);
+    const stone = await stoneConfiguration(execute);
+    const gem = await gemConfiguration(execute);
     const descriptions = this.configDescriptions(session.login.version);
     return {
       sessionId: session.id,
@@ -393,13 +393,13 @@ export class ConfigurationPanel {
    * Redo history: from here on, the branch that was undone is no longer the one
    * the session is on.
    */
-  private setConfiguration(
+  private async setConfiguration(
     scope: ConfigScope,
     key: string,
     valueType: ConfigValueType,
     value: string,
-  ): void {
-    const outcome = this.applySet(scope, key, valueType, value);
+  ): Promise<void> {
+    const outcome = await this.applySet(scope, key, valueType, value);
     const { before, settled } = outcome;
     // Recorded on the step the set actually took, NOT on `took` — see
     // {@link stepTaken} for why, and for what that still excludes.
@@ -436,7 +436,7 @@ export class ConfigurationPanel {
    * true: putting `from` back would discard the newer change instead of
    * reversing this panel's.
    */
-  private stepHistory(direction: 'undo' | 'redo'): void {
+  private async stepHistory(direction: 'undo' | 'redo'): Promise<void> {
     const history = direction === 'undo' ? this.undoHistory : this.redoHistory;
     const change = history[history.length - 1];
     if (!change) return;
@@ -465,7 +465,13 @@ export class ConfigurationPanel {
       return;
     }
 
-    const outcome = this.applySet(change.scope, change.key, change.valueType, target, direction);
+    const outcome = await this.applySet(
+      change.scope,
+      change.key,
+      change.valueType,
+      target,
+      direction,
+    );
     const { before, settled } = outcome;
     // "It moved" rather than "it obeyed", by the same rule a hand-typed change
     // is recorded under — see {@link stepTaken}. A stone that clamps lands
@@ -502,13 +508,13 @@ export class ConfigurationPanel {
    * same standard of "it worked"; `origin` only changes how the change reads in
    * the sysadmin log and in the banner beside the row.
    */
-  private applySet(
+  private async applySet(
     scope: ConfigScope,
     key: string,
     valueType: ConfigValueType,
     value: string,
     origin: 'set' | 'undo' | 'redo' = 'set',
-  ): SetOutcome {
+  ): Promise<SetOutcome> {
     const session = this.deps.sessionManager.getSession(this.sessionId);
     if (!session) {
       this.configurationError('No GemStone session is selected. Log in and try again.');
@@ -517,7 +523,7 @@ export class ConfigurationPanel {
     const before = this.lastValueOf(scope, key);
     try {
       const execute = defaultQueryExecutorUsing(session);
-      const result = setSessionConfiguration(execute, scope, key, valueType, value);
+      const result = await setSessionConfiguration(execute, scope, key, valueType, value);
       if (!result.ok) {
         // A refused set is not a panel-wide failure — it belongs beside the row
         // the user was editing, with the stone's own words.
@@ -529,7 +535,7 @@ export class ConfigurationPanel {
           `${scope} configuration ${key} = ${value}`,
       );
 
-      const config = this.readConfiguration(session);
+      const config = await this.readConfiguration(session);
       this.postConfiguration(config);
 
       const settled = (scope === 'stone' ? config.stoneParams : config.gemParams).find(

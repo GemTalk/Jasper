@@ -64,10 +64,10 @@ beforeEach(() => {
   // clearAllMocks clears call history but NOT implementations, so re-establish the
   // benign defaults each test (a per-test mockReturnValue would otherwise leak into
   // the next test under the suite's randomized order).
-  vi.mocked(queries.addClassVariable).mockReturnValue('ok');
-  vi.mocked(queries.getVisibleClassVarNames).mockReturnValue([]);
-  vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
-  vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
+  vi.mocked(queries.addClassVariable).mockResolvedValue('ok');
+  vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue([]);
+  vi.mocked(queries.addAccessors).mockResolvedValue({ created: 2, skipped: 0, noClass: false });
+  vi.mocked(queries.getClassEnvironments).mockResolvedValue([]);
   vi.mocked(vscode.window.showQuickPick).mockResolvedValue('No accessors' as never);
   resetUndoStacks();
   // mockReset, not clearAllMocks: clearing a mock leaves its `...Once` queue in place, so a
@@ -76,12 +76,12 @@ beforeEach(() => {
   vi.mocked(captureMethodSlots).mockReset();
   // Not declared before the add, declared after it — what the recorder reads either side.
   vi.mocked(captureClassVar)
-    .mockReturnValueOnce({ defined: false })
-    .mockReturnValue({ defined: true });
+    .mockResolvedValueOnce({ defined: false })
+    .mockResolvedValue({ defined: true });
   // Absent on the way in, present on the way out — what the stone reads either side of an
   // add that actually compiled the accessors.
   captureCalls = 0;
-  vi.mocked(captureMethodSlots).mockImplementation((_e, slots) => {
+  vi.mocked(captureMethodSlots).mockImplementation(async (_e, slots) => {
     captureCalls += 1;
     return slots.map((slot) =>
       captureCalls === 1
@@ -105,7 +105,7 @@ describe('ExplorerController add class variable', () => {
   it('refuses a name already visible on the class instead of a silent no-op', async () => {
     const { ctl } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
-    vi.mocked(queries.getVisibleClassVarNames).mockReturnValue(['Registry']);
+    vi.mocked(queries.getVisibleClassVarNames).mockResolvedValue(['Registry']);
 
     await ctl.addClassVarOnClass('Foo');
 
@@ -182,7 +182,7 @@ describe('ExplorerController add class variable', () => {
   it('records nothing when the class could not be resolved', async () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
-    vi.mocked(queries.addClassVariable).mockReturnValue('no-class');
+    vi.mocked(queries.addClassVariable).mockResolvedValue('no-class');
 
     await ctl.addClassVarOnClass('Foo');
 
@@ -195,7 +195,7 @@ describe('ExplorerController add class variable', () => {
     const { ctl, refresh, reveal } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
-    vi.mocked(queries.addClassVariable).mockReturnValue('no-class');
+    vi.mocked(queries.addClassVariable).mockResolvedValue('no-class');
 
     await ctl.addClassVarOnClass('Foo');
 
@@ -240,7 +240,7 @@ describe('ExplorerController add accessors (standalone row action)', () => {
   it('records nothing when every accessor already existed', async () => {
     // Nothing was compiled, so there is nothing to take away.
     const { ctl } = makeController({ id: 1 } as ActiveSession);
-    vi.mocked(queries.addAccessors).mockReturnValue({ created: 0, skipped: 2, noClass: false });
+    vi.mocked(queries.addAccessors).mockResolvedValue({ created: 0, skipped: 2, noClass: false });
 
     await ctl.generateAccessorsFor('Foo', 'count', 'ivar');
 
@@ -249,7 +249,7 @@ describe('ExplorerController add accessors (standalone row action)', () => {
 
   it('records nothing when the class could not be resolved', async () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
-    vi.mocked(queries.addAccessors).mockReturnValue({ created: 0, skipped: 0, noClass: true });
+    vi.mocked(queries.addAccessors).mockResolvedValue({ created: 0, skipped: 0, noClass: true });
 
     await ctl.generateAccessorsFor('Foo', 'count', 'ivar');
 

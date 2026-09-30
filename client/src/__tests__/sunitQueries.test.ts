@@ -27,9 +27,9 @@ function createMockSession(executeFetchData = ''): ActiveSession {
 
 describe('sunitQueries', () => {
   describe('discoverTestClasses', () => {
-    it('parses tab-separated dictName/className/testCount rows', () => {
+    it('parses tab-separated dictName/className/testCount rows', async () => {
       const session = createMockSession('UserGlobals\tMyTestCase\t7\nGlobals\tOtherTest\t19\n');
-      const results = sunit.discoverTestClasses(session);
+      const results = await sunit.discoverTestClasses(session);
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
         dictName: 'UserGlobals',
@@ -39,60 +39,60 @@ describe('sunitQueries', () => {
       expect(results[1]).toEqual({ dictName: 'Globals', className: 'OtherTest', testCount: 19 });
     });
 
-    it('emits the per-class test count from the query', () => {
+    it('emits the per-class test count from the query', async () => {
       const session = createMockSession('');
-      sunit.discoverTestClasses(session);
+      await sunit.discoverTestClasses(session);
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain('testSelectors size');
     });
 
-    it('keeps a genuine zero count distinct from a missing one', () => {
+    it('keeps a genuine zero count distinct from a missing one', async () => {
       const session = createMockSession('UserGlobals\tEmptyTest\t0\n');
-      const results = sunit.discoverTestClasses(session);
+      const results = await sunit.discoverTestClasses(session);
       expect(results[0].testCount).toBe(0);
     });
 
-    it('parses a bad/missing/negative test count as null (never negative or NaN)', () => {
+    it('parses a bad/missing/negative test count as null (never negative or NaN)', async () => {
       const session = createMockSession(
         'A\tMissing\t\n' + // empty count field
           'B\tNonNumeric\tabc\n' + // not a number
           'C\tNegative\t-5\n' + // negative (impossible for a real count)
           'D\tFraction\t3.9\n', // non-integer
       );
-      const results = sunit.discoverTestClasses(session);
+      const results = await sunit.discoverTestClasses(session);
       expect(results.map((r) => r.testCount)).toEqual([null, null, null, null]);
     });
 
-    it('parses the dictionary index so callers can build ?dict=N URIs', () => {
+    it('parses the dictionary index so callers can build ?dict=N URIs', async () => {
       const session = createMockSession('UserGlobals\tMyTestCase\t7\t3\n');
-      expect(sunit.discoverTestClasses(session)[0].dictIndex).toBe(3);
+      expect((await sunit.discoverTestClasses(session))[0].dictIndex).toBe(3);
     });
 
-    it('leaves the dictionary index undefined when the stone sends no usable one', () => {
+    it('leaves the dictionary index undefined when the stone sends no usable one', async () => {
       const session = createMockSession(
         'A\tMissing\t1\t\n' + // empty index field
           'B\tNonNumeric\t1\tabc\n' + // not a number
           'C\tZero\t1\t0\n', // 0 — SymbolList indexes are 1-based
       );
-      const results = sunit.discoverTestClasses(session);
+      const results = await sunit.discoverTestClasses(session);
       expect(results.map((r) => r.dictIndex)).toEqual([undefined, undefined, undefined]);
     });
 
-    it('reads the dictionary index from the symbol list position', () => {
+    it('reads the dictionary index from the symbol list position', async () => {
       const session = createMockSession('');
-      sunit.discoverTestClasses(session);
+      await sunit.discoverTestClasses(session);
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain('1 to: sl size do:');
     });
 
-    it('returns empty array when no test classes exist', () => {
+    it('returns empty array when no test classes exist', async () => {
       const session = createMockSession('');
-      expect(sunit.discoverTestClasses(session)).toEqual([]);
+      expect(await sunit.discoverTestClasses(session)).toEqual([]);
     });
 
-    it('executes Smalltalk code that finds TestCase subclasses', () => {
+    it('executes Smalltalk code that finds TestCase subclasses', async () => {
       const session = createMockSession('');
-      sunit.discoverTestClasses(session);
+      await sunit.discoverTestClasses(session);
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain('TestCase');
       expect(code).toContain('isSubclassOf');
@@ -100,23 +100,23 @@ describe('sunitQueries', () => {
   });
 
   describe('discoverTestMethods', () => {
-    it('parses selector and category', () => {
+    it('parses selector and category', async () => {
       const session = createMockSession('testAdd\tunit tests\ntestRemove\ttesting\n');
-      const results = sunit.discoverTestMethods(session, 'MyTestCase');
+      const results = await sunit.discoverTestMethods(session, 'MyTestCase');
       expect(results).toEqual([
         { selector: 'testAdd', category: 'unit tests' },
         { selector: 'testRemove', category: 'testing' },
       ]);
     });
 
-    it('returns empty array when no test methods', () => {
+    it('returns empty array when no test methods', async () => {
       const session = createMockSession('');
-      expect(sunit.discoverTestMethods(session, 'MyTestCase')).toEqual([]);
+      expect(await sunit.discoverTestMethods(session, 'MyTestCase')).toEqual([]);
     });
 
-    it('handles missing category gracefully', () => {
+    it('handles missing category gracefully', async () => {
       const session = createMockSession('testFoo\t\n');
-      const results = sunit.discoverTestMethods(session, 'MyTestCase');
+      const results = await sunit.discoverTestMethods(session, 'MyTestCase');
       expect(results).toEqual([{ selector: 'testFoo', category: '' }]);
     });
 
@@ -125,9 +125,9 @@ describe('sunitQueries', () => {
     // also pins the nil-guard that protects against a missing class.
     it.each(['UserGlobals', 'Globals'])(
       'resolves the class dictionary-scoped (%s) and guards a missing class',
-      (dict) => {
+      async (dict) => {
         const session = createMockSession('');
-        sunit.discoverTestMethods(session, 'AnnouncerTest', dict);
+        await sunit.discoverTestMethods(session, 'AnnouncerTest', dict);
         const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock
           .calls[0][1];
         expect(code).toContain(`objectNamed: #'${dict}'`);
@@ -140,9 +140,9 @@ describe('sunitQueries', () => {
   });
 
   describe('runTestMethod', () => {
-    it('parses a passing test result', () => {
+    it('parses a passing test result', async () => {
       const session = createMockSession('passed\t\t42');
-      const result = sunit.runTestMethod(session, 'MyTestCase', 'testAdd');
+      const result = await sunit.runTestMethod(session, 'MyTestCase', 'testAdd');
       expect(result).toEqual({
         className: 'MyTestCase',
         selector: 'testAdd',
@@ -152,9 +152,9 @@ describe('sunitQueries', () => {
       });
     });
 
-    it('parses a failed test result', () => {
+    it('parses a failed test result', async () => {
       const session = createMockSession('failed\tExpected 3 but got 4\t15');
-      const result = sunit.runTestMethod(session, 'MyTestCase', 'testAdd');
+      const result = await sunit.runTestMethod(session, 'MyTestCase', 'testAdd');
       expect(result).toEqual({
         className: 'MyTestCase',
         selector: 'testAdd',
@@ -164,9 +164,9 @@ describe('sunitQueries', () => {
       });
     });
 
-    it('parses an error test result', () => {
+    it('parses an error test result', async () => {
       const session = createMockSession('error\tMessageNotUnderstood: #foo\t8');
-      const result = sunit.runTestMethod(session, 'MyTestCase', 'testBad');
+      const result = await sunit.runTestMethod(session, 'MyTestCase', 'testBad');
       expect(result).toEqual({
         className: 'MyTestCase',
         selector: 'testBad',
@@ -176,9 +176,9 @@ describe('sunitQueries', () => {
       });
     });
 
-    it('handles malformed response gracefully', () => {
+    it('handles malformed response gracefully', async () => {
       const session = createMockSession('');
-      const result = sunit.runTestMethod(session, 'MyTestCase', 'testBad');
+      const result = await sunit.runTestMethod(session, 'MyTestCase', 'testBad');
       expect(result.status).toBe('error');
       expect(result.durationMs).toBe(0);
     });
@@ -189,9 +189,9 @@ describe('sunitQueries', () => {
     // post-run debug recipe). Build through a String-class WriteStream and
     // call encodeAsUTF8 at the boundary; that's the canonical GemStone pattern
     // for "internal storage → transfer protocol."
-    it('captures live exception class + messageText (no testCase run framework)', () => {
+    it('captures live exception class + messageText (no testCase run framework)', async () => {
       const session = createMockSession('');
-      sunit.runTestMethod(session, 'MyTestCase', 'testBad');
+      await sunit.runTestMethod(session, 'MyTestCase', 'testBad');
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain('on: AbstractException');
       expect(code).toContain('testCase setUp');
@@ -209,9 +209,9 @@ describe('sunitQueries', () => {
 
     it.each(['UserGlobals', 'Globals'])(
       'resolves dictionary-scoped (%s) and raises if the class is absent there',
-      (dict) => {
+      async (dict) => {
         const session = createMockSession('passed\t\t1');
-        sunit.runTestMethod(session, 'AnnouncerTest', 'testFoo', dict);
+        await sunit.runTestMethod(session, 'AnnouncerTest', 'testFoo', dict);
         const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock
           .calls[0][1];
         expect(code).toContain(`objectNamed: #'${dict}'`);
@@ -224,7 +224,7 @@ describe('sunitQueries', () => {
   });
 
   describe('runTestClass', () => {
-    it('parses multiple test results', () => {
+    it('parses multiple test results', async () => {
       const payload =
         [
           'MyTestCase\ttestAdd\tpassed\t',
@@ -232,7 +232,7 @@ describe('sunitQueries', () => {
           'MyTestCase\ttestBad\terror\tMessageNotUnderstood',
         ].join('\n') + '\n';
       const session = createMockSession(payload);
-      const results = sunit.runTestClass(session, 'MyTestCase');
+      const results = await sunit.runTestClass(session, 'MyTestCase');
       expect(results).toHaveLength(3);
       expect(results[0]).toEqual({
         className: 'MyTestCase',
@@ -257,18 +257,18 @@ describe('sunitQueries', () => {
       });
     });
 
-    it('returns empty array when no results', () => {
+    it('returns empty array when no results', async () => {
       const session = createMockSession('');
-      expect(sunit.runTestClass(session, 'MyTestCase')).toEqual([]);
+      expect(await sunit.runTestClass(session, 'MyTestCase')).toEqual([]);
     });
 
     // Bug guard: probe of GemStone's SUnit revealed that `result failures`
     // and `result errors` contain TestCase instances (only `testSelector`
     // ivar) — they don't respond to `#testCase`. The query must not send it
     // (would silently DNU on real failures).
-    it('does not send #testCase to failure/error wrappers', () => {
+    it('does not send #testCase to failure/error wrappers', async () => {
       const session = createMockSession('');
-      sunit.runTestClass(session, 'MyTestCase');
+      await sunit.runTestClass(session, 'MyTestCase');
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).not.toMatch(/testCase\s+class\s+name/);
       expect(code).not.toMatch(/testCase\s+selector/);
@@ -278,9 +278,9 @@ describe('sunitQueries', () => {
     // own AbstractException handler so the message column carries the live
     // exception's class + messageText, not `each printString` (the SUnit
     // debug recipe). Passed tests don't re-run.
-    it('captures live exception class + messageText for failures and errors via re-run', () => {
+    it('captures live exception class + messageText for failures and errors via re-run', async () => {
       const session = createMockSession('');
-      sunit.runTestClass(session, 'MyTestCase');
+      await sunit.runTestClass(session, 'MyTestCase');
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain('captureMessage');
       expect(code).toContain('on: AbstractException');
@@ -299,9 +299,9 @@ describe('sunitQueries', () => {
       expect(code).not.toContain('asInteger < 128');
     });
 
-    it('runs the suite of the dictionary-scoped class, not a bare name', () => {
+    it('runs the suite of the dictionary-scoped class, not a bare name', async () => {
       const session = createMockSession('');
-      sunit.runTestClass(session, 'AnnouncerTest', 'Globals');
+      await sunit.runTestClass(session, 'AnnouncerTest', 'Globals');
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain("objectNamed: #'Globals'");
       expect(code).toContain("at: #'AnnouncerTest'");
@@ -311,21 +311,21 @@ describe('sunitQueries', () => {
       expect(code).not.toMatch(/suite := AnnouncerTest suite/);
     });
 
-    it('falls back to bare-name lookup when no dictionary is given', () => {
+    it('falls back to bare-name lookup when no dictionary is given', async () => {
       const session = createMockSession('');
-      sunit.runTestClass(session, 'MyTestCase');
+      await sunit.runTestClass(session, 'MyTestCase');
       const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
       expect(code).toContain("objectNamed: #'MyTestCase'");
     });
   });
 
   describe('runFailingTests', () => {
-    it('parses failed/errored tab-separated rows', () => {
+    it('parses failed/errored tab-separated rows', async () => {
       const session = createMockSession(
         'MyTestCase\ttestFails\tfailed\tTestFailure: nope\n' +
           'MyTestCase\ttestBad\terror\tMessageNotUnderstood: boom\n',
       );
-      const results = sunit.runFailingTests(session);
+      const results = await sunit.runFailingTests(session);
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
         className: 'MyTestCase',
@@ -363,18 +363,18 @@ describe('sunitQueries', () => {
   });
 
   describe('error handling', () => {
-    it('throws SunitQueryError on GCI error', () => {
+    it('throws SunitQueryError on GCI error', async () => {
       const session = createMockSession('');
       (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mockImplementation(() => {
         throw new Error('TestCase not found');
       });
-      expect(() => sunit.discoverTestClasses(session)).toThrow('TestCase not found');
+      await expect(sunit.discoverTestClasses(session)).rejects.toThrow('TestCase not found');
     });
 
-    it('throws SunitQueryError when session is busy', () => {
+    it('throws SunitQueryError when session is busy', async () => {
       const session = createMockSession('');
       (session.gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({ result: 1 });
-      expect(() => sunit.discoverTestClasses(session)).toThrow('Session is busy');
+      await expect(sunit.discoverTestClasses(session)).rejects.toThrow('Session is busy');
     });
   });
 });

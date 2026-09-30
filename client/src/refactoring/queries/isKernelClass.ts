@@ -8,10 +8,10 @@ import { escapeString } from '../../queries/util';
 // for ordinary user classes, so it can't distinguish kernel from user code.)
 // Renaming a kernel class is hazardous — pervasive references, and some kernel
 // histories are deliberately size 1 — so the Explorer warns before proceeding.
-export function isKernelClass(execute: QueryExecutor, name: string): boolean {
+export async function isKernelClass(execute: QueryExecutor, name: string): Promise<boolean> {
   const esc = escapeString(name);
   const code = `| c |
 c := System myUserProfile symbolList objectNamed: #'${esc}'.
 (c notNil and: [c isBehavior and: [(Globals at: #'${esc}' ifAbsent: [nil]) == c]]) printString`;
-  return execute(code).trim() === 'true';
+  return (await execute(code)).trim() === 'true';
 }

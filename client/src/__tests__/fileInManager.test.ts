@@ -287,7 +287,7 @@ describe('FileInManager', () => {
   describe('handleFileCreate', () => {
     let tmpDir: string;
     let exportRoot: string;
-    let createHandler: (e: { files: vscode.Uri[] }) => void;
+    let createHandler: (e: { files: vscode.Uri[] }) => Promise<void>;
 
     beforeEach(() => {
       tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'filein-test-'));
@@ -296,7 +296,7 @@ describe('FileInManager', () => {
       manager = new FileInManager(mockSessionManager, mockExportManager);
 
       (vscode.workspace.onDidCreateFiles as ReturnType<typeof vi.fn>).mockImplementation(
-        (handler: (e: { files: vscode.Uri[] }) => void) => {
+        (handler: (e: { files: vscode.Uri[] }) => Promise<void>) => {
           createHandler = handler;
           return { dispose: () => {} };
         },
@@ -313,63 +313,63 @@ describe('FileInManager', () => {
       return { scheme: 'file', fsPath } as unknown as vscode.Uri;
     }
 
-    it('populates an empty .gs file with template', () => {
+    it('populates an empty .gs file with template', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toContain("Object subclass: 'MyClass'");
       expect(content).toContain('inDictionary: UserGlobals');
     });
 
-    it('extracts dictionary name from numbered directory', () => {
+    it('extracts dictionary name from numbered directory', async () => {
       const dictDir = path.join(exportRoot, '3-Published');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'Account.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toContain('inDictionary: Published');
       expect(content).toContain("Object subclass: 'Account'");
     });
 
-    it('skips non-empty files', () => {
+    it('skips non-empty files', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, 'existing content', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toBe('existing content');
     });
 
-    it('skips non-.gs files with an extension', () => {
+    it('skips non-.gs files with an extension', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'notes.txt');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toBe('');
     });
 
-    it('appends .gs and populates template when file has no extension', () => {
+    it('appends .gs and populates template when file has no extension', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       expect(fs.existsSync(filePath)).toBe(false);
       const renamed = filePath + '.gs';
@@ -378,34 +378,34 @@ describe('FileInManager', () => {
       expect(content).toContain("Object subclass: 'MyClass'");
     });
 
-    it('skips files outside export root', () => {
+    it('skips files outside export root', async () => {
       const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'other-'));
       const dictDir = path.join(otherDir, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toBe('');
       fs.rmSync(otherDir, { recursive: true, force: true });
     });
 
-    it('uses raw directory name as dict name when no numeric prefix', () => {
+    it('uses raw directory name as dict name when no numeric prefix', async () => {
       const dictDir = path.join(exportRoot, 'UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toContain('inDictionary: UserGlobals');
       expect(content).toContain("Object subclass: 'MyClass'");
     });
 
-    it('skips when isWriting is true', () => {
+    it('skips when isWriting is true', async () => {
       Object.defineProperty(mockExportManager, 'isWriting', {
         get: () => true,
         configurable: true,
@@ -416,32 +416,32 @@ describe('FileInManager', () => {
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toBe('');
     });
 
-    it('skips non-file scheme URIs', () => {
+    it('skips non-file scheme URIs', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'MyClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
       const uri = { scheme: 'gemstone', fsPath: filePath } as unknown as vscode.Uri;
-      createHandler({ files: [uri] });
+      await createHandler({ files: [uri] });
 
       const content = fs.readFileSync(filePath, 'utf-8');
       expect(content).toBe('');
     });
 
-    it('files in the template and refreshes the browser', () => {
+    it('files in the template and refreshes the browser', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'NewClass.gs');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       expect(fileInClass).toHaveBeenCalledWith(
         mockSession,
@@ -450,13 +450,13 @@ describe('FileInManager', () => {
       expect(SystemBrowser.refresh).toHaveBeenCalledWith(mockSession.id);
     });
 
-    it('files in and refreshes browser when file has no extension', () => {
+    it('files in and refreshes browser when file has no extension', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'James');
       fs.writeFileSync(filePath, '', 'utf-8');
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       expect(fileInClass).toHaveBeenCalledWith(
         mockSession,
@@ -465,7 +465,7 @@ describe('FileInManager', () => {
       expect(SystemBrowser.refresh).toHaveBeenCalledWith(mockSession.id);
     });
 
-    it('closes the stale tab when file is renamed to .gs', () => {
+    it('closes the stale tab when file is renamed to .gs', async () => {
       const dictDir = path.join(exportRoot, '1-UserGlobals');
       fs.mkdirSync(dictDir, { recursive: true });
       const filePath = path.join(dictDir, 'James');
@@ -478,21 +478,21 @@ describe('FileInManager', () => {
         close: mockClose,
       };
 
-      createHandler({ files: [createUri(filePath)] });
+      await createHandler({ files: [createUri(filePath)] });
 
       expect(mockClose).toHaveBeenCalledWith(mockTab);
     });
   });
 
   describe('handleFileDelete', () => {
-    let deleteHandler: (e: { files: vscode.Uri[] }) => void;
+    let deleteHandler: (e: { files: vscode.Uri[] }) => Promise<void>;
 
     beforeEach(() => {
       mockExportManager = createMockExportManager();
       manager = new FileInManager(mockSessionManager, mockExportManager);
 
       (vscode.workspace.onDidDeleteFiles as ReturnType<typeof vi.fn>).mockImplementation(
-        (handler: (e: { files: vscode.Uri[] }) => void) => {
+        (handler: (e: { files: vscode.Uri[] }) => Promise<void>) => {
           deleteHandler = handler;
           return { dispose: () => {} };
         },
@@ -505,9 +505,9 @@ describe('FileInManager', () => {
       return { scheme: 'file', fsPath } as unknown as vscode.Uri;
     }
 
-    it('removes class from GemStone when .gs file is deleted', () => {
+    it('removes class from GemStone when .gs file is deleted', async () => {
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).toHaveBeenCalledWith(mockSession, 1, 'MyClass');
       // Drop the (already-deleted) class from the persisted mirror state too.
@@ -520,18 +520,18 @@ describe('FileInManager', () => {
       expect(SystemBrowser.refresh).toHaveBeenCalledWith(mockSession.id);
     });
 
-    it('records the removal, so Undo can put the dictionary back (#434)', () => {
+    it('records the removal, so Undo can put the dictionary back (#434)', async () => {
       // Deleting the mirror directory is the same destructive act as the Explorer's Remove
       // Dictionary, and gets the same way back -- including the POSITION it held.
       resetUndoStacks();
-      vi.mocked(captureDictionary).mockReturnValue({
+      vi.mocked(captureDictionary).mockResolvedValue({
         present: true,
         name: 'Published',
         index: 3,
       });
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/3-Published';
 
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       const entry = peekUndoEntry(mockSession.id);
       expect(entry).toMatchObject({
@@ -551,26 +551,26 @@ describe('FileInManager', () => {
       );
     });
 
-    it('records nothing when the removal itself failed', () => {
+    it('records nothing when the removal itself failed', async () => {
       resetUndoStacks();
-      vi.mocked(captureDictionary).mockReturnValue({
+      vi.mocked(captureDictionary).mockResolvedValue({
         present: true,
         name: 'Published',
         index: 3,
       });
-      vi.mocked(queries.removeDictionary).mockImplementationOnce(() => {
+      vi.mocked(queries.removeDictionary).mockImplementationOnce(async () => {
         throw new Error('boom');
       });
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/3-Published';
 
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(undoStackDepth(mockSession.id)).toBe(0);
     });
 
-    it('removes dictionary from GemStone when directory is deleted', () => {
+    it('removes dictionary from GemStone when directory is deleted', async () => {
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/3-Published';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.removeDictionary).toHaveBeenCalledWith(mockSession, 3);
       // Reconcile the mirror after the dictionary is gone.
@@ -578,90 +578,90 @@ describe('FileInManager', () => {
       expect(SystemBrowser.refresh).toHaveBeenCalledWith(mockSession.id);
     });
 
-    it('skips files outside export root', () => {
+    it('skips files outside export root', async () => {
       const fsPath = '/other/path/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).not.toHaveBeenCalled();
       expect(queries.removeDictionary).not.toHaveBeenCalled();
     });
 
-    it('skips when isWriting is true', () => {
+    it('skips when isWriting is true', async () => {
       Object.defineProperty(mockExportManager, 'isWriting', {
         get: () => true,
         configurable: true,
       });
 
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).not.toHaveBeenCalled();
     });
 
-    it('skips non-file scheme URIs', () => {
+    it('skips non-file scheme URIs', async () => {
       const uri = {
         scheme: 'gemstone',
         fsPath: '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals/MyClass.gs',
       } as unknown as vscode.Uri;
-      deleteHandler({ files: [uri] });
+      await deleteHandler({ files: [uri] });
 
       expect(queries.deleteClass).not.toHaveBeenCalled();
     });
 
-    it('skips when no session matches the path', () => {
+    it('skips when no session matches the path', async () => {
       const fsPath = '/workspace/gemstone/otherhost/otherstone/otheruser/1-Dict/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).not.toHaveBeenCalled();
     });
 
-    it('skips directories that are not recognized dictionaries', () => {
+    it('skips directories that are not recognized dictionaries', async () => {
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/notes';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.removeDictionary).not.toHaveBeenCalled();
     });
 
-    it('looks up dict index by name for directories without numeric prefix', () => {
+    it('looks up dict index by name for directories without numeric prefix', async () => {
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/UserGlobals/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).toHaveBeenCalledWith(mockSession, 1, 'MyClass');
     });
 
-    it('shows error when class deletion fails', () => {
+    it('shows error when class deletion fails', async () => {
       // Once-only: a sticky mockImplementation here survives the suite's
       // clearAllMocks() and makes deleteClass throw in every later test under
       // sequence.shuffle (breaking the happy-path removeClassFile assertions).
-      vi.mocked(queries.deleteClass).mockImplementationOnce(() => {
+      vi.mocked(queries.deleteClass).mockImplementationOnce(async () => {
         throw new Error('GCI error');
       });
 
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals/MyClass.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining('Failed to remove class'),
       );
     });
 
-    it('shows error when dictionary deletion fails', () => {
+    it('shows error when dictionary deletion fails', async () => {
       // Once-only — see the note on the class-deletion test above.
-      vi.mocked(queries.removeDictionary).mockImplementationOnce(() => {
+      vi.mocked(queries.removeDictionary).mockImplementationOnce(async () => {
         throw new Error('GCI error');
       });
 
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/1-UserGlobals';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining('Failed to remove dictionary'),
       );
     });
 
-    it('parses multi-digit dictionary index correctly', () => {
+    it('parses multi-digit dictionary index correctly', async () => {
       const fsPath = '/workspace/gemstone/localhost/gs64stone/DataCurator/12-Published/Account.gs';
-      deleteHandler({ files: [createUri(fsPath)] });
+      await deleteHandler({ files: [createUri(fsPath)] });
 
       expect(queries.deleteClass).toHaveBeenCalledWith(mockSession, 12, 'Account');
     });

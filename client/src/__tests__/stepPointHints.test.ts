@@ -6,17 +6,19 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // delegates to the three separate mocks so every test keeps setting up its
 // method the same way, one fact at a time.
 vi.mock('../browserQueries', () => {
-  const getMethodSource = vi.fn(() => '');
-  const getSourceOffsets = vi.fn((): number[] => []);
-  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  const getMethodSource = vi.fn(async () => '');
+  const getSourceOffsets = vi.fn(async (): Promise<number[]> => []);
+  const getStepPointSelectorRanges = vi.fn(async (): Promise<unknown[]> => []);
   return {
     getMethodSource,
     getSourceOffsets,
     getStepPointSelectorRanges,
-    getStepPointBundle: vi.fn((...args: unknown[]) => ({
-      source: (getMethodSource as (...a: unknown[]) => string)(...args),
-      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
-      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    getStepPointBundle: vi.fn(async (...args: unknown[]) => ({
+      source: await (getMethodSource as (...a: unknown[]) => Promise<string>)(...args),
+      offsets: await (getSourceOffsets as (...a: unknown[]) => Promise<number[]>)(...args),
+      selectors: await (getStepPointSelectorRanges as (...a: unknown[]) => Promise<unknown[]>)(
+        ...args,
+      ),
     })),
   };
 });
@@ -109,34 +111,36 @@ describe('StepPointHintsProvider', () => {
 
   beforeEach(() => {
     __resetConfig();
-    mockGetMethodSource.mockReset().mockReturnValue(SOURCE);
+    mockGetMethodSource.mockReset().mockResolvedValue(SOURCE);
     // step points at 0-based 10 ('^') and 16 ('basicAt:')
-    mockGetSourceOffsets.mockReset().mockReturnValue([11, 17]);
-    mockGetRanges.mockReset().mockReturnValue([]);
+    mockGetSourceOffsets.mockReset().mockResolvedValue([11, 17]);
+    mockGetRanges.mockReset().mockResolvedValue([]);
     debug.activeDebugSession = undefined;
   });
 
-  it('draws nothing when numbering is off', () => {
-    expect(makeProvider('off').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
+  it('draws nothing when numbering is off', async () => {
+    expect(await makeProvider('off').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
   });
 
-  it('draws nothing outside a debug session when set to debugging', () => {
-    expect(makeProvider('debugging').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
+  it('draws nothing outside a debug session when set to debugging', async () => {
+    expect(
+      await makeProvider('debugging').provideInlayHints(makeDocument(), WHOLE),
+    ).toBeUndefined();
   });
 
-  it('draws while a debug session is live when set to debugging', () => {
+  it('draws while a debug session is live when set to debugging', async () => {
     debug.activeDebugSession = { id: 'x' };
-    const hints = makeProvider('debugging').provideInlayHints(makeDocument(), WHOLE);
+    const hints = await makeProvider('debugging').provideInlayHints(makeDocument(), WHOLE);
     expect(hints).toHaveLength(2);
   });
 
-  it('numbers each step point from one', () => {
-    const hints = makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
+  it('numbers each step point from one', async () => {
+    const hints = await makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
     expect(hints?.map((h) => (h.label as { value: string }[])[0].value)).toEqual(['1', '2']);
   });
 
-  it('makes each number a clickable breakpoint toggle for its own step point', () => {
-    const hints = makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
+  it('makes each number a clickable breakpoint toggle for its own step point', async () => {
+    const hints = await makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
     const parts = hints!.map(
       (h) => (h.label as { command?: { command: string; arguments: unknown[] } }[])[0],
     );
@@ -145,8 +149,8 @@ describe('StepPointHintsProvider', () => {
     expect(parts[1].command?.arguments).toEqual([{ uri: METHOD_URI, stepPoint: 2 }]);
   });
 
-  it('offers a way back out of the numbered view in the hover', () => {
-    const hints = makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
+  it('offers a way back out of the numbered view in the hover', async () => {
+    const hints = await makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
     const tooltip = (hints![0].label as { tooltip: { value: string; isTrusted: unknown } }[])[0]
       .tooltip;
     expect(tooltip.value).toContain('Step point **1** of 2');
@@ -158,18 +162,18 @@ describe('StepPointHintsProvider', () => {
     });
   });
 
-  it('only draws the step points inside the requested range', () => {
+  it('only draws the step points inside the requested range', async () => {
     // Offsets 0..12 covers the '^' step point (10) but not 'basicAt:' (16).
     const narrow = range(0, 0, 1, 2);
-    const hints = makeProvider('always').provideInlayHints(makeDocument(), narrow);
+    const hints = await makeProvider('always').provideInlayHints(makeDocument(), narrow);
     expect(hints?.map((h) => (h.label as { value: string }[])[0].value)).toEqual(['1']);
   });
 
-  it('draws nothing for a method whose step points cannot be read', () => {
+  it('draws nothing for a method whose step points cannot be read', async () => {
     mockGetMethodSource.mockImplementation(() => {
       throw new Error('gone');
     });
-    expect(makeProvider('always').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
+    expect(await makeProvider('always').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
   });
 
   // Writing a setting is slow enough that a second call lands mid-await — a

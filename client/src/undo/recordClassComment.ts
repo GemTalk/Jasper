@@ -40,13 +40,13 @@ export interface ClassCommentRecording {
  * A comment that cannot be read cannot be put back, and an entry that would write the
  * empty string over the user's earlier text is worse than no entry at all.
  */
-export function beginClassCommentEdit(
+export async function beginClassCommentEdit(
   session: ActiveSession,
   slot: ClassSlot,
-): ClassCommentRecording | undefined {
+): Promise<ClassCommentRecording | undefined> {
   let before: string;
   try {
-    before = getStoredClassComment(session, slot.className, slot.dict);
+    before = await getStoredClassComment(session, slot.className, slot.dict);
   } catch (e: unknown) {
     logInfo(
       `[undo] comment capture failed, save will not be undoable: ` +

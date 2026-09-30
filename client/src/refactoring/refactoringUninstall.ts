@@ -102,7 +102,7 @@ export async function uninstallRefactoringSupport(
   onProgress('Removing the refactoring engine…', 60);
   await yieldToEventLoop();
   try {
-    executeFetchString(session, REMOVAL_SNIPPET);
+    await executeFetchString(session, REMOVAL_SNIPPET);
   } catch (e: unknown) {
     safeAbort(session);
     return {
@@ -128,7 +128,7 @@ export async function uninstallRefactoringSupport(
 
   onProgress('Verifying…', 20);
   await yieldToEventLoop();
-  const stillPresent = checkRefactoringSupportAvailable(session);
+  const stillPresent = await checkRefactoringSupportAvailable(session);
   return {
     success: !stillPresent,
     committed: true,

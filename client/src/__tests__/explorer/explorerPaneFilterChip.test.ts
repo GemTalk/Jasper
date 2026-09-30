@@ -45,20 +45,20 @@ describe.each([
   { name: 'Class Categories', view: VIEW_CATEGORIES, provider: 'categoryProvider' as const },
   { name: 'Classes', view: VIEW_CLASSES, provider: 'classProvider' as const },
 ])('$name pane filter chip', ({ view, provider }) => {
-  it('leads the root with a filter chip carrying the pane view id while filtering', () => {
+  it('leads the root with a filter chip carrying the pane view id while filtering', async () => {
     const ctl = makeController();
     setFilter(ctl, view, 'a');
 
-    const rows = ctl[provider].getChildren();
+    const rows = await ctl[provider].getChildren();
 
     expect(isChip(rows[0])).toBe(true);
     expect((rows[0] as FilterChipItem).viewId).toBe(view);
   });
 
-  it('shows no chip when the pane has no filter', () => {
+  it('shows no chip when the pane has no filter', async () => {
     const ctl = makeController();
 
-    expect(ctl[provider].getChildren().some(isChip)).toBe(false);
+    expect((await ctl[provider].getChildren()).some(isChip)).toBe(false);
   });
 
   it('treats the chip as a root, so reveal never targets it', () => {

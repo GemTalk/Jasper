@@ -61,10 +61,10 @@ describe('GemStoneHoverProvider', () => {
     mockSendersOf.mockReset();
     mockGetAllClassNames.mockReset();
     mockGetClassComment.mockReset();
-    mockImplementorsOf.mockReturnValue([]);
-    mockSendersOf.mockReturnValue([]);
-    mockGetAllClassNames.mockReturnValue([]);
-    mockGetClassComment.mockReturnValue('');
+    mockImplementorsOf.mockResolvedValue([]);
+    mockSendersOf.mockResolvedValue([]);
+    mockGetAllClassNames.mockResolvedValue([]);
+    mockGetClassComment.mockResolvedValue('');
   });
 
   describe('with no session', () => {
@@ -77,7 +77,7 @@ describe('GemStoneHoverProvider', () => {
 
   describe('selector hover', () => {
     it('shows implementors with categories, plus clickable senders/implementors links', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -95,7 +95,7 @@ describe('GemStoneHoverProvider', () => {
           environmentId: 0,
         },
       ]);
-      mockSendersOf.mockReturnValue(Array.from({ length: 7 }, () => ({}) as never));
+      mockSendersOf.mockResolvedValue(Array.from({ length: 7 }, () => ({}) as never));
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
@@ -112,8 +112,8 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('shows a hover with just a senders link when the selector has no implementors', async () => {
-      mockImplementorsOf.mockReturnValue([]);
-      mockSendersOf.mockReturnValue(Array.from({ length: 3 }, () => ({}) as never));
+      mockImplementorsOf.mockResolvedValue([]);
+      mockSendersOf.mockResolvedValue(Array.from({ length: 3 }, () => ({}) as never));
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'onlySent') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self onlySent'), pos(0, 5));
@@ -129,7 +129,7 @@ describe('GemStoneHoverProvider', () => {
       // implementors for every selector -- almost nothing is compiled above 0 -- and a hover
       // with nothing to report returns null, so the senders/implementors line simply vanished.
       __setConfig('gemstone', 'maxEnvironment', 1);
-      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+      mockImplementorsOf.mockImplementation(async (_session, _selector, env) =>
         env === 0
           ? [
               {
@@ -143,7 +143,7 @@ describe('GemStoneHoverProvider', () => {
             ]
           : [],
       );
-      mockSendersOf.mockImplementation((_session, _selector, env) =>
+      mockSendersOf.mockImplementation(async (_session, _selector, env) =>
         env === 0 ? Array.from({ length: 5 }, () => ({}) as never) : [],
       );
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
@@ -160,7 +160,7 @@ describe('GemStoneHoverProvider', () => {
 
     it('adds up the counts found across environments', async () => {
       __setConfig('gemstone', 'maxEnvironment', 1);
-      mockImplementorsOf.mockImplementation((_session, _selector, env = 0) => [
+      mockImplementorsOf.mockImplementation(async (_session, _selector, env = 0) => [
         {
           dictName: 'Globals',
           className: env === 0 ? 'Array' : 'String',
@@ -170,7 +170,7 @@ describe('GemStoneHoverProvider', () => {
           environmentId: env,
         },
       ]);
-      mockSendersOf.mockImplementation(() => Array.from({ length: 2 }, () => ({}) as never));
+      mockSendersOf.mockImplementation(async () => Array.from({ length: 2 }, () => ({}) as never));
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
@@ -186,7 +186,7 @@ describe('GemStoneHoverProvider', () => {
       // The guard sits inside the sweep, not around it: a throw in the last environment used
       // to discard the rows the earlier ones had already returned.
       __setConfig('gemstone', 'maxEnvironment', 2);
-      mockImplementorsOf.mockImplementation((_session, _selector, env) => {
+      mockImplementorsOf.mockImplementation(async (_session, _selector, env) => {
         if (env === 2) throw new Error('session busy');
         return [
           {
@@ -199,7 +199,7 @@ describe('GemStoneHoverProvider', () => {
           },
         ];
       });
-      mockSendersOf.mockImplementation((_session, _selector, env) => {
+      mockSendersOf.mockImplementation(async (_session, _selector, env) => {
         if (env === 2) throw new Error('session busy');
         return Array.from({ length: 3 }, () => ({}) as never);
       });
@@ -220,7 +220,7 @@ describe('GemStoneHoverProvider', () => {
       // for that selector long after the stone was healthy again.
       __setConfig('gemstone', 'maxEnvironment', 1);
       let failing = true;
-      mockSendersOf.mockImplementation((_session, _selector, env) => {
+      mockSendersOf.mockImplementation(async (_session, _selector, env) => {
         if (env === 1 && failing) throw new Error('session busy');
         return Array.from({ length: 2 }, () => ({}) as never);
       });
@@ -243,7 +243,7 @@ describe('GemStoneHoverProvider', () => {
       // Two environments can implement the same selector on the same class. Both rows are
       // kept on purpose, so without the suffix the list shows the same line twice.
       __setConfig('gemstone', 'maxEnvironment', 1);
-      mockImplementorsOf.mockImplementation((_session, _selector, env) => [
+      mockImplementorsOf.mockImplementation(async (_session, _selector, env) => [
         {
           dictName: 'Globals',
           className: 'Array',
@@ -268,7 +268,7 @@ describe('GemStoneHoverProvider', () => {
       mockImplementorsOf.mockImplementation(() => {
         throw new Error('session busy');
       });
-      mockSendersOf.mockReturnValue(Array.from({ length: 4 }, () => ({}) as never));
+      mockSendersOf.mockResolvedValue(Array.from({ length: 4 }, () => ({}) as never));
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
@@ -280,7 +280,7 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('shows singular "implementor" for one result', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -299,7 +299,7 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('shows "class" suffix for class-side implementors', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -326,7 +326,7 @@ describe('GemStoneHoverProvider', () => {
         category: 'accessing',
         environmentId: 0,
       }));
-      mockImplementorsOf.mockReturnValue(results);
+      mockImplementorsOf.mockResolvedValue(results);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
@@ -339,7 +339,7 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('returns null when no implementors found', async () => {
-      mockImplementorsOf.mockReturnValue([]);
+      mockImplementorsOf.mockResolvedValue([]);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'noSuchMethod') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self noSuchMethod'), pos(0, 5));
@@ -349,7 +349,7 @@ describe('GemStoneHoverProvider', () => {
 
     it('passes maxEnvironment to implementorsOf', async () => {
       __setConfig('gemstone', 'maxEnvironment', 2);
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -382,10 +382,10 @@ describe('GemStoneHoverProvider', () => {
 
   describe('class name hover', () => {
     it('shows class name with dictionary and comment', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
-      mockGetClassComment.mockReturnValue(
+      mockGetClassComment.mockResolvedValue(
         'Instances of Array are variable-length ordered collections.',
       );
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => null) };
@@ -400,11 +400,11 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('truncates long comments to 500 characters', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const longComment = 'A'.repeat(600);
-      mockGetClassComment.mockReturnValue(longComment);
+      mockGetClassComment.mockResolvedValue(longComment);
       const provider = new GemStoneHoverProvider(makeSessionManager(true));
       const result = await provider.provideHover(makeDocument('Array new'), pos(0, 0));
 
@@ -414,10 +414,10 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('shows hover even when comment is empty', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
-      mockGetClassComment.mockReturnValue('');
+      mockGetClassComment.mockResolvedValue('');
       const provider = new GemStoneHoverProvider(makeSessionManager(true));
       const result = await provider.provideHover(makeDocument('Array new'), pos(0, 0));
 
@@ -435,7 +435,7 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('returns null for unknown class names', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneHoverProvider(makeSessionManager(true));
@@ -445,7 +445,7 @@ describe('GemStoneHoverProvider', () => {
     });
 
     it('handles getClassComment throwing', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       mockGetClassComment.mockImplementation(() => {

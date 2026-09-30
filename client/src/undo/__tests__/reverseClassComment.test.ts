@@ -42,12 +42,12 @@ function entry(before = 'the old comment', after = 'the new comment'): ClassComm
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(setClassComment).mockReturnValue('Comment set: Account');
+  vi.mocked(setClassComment).mockResolvedValue('Comment set: Account');
 });
 
 describe('reverseClassComment', () => {
   it('writes the earlier comment back and reports it', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockResolvedValue('the new comment');
 
     expect(await reverseClassComment(session, entry())).toBe(true);
 
@@ -58,7 +58,7 @@ describe('reverseClassComment', () => {
   });
 
   it('reloads open editors, so the comment tab stops showing what the undo discarded', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockResolvedValue('the new comment');
 
     await reverseClassComment(session, entry());
 
@@ -66,14 +66,14 @@ describe('reverseClassComment', () => {
   });
 
   it('does nothing when the comment is already back the way it was', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the old comment');
+    vi.mocked(getStoredClassComment).mockResolvedValue('the old comment');
 
     expect(await reverseClassComment(session, entry())).toBe(true);
     expect(setClassComment).not.toHaveBeenCalled();
   });
 
   it('warns before discarding a comment edited since, and undoes anyway when told to', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('someone else edited this');
+    vi.mocked(getStoredClassComment).mockResolvedValue('someone else edited this');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     expect(await reverseClassComment(session, entry())).toBe(true);
@@ -87,7 +87,7 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the drift warning is declined', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('someone else edited this');
+    vi.mocked(getStoredClassComment).mockResolvedValue('someone else edited this');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     expect(await reverseClassComment(session, entry())).toBe(false);
@@ -96,8 +96,8 @@ describe('reverseClassComment', () => {
 
   it('reports a write the stone refused rather than claiming the undo landed', async () => {
     // setClassComment answers a status string instead of throwing when the class is gone.
-    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
-    vi.mocked(setClassComment).mockReturnValue('Class not found: Account');
+    vi.mocked(getStoredClassComment).mockResolvedValue('the new comment');
+    vi.mocked(setClassComment).mockResolvedValue('Class not found: Account');
 
     expect(await reverseClassComment(session, entry())).toBe(false);
 
@@ -108,8 +108,8 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the write itself raises', async () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
-    vi.mocked(setClassComment).mockImplementation(() => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('the new comment');
+    vi.mocked(setClassComment).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -121,7 +121,7 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the current comment cannot be read', async () => {
-    vi.mocked(getStoredClassComment).mockImplementation(() => {
+    vi.mocked(getStoredClassComment).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
