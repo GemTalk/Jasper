@@ -48,10 +48,7 @@ function makeController(onClassRemoved?: (sessionId: number, className: string) 
   return ctl;
 }
 
-// `showWarningMessage` is overloaded and `vi.mocked` types the mock via the last
-// (`MessageItem`) overload; removeClass uses the string one, so narrow to it. Assigning
-// rather than casting keeps the compiler checking it against the real overloads, though
-// only loosely for their generic item and return types.
+// Narrowed to the string overload removeClass uses; see .claude/rules/client/tests.md.
 const showStringWarning: (
   message: string,
   options: MessageOptions,
@@ -71,10 +68,8 @@ const referencesMock = vi.mocked(referencesToClassInDict);
  *  Answering with a hard-coded string instead would silently turn every one of these into a
  *  "cancelled" run the day the label changes; the label itself is pinned by its own test below. */
 const confirmSubtreeOnce = () =>
-  // The cast is needed because the rest-args echo is typed `unknown`, while the
-  // string overload this mock now carries must resolve `string | undefined`.
-  warn.mockImplementationOnce((...args: unknown[]) =>
-    Promise.resolve(args[args.length - 1] as string | undefined),
+  warn.mockImplementationOnce((_message, _options, ...items) =>
+    Promise.resolve(items[items.length - 1]),
   );
 
 const descendant = (className: string, dictIndex: number, dictName = 'UserGlobals') => ({

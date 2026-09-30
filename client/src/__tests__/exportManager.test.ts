@@ -183,8 +183,9 @@ vi.mock('vscode', () => {
         append: vi.fn(),
         dispose: vi.fn(),
       })),
-      withProgress: vi.fn(async (_opts: unknown, task: (p: unknown, t: unknown) => Promise<void>) =>
-        task({ report: vi.fn() }, { isCancellationRequested: false }),
+      withProgress: vi.fn(
+        async (_opts: unknown, task: (p: unknown, t: unknown) => Promise<void>) =>
+          await task({ report: vi.fn() }, { isCancellationRequested: false }),
       ),
     },
     ProgressLocation: { Notification: 15 },

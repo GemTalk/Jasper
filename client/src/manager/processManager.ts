@@ -680,7 +680,7 @@ export class ProcessManager {
       (needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath());
     const env = this.versionEnvironment(gsPath, globalDir);
     if (server.process.type === 'netldi') {
-      return this.runCommand(
+      return await this.runCommand(
         `${gsPath}/bin/stopnetldi`,
         [server.process.name],
         env,
@@ -688,7 +688,7 @@ export class ProcessManager {
         { reveal: false },
       );
     }
-    return this.runCommand(
+    return await this.runCommand(
       `${gsPath}/bin/stopstone`,
       [server.process.name, 'DataCurator', password],
       env,
@@ -982,7 +982,7 @@ export class ProcessManager {
   async stopStone(db: GemStoneDatabase, password: string = DEFAULT_GS_PW): Promise<string> {
     const env = this.getEnvironment(db);
     const gsPath = env.GEMSTONE;
-    return this.runCommand(
+    return await this.runCommand(
       `${gsPath}/bin/stopstone`,
       [db.config.stoneName, 'DataCurator', password],
       env,
@@ -1212,7 +1212,7 @@ export class ProcessManager {
     // then dials a port nothing is listening on. Only registered databases
     // record a port; a created one's logins address their NetLDI by name.
     const port = registeredPaths(db.config)?.netldiPort;
-    return this.runCommand(
+    return await this.runCommand(
       `${gsPath}/bin/startnetldi`,
       ['-a', user, '-g', ...(port ? ['-P', String(port)] : []), '-l', logPath, db.config.ldiName],
       env,
@@ -1225,7 +1225,7 @@ export class ProcessManager {
   async stopNetldi(db: GemStoneDatabase): Promise<string> {
     const env = this.getEnvironment(db);
     const gsPath = env.GEMSTONE;
-    return this.runCommand(
+    return await this.runCommand(
       `${gsPath}/bin/stopnetldi`,
       [db.config.ldiName],
       env,

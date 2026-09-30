@@ -203,5 +203,5 @@ async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<bo
   // The plan's own note -- what THIS reversal costs -- is the panel's banner. The standing
   // caveat about which change is on top of the stack lives in the panel as a disclosure, so it
   // stays available without sitting above the rows on every single undo.
-  return showUndoPlanPanel(plan);
+  return await showUndoPlanPanel(plan);
 }

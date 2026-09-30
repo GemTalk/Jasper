@@ -130,7 +130,7 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return finishNbLogin(session, signal);
+    return await finishNbLogin(session, signal);
   }
 
   async function gciTsNbLogin_(signal: AbortSignal) {
@@ -147,7 +147,7 @@ describe('GCI login (integration)', () => {
       0,
       0,
     );
-    return finishNbLogin(session, signal);
+    return await finishNbLogin(session, signal);
   }
 
   describe('successful login', () => {

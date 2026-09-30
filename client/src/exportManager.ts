@@ -376,7 +376,7 @@ export class ExportManager {
 
   /** Re-sync after a commit or abort (another session's changes may be visible). */
   async refreshSession(session: ActiveSession): Promise<void> {
-    return this.exportSession(session, true);
+    return await this.exportSession(session, true);
   }
 
   /**
