@@ -129,20 +129,26 @@ describe('browserQueries', () => {
   describe('getClassHierarchy', () => {
     it('parses superclass/self/subclass entries', () => {
       const payload =
-        'Globals\tObject\tsuperclass\nGlobals\tSequenceableCollection\tsuperclass\nGlobals\tArray\tself\nGlobals\tFoo\tsubclass\n';
+        'Globals\tObject\tsuperclass\t3\tbound\n' +
+        'Globals\tSequenceableCollection\tsuperclass\t3\tbound\n' +
+        'Globals\tArray\tself\t3\tbound\n' +
+        'Globals\tFoo\tsubclass\t3\tbound\n';
       const session = createMockSession(payload);
 
       const results = queries.getClassHierarchy(session, 'Array');
 
-      expect(results).toHaveLength(4);
-      expect(results[0]).toEqual({ dictName: 'Globals', className: 'Object', kind: 'superclass' });
-      expect(results[1]).toEqual({
+      const row = (className: string, kind: string) => ({
         dictName: 'Globals',
-        className: 'SequenceableCollection',
-        kind: 'superclass',
+        className,
+        kind,
+        dictIndex: 3,
+        binding: 'bound',
       });
-      expect(results[2]).toEqual({ dictName: 'Globals', className: 'Array', kind: 'self' });
-      expect(results[3]).toEqual({ dictName: 'Globals', className: 'Foo', kind: 'subclass' });
+      expect(results).toHaveLength(4);
+      expect(results[0]).toEqual(row('Object', 'superclass'));
+      expect(results[1]).toEqual(row('SequenceableCollection', 'superclass'));
+      expect(results[2]).toEqual(row('Array', 'self'));
+      expect(results[3]).toEqual(row('Foo', 'subclass'));
     });
 
     it('returns empty array for no results', () => {

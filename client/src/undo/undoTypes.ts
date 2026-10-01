@@ -369,3 +369,18 @@ export function classVarSlotLabel(slot: ClassVarSlot): string {
 export function methodCategorySlotLabel(slot: MethodCategorySlot): string {
   return `${slot.className}${slot.isMeta ? ' class' : ''}`;
 }
+
+/**
+ * What to call reversing this entry: `Revert` for a class edit, `Undo` for everything else.
+ *
+ * A class edit binds an earlier class version rather than rolling anything back -- the class
+ * history grows and anything written since is left behind -- so calling it an undo would
+ * overstate what happens. Every affordance that offers the action uses this: the Actions pane
+ * button, the tooltip, the toast, and the heading and button of the panel that shows the plan.
+ *
+ * It lives here, with the types, rather than in `undoUi` -- which needs vscode -- so that the
+ * PURE parts (the plan, and its tests) can reach it without pulling the editor in.
+ */
+export function undoVerb(entry: UndoEntry): 'Undo' | 'Revert' {
+  return entry.kind === 'classEdit' ? 'Revert' : 'Undo';
+}

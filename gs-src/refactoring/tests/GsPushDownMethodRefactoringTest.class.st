@@ -29,6 +29,14 @@ This suite pins down:
     method in place); apply never commits; a token round-trip works.
 
 setUp builds a throwaway base + two subclasses in UserGlobals; tearDown removes them.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
+
+Each receiving subclass is named in its own change, so shadowing one subclass is enough.
 "
 Class {
 	#name : 'GsPushDownMethodRefactoringTest',
@@ -418,4 +426,26 @@ GsPushDownMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnE
 GsPushDownMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsPushDownMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsPushDownMethodRefactoringTest >> testPushDownCompilesOntoTheRealSubclassesNotAGlobalFirstMatch [
+	"Each subclass receiving the pushed method is named in its own change and re-resolved at apply
+	 time with `environment classNamed:`. A decoy binding GsPDA ahead of UserGlobals used to take A's
+	 copy, so the real GsPDA never received it while the base lost the method anyway (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsPDShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsPDA'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self push: #pureCompute) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsPDA) compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: ((UserGlobals at: #GsPDB) compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

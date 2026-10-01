@@ -71,6 +71,7 @@ Class {
 		'newIvarLists',
 		'methodRewrite',
 		'targetClasses',
+		'ambiguousTarget',
 		'moveDirection',
 		'moveAccessors',
 		'accessorRemovals',
@@ -132,8 +133,12 @@ GsInstVarStructureRefactoring class >> class: aClass moveInstVar: aName toClasse
 	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
 	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
 	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
-	 name yields nil and declines as a destination that could not be found."
-	| ref env dir lineage targets |
+	 name yields nil and declines as a destination that could not be found.
+
+	 A name that TWO classes in the lineage answer to -- same-named classes in different
+	 dictionaries -- is recorded and declined in analysis. Taking the first the walk reached moved
+	 the variable into whichever that was, which need not be the one the user picked (#396)."
+	| ref env dir lineage targets ambiguous |
 	env := GsRefactoringEnvironment new.
 	dir := aSymbol asSymbol.
 	ref := self new
@@ -146,10 +151,13 @@ GsInstVarStructureRefactoring class >> class: aClass moveInstVar: aName toClasse
 	lineage := dir == #up
 		ifTrue: [ref ancestorsOf: aClass]
 		ifFalse: [env descendantsOf: aClass].
-	targets := classNames collect: [:n |
-		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
-			ifNil: [env classNamed: n asString]].
-	^ref setMoveTargets: targets direction: dir
+	targets := classNames collect: [:n | | matches |
+		matches := lineage select: [:c | c name asString = n asString].
+		(matches size > 1 and: [ambiguous isNil]) ifTrue: [ambiguous := matches].
+		matches isEmpty
+			ifTrue: [env classNamed: n asString]
+			ifFalse: [matches first]].
+	^(ref setMoveTargets: targets direction: dir) setAmbiguousTarget: ambiguous
 ]
 
 { #category : 'instance creation' }
@@ -238,6 +246,14 @@ GsInstVarStructureRefactoring >> setMoveTargets: anArrayOfClasses direction: aSy
 	^self
 ]
 
+{ #category : 'private' }
+GsInstVarStructureRefactoring >> setAmbiguousTarget: aCollectionOrNil [
+	"The same-named classes one requested destination name matched in the lineage, or nil when
+	 every name meant exactly one class. Answers self."
+	ambiguousTarget := aCollectionOrNil.
+	^self
+]
+
 { #category : 'accessing' }
 GsInstVarStructureRefactoring >> effectiveDirection [
 	"The direction the ivar travels, unified across the fixed push operations and the general
@@ -300,10 +316,12 @@ GsInstVarStructureRefactoring >> ensureAnalysis [
 
 { #category : 'private - analysis' }
 GsInstVarStructureRefactoring >> computeAnalysis [
-	"Set decline (nil when viable), topClass, newIvarLists (class name -> new own-ivar
+	"Set decline (nil when viable), topClass, newIvarLists (class -> new own-ivar
 	 Array), and, for V5, methodRewrite. Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	accessorRemovals := OrderedCollection new.
 	accessorAdds := OrderedCollection new.
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
@@ -345,7 +363,7 @@ GsInstVarStructureRefactoring >> analyzeConvertTemp [
 		newDecl,
 		(src copyFrom: tree body rightBar + 1 to: src size).
 	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
 ]
 
 { #category : 'private - analysis' }
@@ -364,8 +382,8 @@ GsInstVarStructureRefactoring >> analyzePushUp [
 	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 ]
 
@@ -394,9 +412,9 @@ GsInstVarStructureRefactoring >> analyzePushDown [
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
+		newIvarLists at: sub put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 ]
 
@@ -420,6 +438,17 @@ GsInstVarStructureRefactoring >> analyzeMove [
 		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
 	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
 		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	ambiguousTarget isNil ifFalse: [
+		^decline := 'Cannot move ', varName, ' to ', ambiguousTarget first name asString, ': ',
+			ambiguousTarget size printString, ' ',
+			(dir == #up ifTrue: ['ancestors'] ifFalse: ['descendants']), ' of ', def name asString,
+			' have that name, in ',
+			((ambiguousTarget collect: [:c |
+				(environment dictionaryDefiningClass: c)
+					ifNil: ['an unknown dictionary']
+					ifNotNil: [:d | d name ifNil: ['an unnamed dictionary'] ifNotNil: [:nm | nm asString]]])
+				inject: '' into: [:acc :e | acc isEmpty ifTrue: [e] ifFalse: [acc, ', ', e]]),
+			'. The destination is chosen by name, so which of them was meant cannot be told.'].
 	(targetClasses includes: def) ifTrue: [
 		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
 	dir == #up
@@ -470,9 +499,9 @@ GsInstVarStructureRefactoring >> analyzeMove [
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
 				(self selectorListString: users), '.']].
-	newIvarLists at: def name asString put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
+	newIvarLists at: def put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
 	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
+		newIvarLists at: t put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 ]
 
@@ -553,9 +582,11 @@ GsInstVarStructureRefactoring >> planAccessorMovesFrom: srcClass to: destClasses
 				ifFalse: [t includesSelector: sel]].
 		(self effectiveDirection == #up and: [targets isEmpty])
 			ifFalse: [
-				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
+				accessorRemovals add: ((Array with: sel with: srcClass name asString with: src with: cat)
+					copyWith: srcClass).
 				targets do: [:t |
-					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+					accessorAdds add: ((Array with: sel with: t name asString with: src with: cat)
+						copyWith: t)]]]
 ]
 
 { #category : 'private - accessors' }
@@ -619,7 +650,11 @@ GsInstVarStructureRefactoring >> simpleAccessorKindOf: tree forVar: v [
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> dictNameForClassNamed: aName [
+GsInstVarStructureRefactoring >> dictForClassNamed: aName [
+	"DEPRECATED, and kept only so an external caller does not break: a NAME cannot say which
+	 dictionary is meant when the name is shadowed, and answering the first match is what sent
+	 staged changes to the wrong class (#396). Use #dictForClass:, which resolves the class
+	 object by identity. Nothing in the engine calls this."
 	| dicts |
 	dicts := environment dictionariesDefiningClassNamed: aName.
 	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
@@ -643,13 +678,19 @@ GsInstVarStructureRefactoring >> spaceList: aCollection [
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> isEditedClassNamed: aName [
-	^newIvarLists includesKey: aName
+GsInstVarStructureRefactoring >> isEditedClass: aClass [
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 ]
 
 { #category : 'private' }
-GsInstVarStructureRefactoring >> dictNameForClass: aClass [
-	^self dictNameForClassNamed: aClass name
+GsInstVarStructureRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -679,7 +720,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 	affected do: [:cls | self stageClassChange: cls into: cs].
 	accessorRemovals do: [:r |
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClassNamed: (r at: 2))
+			addMethodRemoveInDictionary: (self dictForClass: (r at: 5))
 			className: (r at: 2)
 			isMeta: false
 			selector: (r at: 1)
@@ -687,7 +728,7 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 			oldSource: (r at: 3)].
 	accessorAdds do: [:a |
 		cs
-			addMethodAddInDictionary: (self dictNameForClassNamed: (a at: 2))
+			addMethodAddInDictionary: (self dictForClass: (a at: 5))
 			className: (a at: 2)
 			isMeta: false
 			selector: (a at: 1)
@@ -700,14 +741,14 @@ GsInstVarStructureRefactoring >> buildChangeSet [
 { #category : 'building' }
 GsInstVarStructureRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
 			oldSource: oldDef
-			newSource: (self definitionWithIvars: (newIvarLists at: aClass name asString) in: oldDef)]
+			newSource: (self definitionWithIvars: (newIvarLists at: aClass) in: oldDef)]
 		ifFalse: [cs
 			addClassReparentInDictionary: dn
 			className: aClass name asString
@@ -722,7 +763,7 @@ GsInstVarStructureRefactoring >> stageMethodRewriteInto: cs [
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	cat := (behavior categoryOfSelector: methodSelector environmentId: 0) ifNil: ['as yet unclassified'].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: (methodRewrite at: 1)
 		isMeta: (methodRewrite at: 3)
 		selector: (methodRewrite at: 2)
@@ -914,7 +955,7 @@ GsInstVarStructureRefactoring >> applyMethodRemove: aChange [
 	 class. #copyMethodsFrom:to: already skips carrying it forward, so this is normally a no-op;
 	 the guard also keeps re-application idempotent and avoids removeSelector: on an absent one."
 	| cls target sel |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	sel := aChange selector asSymbol.
@@ -925,7 +966,7 @@ GsInstVarStructureRefactoring >> applyMethodRemove: aChange [
 GsInstVarStructureRefactoring >> applyMethodAdd: aChange [
 	"Accessor move: compile the accessor onto its (freshly versioned) target class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -940,10 +981,10 @@ GsInstVarStructureRefactoring >> applyClassChange: aChange [
 	 with its computed own-instVar list -- copy its methods forward, and record the
 	 old->new mapping so its own descendants re-parent onto it. No commit."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
@@ -963,7 +1004,7 @@ GsInstVarStructureRefactoring >> makeNewVersionOf: old superclass: sup instVarNa
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -980,19 +1021,23 @@ GsInstVarStructureRefactoring >> copyMethodsFrom: old to: new [
 	    accessor is instead added to the target class as its own #methodAdd;
 	  - methods this refactoring stages a #methodRecompile for: their rewritten source is what
 	    belongs on the new version, and it is installed by that change (see
-	    #rewriteSelectorsFor:)."
+	    #rewriteSelectorsFor:).
+
+	 Both are matched to old by the class, never by its name: a same-named class in another
+	 dictionary can sit inside the reshaped subtree too, and it is re-versioned alongside. Keyed by
+	 name, its own methods of those selectors matched and were silently not carried forward (#396)."
 	| skip |
-	skip := self accessorRemovalSelectorsFor: old name asString.
-	skip addAll: (self rewriteSelectorsFor: old name asString).
+	skip := self accessorRemovalSelectorsFor: old.
+	skip addAll: (self rewriteSelectorsFor: old).
 	old selectors do: [:sel |
 		(skip includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
 	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 ]
 
 { #category : 'private - accessors' }
-GsInstVarStructureRefactoring >> rewriteSelectorsFor: aClassName [
-	"The instance-side selectors this refactoring stages a #methodRecompile for on the named
-	 class, so #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
+GsInstVarStructureRefactoring >> rewriteSelectorsFor: aClass [
+	"The instance-side selectors this refactoring stages a #methodRecompile for on aClass, so
+	 #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
 
 	 Carrying it forward is not merely redundant, it FAILS: converting a method temporary into
 	 an instance variable leaves the old source declaring a temporary the new version now
@@ -1000,23 +1045,31 @@ GsInstVarStructureRefactoring >> rewriteSelectorsFor: aClassName [
 	 already been declared'). Skipping is safe because the recompile always runs -- this
 	 refactoring is all-or-nothing, so deselection is ignored -- and a rewrite that genuinely
 	 fails is reported by the apply loop like any other change."
-	| set |
+	| set mine |
 	set := IdentitySet new.
+	mine := environment lineageOf: aClass.
 	self changeSet changes do: [:c |
 		(c kind == #methodRecompile
-			and: [c isMeta ~~ true and: [c className asString = aClassName]])
+			and: [c isMeta ~~ true
+			and: [c className asString = aClass name asString
+			and: [| cls |
+				cls := environment classForChange: c.
+				mine isNil
+					ifTrue: [cls == aClass]
+					ifFalse: [(environment lineageOf: cls) == mine]]]])
 				ifTrue: [set add: c selector asSymbol]].
 	^set
 ]
 
 { #category : 'private - accessors' }
-GsInstVarStructureRefactoring >> accessorRemovalSelectorsFor: aClassName [
-	"The set of (instance-side) selectors being moved OUT of the named class, so
-	 #copyMethodsFrom:to: can skip carrying them onto the new version."
+GsInstVarStructureRefactoring >> accessorRemovalSelectorsFor: aClass [
+	"The set of (instance-side) selectors being moved OUT of aClass, so #copyMethodsFrom:to: can
+	 skip carrying them onto the new version. Slot 5 of each removal is the class it was staged
+	 against, and aClass is still that same object here: it has not been re-versioned yet."
 	| set |
 	set := IdentitySet new.
 	accessorRemovals do: [:r |
-		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
+		(r at: 5) == aClass ifTrue: [set add: (r at: 1)]].
 	^set
 ]
 
@@ -1026,23 +1079,13 @@ GsInstVarStructureRefactoring >> applyMethodRecompile: aChange [
 	"Recompile the converted method (V5) with the temporary declaration removed, onto the
 	 current (freshly versioned) class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
 		compile: aChange newSource
 		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
-]
-
-{ #category : 'applying' }
-GsInstVarStructureRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 ]
 
 { #category : 'serializing' }

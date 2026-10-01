@@ -96,7 +96,12 @@ import {
   SafeDeleteTarget,
 } from './refactoring/safeDelete';
 import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
-import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
+import {
+  formatRenameFailureLog,
+  renameFailureNotification,
+  UNDO_RENAME,
+  SHOW_RENAME_DETAILS,
+} from './refactoring/renameFailureLog';
 import { getGciLog, logInfo, logWarning } from './gciLog';
 import { focusGemStoneExplorer } from './explorerContainer';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
@@ -159,6 +164,8 @@ import {
 } from './refactoring/classHistoryModel';
 import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { dictionaryNameFor, qualifiedClassName } from './refactoring/dictionaryLabel';
+import { resolveDictionaryIndex } from './dictionaryIndex';
 import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
 import {
   showMethodHistoryPanel,
@@ -168,7 +175,10 @@ import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { isHelperMissingError } from './methodHistory/queries/methodHistory';
 import { moveMethod } from './refactoring/moveMethodCommand';
-import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
+import {
+  armRefactoringUndo,
+  notifyRefactoringApplied,
+} from './refactoring/refactoringAppliedToast';
 import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -179,7 +189,6 @@ const VIEW_METHODS = 'gemstoneExplorerMethods';
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
 
 // Button on a rename-failure notification; reveals the channel holding the full list.
-const SHOW_RENAME_DETAILS = 'Show Details';
 
 // Highlights the filtered instance variable(s) in an opened method source while a
 // reads:/writes:/accesses: filter is active — theme-aware, styled like a search
@@ -632,6 +641,56 @@ export class FilterChipItem extends vscode.TreeItem {
 
 type MethodNode = MethodCategoryItem | MethodItem | FilterChipItem;
 
+/**
+ * What to say on a hierarchy row whose class the symbol list no longer binds.
+ *
+ * It names the failed-refactoring case explicitly, because that is the one where the recourse is
+ * immediate and specific: Undo puts the parent's old version back and the subtree is whole again.
+ * After a hand redefinition the same row means something different -- the user redefined the
+ * class themselves and the subclasses simply have not been carried across -- and Undo there is
+ * about their own earlier edit, which may not be what they want at all. Same row, same words up
+ * to that point, and the difference is worth the sentence.
+ */
+/**
+ * Refuse a command on a hierarchy row the symbol list no longer binds, saying which of the two
+ * things happened rather than letting the query come back with "not a class: Object".
+ *
+ * The commands here all address a class THROUGH a dictionary, which is what makes them right for
+ * a shadowed name (#396) and what leaves them nothing to say about a class no dictionary holds.
+ * Answers true when the caller should stop.
+ */
+function declineIfUnbound(item: ClassItem | HierarchyItem, what: string): boolean {
+  if (!(item instanceof HierarchyItem) || item.binding === 'bound') return false;
+  const why =
+    item.binding === 'superseded'
+      ? `${item.className} here is an older version of the class — the name now binds a newer one, ` +
+        'and no dictionary holds this one. A refactoring that failed part-way leaves exactly this: ' +
+        'Undo reverses it and puts the subtree back together.'
+      : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
+  void vscode.window.showWarningMessage(`${what} is not available here. ${why}`);
+  return true;
+}
+
+function unboundHierarchyTooltip(className: string, binding: 'superseded' | 'unbound'): string {
+  if (binding === 'unbound') {
+    return (
+      `${className} — no class of this name is bound in any dictionary.\n\n` +
+      'It is still this class\u2019s real superclass, but it has been removed from the symbol ' +
+      'list, so commands that work through a dictionary cannot reach it.'
+    );
+  }
+  return (
+    `${className} — an older version.\n\n` +
+    `The name ${className} now binds a newer version of the class. This one is still real, and ` +
+    'still the superclass of the class below it, but no dictionary holds it, so Class History, ' +
+    'Rename, Insert/Extract Superclass and Split cannot act on it.\n\n' +
+    'Redefining a class does not carry its subclasses onto the new version. This row appears ' +
+    'after a redefinition made outside a refactoring — and after a refactoring that failed ' +
+    'part-way, which stops at the first failure with the classes before it already re-versioned. ' +
+    'If that is what happened, Undo reverses it and puts the subtree back together.'
+  );
+}
+
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
 // itself → its immediate subclasses. Clicking any row navigates to that class.
@@ -649,6 +708,14 @@ export class HierarchyItem extends vscode.TreeItem {
     // (same rule as the Classes pane). Rendered as a `[vcurrent/total]` tag on the
     // label and spelled out in the tooltip; never affects the id.
     version?: queries.ClassVersionInfo,
+    // The 1-based SymbolList position of the dictionary that binds this class, when the hierarchy
+    // query could place it. Two dictionaries can share a name, so `dictName` alone lands on the
+    // first of them (#396).
+    public readonly dictIndex?: number,
+    // Whether the symbol list still binds this class object under its own name. A SUPERSEDED row
+    // is a real class -- it is this subclass's actual superclass -- that the name no longer
+    // points at, so every command scoped by dictionary has nowhere to send it.
+    public readonly binding: 'bound' | 'superseded' | 'unbound' = 'bound',
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -656,8 +723,20 @@ export class HierarchyItem extends vscode.TreeItem {
       hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
     this.tooltip = versionTooltipOf(className, version);
-    this.id = `h:${role}:${chainIndex}:${className}`;
-    this.contextValue = 'explorerHierClass';
+    // A row nothing binds says so on its face, and says it in full on hover. Without this the
+    // row is indistinguishable from any other ancestor, and every command on it failed with
+    // "not a class" -- which reads as a broken tool rather than as what it is.
+    if (binding !== 'bound') {
+      this.description = binding === 'superseded' ? '(old version)' : '(unbound)';
+      this.tooltip = unboundHierarchyTooltip(className, binding);
+    }
+    // The dictionary position is part of the id: every subclass has chainIndex -1, so two
+    // same-named subclasses from different dictionaries would otherwise share one, which a tree
+    // view refuses outright.
+    this.id = `h:${role}:${chainIndex}:${dictIndex ?? ''}:${className}`;
+    // A separate context value so the menus that cannot act on an unbound class are withheld
+    // rather than offered and then refused.
+    this.contextValue = binding === 'bound' ? 'explorerHierClass' : 'explorerHierClassUnbound';
     // The current class is shown by keeping it *selected* in this pane (synced
     // with the Classes pane), so no extra "current" label is needed; up/down
     // arrows distinguish superclasses from subclasses.
@@ -668,6 +747,11 @@ export class HierarchyItem extends vscode.TreeItem {
           ? 'arrow-small-up'
           : 'arrow-small-down',
     );
+  }
+
+  /** How to address this class's dictionary in a query: its position when known, else its name. */
+  get dictRef(): number | string {
+    return this.dictIndex ?? this.dictName;
   }
 }
 
@@ -1031,11 +1115,50 @@ export class ExplorerController {
   // click is recognised by elimination: an open of a test item's URI that nobody
   // claimed. Claiming the deliberate ones keeps them navigating as they always have.
   private readonly attributedOpens = new Set<string>();
+  /**
+   * Set while a deliberate reveal has just placed the tree, so the NEXT editor activation does
+   * not drag it away again.
+   *
+   * Closing a webview panel makes VS Code activate whatever tab is next to it. That activation
+   * is not a navigation -- the user did not go anywhere, a panel merely went away -- but it
+   * fires `onDidChangeActiveTextEditor` like any other, and the follow then moved the Explorer
+   * onto that tab's class. Applying a refactoring with any other GemStone editor open landed
+   * you in its dictionary rather than the one you had just refactored in.
+   *
+   * A one-shot claim, like `attributedOpens`, and cleared on a timer for the same reason: an
+   * activation may never arrive (nothing else was open), and a claim left standing would
+   * swallow the user's next real editor click.
+   */
+  private revealClaim: NodeJS.Timeout | undefined;
 
   /** Claim the next open of `uri`, so syncToEditor treats it as a deliberate
    *  navigation rather than a Testing-view row click. */
   markAttributedOpen(uri: vscode.Uri): void {
     this.attributedOpens.add(uri.toString());
+  }
+
+  /**
+   * Claim the next editor activation, so a deliberate reveal survives a panel closing.
+   *
+   * Called by the flows that drive a PREVIEW PANEL, and called BEFORE they await anything. The
+   * panel resolves and then disposes itself, so the activation its disposal causes can arrive
+   * while the reveal is still awaiting -- which is to say before a claim made afterwards exists.
+   * A claim made too late is worse than none: it is still standing when the user's next real
+   * click arrives, and swallows that instead.
+   *
+   * Not called by the paths where no panel closes -- adding or removing a class variable, and
+   * Class History Restore, whose panel stays open -- since there is no stray activation there to
+   * absorb, only the user's own next click.
+   *
+   * The window is one activation OR a short moment, whichever comes first: long enough to cover
+   * the activation a disposing panel causes, short enough that a claim nobody spends cannot
+   * affect a later click.
+   */
+  private claimNextEditorActivation(): void {
+    if (this.revealClaim) clearTimeout(this.revealClaim);
+    this.revealClaim = setTimeout(() => {
+      this.revealClaim = undefined;
+    }, 1000);
   }
 
   /** Drop a claim that was never consumed — the open threw, kept focus, or the
@@ -1713,20 +1836,23 @@ export class ExplorerController {
       return;
     }
 
-    // Re-resolve the selected dictionary by NAME. A commit elsewhere can remove it
-    // or shift every dictionary's index — e.g. uninstalling the server plugin drops
+    // Re-resolve the selected dictionary. A commit elsewhere can remove it or shift
+    // every dictionary's index — e.g. uninstalling the server plugin drops
     // GsRefactoring / GsEnhancedInspector. If the selected dictionary is gone, don't
     // reload by its stale index (that would show a different dictionary's classes, or
     // leave the removed one's classes orphaned in the panes); reset to a default
     // dictionary so the class/category/hierarchy/method panes reflect the stone.
+    // The retained index is kept while the dictionary there still has the name: two
+    // dictionaries can share one, and a plain name lookup moved a selection on the
+    // second of them to the first (#396).
     let currentDictIndex = dictIndex;
     try {
-      const pos = queries.getDictionaryNames(session).indexOf(dictName);
-      if (pos < 0) {
+      const pos = resolveDictionaryIndex(queries.getDictionaryNames(session), dictName, dictIndex);
+      if (pos === 0) {
         this.reset();
         return;
       }
-      currentDictIndex = pos + 1;
+      currentDictIndex = pos;
       this.state.dictIndex = currentDictIndex;
     } catch {
       /* keep the retained index if the dictionary list can't be read */
@@ -2127,15 +2253,22 @@ export class ExplorerController {
   }
 
   // Resolve a class's dictionary (name + 1-based index). Prefers the given dict
-  // name; falls back to a full class-name lookup when it's blank/unresolvable.
+  // name -- at `dictIndex` when the caller knows its position, since two dictionaries
+  // can share a name -- and falls back to a full class-name lookup when it's
+  // blank/unresolvable.
   private resolveClassDict(
     className: string,
     dictName?: string,
+    dictIndex?: number,
   ): { dictName: string; dictIndex: number } | undefined {
     const session = this.session();
     if (!session) return undefined;
     if (dictName) {
-      const index = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+      const index = resolveDictionaryIndex(
+        queries.getDictionaryNames(session),
+        dictName,
+        dictIndex,
+      );
       if (index > 0) return { dictName, dictIndex: index };
     }
     const match = queries.getAllClassNames(session).find((e) => e.className === className);
@@ -2183,7 +2316,7 @@ export class ExplorerController {
   // dictionary (it may live elsewhere than the currently-shown one), mirroring
   // openHierarchyDefinition.
   async openHierarchyComment(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2223,7 +2356,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className) {
@@ -2275,7 +2408,7 @@ export class ExplorerController {
   // in a different dictionary than the one currently browsed). Opens to the side
   // like the Classes-pane button, without changing the navigator selection.
   async openHierarchyDefinition(item: HierarchyItem): Promise<void> {
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2374,6 +2507,8 @@ export class ExplorerController {
         i,
         hasChildren,
         this.classVersion(e.className),
+        e.dictIndex,
+        e.binding,
       );
       // Each row carries its own dictionary — an ancestor often lives in another
       // one — so the affordance and the outcome are for the right class.
@@ -2392,6 +2527,8 @@ export class ExplorerController {
         -1,
         false,
         this.classVersion(s.className),
+        s.dictIndex,
+        s.binding,
       );
       this.decorateTestRow(item, s.dictName, s.className);
       return item;
@@ -2412,6 +2549,9 @@ export class ExplorerController {
       'self',
       lastIdx,
       this.hierSubs.length > 0,
+      undefined,
+      e.dictIndex,
+      e.binding,
     );
     await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
   }
@@ -2421,22 +2561,40 @@ export class ExplorerController {
       const selfIdx = this.hierChain.length - 1;
       if (selfIdx < 0) return undefined;
       const e = this.hierChain[selfIdx];
-      return new HierarchyItem(e.className, e.dictName, 'self', selfIdx, true);
+      return new HierarchyItem(
+        e.className,
+        e.dictName,
+        'self',
+        selfIdx,
+        true,
+        undefined,
+        e.dictIndex,
+        e.binding,
+      );
     }
     if (element.chainIndex <= 0) return undefined;
     const i = element.chainIndex - 1;
     const e = this.hierChain[i];
-    return new HierarchyItem(e.className, e.dictName, 'ancestor', i, true);
+    return new HierarchyItem(
+      e.className,
+      e.dictName,
+      'ancestor',
+      i,
+      true,
+      undefined,
+      e.dictIndex,
+      e.binding,
+    );
   }
 
   // Clicking a hierarchy node navigates to that class (which reloads the
   // hierarchy centered on it, plus the methods and the other panes).
   selectHierarchyNode(item: HierarchyItem): void {
     if (item.role === 'self') return; // already the current class
-    // The hierarchy query supplies a dict name, but it can be blank (a class
-    // reachable only in another symbol-list scope); the resolver falls back to a
+    // The hierarchy query supplies a dict name and position, but they can be blank (a
+    // class reachable only in another symbol-list scope); the resolver falls back to a
     // full class-name lookup so nodes like Object always navigate.
-    const resolved = this.resolveClassDict(item.className, item.dictName);
+    const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
     if (!resolved) {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
@@ -2700,6 +2858,7 @@ export class ExplorerController {
       accessorSpecs: wantAccessors ? accessorSpecsFor(name, 'ivar').accessors : undefined,
     });
     if (outcome) {
+      this.claimNextEditorActivation();
       await this.refreshAfterClassReshape(className);
       // Select the newly-added instance variable: refreshAfterClassReshape re-reveals
       // the CLASS, which would otherwise steal the selection, so re-reveal the new
@@ -3005,6 +3164,7 @@ export class ExplorerController {
       autoApply: decision === 'silent',
     });
     if (!outcome) return;
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Only when the panel really was skipped: the engine can send an autoApply request to
     // the panel after all, and that removal was not unasked.
@@ -3115,6 +3275,7 @@ export class ExplorerController {
       this.state.dictIndex,
     );
     if (!applied) return;
+    this.claimNextEditorActivation();
     await this.refreshAfterClassReshape(item.className);
     // Select the moved variable on its first destination. Best-effort: reveal rejects if the
     // row isn't in the rebuilt tree, which we ignore.
@@ -3296,6 +3457,7 @@ export class ExplorerController {
       className,
       oldName,
       newName,
+      dict,
     );
     safeClear();
     return applied;
@@ -3310,6 +3472,18 @@ export class ExplorerController {
    *
    * `from` is the name in force now and `to` the one to go back to; `className` is the class
    * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
+   *
+   * Answers whether the stone recorded it. A caller must not arm the Undo button on a `false`:
+   * `armRefactoringUndo` pushes whatever the stone's CURRENT entry is, and `pushUndoEntry` drops
+   * every other refactoring entry first -- so arming after a failed record lifts the PREVIOUS
+   * refactoring's entry above the user's newer method edits, and Undo then reverses that one.
+   *
+   * `classDict` is the class's OWN dictionary, which each flow already knows. It is not the
+   * tree selection: a rename started from a Hierarchy ancestor, and a rename of an INHERITED
+   * instance variable at the cursor, both act on a class in a different dictionary from the one
+   * selected. Recorded wrongly, the reversal looks in the wrong place and either declines or
+   * reverses a same-named class, and the label names a dictionary the class does not live in --
+   * which is the one thing the labels were added to prevent (#396).
    */
   private recordReverseRename(
     session: ActiveSession,
@@ -3319,8 +3493,9 @@ export class ExplorerController {
     to: string,
     label: string,
     engine: string,
+    classDict: number | string | undefined,
     scope?: { kind: string; dictName?: string },
-  ): void {
+  ): boolean {
     try {
       const answer = queries.recordReverseRename(
         session,
@@ -3331,17 +3506,20 @@ export class ExplorerController {
         label,
         engine,
         scope,
+        classDict,
       );
       // Logged on the way THROUGH, not only on failure: "no Undo was offered" is a silent
       // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
       // told apart from a status probe that came back empty.
       logInfo(`[undoRefactoring] recorded ${kind} reversal for ${className}: ${answer.trim()}`);
+      return answer.trim() === 'ok';
     } catch (e: unknown) {
       logInfo(
         `[undoRefactoring] could not record the reverse rename: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
+      return false;
     }
   }
 
@@ -3353,15 +3531,23 @@ export class ExplorerController {
   // rather than an instruction to go find it ('Show Details', the idiom logJasperError
   // uses in extension.ts). `action` must name WHAT was renamed: the channel is durable
   // and shared, so two renames in a session otherwise leave two indistinguishable blocks.
-  private reportRenameFailures(action: string, result: RenameApplyResult): void {
+  private reportRenameFailures(
+    action: string,
+    result: RenameApplyResult,
+    // Whether an Undo was armed for this rename. It decides BOTH the button and the sentence
+    // that names it, together, in renameFailureNotification -- a toast that names a recourse
+    // and does not offer it sends the user to the Undo pane, where they reverse whatever they
+    // did before the rename (#396). Omitted where nothing was armed.
+    undoable = false,
+  ): void {
     if (result.failed.length === 0) return; // nothing to report; the toast names failed[0]
     const block = formatRenameFailureLog(action, result.failed);
     if (block) logWarning(block);
-    void vscode.window
-      .showErrorMessage(formatRenameFailureToast(action, result), SHOW_RENAME_DETAILS)
-      .then((choice) => {
-        if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
-      });
+    const { message, actions } = renameFailureNotification(action, result, undoable);
+    void vscode.window.showErrorMessage(message, ...actions).then((choice) => {
+      if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
+      if (choice === UNDO_RENAME) void vscode.commands.executeCommand('gemstone.undoLast');
+    });
   }
 
   // Apply the rename SERVER-SIDE, without committing. The engine re-versions the
@@ -3377,6 +3563,9 @@ export class ExplorerController {
     className: string,
     oldName: string,
     newName: string,
+    // The DEFINING class's dictionary, which for an inherited variable renamed at the cursor is
+    // not the selected one.
+    classDict: number | string | undefined,
   ): Promise<boolean> {
     let result: RenameApplyResult;
     try {
@@ -3403,7 +3592,8 @@ export class ExplorerController {
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
     this.loadClassRowMetadata();
-    await this.refreshAfterClassReshape(className);
+    this.claimNextEditorActivation();
+    await this.refreshAfterClassReshape(className, classDict);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
     this.views?.klass
@@ -3417,22 +3607,28 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
       return false;
     }
-    if (result.failed.length > 0) {
-      this.reportRenameFailures(
-        `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
-        result,
-      );
-      return true;
-    }
-    this.recordReverseRename(
+    const recorded = this.recordReverseRename(
       session,
       'instVarRename',
       className,
       newName,
       oldName,
-      `Rename instance variable ${oldName} to ${newName} in ${className}`,
+      `Rename instance variable ${oldName} to ${newName} in ${qualifiedClassName(className, dictionaryNameFor(session, classDict))}`,
       'GsRenameInstanceVariableRefactoring',
+      classDict,
     );
+    if (result.failed.length > 0) {
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
+      this.reportRenameFailures(
+        `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
+        result,
+        recorded,
+      );
+      return true;
+    }
     notifyRefactoringApplied(
       session,
       `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
@@ -3691,28 +3887,135 @@ export class ExplorerController {
     return this.session()?.rbSupportAvailable === true;
   }
 
-  // Validate a proposed rename target: the name's format AND that it isn't already
-  // bound to another global in the stone. Runs as the rename input's live validator
-  // (showRenameClassEditor), so catching a collision here surfaces it inline while the
-  // user is still typing — they correct the name in place, instead of the rename starting
-  // and failing server-side with a costlier, later error. Returns an error string or undefined.
-  private validateRenameTarget(newName: string, oldName: string): string | undefined {
+  /**
+   * Validate a proposed rename target: the name's format, and that it is not already bound IN
+   * THE DICTIONARY the renamed class will be filed into.
+   *
+   * Scoped to that one dictionary, not the whole symbol list. Two bindings of a name in the same
+   * dictionary is the case the image cannot represent and the apply would fail on. A binding in
+   * a DIFFERENT dictionary is a shadow — legal in GemStone, handled throughout this engine, and
+   * quite possibly what the user means — so refusing on it blocked a rename that would have
+   * worked, with no way around it (#396). The shadow is warned about instead, once, before the
+   * preview opens.
+   *
+   * Runs as the rename input's live validator, so a real collision surfaces inline while the
+   * user is still typing rather than as a costlier server-side failure later.
+   */
+  private validateRenameTarget(
+    newName: string,
+    oldName: string,
+    dict: number | string | undefined,
+  ): string | undefined {
     const fmt = validateNewClassName(newName, oldName);
     if (fmt) return fmt;
     const session = this.session();
-    if (session && queries.globalNameInUse(session, newName)) {
-      return `The name ${newName} is already in use. Choose another.`;
+    if (session && queries.globalNameInUseInDictionary(session, newName, dict)) {
+      return `The name ${newName} is already used in this dictionary. Choose another.`;
     }
     return undefined;
+  }
+
+  /**
+   * Ask before a rename creates a shadow, and answer whether to go on.
+   *
+   * Renaming onto a name another dictionary already binds is allowed, but it is worth saying out
+   * loud: from then on an unqualified reference to that name resolves to whichever dictionary
+   * comes first on the symbol list.
+   *
+   * Whether that is this one is not a matter of doubt, and saying "may not be" understated it.
+   * The symbol list has an order, so the warning names which class wins. When a binding sits
+   * EARLIER than the destination, every unqualified reference -- the renamed class's own
+   * methods, and every referencer this rename rewrites -- lands on that other class, and the
+   * user should hear it in those words (#396).
+   */
+  private async confirmShadowingRename(
+    session: ActiveSession,
+    newName: string,
+    oldName: string,
+    dictName: string | undefined,
+    dict: number | string | undefined,
+  ): Promise<boolean> {
+    let holders: queries.ShadowingHolder[];
+    let order: string[];
+    try {
+      // The stone excludes the renamed class's own dictionary by IDENTITY. Dropping it here by
+      // NAME dropped every dictionary called that, so a second one of the same name — holding a
+      // real, clashing class — vanished with it and the rename went ahead unwarned (#396).
+      holders = queries.dictionariesShadowedByRename(session, newName, oldName, dict);
+      order = queries.getDictionaryNames(session);
+    } catch {
+      return true; // a failed probe must not block a rename
+    }
+    if (holders.length === 0) return true;
+    const elsewhere = holders.map((h) => h.name);
+    // Which of them the symbol list reaches before the destination. Compared by POSITION, since
+    // two dictionaries can share a name and the answer is about order, not naming. An unknown
+    // destination sorts everything ahead of it, which is the cautious reading: warn rather than
+    // reassure.
+    const destAt = dictName === undefined ? -1 : order.indexOf(dictName) + 1;
+    const ahead = holders.filter((h) => destAt < 1 || h.position < destAt).map((h) => h.name);
+    const detail =
+      ahead.length > 0
+        ? `Renaming to it leaves two classes called ${newName}, and ${ahead[0]} comes first on ` +
+          `the symbol list. An unqualified ${newName} will then mean ${ahead[0]}'s class — ` +
+          'including in the methods of the class being renamed, and in every reference this ' +
+          'rename rewrites.'
+        : `Renaming to it leaves two classes called ${newName}. This dictionary comes first on ` +
+          `the symbol list, so an unqualified ${newName} still means this class; code that ` +
+          'reaches the other one by name will now find this one instead.';
+    const PROCEED = 'Rename anyway';
+    const choice = await vscode.window.showWarningMessage(
+      `${newName} is already defined in ${elsewhere.join(', ')}.`,
+      { modal: true, detail },
+      PROCEED,
+    );
+    return choice === PROCEED;
   }
 
   // Re-cascade the class panes onto a (renamed or reshaped) class so the Classes
   // and Hierarchy panes show the new name / version tag. When the class is in the
   // current dictionary, revealClass does the full reload+reveal; otherwise reload
   // what we can from the current view.
-  private async refreshAfterClassReshape(className: string): Promise<void> {
+  private async refreshAfterClassReshape(
+    className: string,
+    // The dictionary the reshaped class lives in, when the caller knows it to be something
+    // other than the tree selection — a Class History opened from a Hierarchy ancestor, whose
+    // dictionary is usually not the selected one. Without it the selection is used, as before.
+    //
+    // Pass the 1-based SymbolList index whenever the caller has one. A dictionary NAME does not
+    // identify a dictionary — two can share one — so turning an index into a name and back lands
+    // on the first of them, and the Explorer shows the other dictionary's class of the same name
+    // (#396). A name is accepted for the callers that only have one (a Hierarchy node the query
+    // could not place), and is placed on the selection when the selection carries it, else on
+    // its first match.
+    inDict?: number | string,
+  ): Promise<void> {
     const session = this.session();
-    const { dictName, dictIndex } = this.state;
+    let { dictName, dictIndex } = this.state;
+    const isSelection = typeof inDict === 'number' ? inDict === dictIndex : inDict === dictName;
+    if (inDict !== undefined && !isSelection) {
+      let names: string[] = [];
+      try {
+        names = session ? queries.getDictionaryNames(session) : [];
+      } catch {
+        /* the symbol list could not be read; fall through to the no-row path */
+      }
+      const found =
+        typeof inDict === 'number'
+          ? inDict >= 1 && inDict <= names.length
+            ? inDict
+            : 0
+          : names.indexOf(inDict) + 1;
+      if (found === 0) {
+        // Not a dictionary this tree can place, so there is no row to reveal. Refresh the panes
+        // and leave the selection where the user put it.
+        this.classProvider.refresh();
+        this.hierarchyProvider.refresh();
+        return;
+      }
+      dictName = names[found - 1];
+      dictIndex = found;
+    }
     if (!session || dictName === undefined || dictIndex === undefined) {
       this.classProvider.refresh();
       this.hierarchyProvider.refresh();
@@ -3748,17 +4051,19 @@ export class ExplorerController {
   // change set is previewed, any optional reference unchecked, and applied.
   // Invokable from a class row OR a hierarchy-pane class node.
   async renameClass(item: ClassItem | HierarchyItem): Promise<void> {
-    // A hierarchy node may name a class outside the current dictionary, so resolve
-    // it across the whole symbol list; a class-row uses the current dictionary.
-    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    if (declineIfUnbound(item, 'Rename Class')) return;
+    // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
+    // carries its own. Resolving it across the whole symbol list instead would rename whichever
+    // class of that name comes first, and record the undo against it (#396).
+    const dictArg = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     await this.renameClassNamed(item.className, dictArg);
   }
 
   /** Rename the class `oldName` across the image, resolving it through `dictArg`
-   *  (a 1-based SymbolList index, or undefined to resolve across the whole symbol
-   *  list). Shared by the Explorer class-row / hierarchy pencil and the method
+   *  (a 1-based SymbolList index, a dictionary name, or undefined to resolve across the whole
+   *  symbol list). Shared by the Explorer class-row / hierarchy pencil and the method
    *  editor's Rename… when the cursor is on a class reference. */
-  async renameClassNamed(oldName: string, dictArg: number | undefined): Promise<void> {
+  async renameClassNamed(oldName: string, dictArg: number | string | undefined): Promise<void> {
     const session = this.session();
     if (!session) return;
     if (!(await this.ensureRbSupport('Renaming a class'))) return;
@@ -3797,11 +4102,17 @@ export class ExplorerController {
       /* keep the Explorer selection as a best-effort fallback */
     }
 
+    // The class is filed back into its OWN dictionary, so that is what a collision is measured
+    // against -- `scopeDictName` is where it lives, resolved above.
     const edit = await showRenameClassEditor({ oldName, dictName: scopeDictName }, (newName) =>
-      this.validateRenameTarget(newName, oldName),
+      this.validateRenameTarget(newName, oldName, dictArg ?? scopeDictName),
     );
     if (!edit) return;
     const { newName, scope, options } = edit;
+
+    // Allowed, but said out loud once: the rename is about to leave two classes of this name.
+    if (!(await this.confirmShadowingRename(session, newName, oldName, scopeDictName, dictArg)))
+      return;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const safeClear = (): void => {
@@ -3869,10 +4180,47 @@ export class ExplorerController {
 
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
-    await this.refreshAfterClassReshape(newName);
+    this.claimNextEditorActivation();
+    await this.refreshAfterClassReshape(newName, dictArg);
+
+    // The class is bound under `newName` now -- the renameFailed check below is what makes
+    // that true -- so that is what the reversal looks up; it renames it back to `oldName`,
+    // reusing the scope the forward rename ran in.
+    //
+    // Recorded BEFORE the failure report. A partial apply has still renamed the class -- some
+    // method merely failed to recompile onto the new version -- and that is exactly when a way
+    // back is worth most. Returning first left the only recourse an abort, which discards every
+    // uncommitted change in the session rather than this one (#396).
+    //
+    // Unless the rename ITSELF failed. Then the class is not bound under `newName`, and a
+    // reversal that renames `newName` back would reach whatever else binds that name -- in the
+    // case that matters, another dictionary's class, which it would rename to `oldName` without
+    // declining, because this dictionary binds no `oldName` any more (#396).
+    if (result.renameFailed) {
+      logInfo(
+        `[undoRefactoring] the rename of ${oldName} did not land; not recording a reversal for ${newName}`,
+      );
+      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
+      return;
+    }
+    const recorded = this.recordReverseRename(
+      session,
+      'classRename',
+      newName,
+      newName,
+      oldName,
+      `Rename class ${qualifiedClassName(oldName, dictionaryNameFor(session, dictArg))} to ${newName}`,
+      'GsRenameClassRefactoring',
+      dictArg,
+      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
+    );
 
     if (result.failed.length > 0) {
-      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
+      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result, recorded);
       return;
     }
     const migrateNote =
@@ -3882,18 +4230,6 @@ export class ExplorerController {
     const commitNote = result.committed
       ? `Migrated and COMMITTED${migrateNote}.`
       : 'Compiled but NOT committed — commit when ready.';
-    // The class is bound under `newName` now, so that is what the reversal looks up; it
-    // renames it back to `oldName`, reusing the scope the forward rename ran in.
-    this.recordReverseRename(
-      session,
-      'classRename',
-      newName,
-      newName,
-      oldName,
-      `Rename class ${oldName} to ${newName}`,
-      'GsRenameClassRefactoring',
-      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
-    );
     notifyRefactoringApplied(
       session,
       `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
@@ -3905,34 +4241,50 @@ export class ExplorerController {
   // V6 Insert Superclass: slide a new empty class between this class and its current
   // superclass (server-side new class versions, no commit). Reveals the new class after.
   async insertSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Insert Superclass')) return;
     const session = this.session();
     if (!session) return;
-    // A hierarchy node may name a class outside the current dictionary; a class row uses it.
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // A hierarchy node names a class that usually lives OUTSIDE the current dictionary, and it
+    // carries its own. Passing nothing let the engine take whichever class of that name the
+    // symbol list reached first -- the same defect as #396, one pane over.
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // V7 Extract Superclass: insert a new common superclass above this class and chosen sibling
   // classes, hoisting chosen shared members up into it (server-side, no commit). Reveals the
   // new class after.
   async extractSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Extract Superclass')) return;
     const session = this.session();
     if (!session) return;
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // The node's own dictionary, not the selection (see insertSuperclass).
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // V8 Split Class: extract a chosen set of this class's own instance variables (and the methods
   // that use them) into a new component class, leaving the source with a lazy accessor +
   // delegating stubs (server-side, no commit). Reveals the new class after.
   async splitClass(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Split Class')) return;
     const session = this.session();
     if (!session) return;
-    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    // The node's own dictionary, not the selection (see insertSuperclass).
+    const dict = item instanceof HierarchyItem ? item.dictRef : this.state.dictIndex;
     const outcome = await splitClassCommand({ session, className: item.className, dict });
-    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+    if (outcome) {
+      this.claimNextEditorActivation();
+      await this.refreshAfterClassReshape(outcome.newClass);
+    }
   }
 
   // Rename this class variable across its defining class and every subclass — both
@@ -4053,7 +4405,8 @@ export class ExplorerController {
 
     // The class variable and any referencing methods changed (the class name and
     // its [n] version tag do NOT — a class-variable change makes no new version).
-    await this.refreshAfterClassReshape(className);
+    this.claimNextEditorActivation();
+    await this.refreshAfterClassReshape(className, dict);
     // Keep the (now-renamed) class variable selected: refreshAfterClassReshape
     // re-reveals the CLASS, which would otherwise steal the selection, so re-reveal
     // the renamed class-variable row last. Best-effort — the row must be in the
@@ -4077,22 +4430,28 @@ export class ExplorerController {
       }
     }
 
-    if (result.failed.length > 0) {
-      this.reportRenameFailures(
-        `Rename class variable '${oldName}' → '${newName}' in ${className}`,
-        result,
-      );
-      return true;
-    }
-    this.recordReverseRename(
+    const recorded = this.recordReverseRename(
       session,
       'classVarRename',
       className,
       newName,
       oldName,
-      `Rename class variable ${oldName} to ${newName} in ${className}`,
+      `Rename class variable ${oldName} to ${newName} in ${qualifiedClassName(className, dictionaryNameFor(session, dict))}`,
       'GsRenameClassVariableRefactoring',
+      dict,
     );
+    if (result.failed.length > 0) {
+      // Arm the Undo button too -- but only when the stone actually took the record. Arming
+      // regardless pushes whatever entry the stone holds, which after a failed record is the
+      // PREVIOUS refactoring's, lifted above the user's newer edits.
+      if (recorded) armRefactoringUndo(session);
+      this.reportRenameFailures(
+        `Rename class variable '${oldName}' → '${newName}' in ${className}`,
+        result,
+        recorded,
+      );
+      return true;
+    }
     notifyRefactoringApplied(
       session,
       `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
@@ -4107,14 +4466,26 @@ export class ExplorerController {
   // the methods that changed. Offers a redo — restore a prior version as a new
   // version (no commit). Invokable from a class row OR a hierarchy-pane class node.
   async classHistory(item: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(item, 'Class History')) return;
     const session = this.session();
     if (!session) return;
     const className = item.className;
     if (!(await this.ensureRbSupport('Viewing class history'))) return;
 
+    // The dictionary THIS class lives in. Threaded through every history call, the panel's
+    // label, Restore, Remove, and the tree refresh each of those drives. Without it the
+    // engine resolves the class name against the whole symbol list and answers the first
+    // binding -- a different class when the name is shadowed, whose history is then shown and,
+    // on Restore, rewritten (#396).
+    //
+    // A Hierarchy node carries its own dictionary and is usually NOT the selected one: an
+    // ancestor generally lives elsewhere, which is why Class History on `Object` from the
+    // Hierarchy pane failed outright with `not a class: Object` once the lookup became scoped.
+    const historyDict =
+      item instanceof HierarchyItem ? item.dictRef : (this.state.dictIndex ?? this.state.dictName);
     let versions;
     try {
-      versions = parseClassHistory(queries.getClassHistory(session, className));
+      versions = parseClassHistory(queries.getClassHistory(session, className, historyDict));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       void vscode.window.showErrorMessage(`Class history failed: ${msg}`);
@@ -4129,54 +4500,98 @@ export class ExplorerController {
     // change between restores; track it so the follow-up history fetch, the tree
     // refresh, and a second restore all target the right (current) name.
     let currentName = className;
-    showClassHistoryPanel(className, versions, {
-      restore: async (index) => {
-        // A restore binds a NEW version under the class name, so it is an ordinary class
-        // edit and reverts the same way -- by binding back the version that is bound now
-        // (#434). Restoring across a rename also renames the class, which unbinds one name
-        // and binds another, so BOTH names are recorded: the reversal rebinds the first and
-        // unbinds the second. The target version's own name is what history reports for it.
-        const dictRef = this.state.dictIndex ?? this.state.dictName;
-        const restoredName = versions.find((v) => v.index === index)?.name;
-        const names = [
-          currentName,
-          ...(restoredName && restoredName !== currentName ? [restoredName] : []),
-        ];
-        const recording =
-          dictRef !== undefined
-            ? beginClassEdit(
-                session,
-                names.map((className) => ({ dict: dictRef, className })),
-              )
-            : undefined;
+    // Which dictionary this history belongs to. The versions listed, and anything Restore or
+    // Remove does, belong to exactly one of the classes sharing this name, and nothing else on
+    // screen says which (#396).
+    const dictName = this.dictionaryNameForHistory(session, historyDict);
+    showClassHistoryPanel(
+      className,
+      versions,
+      {
+        restore: async (index) => {
+          // A restore binds a NEW version under the class name, so it is an ordinary class
+          // edit and reverts the same way -- by binding back the version that is bound now
+          // (#434). Restoring across a rename also renames the class, which unbinds one name
+          // and binds another, so BOTH names are recorded: the reversal rebinds the first and
+          // unbinds the second. The target version's own name is what history reports for it.
+          // `historyDict`, captured when the panel opened -- not the live selection. The panel
+          // stays open, so re-reading the tree state here records the undo against whatever the
+          // user has clicked since, while the revert itself lands on the class the panel is
+          // actually showing (#396).
+          const dictRef = historyDict;
+          const restoredName = versions.find((v) => v.index === index)?.name;
+          const names = [
+            currentName,
+            ...(restoredName && restoredName !== currentName ? [restoredName] : []),
+          ];
+          const recording =
+            dictRef !== undefined
+              ? beginClassEdit(
+                  session,
+                  names.map((className) => ({ dict: dictRef, className })),
+                )
+              : undefined;
 
-        const result = parseRevertResult(queries.revertClassToVersion(session, currentName, index));
-        const previousName = currentName;
-        if (result.reverted && result.name) currentName = result.name;
-        const refreshed = result.reverted
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
-          : versions;
-        // The class was reshaped/renamed (a new version) — re-cascade so the
-        // Explorer's Classes + Hierarchy panes show the restored name and version.
-        if (result.reverted) await this.refreshAfterClassReshape(currentName);
-        if (result.reverted) {
-          notifyUndoable(
-            `Restored ${previousName} to version ${index}`,
-            recording?.commit(`Restore ${previousName} to version ${index}`),
+          const result = parseRevertResult(
+            queries.revertClassToVersion(session, currentName, index, historyDict),
           );
-        }
-        return { result, versions: refreshed };
+          const previousName = currentName;
+          if (result.reverted && result.name) currentName = result.name;
+          const refreshed = result.reverted
+            ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
+            : versions;
+          // The class was reshaped/renamed (a new version) — re-cascade so the
+          // Explorer's Classes + Hierarchy panes show the restored name and version.
+          if (result.reverted) await this.refreshAfterClassReshape(currentName, historyDict);
+          if (result.reverted) {
+            notifyUndoable(
+              `Restored ${previousName} to version ${index}`,
+              recording?.commit(`Restore ${previousName} to version ${index}`),
+            );
+          }
+          return { result, versions: refreshed };
+        },
+        remove: async (index) => {
+          const result = parseRemoveResult(
+            queries.removeClassVersion(session, currentName, index, historyDict),
+          );
+          const refreshed = result.removed
+            ? parseClassHistory(queries.getClassHistory(session, currentName, historyDict))
+            : versions;
+          // The version count / tag changed — refresh the tree's version tags.
+          if (result.removed) await this.refreshAfterClassReshape(currentName, historyDict);
+          return { result, versions: refreshed };
+        },
       },
-      remove: async (index) => {
-        const result = parseRemoveResult(queries.removeClassVersion(session, currentName, index));
-        const refreshed = result.removed
-          ? parseClassHistory(queries.getClassHistory(session, currentName))
-          : versions;
-        // The version count / tag changed — refresh the tree's version tags.
-        if (result.removed) await this.refreshAfterClassReshape(currentName);
-        return { result, versions: refreshed };
-      },
-    });
+      { dictName },
+    );
+  }
+
+  /**
+   * The name of the dictionary a Class History was opened on, for the panel to show.
+   *
+   * `dictRef` is what the tree selection gives: a 1-based SymbolList index (the canonical form)
+   * or a name. An index is turned into its dictionary's name, since that is what a reader
+   * recognises. Answers undefined when the reference cannot be resolved, which leaves the panel
+   * unlabelled rather than labelled wrongly.
+   */
+  private dictionaryNameForHistory(
+    session: ActiveSession,
+    dictRef: number | string | undefined,
+  ): string | undefined {
+    // A name given directly (a Hierarchy node's own dictionary) is already the answer. An INDEX
+    // has to be resolved, and the tree's selected name is a shortcut for exactly ONE index —
+    // the selected one. Using it for any index labelled a Hierarchy ancestor with the selected
+    // dictionary: Class History on `Object`, which lives in Globals, opened saying UserGlobals.
+    // The history itself was scoped correctly, so only the label lied, which is the worse half
+    // of the bug this scoping exists to prevent — the panel's job is to say WHICH of the
+    // same-named classes these versions belong to.
+    if (typeof dictRef === 'string') return dictRef;
+    if (dictRef === undefined) return this.state.dictName;
+    if (dictRef === this.state.dictIndex) {
+      return this.state.dictName ?? dictionaryNameFor(session, dictRef);
+    }
+    return dictionaryNameFor(session, dictRef);
   }
 
   // Show one method's recorded source history (context menu on a method row). The
@@ -5473,11 +5888,14 @@ export class ExplorerController {
     dictName: string,
     categoryPath: string,
     sessionId?: number,
+    // The dictionary's SymbolList position when the caller has it (a GemStone Search result
+    // does): two dictionaries can share a name, and the name alone finds the first (#396).
+    dictIndex?: number,
   ): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
     const names = queries.getDictionaryNames(session);
-    const idx = names.indexOf(dictName);
+    const idx = resolveDictionaryIndex(names, dictName, dictIndex) - 1;
     if (idx < 0) {
       void vscode.window.showWarningMessage(`No dictionary matching "${dictName}".`);
       return;
@@ -5671,13 +6089,13 @@ export class ExplorerController {
   private recordLanding(method?: { selector: string; isMeta: boolean }): void {
     const session = this.session();
     const { dictName, dictIndex, classCategory, className } = this.state;
-    // dictIndex is not part of the coordinate — Back re-resolves it from the name —
-    // but until the panes have one there is no dictionary landed on to record.
+    // Until the panes have a dictionary index there is no dictionary landed on to record.
     if (!session || dictName === undefined || dictIndex === undefined) return;
     this.history.record(
       {
         sessionId: session.id,
         dictName,
+        dictIndex,
         classCategory,
         className,
         selector: method?.selector,
@@ -5689,9 +6107,10 @@ export class ExplorerController {
 
   /**
    * Put the panes back on a recorded landing, recomputing it against the live
-   * stone rather than trusting the coordinate: the dictionary is re-resolved by
-   * name (a commit elsewhere can shift every index) and the class and selector
-   * have to still be there.
+   * stone rather than trusting the coordinate: the recorded dictionary index is kept
+   * only while the dictionary there still has the recorded name, and is otherwise
+   * re-resolved from the name (a commit elsewhere can shift every index); the class
+   * and selector have to still be there.
    *
    * Answers false when the landing no longer resolves, which drops it from the
    * chain so a second press tries the one before it. A landing whose class is
@@ -5711,7 +6130,11 @@ export class ExplorerController {
     }
     let dictIndex: number;
     try {
-      dictIndex = queries.getDictionaryNames(session).indexOf(landing.dictName) + 1;
+      dictIndex = resolveDictionaryIndex(
+        queries.getDictionaryNames(session),
+        landing.dictName,
+        landing.dictIndex,
+      );
     } catch {
       return false;
     }
@@ -5923,8 +6346,21 @@ export class ExplorerController {
     }
     // Nobody claimed this open and it lands on a test item's document: it is a
     // click on a row in the Testing view, whose navigation is its own.
-    if (!this.attributedOpens.delete(uri.toString()) && this.sunit?.isTestItemUri(uri)) {
+    const attributed = this.attributedOpens.delete(uri.toString());
+    if (!attributed && this.sunit?.isTestItemUri(uri)) {
       return;
+    }
+    // A deliberate reveal has just placed the tree and a panel then closed, surfacing whatever
+    // tab was beside it. That is not a navigation, so it must not move the Explorer off the
+    // class the user just refactored. One shot: spent here whether or not it was this URI.
+    //
+    // Spent, but not obeyed, for an open somebody CLAIMED -- Reveal in GemStone Explorer, or
+    // GemStone Search. Those exist to move the tree, and a stray claim swallowing one meant the
+    // command did nothing at all.
+    if (this.revealClaim) {
+      clearTimeout(this.revealClaim);
+      this.revealClaim = undefined;
+      if (!attributed) return;
     }
     const session = this.session();
     if (!session || String(session.id) !== uri.authority) return;
@@ -5943,8 +6379,14 @@ export class ExplorerController {
     const revealMethod =
       parsed.kind === 'method' ? { selector: parsed.selector, isMeta: parsed.isMeta } : undefined;
 
-    // Already showing this class: just (re)reveal the method row / refresh title.
-    if (this.state.className === className && this.state.dictName === dictName) {
+    // Already showing this class: just (re)reveal the method row / refresh title. A tab that
+    // carries its dictionary's position is compared by position too: two dictionaries can share
+    // a name, and each can bind a class of this one (#396).
+    if (
+      this.state.className === className &&
+      this.state.dictName === dictName &&
+      (parsed.dictIndex === undefined || parsed.dictIndex === this.state.dictIndex)
+    ) {
       if (revealMethod) {
         // If the Methods pane already has this selector selected — which is exactly
         // the case when the user just clicked it in the tree (that click is what
@@ -5977,7 +6419,11 @@ export class ExplorerController {
       return;
     }
 
-    const dictIndex = queries.getDictionaryNames(session).indexOf(dictName) + 1;
+    const dictIndex = resolveDictionaryIndex(
+      queries.getDictionaryNames(session),
+      dictName,
+      parsed.dictIndex,
+    );
     if (dictIndex <= 0) return;
     await this.revealClass(dictName, dictIndex, className, {
       revealMethod,
@@ -6287,7 +6733,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -6512,7 +6958,7 @@ export class ExplorerController {
       dictIndex = this.state.dictIndex;
     } else if (item instanceof HierarchyItem) {
       className = item.className;
-      const resolved = this.resolveClassDict(item.className, item.dictName);
+      const resolved = this.resolveClassDict(item.className, item.dictName, item.dictIndex);
       dictName = resolved?.dictName;
       dictIndex = resolved?.dictIndex;
     } else if (this.state.className !== undefined) {
@@ -7168,9 +7614,10 @@ export class ExplorerController {
    *  Classes pane and from the Class Hierarchy pane, which carries its own dictionary
    *  (a superclass usually lives somewhere else). */
   async fileOutClass(node: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(node, 'File Out')) return;
     const session = this.fileOutSession();
     if (!session) return;
-    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    const dict = node instanceof HierarchyItem ? node.dictRef : this.state.dictIndex;
     await this.runFileOut({
       title: `File Out ${node.className}`,
       defaultFileName: fileOutFileName(node.className),
@@ -7194,10 +7641,11 @@ export class ExplorerController {
    * `.extension.st`. See `queries/tonel/fileOutClassTonel.ts`.
    */
   async fileOutClassAsTonel(node: ClassItem | HierarchyItem): Promise<void> {
+    if (declineIfUnbound(node, 'File Out as Tonel')) return;
     const session = this.fileOutSession();
     if (!session) return;
     if (!requireTonelAvailable(session)) return;
-    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    const dict = node instanceof HierarchyItem ? node.dictRef : this.state.dictIndex;
     await this.runFileOut({
       title: `File Out ${node.className} (.st)`,
       defaultFileName: `${sanitizeFileNameStem(node.className)}.class.st`,
@@ -7709,10 +8157,22 @@ export class ExplorerController {
         targetName: flipSide ? group[0].className : targetClass,
         toMeta: flipSide ? !isMeta : isMeta,
         dict: group[0].dictIndex,
+        // A side flip stays in the source's own dictionary; a drop lands in the dictionary
+        // whose row the user dropped onto. Either way the target is named, never guessed
+        // from the symbol list -- a shadowed class name would send the method to a
+        // stranger's class and delete it from the source (#396).
+        targetDict: flipSide ? group[0].dictIndex : targetDictIndex,
       });
       if (outcome && outcome.moved.length > 0 && !reveal) {
         reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
       }
+      // The move preview panel has resolved and is disposing itself, which surfaces the tab
+      // beside it. Claimed HERE, before the reveal below is awaited, so the claim exists by the
+      // time that activation arrives -- otherwise the follow drags the Explorer onto that tab's
+      // dictionary, and a move into another dictionary lands the user back in the one they
+      // dragged FROM (#396). This path reveals through revealClass rather than
+      // refreshAfterClassReshape, which is why it needs its own claim.
+      if (outcome) this.claimNextEditorActivation();
     }
     if (reveal && targetDictName !== undefined && targetDictIndex !== undefined) {
       await this.revealClass(targetDictName, targetDictIndex, targetClass, {
@@ -7956,7 +8416,13 @@ export class ExplorerController {
     this.classProvider.refresh();
   }
 
-  onExternalClassCompiled(sessionId: number, className: string, dictName?: string): void {
+  onExternalClassCompiled(
+    sessionId: number,
+    className: string,
+    dictName?: string,
+    // The compiled definition's SymbolList position, when its editor tab carried one.
+    dictIndex?: number,
+  ): void {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
     this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
@@ -7964,8 +8430,11 @@ export class ExplorerController {
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     // If the compiled class lives in the current dictionary, select it so the
-    // freshly-created class is highlighted and its methods load.
+    // freshly-created class is highlighted and its methods load. A class of the same NAME in
+    // the current dictionary is not enough when the definition says it was compiled in
+    // another one: two dictionaries can each bind a class of that name (#396).
     if (
+      (dictIndex === undefined || dictIndex === this.state.dictIndex) &&
       this.classCategoryEntries.some((e) => e.className === className) &&
       this.state.dictName !== undefined
     ) {
@@ -7976,7 +8445,7 @@ export class ExplorerController {
     // — e.g. a new class whose `inDictionary:` names a different dictionary. Jump
     // the explorer to where the class actually lives so it's revealed there,
     // rather than leaving the panes on a dictionary that doesn't contain it.
-    const resolved = this.resolveClassDict(className, dictName);
+    const resolved = this.resolveClassDict(className, dictName, dictIndex);
     if (resolved) {
       void this.revealClass(resolved.dictName, resolved.dictIndex, className);
     } else {
@@ -8337,7 +8806,12 @@ export function commitFilterOnRowSelection(
 // for a live panel refresh.
 export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string, selector?: string): void;
-  onClassCompiled(sessionId: number, className: string, dictName?: string): void;
+  onClassCompiled(
+    sessionId: number,
+    className: string,
+    dictName?: string,
+    dictIndex?: number,
+  ): void;
   /** A class comment was saved: put the 📖 button on that class's row, or take it
    *  off, without refetching the dictionary's class list. */
   onClassCommentSaved(
@@ -8771,12 +9245,13 @@ export function registerGemStoneExplorer(
     // sessionId as above.
     vscode.commands.registerCommand(
       'gemstone.explorer.revealCategory',
-      (dictName?: string, categoryPath?: string, sessionId?: number) =>
+      (dictName?: string, categoryPath?: string, sessionId?: number, dictIndex?: number) =>
         typeof dictName === 'string' && typeof categoryPath === 'string'
           ? ctl.revealCategoryByPath(
               dictName,
               categoryPath,
               typeof sessionId === 'number' ? sessionId : undefined,
+              typeof dictIndex === 'number' ? dictIndex : undefined,
             )
           : undefined,
     ),
@@ -9296,8 +9771,8 @@ export function registerGemStoneExplorer(
   return {
     onMethodCompiled: (sessionId, className, selector) =>
       ctl.onExternalMethodCompiled(sessionId, className, selector),
-    onClassCompiled: (sessionId, className, dictName) =>
-      ctl.onExternalClassCompiled(sessionId, className, dictName),
+    onClassCompiled: (sessionId, className, dictName, dictIndex) =>
+      ctl.onExternalClassCompiled(sessionId, className, dictName, dictIndex),
     onClassCommentSaved: (sessionId, dictName, className, hasComment) =>
       ctl.onClassCommentSaved(sessionId, dictName, className, hasComment),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),

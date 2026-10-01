@@ -23,6 +23,12 @@ apply recompiles in the stone but never commits. setUp builds a throwaway
 two-class hierarchy in UserGlobals and tearDown removes it. The block-argument
 fixtures shadow the class variable on purpose, which the compiler warns about;
 the warning is resumed so the fixture still installs.
+
+The `tests - shadowed class name` category covers #396. This refactoring creates no new class
+version, so it never reaches `dictionaryForNewVersionOf:`; it exercises the wider half, where a staged change
+records its class by name and the apply resolves that name against a dictionary. Getting it wrong
+left the refactoring HALF-applied -- the new class variable on one class, the methods rewritten on
+another -- which is why the test asserts `"failed":[]` as well as the destination.
 "
 Class {
 	#name : 'GsRenameClassVariableRefactoringTest',
@@ -542,4 +548,38 @@ GsRenameClassVariableRefactoringTest >> testCollisionSurfacedInPreviewPayload [
 	self deny: collided includesSubstring: '"collision":null'.
 	self assert: collided includesSubstring: '"collision":"'.
 	self assert: free includesSubstring: '"collision":null'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassVariableRefactoringTest >> testRenameEditsTheActedOnClassNotAGlobalFirstMatch [
+	"A class-variable rename creates NO new class version -- it edits the class reflectively
+	 (addClassVarName: / removeClassVarName:) and never reaches `dictionaryForNewVersionOf:`. It is broken
+	 anyway, by a second and wider root cause: a staged change records its class by NAME, and
+	 `applyClassDefinitionEdit:` re-resolves it with `environment classNamed:`, documented as
+	 'the first class bound to aName across all dictionaries'. With a decoy binding GsRCVBase
+	 ahead of UserGlobals the new class variable used to be created on the DECOY, leaving the
+	 acted-on class with its old name and the methods rewritten to a name that would not compile
+	 (#396)."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsRCVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCVBase'
+		instVarNames: #()
+		classVars: #('Counter') classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := UserGlobals at: #GsRCVBase.
+	 json := (GsRenameClassVariableRefactoring class: base renameClassVar: 'Counter' to: 'Tally')
+		applyDeselected: #().
+
+	 "nothing may be left half-applied: this is what caught the half-apply -- the referencing methods
+	  were rewritten to a name their own class did not have"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the rename lands on the class the user acted on"
+	 self assert: ((base classVarNames collect: [:e | e asString]) includes: 'Tally').
+	 self deny: ((base classVarNames collect: [:e | e asString]) includes: 'Counter').
+	 "the decoy's own class variable is left alone"
+	 self assert: ((decoyClass classVarNames collect: [:e | e asString]) includes: 'Counter').
+	 self deny: ((decoyClass classVarNames collect: [:e | e asString]) includes: 'Tally')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

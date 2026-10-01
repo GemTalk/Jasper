@@ -19,7 +19,9 @@ function makeController(): ExplorerController {
   const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   const access = ctl as unknown as HierAccess;
-  access.hierChain = [{ className: 'Array', dictName: 'UserGlobals', kind: 'self' }];
+  access.hierChain = [
+    { className: 'Array', dictName: 'UserGlobals', kind: 'self', binding: 'bound' },
+  ];
   access.hierSubs = [];
   return ctl;
 }

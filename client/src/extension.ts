@@ -122,6 +122,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
+  classCompiledTarget,
   isMethodEditorUri,
   isClassCommentUri,
 } from './gemstoneFileSystemProvider';
@@ -1211,16 +1212,16 @@ export function activate(context: vscode.ExtensionContext) {
     gemstoneFs.onClassDefinitionCompiled(handleClassDefinitionCompiled),
     // Refresh the GemStone Explorer's class list when a class is created/redefined
     // (the definition event carries the real class name; the new-class URI
-    // doesn't). parts: ['', dictName, className, 'definition'].
+    // doesn't).
     gemstoneFs.onClassDefinitionCompiled((e) => {
-      const parts = e.uri.path.split('/').map(decodeURIComponent);
-      if (parts.length >= 3) {
-        // parts: ['', dictName, className, 'definition'] — pass the dictName so the
-        // explorer can jump to the dictionary the class was actually created in
-        // (which may differ from the selected one for a new-class inDictionary:).
-        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
+      // Pass the dictName so the explorer can jump to the dictionary the class was actually
+      // created in (which may differ from the selected one for a new-class inDictionary:),
+      // and its position, since two dictionaries can share a name.
+      const t = classCompiledTarget(e.uri);
+      if (t) {
+        explorer.onClassCompiled(t.sessionId, t.className, t.dictName, t.dictIndex);
         // Keep an open GemStone Search current: fold the freshly compiled class into its cache.
-        omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
+        omniSearch?.notifyClassCompiled(t.sessionId, t.className, t.dictName);
       }
     }),
     // A comment save changes one thing in the Explorer — whether the class's row

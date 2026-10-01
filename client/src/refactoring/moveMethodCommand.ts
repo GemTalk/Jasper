@@ -35,6 +35,10 @@ export interface MoveMethodRequest {
   toMeta: boolean;
   /** Dict scope for the source-class lookup (1-based SymbolList index or name). */
   dict?: number | string;
+  /** Dict scope for the TARGET-class lookup. Without it the engine takes the first class of
+   *  that name in the symbol list, which for a shadowed name is not the one the user picked
+   *  -- the method lands on a stranger's class and is removed from the source (#396). */
+  targetDict?: number | string;
 }
 
 /** The result of a completed, applied move — so the caller can reveal the methods in
@@ -51,7 +55,7 @@ export interface MoveOutcome {
  *  applied, or undefined when cancelled, declined, or nothing was movable. Surfaces its
  *  own user-facing messages; the CALLER reveals the moved methods in the target. */
 export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | undefined> {
-  const { session, sourceClass, selectors, isMeta, targetName, toMeta, dict } = req;
+  const { session, sourceClass, selectors, isMeta, targetName, toMeta, dict, targetDict } = req;
   logInfo(`[moveMethod] ${sourceClass} ${selectors.length} selector(s) -> ${targetName}`);
 
   if (selectors.length === 0) return undefined;
@@ -73,6 +77,7 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
         targetName,
         toMeta,
         dict,
+        targetDict,
       ),
     );
   } catch (e: unknown) {
@@ -119,6 +124,7 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
         token,
         PREVIEW_PAGE_BYTES,
         dict,
+        targetDict,
       ),
     );
   } catch (e: unknown) {

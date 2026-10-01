@@ -31,6 +31,12 @@ This suite pins down:
     the two core changes) without committing.
 
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
 "
 Class {
 	#name : 'GsExtractMethodRefactoringTest',
@@ -809,4 +815,28 @@ GsExtractMethodRefactoringTest >> testApplyHonoursDuplicateDeselectionButNotCore
 	"a non-deselected duplicate WAS rewritten"
 	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
 		includesSubstring: 'self sideEffects'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractMethodRefactoringTest >> testExtractMethodCompilesOntoTheActedOnClassNotAGlobalFirstMatch [
+	"Extract method adds the new method and rewrites the original, both through changes that record
+	 their class by NAME and are re-resolved at apply time with `environment classNamed:`. A decoy
+	 binding GsEMBase ahead of UserGlobals used to take both writes (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsEMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsEMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture includesSelector: #sideEffects).
+	 self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'.
+	 self deny: (decoyClass includesSelector: #sideEffects)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

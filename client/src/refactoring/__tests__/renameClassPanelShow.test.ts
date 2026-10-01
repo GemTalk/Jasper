@@ -50,7 +50,7 @@ const start: StartClassPreview = {
   total: 2,
   oldName: 'Foo',
   newName: 'Bar',
-  outOfScope: { references: 0, descendants: 1, skipped: 0, collision: null },
+  outOfScope: { references: 0, descendants: 1, skipped: 0, collision: null, shadowedFrom: null },
   skippedMethods: [],
   page: {
     changes: [

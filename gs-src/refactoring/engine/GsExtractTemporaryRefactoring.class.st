@@ -396,7 +396,7 @@ GsExtractTemporaryRefactoring >> buildChangeSet [
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -524,10 +524,12 @@ GsExtractTemporaryRefactoring >> methodCategory [
 ]
 
 { #category : 'private' }
-GsExtractTemporaryRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsExtractTemporaryRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'serializing' }
@@ -622,7 +624,7 @@ GsExtractTemporaryRefactoring >> applyChange: aChange [
 GsExtractTemporaryRefactoring >> applyMethodRecompile: aChange [
 	"Recompile the one method with its rewritten source. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment

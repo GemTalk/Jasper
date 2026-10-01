@@ -127,6 +127,29 @@ describe('rename-class preview parsing', () => {
     expect(result.applied).toBe(2);
     expect(result.failed[0].error).toBe('boom');
   });
+
+  it('reads whether the rename itself failed, apart from a failed re-parent after it', () => {
+    // A re-parent that fails after the rename landed is a partial apply the client arms an
+    // Undo for; only a failed #classRename leaves nothing to undo.
+    const landed = parseApplyResult(
+      JSON.stringify({
+        applied: 1,
+        failed: [{ id: '2', label: 'Sub', error: 'x' }],
+        renameFailed: false,
+      }),
+    );
+    const failed = parseApplyResult(
+      JSON.stringify({
+        applied: 0,
+        failed: [{ id: '1', label: 'Base', error: 'x' }],
+        renameFailed: true,
+      }),
+    );
+
+    expect(landed.renameFailed).toBe(false);
+    expect(failed.renameFailed).toBe(true);
+    expect(parseApplyResult(JSON.stringify({ applied: 1, failed: [] })).renameFailed).toBe(false);
+  });
 });
 
 describe('rename-class change classification and labels', () => {

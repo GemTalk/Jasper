@@ -35,6 +35,12 @@ a 1-based source OFFSET into the method that identifies the clicked occurrence
 setUp builds a throwaway two-class hierarchy in UserGlobals and tearDown removes
 it. The shadowing fixture shadows a temporary with a block parameter on purpose,
 which the compiler warns about; the warning is resumed so the fixture installs.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
 "
 Class {
 	#name : 'GsRenameTemporaryRefactoringTest',
@@ -480,3 +486,25 @@ GsRenameTemporaryRefactoringTest >> testApplyDoesNotCommit [
 	self assert: System needsCommit equals: before
 ]
 </content>
+
+{ #category : 'tests - shadowed class name' }
+GsRenameTemporaryRefactoringTest >> testRenameTemporaryRecompilesTheActedOnClassNotAGlobalFirstMatch [
+	"A temporary rename touches exactly one method, recompiled through a change that records its
+	 class by NAME and is re-resolved at apply time with `environment classNamed:`. A decoy binding
+	 GsRTBase ahead of UserGlobals used to take the recompile (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRTShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRTBase'
+		instVarNames: #('count' 'total')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameComputeTempTo: 'sum') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self baseFixture compiledMethodAt: #computeTemp) sourceString
+		includesSubstring: 'sum'.
+	 self assert: (decoyClass compiledMethodAt: #computeTemp environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]

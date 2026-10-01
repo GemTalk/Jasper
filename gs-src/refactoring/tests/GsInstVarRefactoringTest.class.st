@@ -25,6 +25,13 @@ new-version machinery is covered; tearDown removes it. Applying an operation cre
 delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
 the full committing migrate / delete-history round trip (which needs a clean committed transaction)
 is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
+
+The `tests - shadowed class name` category covers #396: a class name bound in more than one
+dictionary must not send an add or remove at the class the symbol list reaches first. Each test
+plants a decoy class of the same name in a dictionary ahead of the fixture's own and asserts the
+reshape lands on the acted-on class, the decoy is untouched, and the apply reports `"failed":[]`.
+One test is the boundary control -- the decoy appended rather than inserted first -- which passed
+even before the fix, and says the outcome turned purely on symbol-list order.
 "
 Class {
 	#name : 'GsInstVarRefactoringTest',
@@ -769,4 +776,285 @@ GsInstVarRefactoringTest >> testShadowScanIgnoresMethodsThatMerelyMentionTheName
 	self compile: 'sendsIt ^self respondsTo: #tally' in: self sub.
 	ref := self add: 'tally'.
 	self assert: ref willNotRecompileSelectorCount equals: 0
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddBindsTheNewVersionInTheActedOnClassOwnDictionary [
+	"A dictionary EARLIER in the symbol list that binds the same class NAME must not receive the
+	 reshaped class. `dictionaryForNewVersionOf:` used to resolve the target dictionary from the class's NAME and take
+	 the first match, discarding the class object it was handed, so the new version was bound into
+	 the decoy: the class the user acted on never gained the variable, and the decoy's own
+	 same-named class was replaced by a copy of the acted-on one. It resolves by identity now (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 "the whole change set applied -- nothing left half-done"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 "the class the user acted on is the one that gains the variable"
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 "and the same-named class in the shadowing dictionary is untouched"
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddIsCorrectWhenTheShadowingDictionaryComesAfterTheOwnOne [
+	"The ordering control. Same two dictionaries, but the decoy is APPENDED after UserGlobals rather
+	 than inserted before it, so name-first-match happens to be the acted-on class's own dictionary
+	 and the reshape lands correctly. This passed even before the fix, which is what makes the
+	 companion tests a statement about symbol-list ORDER rather than about a second dictionary
+	 merely existing."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowDictAfter; yourself.
+	System myUserProfile symbolList add: decoy.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile symbolList remove: decoy ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddBindsAReversionedSubclassInItsOwnDictionary [
+	"The blast radius is not limited to the class the user picked. Adding an instance variable to the
+	 base re-versions every subclass as well, and each of those new versions is bound through the
+	 same `dictionaryForNewVersionOf:`. Here only the SUBCLASS name is shadowed and the acted-on base is not:
+	 the base used to reshape correctly while GsIVSub's new version went into the decoy. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowSubDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVSub'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "`tally` is declared on the base, so the subclass INHERITS it -- instVarNames is own-only."
+	 self assert: ((UserGlobals at: #GsIVSub) allInstVarNames includes: #tally).
+	 "the observable of the re-version: the subclass is parented onto the base's NEW version"
+	 self assert: (UserGlobals at: #GsIVSub) superclass == (UserGlobals at: #GsIVBase).
+	 self assert: (decoy at: #GsIVSub) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testRemoveBindsTheNewVersionInTheActedOnClassOwnDictionary [
+	"The remove half of the same defect -- both operations reshape through makeNewVersionOf:, so
+	 both bind the result through dictionaryForNewVersionOf:."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsIVShadowRemoveDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self remove: 'other') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: ((UserGlobals at: #GsIVBase) instVarNames includes: #other).
+	 self assert: (decoy at: #GsIVBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarRefactoringTest >> testAddWithAccessorsCompilesThemOntoTheActedOnClassNewVersion [
+	"Accessors are compiled onto the new version via `oldToNew at: definingClass`, where
+	 `definingClass` is the class the caller passed BY IDENTITY and `oldToNew` is keyed by whatever
+	 the apply resolved from the change. While that resolution went by name and answered a
+	 same-named class from another dictionary, the two never matched: the lookup missed, fell back
+	 to the caller's class -- still the OLD version, without the new variable -- and every accessor
+	 failed to compile with `undefined symbol`, leaving the refactoring PARTIALLY applied with its
+	 reshape landed on the wrong class (#396).
+
+	 This is the accessor path specifically; the other add tests here pass no accessors and so
+	 never reached it."
+	| decoy decoyClass accessors json |
+	decoy := SymbolDictionary new name: #GsIVShadowAccessorDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 accessors := ((OrderedCollection new)
+		add: (Array with: 'tally' with: 'tally
+	^tally');
+		add: (Array with: 'tally:' with: 'tally: aValue
+	tally := aValue'); yourself) asArray.
+	 json := (self add: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false accessors: accessors.
+
+	 "the accessors compiled -- nothing left half-applied"
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 self assert: ((UserGlobals at: #GsIVBase) instVarNames includes: #tally).
+	 self assert: ((UserGlobals at: #GsIVBase) includesSelector: #tally).
+	 self assert: ((UserGlobals at: #GsIVBase) includesSelector: #'tally:').
+	 "and the shadowing dictionary's class gained neither the variable nor the accessors"
+	 self assert: (decoy at: #GsIVBase) == decoyClass.
+	 self deny: (decoyClass includesSelector: #tally)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsInstVarRefactoringTest >> withUnnamedDictionaryDo: aBlock [
+	"A SymbolDictionary with NO name -- which is simply what `SymbolDictionary new` answers,
+	 since a name only exists if someone sets one -- sitting AFTER UserGlobals on the symbol
+	 list, each holding its own GsIVNoName. Evaluates aBlock with the UserGlobals class, the
+	 unnamed dictionary's class, and the dictionary, then cleans up."
+	| sl at decoy mine theirs |
+	sl := System myUserProfile symbolList.
+	at := sl size + 1.
+	decoy := SymbolDictionary new.
+	System myUserProfile insertDictionary: decoy at: at.
+	[mine := Object
+		subclass: 'GsIVNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 theirs := Object
+		subclass: 'GsIVNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 aBlock value: mine value: theirs value: decoy]
+		ensure: [
+			UserGlobals removeKey: #GsIVNoName ifAbsent: [].
+			System myUserProfile removeDictionaryAt: at]
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsInstVarRefactoringTest >> testAddReachesTheClassInAnUnnamedDictionary [
+	"A change recorded only the dictionary's NAME, so a class in a nameless dictionary recorded
+	 nil -- and nil is the compatibility path, first-match across the symbol list. That is the
+	 same-named class in UserGlobals. The targeted class was left untouched and an unrelated one
+	 was re-versioned, silently. A name cannot identify a dictionary that has none. See #396."
+	self withUnnamedDictionaryDo: [:mine :theirs :decoy | | json |
+		json := (GsInstVarRefactoring class: theirs addInstVar: 'newOne')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		"the class in the unnamed dictionary is the one that gained the variable"
+		self assert: ((decoy at: #GsIVNoName) instVarNames collect: [:e | e asString])
+			includesItem: 'newOne'.
+		"and UserGlobals' same-named class was not touched at all"
+		self deny: ((UserGlobals at: #GsIVNoName) instVarNames collect: [:e | e asString])
+			includesItem: 'newOne'.
+		self assert: (UserGlobals at: #GsIVNoName) == mine]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> withShadowedLineageDo: aBlock [
+	"A lineage shadow: UserGlobals holds GsIVTwin, and a dictionary AHEAD of it in the symbol
+	 list holds a DIFFERENT GsIVTwin that is a subclass of the first. Legal in GemStone, and the
+	 shape that broke the ivar refactorings -- the bookkeeping was keyed by class name, so the
+	 subclass was handed its parent''s ivar list. Evaluates aBlock with the two classes and
+	 cleans the dictionary up."
+	| decoy parent child |
+	decoy := SymbolDictionary new name: #GsIVShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[parent := Object
+		subclass: 'GsIVTwin'
+		instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	 child := parent
+		subclass: 'GsIVTwin'
+		instVarNames: #('childOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self compile: 'parentSees ^parentOwn' in: parent.
+	 self compile: 'childSees ^childOwn' in: child.
+	 aBlock value: parent value: child]
+		ensure: [
+			UserGlobals removeKey: #GsIVTwin ifAbsent: [].
+			System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddKeepsAShadowedSubclassOwnInstVars [
+	"Adding an ivar to the parent must not push the parent''s list onto the same-named child.
+	 It used to: newIvarLists was keyed by class NAME, both classes answer 'GsIVTwin', and the
+	 child was rebuilt with #('parentOwn' 'newOne') -- which duplicates the inherited parentOwn
+	 and raises error 2271, leaving the parent re-versioned and the child stranded on the
+	 parent''s OLD version. See #396."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		"the parent got the new variable"
+		self assert: (newParent instVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		"the child kept its OWN list, and did not inherit a duplicate"
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: (newChild allInstVarNames collect: [:e | e asString]) includesItem: 'newOne'.
+		self assert: (newChild allInstVarNames select: [:e | e asString = 'parentOwn']) size = 1.
+		"and it hangs off the parent''s NEW version, not the superseded one"
+		self assert: newChild superclass == newParent.
+		self deny: newChild superclass == parent]
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddStagesAnEditForTheParentAndAReparentForTheShadowedChild [
+	"The preview must show what will actually happen: the parent''s definition is edited, the
+	 same-named child is only re-parented. Keyed by name, isEditedClassNamed: answered true for
+	 both and the child got a second classDefinitionEdit -- two rows the user cannot tell apart."
+	self withShadowedLineageDo: [:parent :child | | cs edits reparents |
+		cs := (GsInstVarRefactoring class: parent addInstVar: 'newOne') changeSet.
+		edits := cs changes select: [:c | c kind = #classDefinitionEdit].
+		reparents := cs changes select: [:c | c kind = #classReparent].
+		self assert: edits size = 1.
+		self assert: reparents size = 1.
+		self assert: (edits first className asString) = 'GsIVTwin'.
+		self assert: (reparents first className asString) = 'GsIVTwin'.
+		"the two rows are told apart by their dictionary, which is the only thing that differs"
+		self assert: (edits first dictName asString) = 'UserGlobals'.
+		self assert: (reparents first dictName asString) = 'GsIVShadowDict']
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testAddGivesAShadowedChildItsOwnOptionsNotTheEditedOnes [
+	"Options the user edits belong to the class they acted on. optionsForApply: matched the
+	 acted-on class by NAME, so a same-named child was rebuilt with options the user chose for a
+	 class they never touched."
+	self withShadowedLineageDo: [:parent :child | | json newChild |
+		json := (GsInstVarRefactoring class: parent addInstVar: 'newOne')
+			applyDeselected: #() options: #('selfCanBeSpecial') migrate: false deleteHistory: false.
+		self assert: json includesSubstring: '"failed":[]'.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self deny: ((newChild _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial'.
+		"and the class the user DID act on got them"
+		self assert: (((UserGlobals at: #GsIVTwin) _optionsArray ifNil: [#()]) collect: [:e | e asString])
+			includesItem: 'selfCanBeSpecial']
+]
+
+{ #category : 'tests - shadowed lineage' }
+GsInstVarRefactoringTest >> testRemoveKeepsAShadowedSubclassOwnInstVars [
+	"The remove path shares the same bookkeeping as add, and broke the same way."
+	self withShadowedLineageDo: [:parent :child | | json newParent newChild |
+		json := (GsInstVarRefactoring class: parent removeInstVar: 'parentOwn')
+			applyDeselected: #() options: nil migrate: false deleteHistory: false.
+		newParent := UserGlobals at: #GsIVTwin.
+		newChild := (System myUserProfile symbolList at: 1) at: #GsIVTwin.
+		self assert: (newParent instVarNames collect: [:e | e asString]) = #().
+		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
+		self assert: newChild superclass == newParent]
 ]

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { renderMethodPanelHtml, renderMethodCards } from '../renameMethodPanelHtml';
@@ -188,5 +188,265 @@ describe('paginated rename-method panel', () => {
       (c) => (c[0] as { command: string }).command === 'apply',
     );
     expect(applies).toHaveLength(2);
+  });
+
+  // The editor's Enter opens the preview; the preview's Enter applies it. Without this the flow
+  // stopped dead at the panel, which offers no other keyboard route to its primary action.
+  describe('Enter applies, so a refactoring can be driven Enter-to-Enter', () => {
+    // A real, deliberate Enter: the key goes down and comes back up. `release` alone is what
+    // arms the panel -- a held Enter carried over from an earlier step never releases.
+    const release = (): void => {
+      document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+    };
+    const down = (target: Element | Document): void => {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    };
+    const press = (target: Element | Document): void => {
+      release();
+      down(target);
+    };
+
+    it('focuses Apply when the panel opens, making it the default button', () => {
+      // A webview opens with nothing focused, so the keydown handler never fires: the keystroke
+      // goes to the editor chrome and Enter looks dead. Focusing Apply also makes Enter and Space
+      // activate it natively -- the same thing the editor step gets by focusing its name field.
+      mount([change('1', 'A')], 1, true);
+
+      expect(document.activeElement).toBe(document.getElementById('apply'));
+    });
+
+    it('applies on Enter from the page', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.body);
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('applies on Enter from a change row’s checkbox, which does not use Enter itself', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.querySelector('input[type="checkbox"]')!);
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('ignores an Enter the page has not seen released, so a held key cannot apply', () => {
+      // Apply is focused on open, so Enter activates it NATIVELY -- the document handler never
+      // sees it, because it returns early for a BUTTON. A held Enter therefore auto-repeated
+      // straight through the rename editor, the shadowing modal's default button, and into
+      // Apply, applying a preview nobody had looked at (#396).
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        repeat: true,
+      });
+      document.getElementById('apply')!.dispatchEvent(e);
+
+      expect(e.defaultPrevented).toBe(true);
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('ignores an unreleased Enter from the page too, not only from Apply', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      down(document.body);
+
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('applies once the key has been released and pressed again', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      down(document.body); // the tail of the held key: ignored
+      release();
+      down(document.body); // a new, deliberate press
+
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    /**
+     * The panel is built after a round trip to the stone, so the Enter that opened it was
+     * released while there was no page to hear the keyup — and opening it with the mouse leaves
+     * nothing to hear either. Waiting for a keyup therefore ate the first DELIBERATE press, and
+     * the Enter-to-Enter flow needed two. A short idle arms it instead, which separates the two
+     * cases by the only thing that actually differs: an auto-repeat cascade lands within tens of
+     * milliseconds, a person reading a preview does not.
+     */
+    describe('a panel that never saw a keyup', () => {
+      const advance = (ms: number): void => {
+        vi.setSystemTime(new Date(Date.now() + ms));
+      };
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('still ignores an Enter arriving at once, which is what a held key does', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        down(document.body);
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('applies a press made after the panel has been open a moment', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        down(document.body);
+
+        expect(vscode.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('stops a held key activating Apply natively before that', () => {
+        mount([change('1', 'A')], 1, true);
+
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          repeat: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(true);
+      });
+
+      it('lets Enter activate Apply natively once it is armed', () => {
+        mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(false);
+      });
+
+      it('refuses a held key that outlasts the window, from the page', () => {
+        // The gap in arming on a clock alone: the window opens whether or not the key came up,
+        // so a key still down when it elapses auto-repeats into Apply. Raised in review.
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+            repeat: true,
+          }),
+        );
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('refuses a held key that outlasts the window, on Apply itself', () => {
+        mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          repeat: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(true);
+      });
+
+      it('refuses a repeat even once a keyup has armed it', () => {
+        // Auto-repeat should never activate the primary action, whatever armed the panel.
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        release();
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+            repeat: true,
+          }),
+        );
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('arms on a keyup without waiting, when there is one to hear', () => {
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        release();
+        down(document.body);
+
+        expect(vscode.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+    });
+
+    it('leaves Enter alone on a button, so Cancel with focus stays Cancel', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.getElementById('cancel')!);
+
+      expect(vscode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('replaces its handler rather than stacking one, so a re-wire cannot double-fire', () => {
+      // The listener is on the DOCUMENT so Enter works from anywhere on the page, and a document
+      // outlives a re-render. A stale handler would fire first, act on a detached button, and its
+      // preventDefault would stop the live one.
+      mount([change('1', 'A')], 1, true);
+      const { vscode } = mount([change('1', 'A')], 1, true);
+
+      press(document.body);
+
+      expect(vscode.postMessage).toHaveBeenCalledTimes(1);
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'apply' }),
+      );
+    });
+
+    it('does nothing when Apply is disabled, so an in-flight apply is not repeated', () => {
+      const { vscode } = mount([change('1', 'A')], 1, true);
+      (document.getElementById('apply') as HTMLButtonElement).disabled = true;
+
+      press(document.body);
+
+      expect(vscode.postMessage).not.toHaveBeenCalled();
+    });
   });
 });

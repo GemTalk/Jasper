@@ -25,6 +25,10 @@ Correctness of the rename-class refactoring:
 setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
 rename target name).
+
+The `tests - shadowed class name` category covers #396: a rename files the renamed class in the
+dictionary that held the class being renamed. This is the same helper the Class History restore
+goes through.
 "
 Class {
 	#name : 'GsRenameClassRefactoringTest',
@@ -107,7 +111,7 @@ GsRenameClassRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameClassRefactoringTest >> tearDown [
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone' 'GsRCShapeStub')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 ]
@@ -493,4 +497,268 @@ GsRenameClassRefactoringTest >> testDictionaryScopeExcludesSameNamedClassReferen
 			#(#GsRCRefInB #GsRCShadowT) do: [:s | dictB removeKey: s ifAbsent: []].
 			sl remove: dictA ifAbsent: [].
 			sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenameBindsTheRenamedClassInItsOwnDictionary [
+	"A rename creates a new version under the new name and binds it through `dictionaryForNewVersionOf:`, which
+	 used to resolve by the OLD class's name and take the first match. With a decoy binding GsRCBase ahead
+	 of UserGlobals, the renamed class used to be filed in the decoy, and the user's own dictionary
+	 lost the class outright. This is the same helper the Class History restore goes through. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsRCShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the renamed class lands in the dictionary that held the class the user renamed"
+	 self deny: (UserGlobals at: #GsRCRenamed ifAbsent: [nil]) isNil.
+	 "and the shadowing dictionary keeps its own binding, unrenamed"
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass.
+	 self assert: (decoy at: #GsRCRenamed ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenamingIntoADictionaryIsNotBlockedByAShadowElsewhere [
+	"The collision check asks whether the new name is free in the dictionary the class will be
+	 bound INTO, not anywhere on the symbol list. A name bound in another dictionary is a shadow,
+	 which GemStone allows -- refusing on it made a legitimate rename impossible.
+
+	 The case that showed it is the rename BACK that undoing a rename performs: rename
+	 DictionaryB's class away and the reversal was refused because DictionaryA still binds the
+	 old name. There was nothing the user could do about that (#396)."
+	| decoy ref json |
+	decoy := SymbolDictionary new name: #GsRCShadowCollisionDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsRCRenamed'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+
+	 "the target name is taken -- but only in a DIFFERENT dictionary"
+	 ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	 self assert: ref newNameCollision isNil.
+
+	 json := ref applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: (UserGlobals at: #GsRCRenamed ifAbsent: [nil]) isNil.
+	 "and the decoy's own binding of that name is untouched"
+	 self assert: (((decoy at: #GsRCRenamed) instVarNames collect: [:e | e asString])
+		includes: 'decoyOwn')]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameClassRefactoringTest >> testRenamingOntoANameTakenInTheSameDictionaryStillDeclines [
+	"The other side of the same boundary: scoping the check must not make it toothless. A name
+	 already bound in the destination is a real collision -- the apply would fail -- and the
+	 message names the dictionary so the reason is checkable."
+	| ref |
+	Object
+		subclass: 'GsRCTaken'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ref := self renameTo: 'GsRCTaken' scope: #wholeSystem.
+
+	 self assert: ref newNameCollision notNil.
+	 self assert: ref newNameCollision includesSubstring: 'already in use'.
+	 self assert: ref newNameCollision includesSubstring: 'UserGlobals']
+		ensure: [UserGlobals removeKey: #GsRCTaken ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameRewritesItsOwnReferencersAndNotTheDecoysAcrossDictionaries [
+	"The references a rename rewrites used to be fetched by NAME, and the name resolves to
+	 whichever dictionary binds it first. With a decoy GsRCBase in a dictionary ahead of
+	 UserGlobals, the rename rewrote the DECOY''s referencers -- pointing them at a class that
+	 does not exist yet -- and never touched the referencers of the class the user renamed. The
+	 apply still reported failed:[]. See #396."
+	| decoy decoyClass decoyUser json |
+	decoy := SymbolDictionary new name: #GsRCRefShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRCBase' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 decoyUser := Object
+		subclass: 'GsRCDecoyUser' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 "GsRCDecoyUser sees the decoy first, so its GsRCBase is the decoy''s"
+	 self compile: 'useDecoy ^GsRCBase new' in: decoyUser.
+
+	 json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 "the renamed class''s own referencer, in UserGlobals, IS rewritten"
+	 self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed new') > 0.
+	 "the decoy''s referencer is left pointing at the decoy, which was not renamed"
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCBase new') > 0.
+	 self assert: ((decoyUser compiledMethodAt: #useDecoy) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0.
+	 self assert: (decoy at: #GsRCBase ifAbsent: [nil]) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRestoreReparentsUnderItsOwnParentNotASameNamedDecoy [
+	"A restore puts the class back under the parent its historical version had, advanced to that
+	 parent''s CURRENT version. That used to be a lookup by name, so a decoy of the parent''s name
+	 earlier in the symbol list took the restored class out of its own hierarchy entirely. See
+	 #396 -- Class History restore is the operation the issue opens with.
+
+	 The fixture gives the child two versions (so there is something to restore) and the parent
+	 two versions (so the restore has to advance past the superseded one). The decoy is inserted
+	 last, so nothing before the restore can resolve through it."
+	| decoy decoyParent parentOne currentParent restored |
+	parentOne := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childOne')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the child -- this is what the restore comes back from"
+	parentOne
+		subclass: 'GsRCChild' instVarNames: #('childTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	"a second version of the parent -- the restore must land on THIS one, not the superseded one"
+	currentParent := Object
+		subclass: 'GsRCParent' instVarNames: #('parentOwn' 'parentTwo')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals.
+	decoy := SymbolDictionary new name: #GsRCParentShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyParent := Object
+		subclass: 'GsRCParent' instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+
+	 GsClassHistory revertClassNamed: 'GsRCChild' toIndex: 1 inDictionary: 'UserGlobals'.
+	 restored := UserGlobals at: #GsRCChild.
+
+	 "the restored definition is the one asked for"
+	 self assert: (restored instVarNames collect: [:e | e asString]) = #('childOne').
+	 "under the real parent''s CURRENT version -- not the decoy, not the superseded version"
+	 self assert: restored superclass == currentParent.
+	 self deny: restored superclass == decoyParent.
+	 self deny: restored superclass == parentOne.
+	 self deny: ((restored allInstVarNames collect: [:e | e asString]) includes: 'decoyOwn').
+	 self assert: ((restored allInstVarNames collect: [:e | e asString]) includes: 'parentTwo')]
+		ensure: [
+			System myUserProfile removeDictionaryAt: 1.
+			#('GsRCChild' 'GsRCParent') do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameReportsWhichDictionaryWillWinTheNewName [
+	"Renaming onto a name another dictionary already binds is legal, and the engine allows it.
+	 What it must not do is stay quiet about WHERE the name will then resolve: a binding earlier
+	 in the symbol list wins, so the renamed class''s own methods stop meaning the renamed class.
+	 A binding LATER loses and changes nothing, so it is not reported. See #396."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsRCAheadDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 "not a collision -- the destination dictionary is free, so the rename may proceed"
+	 self assert: json includesSubstring: '"collision":null'.
+	 self assert: json includesSubstring: '"shadowedFrom":"GsRCAheadDict"']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testRenameDoesNotReportADictionaryBehindTheDestination [
+	"A binding after the destination on the symbol list loses to the renamed class, so warning
+	 about it would be noise."
+	| behind json |
+	behind := SymbolDictionary new name: #GsRCBehindDict; yourself.
+	System myUserProfile symbolList add: behind.
+	[Object
+		subclass: 'GsRCTaken' instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: behind.
+	 json := (self renameTo: 'GsRCTaken' scope: #wholeSystem) outOfScopeJsonString.
+	 self assert: json includesSubstring: '"shadowedFrom":null']
+		ensure: [System myUserProfile symbolList remove: behind ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testAFailedClassRenameStopsTheApplyAndSaysSo [
+	"When the #classRename raises, the class is NOT bound under the new name. Carrying on meant
+	 every #methodRecompile after it compiled the new name against whatever else binds it -- for
+	 a shadowed name, another dictionary''s class -- and the apply still reported the rewrites as
+	 applied. The client then armed an Undo that would rename THAT class back (#396).
+
+	 The rename is made to fail by removing the destination dictionary from the symbol list after
+	 the change set is staged, so binding the new name has nowhere to go."
+	| ref json |
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	ref changeSet.
+	UserGlobals removeKey: #GsRCBase ifAbsent: [].
+	json := ref applyDeselected: #().
+	self assert: json includesSubstring: '"renameFailed":true'.
+	"and the reference rewrites that come after it did NOT run: the external referencer still
+	 names the old class, rather than having been repointed at a name this rename never bound"
+	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testAFailedReparentAfterTheRenameLandedSaysTheRenameLanded [
+	"The change set renames first, then re-parents each descendant. A reparent that raises still
+	 stops the apply -- carrying on would compile rewrites against a half-moved hierarchy -- but
+	 the rename before it HAS landed: the class is bound under the new name. Reporting that as a
+	 failed rename told the client there was nothing to undo, and left the user with the class
+	 renamed, a subclass on the old version, and no Undo.
+
+	 The reparent is made to fail by unbinding the subclass after the change set is staged."
+	| ref json |
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	ref changeSet.
+	UserGlobals removeKey: #GsRCSub ifAbsent: [].
+	json := ref applyDeselected: #().
+	"the rename landed..."
+	self assert: (UserGlobals includesKey: #GsRCRenamed).
+	self assert: json includesSubstring: '"renameFailed":false'.
+	"...the reparent is reported as the failure it was..."
+	self deny: json includesSubstring: '"failed":[]'.
+	"...and the apply still stopped there: the external referencer was not rewritten"
+	self assert: (((UserGlobals at: #GsRCOther) compiledMethodAt: #usesBase) sourceString
+		indexOfSubCollection: 'GsRCRenamed') = 0
+]
+
+{ #category : 'tests - restore' }
+GsRenameClassRefactoringTest >> testARestoreWhoseHistoricalParentHasNoHistoryKeepsTheCurrentSuperclass [
+	"Restoring a historical version re-parents the class under that version's parent, advanced to
+	 the parent's current version through the parent's own class history. When that history
+	 cannot be read, the current superclass is kept -- better a class in the wrong place than one
+	 that cannot be created. Answering the historical parent instead re-parented onto a version
+	 nothing could vouch for.
+
+	 A real class history is never empty, so the historical version here is a stand-in whose
+	 `superclass` answers an object with no class history at all."
+	| stub ref |
+	stub := Object
+		subclass: 'GsRCShapeStub'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'superclass ^ #notAClass' in: stub.
+	ref := self renameTo: 'GsRCRenamed' scope: #wholeSystem.
+	self assert: (ref superclassForShapeSource: stub new of: self baseFixture) == self baseFixture superclass
+]
+
+{ #category : 'tests - shadowed name' }
+GsRenameClassRefactoringTest >> testACleanApplySaysTheStructuralChangeLanded [
+	| json |
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+	self assert: json includesSubstring: '"renameFailed":false'.
+	self assert: json includesSubstring: '"failed":[]'
 ]

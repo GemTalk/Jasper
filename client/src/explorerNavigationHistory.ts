@@ -28,12 +28,16 @@
  */
 export interface ExplorerLanding {
   sessionId: number;
-  /**
-   * The dictionary by NAME, which is the whole coordinate: its symbolList index is
-   * deliberately NOT recorded, because a commit elsewhere can shift every index, so
-   * the index is re-resolved from the name on the way back (see `goToLanding`).
-   */
+  /** The dictionary by NAME. */
   dictName: string;
+  /**
+   * The dictionary's 1-based symbolList index when the landing was recorded. Two
+   * dictionaries can share a name, so the name alone cannot say which was meant — but
+   * a commit elsewhere can shift every index, so on the way back the index is kept only
+   * while the dictionary there still has `dictName`, and is otherwise re-resolved from
+   * the name (see `goToLanding`). Optional: a landing built without one resolves by name.
+   */
+  dictIndex?: number;
   /** Selected class category, or undefined for "all classes in the dictionary". */
   classCategory?: string;
   className?: string;
@@ -61,6 +65,8 @@ export function landingKey(l: ExplorerLanding): string {
   return [
     l.sessionId,
     l.dictName,
+    // Two same-named dictionaries are two places.
+    l.dictIndex ?? '',
     l.className === undefined ? (l.classCategory ?? '') : '',
     l.className ?? '',
     l.selector === undefined ? '' : `${l.isMeta ? 'class' : 'instance'}:${l.selector}`,
@@ -131,7 +137,12 @@ export function landingPath(l: ExplorerLanding): string {
  * Without this, Back would need two presses to leave a method.
  */
 function refines(top: ExplorerLanding, next: ExplorerLanding): boolean {
-  if (top.sessionId !== next.sessionId || top.dictName !== next.dictName) return false;
+  if (
+    top.sessionId !== next.sessionId ||
+    top.dictName !== next.dictName ||
+    top.dictIndex !== next.dictIndex
+  )
+    return false;
   if (top.className === undefined) {
     // Dictionary/category → a class under it (a category-less top matches any class).
     return (

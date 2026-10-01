@@ -173,7 +173,7 @@ GsRenameClassVariableRefactoring >> stageClassDefinitionEditInto: aChangeSet [
 	newDef := self renameClassVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -208,7 +208,7 @@ GsRenameClassVariableRefactoring >> stageMethodRewrite: aMethod into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -227,11 +227,12 @@ GsRenameClassVariableRefactoring >> baseClassOf: aMethod [
 ]
 
 { #category : 'private' }
-GsRenameClassVariableRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsRenameClassVariableRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }
@@ -482,7 +483,7 @@ GsRenameClassVariableRefactoring >> applyClassDefinitionEdit: aChange [
 	 method keeps a working, detached copy of the old association until it is recompiled
 	 to the new name."
 	| cls oldAssoc oldValue |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	oldAssoc := cls _classVars associationAt: oldNameSym ifAbsent: [nil].
 	oldValue := oldAssoc isNil ifTrue: [nil] ifFalse: [oldAssoc value].
@@ -495,7 +496,7 @@ GsRenameClassVariableRefactoring >> applyClassDefinitionEdit: aChange [
 GsRenameClassVariableRefactoring >> applyMethodRecompile: aChange [
 	"Recompile one referencing method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure -- compileMethod: only
