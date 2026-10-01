@@ -197,8 +197,8 @@ export class SessionManager {
 
   // Blocking login: GciTsLogin holds the calling thread until the handshake
   // completes, so a slow connect freezes the extension host. Prefer loginAsync
-  // for interactive connects; this stays for the synchronous callers (and is the
-  // fallback loginAsync uses on Windows / older libraries).
+  // for interactive connects; this stays for callers that accept the blocking
+  // handshake (and is the fallback loginAsync uses on Windows / older libraries).
   login(login: GemStoneLogin, libraryPath: string): ActiveSession {
     const { gci, stoneNrs, gemNrs } = this.prepareLogin(login, libraryPath);
     const handle = this.blockingLoginHandle(gci, stoneNrs, gemNrs, login);

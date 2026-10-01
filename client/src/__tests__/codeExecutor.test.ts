@@ -464,7 +464,7 @@ describe('CodeExecutor', () => {
         const opts = vi.mocked(pollNbToCompletion).mock.lastCall![2] as NbRunOptions;
         (gci.executeAndFetchString as Mock).mockClear();
 
-        opts.onAbandonedCollected!();
+        await opts.onAbandonedCollected!();
 
         const sent = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
         expect(sent).toHaveLength(1);
@@ -1671,7 +1671,7 @@ describe('CodeExecutor', () => {
       const opts = vi.mocked(pollNbToCompletion).mock.lastCall![2] as NbRunOptions;
       (gci.executeAndFetchString as Mock).mockClear();
 
-      opts.onAbandonedCollected!();
+      await opts.onAbandonedCollected!();
 
       const sent = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
       expect(sent).toHaveLength(1);

@@ -721,7 +721,7 @@ export class CodeExecutor {
       disposableProcess: true,
       // Every caller runs in clientForwarder mode, and after a hard break the
       // `finally`'s end is refused; this is where it can succeed.
-      onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+      onAbandonedCollected: async () => appendTranscriptOutput(endClientForwarderMode(session)),
     });
   }
 

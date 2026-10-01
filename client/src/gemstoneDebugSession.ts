@@ -247,10 +247,20 @@ export class GemStoneDebugSession extends DebugSession {
 
   // ── Stack Trace ─────────────────────────────────────────
 
+  // DebugSession dispatches requests synchronously and ignores what a handler
+  // returns, so the async work runs detached. It cannot reject: it catches
+  // every failure and always sends the response itself.
   protected stackTraceRequest(
     response: DebugProtocol.StackTraceResponse,
     args: DebugProtocol.StackTraceArguments,
   ): void {
+    void this.answerStackTraceRequest(response, args);
+  }
+
+  private async answerStackTraceRequest(
+    response: DebugProtocol.StackTraceResponse,
+    args: DebugProtocol.StackTraceArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { stackFrames: [], totalFrames: 0 };
       this.sendResponse(response);
@@ -363,6 +373,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.ScopesResponse,
     args: DebugProtocol.ScopesArguments,
   ): void {
+    void this.answerScopesRequest(response, args);
+  }
+
+  private async answerScopesRequest(
+    response: DebugProtocol.ScopesResponse,
+    args: DebugProtocol.ScopesArguments,
+  ): Promise<void> {
     const level = args.frameId;
 
     const argsRef = this.allocVarRef({ kind: 'frame', level });
@@ -394,6 +411,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.VariablesResponse,
     args: DebugProtocol.VariablesArguments,
   ): void {
+    void this.answerVariablesRequest(response, args);
+  }
+
+  private async answerVariablesRequest(
+    response: DebugProtocol.VariablesResponse,
+    args: DebugProtocol.VariablesArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { variables: [] };
       this.sendResponse(response);
@@ -632,6 +656,13 @@ export class GemStoneDebugSession extends DebugSession {
     response: DebugProtocol.EvaluateResponse,
     args: DebugProtocol.EvaluateArguments,
   ): void {
+    void this.answerEvaluateRequest(response, args);
+  }
+
+  private async answerEvaluateRequest(
+    response: DebugProtocol.EvaluateResponse,
+    args: DebugProtocol.EvaluateArguments,
+  ): Promise<void> {
     if (!this.session) {
       response.body = { result: '<no session>', variablesReference: 0 };
       this.sendResponse(response);

@@ -119,7 +119,9 @@ describe('transcript sink (integration)', () => {
         suppressNotification: true,
         disposableProcess: true,
         onStart: opts.onStart,
-        onAbandonedCollected: () => endClientForwarderMode(session()),
+        onAbandonedCollected: async () => {
+          endClientForwarderMode(session());
+        },
       },
     );
   }

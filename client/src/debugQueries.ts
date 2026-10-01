@@ -1434,33 +1434,29 @@ export function evaluateInFrame(
  * expression string) is still blocking, but cheap; only the evaluation itself —
  * the part that can run away — is non-blocking.
  */
-export function evaluateInFrameNb(
+export async function evaluateInFrameNb(
   session: ActiveSession,
   gsProcess: bigint,
   expression: string,
   level: number,
   opts: NbRunOptions = {},
 ): Promise<string> {
-  // Not an `async` function, so a throw from the frame setup would escape the
-  // caller's promise chain instead of rejecting it.
-  let context: FrameEvalContext;
-  try {
-    context = getFrameEvalContext(session, gsProcess, level);
-  } catch (e: unknown) {
-    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
-  }
-  const { selfOop, selfIsUnavailable, names, oops } = context;
+  const { selfOop, selfIsUnavailable, names, oops } = getFrameEvalContext(
+    session,
+    gsProcess,
+    level,
+  );
 
   const { result: exprOop, err: strErr } = session.gci.GciTsNewString(session.handle, expression);
   if (strErr.number !== 0) {
-    return Promise.reject(new Error(strErr.message || 'Cannot create expression string'));
+    throw new Error(strErr.message || 'Cannot create expression string');
   }
 
   const symbolListOop = buildFrameSymbolList(session, names, oops) ?? sessionSymbolListOop(session);
   const selector = 'evaluateInContext:symbolList:';
   const args = [selfOop, symbolListOop];
 
-  return runNbCall(
+  return await runNbCall(
     session,
     () => session.gci.GciTsNbPerform(session.handle, exprOop, OOP_ILLEGAL, selector, args, 0, 0),
     () => {

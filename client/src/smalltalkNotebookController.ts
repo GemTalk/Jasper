@@ -95,7 +95,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         disposableProcess: true,
         // The `finally`'s end is refused while a hard-broken cell is being
         // collected; this is where it can succeed.
-        onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+        onAbandonedCollected: async () => appendTranscriptOutput(endClientForwarderMode(session)),
       },
     );
 
