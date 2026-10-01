@@ -263,6 +263,27 @@ describe('getClassHierarchy', () => {
     expect(results.map((r) => r.kind)).toEqual(['superclass', 'self', 'subclass']);
   });
 
+  it("answers each class's dictionary position, so two same-named dictionaries stay apart", () => {
+    // Two dictionaries called Shared, at positions 1 and 3: the name alone cannot say which
+    // binds each class, and a caller looking the name up lands on the first (#396).
+    const raw =
+      'Globals\tObject\tsuperclass\t4\nShared\tAccount\tself\t3\nShared\tFoo\tsubclass\t1\n';
+    const results = getClassHierarchy(
+      vi.fn<QueryExecutor>(() => raw),
+      'Account',
+    );
+    expect(results.map((r) => r.dictIndex)).toEqual([4, 3, 1]);
+  });
+
+  it('answers no position for a class no dictionary on the symbol list binds', () => {
+    const raw = '\tHidden\tsuperclass\t0\n';
+    const results = getClassHierarchy(
+      vi.fn<QueryExecutor>(() => raw),
+      'Hidden',
+    );
+    expect(results[0].dictIndex).toBeUndefined();
+  });
+
   // ClassOrganizer>>allSuperclassesOf: returns root-first
   // ([Object, Collection, SequenceableCollection, CharacterCollection]),
   // which is the order we want to render — Object at indent 0, the

@@ -118,15 +118,28 @@ GsRenameClassRefactoring >> superclassForShapeSource: src of: old [
 	 refactoring then left the class under a parent that was about to be unbound (#434).
 
 	 The historical version's superclass may itself be a superseded version of that parent, so it
-	 is resolved BY NAME to whatever version is current -- re-parenting onto a stale version would
-	 strand the class off the live hierarchy. If the name no longer resolves (the parent class is
-	 gone), the current superclass is kept: better a class in the wrong place than one that cannot
-	 be created at all."
-	| histSuper |
+	 is advanced to whatever version of THAT SAME parent is current -- re-parenting onto a stale
+	 version would strand the class off the live hierarchy. It is advanced through the parent's own
+	 classHistory, never by name: a name lookup lands on whichever dictionary comes first in the
+	 symbol list, so a shadowed parent name would re-parent the restored class under a different
+	 dictionary's class (#396). If the parent's history is gone, the current superclass is kept:
+	 better a class in the wrong place than one that cannot be created at all.
+
+	 A parent that is no longer BOUND anywhere is deliberately NOT one of those cases. The
+	 restored class goes back under it, and the result is a class hanging off an ancestor no
+	 dictionary names -- which is what that version's hierarchy actually was. Falling back to the
+	 current superclass here would hand back a class that never existed in that shape, and a
+	 restore's whole job is to reproduce a version. The two fallbacks above are for a version
+	 that cannot be rebuilt at all, which this is not. The Explorer's Hierarchy pane marks such
+	 an ancestor `(unbound)` and says what it is, so the user can see where their class has
+	 landed rather than meeting a mystery row."
+	| histSuper hist |
 	src == old ifTrue: [^old superclass].
 	histSuper := src superclass.
 	histSuper isNil ifTrue: [^old superclass].
-	^(environment classNamed: histSuper name asString) ifNil: [old superclass]
+	hist := [histSuper classHistory] on: Error do: [:e | nil].
+	(hist isNil or: [hist isEmpty]) ifTrue: [^old superclass].
+	^hist last ifNil: [old superclass]
 ]
 
 { #category : 'private' }
@@ -260,7 +273,7 @@ GsRenameClassRefactoring >> stageClassRenameInto: aChangeSet [
 	oldDef := definingClass definition.
 	newDef := self renameClassNameIn: oldDef from: oldName to: newName.
 	aChangeSet
-		addClassRenameInDictionary: (self dictNameForClass: definingClass)
+		addClassRenameInDictionary: (self dictForClass: definingClass)
 		className: oldName
 		newName: newName
 		oldSource: oldDef
@@ -283,7 +296,7 @@ GsRenameClassRefactoring >> stageReparentsInto: aChangeSet [
 			ifTrue: [self renameSuperclassNameIn: oldDef from: oldName to: newName]
 			ifFalse: [oldDef].
 		aChangeSet
-			addClassReparentInDictionary: (self dictNameForClass: sub)
+			addClassReparentInDictionary: (self dictForClass: sub)
 			className: sub name asString
 			oldSource: oldDef
 			newSource: newDef]
@@ -299,7 +312,10 @@ GsRenameClassRefactoring >> stageReferenceRecompilesInto: aChangeSet [
 	"A same-name restore changes no name, so no external reference needs rewriting."
 	oldNameSym == newName asSymbol ifTrue: [^self].
 	subtree := self subtreeClassSet.
-	(environment referencesToClassNamed: oldName) do: [:m |
+	"By identity. Asking for the references of the NAME answers whichever dictionary binds it
+	 first -- another dictionary's class's referencers get rewritten and this class's own are
+	 missed, with nothing in failed to say so (#396)."
+	(environment referencesToClass: definingClass) do: [:m |
 		[| base |
 		 base := self baseClassOf: m.
 		 (subtree includes: base)
@@ -324,7 +340,7 @@ GsRenameClassRefactoring >> stageReferenceRewrite: aMethod base: base into: aCha
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -378,11 +394,12 @@ GsRenameClassRefactoring >> hierarchyScopeClasses [
 ]
 
 { #category : 'private' }
-GsRenameClassRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsRenameClassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'source rewriting' }
@@ -467,15 +484,52 @@ GsRenameClassRefactoring >> node: aNode declaresName: aSymbol [
 ]
 
 { #category : 'preconditions' }
+GsRenameClassRefactoring >> newNameShadowedFrom [
+	"The name of a dictionary EARLIER in the symbol list than the destination that already binds
+	 newName, or nil.
+
+	 This is the difference between a shadow that is harmless and one that is not. After the
+	 rename, every unqualified reference to newName -- the renamed class's own methods, and every
+	 referencer this refactoring rewrites -- resolves to the FIRST binding. A binding later in the
+	 list loses to the renamed class and changes nothing. An earlier one wins, and the rename
+	 quietly repoints the renamed class's own code at a class in another dictionary (#396).
+
+	 Answers only the first such dictionary: one concrete name is what a warning needs."
+	| sl dest sym |
+	dest := environment dictionaryForNewVersionOf: definingClass.
+	dest isNil ifTrue: [^nil].
+	sym := newName asSymbol.
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | | d |
+		d := sl at: i.
+		d == dest ifTrue: [^nil].
+		((d at: sym ifAbsent: [nil]) notNil) ifTrue: [
+			^d name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [d name asString]]].
+	^nil
+]
+
+{ #category : 'preconditions' }
 GsRenameClassRefactoring >> newNameCollision [
-	"nil if the new name is free to use, otherwise a short reason string: the new name
-	 is already bound to some OTHER global anywhere on the symbol list. Building the
-	 change set does not enforce this (the preview surfaces it); the apply would fail."
-	| existing |
-	existing := environment symbolList objectNamed: newName asSymbol.
+	"nil if the new name is free in the dictionary the renamed class will be bound into,
+	 otherwise a short reason string. Building the change set does not enforce this (the preview
+	 surfaces it); the apply would fail.
+
+	 Scoped to that ONE dictionary, not the whole symbol list. A class name bound in another
+	 dictionary is a shadow, which GemStone allows and which this engine handles throughout
+	 (#396) -- refusing on it made a legitimate rename impossible. The case that showed it is
+	 the rename BACK that undoing a rename performs: rename DictionaryB's Shadowed to something
+	 else and the reversal was refused, because DictionaryA still binds Shadowed. There was
+	 nothing the user could do about that, and nothing wrong with the rename.
+
+	 Any binding counts, not just a class: `at:ifAbsent:` catches a non-class global of that name
+	 in the destination, which is what the old `objectNamed:` was reaching for."
+	| dict existing |
+	dict := environment dictionaryForNewVersionOf: definingClass.
+	existing := dict isNil ifTrue: [nil] ifFalse: [dict at: newName asSymbol ifAbsent: [nil]].
 	existing isNil ifTrue: [^nil].
 	existing == definingClass ifTrue: [^nil].
-	^'the name ', newName, ' is already in use'
+	^'the name ', newName, ' is already in use in ',
+	  (dict name isNil ifTrue: ['that dictionary'] ifFalse: [dict name asString])
 ]
 
 { #category : 'accessing' }
@@ -493,7 +547,10 @@ GsRenameClassRefactoring >> outOfScopeJsonString [
 	  ',"descendants":', (environment descendantsOf: definingClass) size printString,
 	  ',"collision":', (self newNameCollision
 		ifNil: ['null']
-		ifNotNil: [:reason | self jsonQuote: reason]), '}'
+		ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"shadowedFrom":', (self newNameShadowedFrom
+		ifNil: ['null']
+		ifNotNil: [:dn | self jsonQuote: dn]), '}'
 ]
 
 { #category : 'private' }
@@ -569,22 +626,33 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 	 cleanly, so a partly-failed rename is left uncommitted for the user to inspect and
 	 abort rather than persisted half-done. With neither option (the safe path) nothing
 	 is committed, matching the other refactorings. Answers
-	 {applied, failed:[..], committed, migratedFailures}."
-	| ids applied failures migrated committed |
+	 {applied, failed:[..], committed, migratedFailures, renameFailed}."
+	| ids applied failures migrated committed halted renameFailed |
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	oldToNew := IdentityDictionary new.
 	applied := 0.
+	halted := false.
+	renameFailed := false.
 	failures := OrderedCollection new.
 	"The copy-forward loop runs deep inside a per-class change and must not raise (one
 	 method that will not recompile would abort the whole change), so it reports through
 	 this alias instead -- entries land in the same `failed` list as everything else."
 	copyFailures := failures.
 	self changeSet changes do: [:change |
-		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
-			ifFalse: [
-				[self applyChange: change. applied := applied + 1]
-				on: Error do: [:e |
-					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
+		"Once a STRUCTURAL change has failed, stop. After a failed #classRename the rename did not
+		 happen, so every #methodRecompile after it compiles the new name against whatever else
+		 binds it -- for a shadowed name, another dictionary's class -- and reports success. After a
+		 failed #classReparent the hierarchy is half-moved. Carrying on turned one failure into a
+		 body of code silently pointing at the wrong class (#396)."
+		halted ifFalse: [
+			(change kind == #methodRecompile and: [ids includes: change id asSymbol])
+				ifFalse: [
+					[self applyChange: change. applied := applied + 1]
+					on: Error do: [:e |
+						(change kind == #classRename or: [change kind == #classReparent])
+							ifTrue: [halted := true].
+						change kind == #classRename ifTrue: [renameFailed := true].
+						failures add: (Array with: change id with: change failureLabel with: e messageText)]]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -600,9 +668,15 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: newName with: e messageText)]]].
+	"renameFailed tells the CLIENT whether the class is bound under the new name. It arms an
+	 Undo that renames `newName` back, and after a failed #classRename that name reaches some
+	 other dictionary's class -- which the reversal would then rename (#396). A failed
+	 #classReparent halts the apply too, but the rename before it HAS landed, so it does not
+	 count: that is exactly the partial apply an Undo exists for."
 	^'{"applied":', applied printString,
 	  ',"committed":', committed printString,
 	  ',"migratedFailures":', migrated printString,
+	  ',"renameFailed":', renameFailed printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -657,7 +731,7 @@ GsRenameClassRefactoring >> applyClassRename: aChange [
 	 references). Record the old->new mapping for the descendant reparents, then, if
 	 the name actually changed, remove the old name binding."
 	| old src new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	src := self shapeSourceOr: old.
 	new := self
@@ -677,7 +751,7 @@ GsRenameClassRefactoring >> applyClassReparent: aChange [
 	 freshly created parent-chain version, and copy its methods forward (rewriting any
 	 old-name reference). Its name is unchanged, so the primitive rebinds it in place."
 	| old parentNew new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	new := self makeNewVersionOf: old shapedLike: old named: old name asString superclass: parentNew.
@@ -689,7 +763,7 @@ GsRenameClassRefactoring >> applyClassReparent: aChange [
 GsRenameClassRefactoring >> applyMethodRecompile: aChange [
 	"Recompile one external referencing method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure -- an unchecked send would
@@ -722,7 +796,7 @@ GsRenameClassRefactoring >> makeNewVersionOf: old shapedLike: shape named: aName
 		classVars: (shape classVarNames collect: [:e | e asString])
 		classInstVars: (shape class instVarNames collect: [:e | e asString])
 		poolDictionaries: shape sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([shape commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -755,18 +829,6 @@ GsRenameClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta
 		source: (newSrc ifNil: [src])
 		meta: isMeta
 		into: copyFailures
-]
-
-{ #category : 'applying' }
-GsRenameClassRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:.
-	 Falls back to the user's default (UserGlobals) if none is found (should not happen
-	 for a bound class)."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 ]
 
 { #category : 'applying' }

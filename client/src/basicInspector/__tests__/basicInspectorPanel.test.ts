@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
 /** Settings the panel reads, so a test can stand in for the user's own. */
-const settings = vi.hoisted(() => ({ loadAllPageLimit: undefined as number | undefined }));
+const settings = vi.hoisted(() => ({
+  loadAllPageLimit: undefined as number | undefined,
+  sessionMode: undefined as string | undefined,
+}));
 
 vi.mock('vscode', () => ({
   window: {
@@ -15,8 +18,11 @@ vi.mock('vscode', () => ({
       get: (key: string, fallback: unknown) =>
         key === 'inspector.loadAllPageLimit' && settings.loadAllPageLimit !== undefined
           ? settings.loadAllPageLimit
-          : fallback,
+          : key === 'sessionMode' && settings.sessionMode !== undefined
+            ? settings.sessionMode
+            : fallback,
     }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
   },
   commands: { executeCommand: vi.fn() },
   env: { clipboard: { writeText: vi.fn(() => Promise.resolve()) } },
@@ -135,6 +141,7 @@ const HEADER = {
 beforeEach(() => {
   vi.clearAllMocks();
   settings.loadAllPageLimit = undefined;
+  settings.sessionMode = undefined;
   callInProgress = 0;
   session = makeSession();
   panel = makeMockPanel();
@@ -210,6 +217,20 @@ describe('opening the panel', () => {
     // A `</script>` inside an injected file would close the block early and
     // strand the rest of it as page text, whatever the nonce says.
     expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(4);
+  });
+
+  it("builds the header rows' Copy-only menu and hands it to the view", () => {
+    // The view is exercised in jsdom with a hand-built harness, so only the page
+    // can say whether the real webview has the element the view needs.
+    open();
+
+    const html = panel.webview.html;
+    const id = /headerCtxMenu:\s*document\.getElementById\('([^']+)'\)/.exec(html)?.[1];
+    expect(id).toBeDefined();
+    const menu = new RegExp(`<div id="${id}"[^>]*>([\\s\\S]*?)</div>\\s*</div>`).exec(html)?.[1];
+    expect(menu).toBeDefined();
+    const actions = Array.from(menu!.matchAll(/data-action="([^"]+)"/g), (m) => m[1]);
+    expect(actions).toEqual(['copy']);
   });
 
   it('sends the inspected object once the webview says it is ready', () => {
@@ -782,6 +803,16 @@ describe('the panel title and lifetime', () => {
     send({ command: 'setTitle', title: 'Account › balance' });
 
     expect(panel.title).toBe('Inspector: Account › balance');
+  });
+
+  it('keeps the session in the title, in multiple-session mode, as the column changes', () => {
+    settings.sessionMode = 'multiple';
+    open();
+    expect(panel.title).toBe(`Inspector · Session ${session.id}`);
+
+    send({ command: 'setTitle', title: 'Account › balance' });
+
+    expect(panel.title).toBe(`Inspector: Account › balance · Session ${session.id}`);
   });
 
   it('falls back to a plain name when there is nothing to name it after', () => {

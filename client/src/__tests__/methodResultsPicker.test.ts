@@ -60,6 +60,28 @@ describe('describing a found method', () => {
       'Account class >> #reset',
     );
   });
+
+  it('adds nothing for a method found in environment 0', () => {
+    expect(describeMethodResult(result({ environmentId: 0 }))).toBe('Account >> #balance');
+  });
+
+  it('names the environment when the method was found above 0', () => {
+    // Matches the selector hover's implementor list.
+    expect(describeMethodResult(result({ environmentId: 1 }))).toBe('Account >> #balance · env 1');
+  });
+
+  it('names the environment after the class side', () => {
+    expect(
+      describeMethodResult(result({ isMeta: true, selector: 'reset', environmentId: 2 })),
+    ).toBe('Account class >> #reset · env 2');
+  });
+
+  it('adds nothing for a caller that has no environment to give', () => {
+    // Breakpoints name a method from its URI coordinates alone.
+    expect(describeMethodResult({ className: 'Account', isMeta: false, selector: 'balance' })).toBe(
+      'Account >> #balance',
+    );
+  });
 });
 
 describe('showing an empty result list', () => {
@@ -83,6 +105,22 @@ describe('showing a result list', () => {
 
     const items = quickPick.mock.calls[0][0] as { label: string }[];
     expect(items.map((i) => i.label)).toEqual(['Account >> #balance', 'Account class >> #reset']);
+  });
+
+  it('tells apart the same method found in two environments', async () => {
+    quickPick.mockResolvedValue(undefined);
+
+    await showMethodResults(
+      1,
+      [result({ environmentId: 0 }), result({ environmentId: 1 })],
+      'Implementors of #balance',
+    );
+
+    const items = quickPick.mock.calls[0][0] as { label: string }[];
+    expect(items.map((i) => i.label)).toEqual([
+      'Account >> #balance',
+      'Account >> #balance · env 1',
+    ]);
   });
 
   it('carries the category and dictionary so the picker can filter on them', async () => {

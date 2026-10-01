@@ -219,6 +219,34 @@ const SIDE_SEGMENTS = ['instance', 'class'];
 // Classify a gemstone:// URI as a browsable directory level, or null when it is a
 // real file (method/definition/comment/new-*) or another scheme. Pure path
 // shape — no stone round-trip — so stat stays cheap on every breadcrumb render.
+/**
+ * The class a class-definition compile event reports, read off the definition URI it carries:
+ * `/{dictName}/{className}/definition[/{className}]`, plus the `?dict=` SymbolList position when
+ * the URI has one. Undefined for a URI too short to name a class.
+ *
+ * The position matters because two dictionaries can share a name: without it the Explorer
+ * reveals the class in the first dictionary of that name (#396).
+ */
+export function classCompiledTarget(
+  uri: vscode.Uri,
+): { sessionId: number; dictName: string; className: string; dictIndex?: number } | undefined {
+  const parts = uri.path.split('/').map(decodeURIComponent);
+  if (parts.length < 3) return undefined;
+  let dictIndex: number | undefined;
+  try {
+    const parsed = parseUri(uri);
+    if (parsed.kind === 'definition') dictIndex = parsed.dictIndex;
+  } catch {
+    /* not a shape parseUri knows; the path segments above are still the class */
+  }
+  return {
+    sessionId: parseInt(uri.authority, 10),
+    dictName: parts[1],
+    className: parts[2],
+    dictIndex,
+  };
+}
+
 export function parseDirUri(uri: vscode.Uri): DirLevel | null {
   if (uri.scheme !== 'gemstone') return null;
   const sessionId = parseInt(uri.authority, 10);

@@ -19,6 +19,10 @@ Correctness of the rename-method refactoring:
 setUp builds a throwaway hierarchy plus an unrelated sender class in UserGlobals
 and tearDown removes them. The rename target (#movePointX:y:) is a spelling
 unique to the fixture, so image-wide implementor/sender search finds only it.
+
+The `tests - shadowed class name` category covers #396. A method rename reshapes nothing, so it
+shows the defect at its widest: the apply resolves the change's class, and resolving by name alone
+compiled onto the wrong one.
 "
 Class {
 	#name : 'GsRenameMethodRefactoringTest',
@@ -378,4 +382,32 @@ GsRenameMethodRefactoringTest >> testUnarySelectorRenames [
 	self assert: change newSelector asString equals: 'pong'.
 	"The sender's #ping send is rewritten to #pong."
 	self assert: (self senderChangeFor: #caller in: cs) newSource includesSubstring: 'self pong'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsRenameMethodRefactoringTest >> testRenameCompilesOntoTheActedOnClassNotAGlobalFirstMatch [
+	"A method rename reshapes nothing, so `dictionaryForNewVersionOf:` is never involved -- but every staged
+	 change still records its class by NAME, and the apply re-resolves it with
+	 `environment classNamed:`, which is first-match across the symbol list. With a decoy binding
+	 GsRMBase ahead of UserGlobals, the renamed method used to be compiled onto the decoy, leaving
+	 the class the user acted on with the old selector (#396)."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsRMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRMBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class)
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the acted-on class carries the new selector and no longer the old one"
+	 self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	 self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	 "and nothing was compiled onto the same-named class in the shadowing dictionary"
+	 self assert: (decoyClass compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

@@ -21,6 +21,12 @@ vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
 vi.mock('../../refactoring/undoRefactoringCommand', () => ({
   undoLastRefactoringCommand: vi.fn(),
 }));
+vi.mock('../undoPlanPanel', () => ({ showUndoPlanPanel: vi.fn() }));
+// Only the dictionary-name read is stood in for; it is what the plan's row labels cost.
+vi.mock('../../browserQueries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../browserQueries')>()),
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+}));
 
 import * as vscode from 'vscode';
 import { reverseMethodEdit } from '../reverseMethodEdit';
@@ -32,6 +38,8 @@ import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
 import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
+import { showUndoPlanPanel } from '../undoPlanPanel';
+import { getDictionaryNames } from '../../browserQueries';
 import { undoLastCommand } from '../undoLastCommand';
 import { peekUndoEntry, pushUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { NewUndoEntry } from '../undoTypes';
@@ -50,9 +58,9 @@ import {
  *
  * What is pinned here is the split that the whole design rests on: a METHOD EDIT reverses
  * straight away, a REFACTORING opens the preview it already has, and the dispatcher is the
- * only place that knows the difference. Plus the confirmation that now precedes every
- * reversal but the refactoring's — it names the change, because the top of the stack is not
- * always the last thing the user did. Plus the two bookkeeping rules that keep the stack
+ * only place that knows the difference. Plus the plan panel that now precedes every reversal
+ * but the refactoring's — it lists what the reversal will do, because the top of the stack is
+ * not always the last thing the user did (#396). Plus the two bookkeeping rules that keep the stack
  * honest — an entry is popped only when it was actually spent, and a refactoring entry the
  * stone no longer holds is dropped and skipped rather than previewed over nothing.
  */
@@ -147,16 +155,14 @@ const dictionaryEdit = (label: string): NewUndoEntry => ({
 });
 
 /**
- * Answer the confirmation with its own action button.
+ * Accept the plan panel.
  *
- * Every undo asks before it reverses anything, so a test about the DISPATCH would otherwise
- * stop at the modal. Resolving to the last argument answers whichever verb the modal offered
- * ('Undo' or 'Revert') without the test having to know which entry kind it is looking at.
+ * Every undo shows a panel of what it will do before it reverses anything, so a test about the
+ * DISPATCH would otherwise stop there. Accepting it unconditionally lets each test get to the
+ * reverser it is actually about.
  */
-function confirmTheModal(): void {
-  vi.mocked(vscode.window.showWarningMessage).mockImplementation(
-    (...args: unknown[]) => Promise.resolve(args[args.length - 1]) as never,
-  );
+function acceptThePlan(): void {
+  vi.mocked(showUndoPlanPanel).mockResolvedValue(true);
 }
 
 beforeEach(() => {
@@ -165,7 +171,7 @@ beforeEach(() => {
   _resetAutoCommitStateForTests();
   setAutoCommitFailureHandler(undefined);
   commit = vi.fn(() => OK);
-  confirmTheModal();
+  acceptThePlan();
 });
 
 describe('undoLastCommand', () => {
@@ -176,7 +182,7 @@ describe('undoLastCommand', () => {
     );
   });
 
-  it('reverses a method edit once confirmed — no preview panel', async () => {
+  it('reverses a method edit once the plan is accepted', async () => {
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     vi.mocked(reverseMethodEdit).mockResolvedValue(true);
 
@@ -187,7 +193,7 @@ describe('undoLastCommand', () => {
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('hands a class edit to the class reverser, which also skips the preview', async () => {
+  it('hands a class edit to the class reverser, after the same plan panel', async () => {
     pushUndoEntry(classEdit('Redefine class Account'));
     vi.mocked(reverseClassEdit).mockResolvedValue(true);
 
@@ -361,39 +367,60 @@ describe('undoLastCommand', () => {
     // click from undoing something the user did not mean (review of #507).
     it('names the change, and reverses nothing until it is answered', async () => {
       pushUndoEntry(methodEdit('Save Account>>#balance'));
-      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
       await undoLastCommand(sessions);
 
-      const [message, options] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
-      expect(message).toContain('Save Account>>#balance');
-      expect(options).toMatchObject({ modal: true });
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].label).toContain(
+        'Save Account>>#balance',
+      );
       expect(reverseMethodEdit).not.toHaveBeenCalled();
       expect(undoStackDepth(session.id)).toBe(1);
     });
 
-    it('says why the change named may not be the last thing you did', async () => {
-      pushUndoEntry(methodEdit('Save Account>>#balance'));
-      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    it('reads the dictionary names once for the whole plan, not once per row', async () => {
+      // Every row names its class with its dictionary, and a slot records the dictionary as a
+      // SymbolList index. Turning each index into a name with its own round trip made a
+      // thirty-class category undo cost thirty GCI calls before the panel even opened.
+      const slots = Array.from({ length: 30 }, (_, i) => ({ dict: 1, className: `C${i}` }));
+      pushUndoEntry({
+        ...classEdit('Move 30 classes to Kernel'),
+        slots,
+        before: slots.map(() => ({ bound: true, oop: '1', selectors: [] })),
+        after: slots.map(() => ({ bound: true, oop: '2', selectors: [] })),
+      } as NewUndoEntry);
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
       await undoLastCommand(sessions);
 
-      const options = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
-        detail: string;
-      };
-      expect(options.detail).toContain('not necessarily the last thing you did');
+      expect(getDictionaryNames).toHaveBeenCalledTimes(1);
+      const rows = vi.mocked(showUndoPlanPanel).mock.calls[0][0].rows;
+      expect(rows).toHaveLength(30);
+      expect(rows.every((r) => r.target.endsWith('(UserGlobals)'))).toBe(true);
+    });
+
+    it('leaves the plan’s note for what the reversal costs, not the standing caveat', async () => {
+      // The standing caveat lives in the panel itself as a disclosure -- see the panel's own
+      // tests. What the dispatcher must NOT do is graft it onto the plan's note, which is
+      // reserved for what THIS reversal costs and is shown as a banner.
+      pushUndoEntry(methodEdit('Save Account>>#balance'));
+      vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
+
+      await undoLastCommand(sessions);
+
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].note).toBeUndefined();
     });
 
     it('offers Undo for a method edit and Revert for a class edit', async () => {
       pushUndoEntry(methodEdit('Save Account>>#balance'));
       await undoLastCommand(sessions);
-      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Undo');
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].verb).toBe('Undo');
 
-      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      vi.mocked(showUndoPlanPanel).mockClear();
       pushUndoEntry(classEdit('Redefine class Account'));
       vi.mocked(reverseClassEdit).mockResolvedValue(true);
       await undoLastCommand(sessions);
-      expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0]).toContain('Revert');
+      expect(vi.mocked(showUndoPlanPanel).mock.calls[0][0].verb).toBe('Revert');
     });
 
     it('does not ask twice for a refactoring, which has its own preview', async () => {
@@ -456,10 +483,10 @@ describe('undoLastCommand and auto-commit', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('commits nothing when the user cancels the confirmation', async () => {
+  it('commits nothing when the user cancels the plan panel', async () => {
     registerSessionAutoCommit(session.id, true);
     pushUndoEntry(methodEdit('Save Account>>#balance'));
-    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    vi.mocked(showUndoPlanPanel).mockResolvedValue(false);
 
     await undoLastCommand(sessions);
 
@@ -474,5 +501,37 @@ describe('undoLastCommand and auto-commit', () => {
     await undoLastCommand(sessions);
 
     expect(commit).not.toHaveBeenCalled();
+  });
+});
+
+// The plan panel is a WEBVIEW, not a modal: the user can keep working while it is open, and a
+// save pushes a NEWER entry. Reversing the peeked entry and then popping "the top" spent somebody
+// else's entry -- losing its reversal, and leaving this one to be applied again over whatever was
+// written since. That is silent source loss (#396 review).
+describe('the stack can move while the non-modal panel is open', () => {
+  it('reverses nothing when a newer entry arrived, and says so', async () => {
+    pushUndoEntry(methodEdit('Save Account>>#older'));
+    // the panel is open; the user saves something else, which pushes a newer entry
+    vi.mocked(showUndoPlanPanel).mockImplementation(async () => {
+      pushUndoEntry(methodEdit('Save Account>>#newer'));
+      return true;
+    });
+
+    await undoLastCommand(sessions);
+
+    expect(reverseMethodEdit).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(2);
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain('stack changed');
+  });
+
+  it('spends the entry it reversed by id, not whatever is on top', async () => {
+    // Belt and braces for the same defect: even if the guard were lifted, the entry that was
+    // reversed is the one removed.
+    pushUndoEntry(methodEdit('Save Account>>#only'));
+    vi.mocked(reverseMethodEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(undoStackDepth(session.id)).toBe(0);
   });
 });

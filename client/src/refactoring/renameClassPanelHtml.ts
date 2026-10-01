@@ -21,6 +21,7 @@ import {
   ClassOutOfScope,
   SkippedMethod,
 } from './renameClassPreview';
+import { ambiguousClassNames, classNameForRow } from './qualifiedClassName';
 import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
@@ -44,25 +45,26 @@ function kindBadge(change: ClassRenameChange): string {
   return change.category ? `<span class="badge">${escapeHtml(change.category)}</span>` : '';
 }
 
-function headerLabel(change: ClassRenameChange): string {
+function headerLabel(change: ClassRenameChange, ambiguous: ReadonlySet<string>): string {
   const side = change.isMeta ? ' class' : '';
+  const name = classNameForRow(change.className, change.dictName, ambiguous);
   if (change.kind === 'classRename' && change.newName) {
     return (
-      `<span class="sel-removed" title="old name">${escapeHtml(change.className)}</span>` +
+      `<span class="sel-removed" title="old name">${escapeHtml(name)}</span>` +
       '<span class="ren-arrow"> → </span>' +
       `<span class="sel-added" title="new name">${escapeHtml(change.newName)}</span>`
     );
   }
   return (
-    `${escapeHtml(change.className)}${escapeHtml(side)}` +
+    `${escapeHtml(name)}${escapeHtml(side)}` +
     (change.kind === 'methodRecompile' && change.selector
       ? `&gt;&gt;${escapeHtml(change.selector)}`
       : '')
   );
 }
 
-function renderCard(change: ClassRenameChange): string {
-  const label = escapeHtml(classChangeLabel(change));
+function renderCard(change: ClassRenameChange, ambiguous: ReadonlySet<string>): string {
+  const label = escapeHtml(classChangeLabel(change, ambiguous));
   const diff = renderDiff(lineDiff(change.oldSource, change.newSource));
   const structural = isStructuralChange(change);
   // Structural changes are required — checked + disabled so they cannot be
@@ -73,7 +75,7 @@ function renderCard(change: ClassRenameChange): string {
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
     ${cb}
-    <span class="label">${headerLabel(change)}</span>
+    <span class="label">${headerLabel(change, ambiguous)}</span>
     ${kindBadge(change)}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>
   </div>
@@ -83,7 +85,10 @@ function renderCard(change: ClassRenameChange): string {
 
 /** Render a batch of change cards (first page and appended pages look identical). */
 export function renderClassCards(changes: ClassRenameChange[]): string {
-  return changes.map(renderCard).join('\n');
+  // Rows whose class name this change set claims from more than one dictionary carry it, so
+  // two rows naming the same class can be told apart (#396).
+  const ambiguous = ambiguousClassNames(changes);
+  return changes.map((c) => renderCard(c, ambiguous)).join('\n');
 }
 
 function renderOutOfScope(

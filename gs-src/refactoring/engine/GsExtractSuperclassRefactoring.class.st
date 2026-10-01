@@ -193,7 +193,10 @@ GsExtractSuperclassRefactoring >> computeAnalysis [
 	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
 	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
 	 rather than clobbered, but shadowing an existing global with a new class is its own
-	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 trap. STRICTER than GsRenameClassRefactoring>>newNameCollision, which asks only about
+	 the destination dictionary and lets a rename shadow after a warning: a rename moves a
+	 class the user already has, while this creates one that does not exist yet, so there
+	 is nothing to weigh against picking a free name (#396).
 	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
 	 class, where grabbing a same-named class from another dictionary would be wrong.)
 	 The decline names the symbol list so it cannot be read as a collision in the
@@ -437,7 +440,7 @@ GsExtractSuperclassRefactoring >> buildChangeSet [
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -458,7 +461,7 @@ GsExtractSuperclassRefactoring >> stageExtractedEdit: aClass into: cs [
 	oldDef := aClass definition.
 	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
 	cs
-		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
@@ -471,7 +474,7 @@ GsExtractSuperclassRefactoring >> stageReparent: aClass into: cs [
 	| oldDef |
 	oldDef := aClass definition.
 	cs
-		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		addClassReparentInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: oldDef
@@ -486,7 +489,7 @@ GsExtractSuperclassRefactoring >> stageHoistOf: aSelector into: cs [
 	src := self sourceOf: aSelector in: anchorClass.
 	cat := self categoryOf: aSelector in: anchorClass.
 	cs
-		addMethodAddInDictionary: (self newClassDictName)
+		addMethodAddInDictionary: (self dictObjectForNewClass)
 		className: newName
 		isMeta: false
 		selector: aSelector
@@ -495,7 +498,7 @@ GsExtractSuperclassRefactoring >> stageHoistOf: aSelector into: cs [
 	extractedClasses do: [:e |
 		(e includesSelector: aSelector) ifTrue: [
 			cs
-				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				addMethodRemoveInDictionary: (self dictForClass: e)
 				className: e name asString
 				isMeta: false
 				selector: aSelector
@@ -561,17 +564,37 @@ GsExtractSuperclassRefactoring >> quotedList: aCollection [
 
 { #category : 'private' }
 GsExtractSuperclassRefactoring >> newClassDictName [
-	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
-	 dictionary."
+	"What to WRITE in the generated `inDictionary:` of the new class's definition -- display only.
+
+	 It reads the dictionary dictObjectForNewClass answers, which is the one the apply actually
+	 files the class into, so the definition on screen cannot name a different dictionary from
+	 the one the refactoring writes to. It used to read the ANCHOR's dictionary instead: the two
+	 agree in the ordinary case, and disagreeing about which dictionary is exactly the defect
+	 this branch exists to remove.
+
+	 A dictionary with NO name -- what `SymbolDictionary new` answers until someone names one --
+	 is written by its symbol-list position, which is unambiguous and is valid Smalltalk. Asking
+	 for its name answered nil, and concatenating nil into the definition raised, so a
+	 refactoring that applies perfectly well could not even be previewed there. Nothing that does
+	 the work ever needed a name: the staged change carries the dictionary itself."
+	| d idx |
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: anchorClass
+	d := self dictObjectForNewClass.
+	d isNil ifTrue: [^'UserGlobals'].
+	d name ifNotNil: [:n | ^n asString].
+	idx := environment symbolList indexOf: d.
+	^idx = 0
+		ifTrue: ['UserGlobals']
+		ifFalse: ['(System myUserProfile symbolList at: ', idx printString, ')']
 ]
 
 { #category : 'private' }
-GsExtractSuperclassRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+GsExtractSuperclassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'serializing' }
@@ -727,7 +750,7 @@ GsExtractSuperclassRefactoring >> applyClassChange: aChange [
 	 own-instVar list, copy its methods forward (skipping the hoisted selectors for an extracted
 	 class), and record the old->new mapping."
 	| old isExtracted parentNew list new skip |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	isExtracted := aChange kind == #classDefinitionEdit.
 	parentNew := isExtracted
@@ -753,7 +776,7 @@ GsExtractSuperclassRefactoring >> makeNewVersionOf: old superclass: sup instVarN
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -775,7 +798,7 @@ GsExtractSuperclassRefactoring >> applyMethodAdd: aChange [
 	| target |
 	target := aChange className = newName
 		ifTrue: [newClass]
-		ifFalse: [environment classNamed: aChange className].
+		ifFalse: [environment classForChange: aChange].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	environment
 		compile: aChange newSource
@@ -788,19 +811,10 @@ GsExtractSuperclassRefactoring >> applyMethodRemove: aChange [
 	"A hoisted method's removal from an extracted class. copyMethodsFrom:to:skipping: already
 	 left it off the new version, so this is a guarded no-op that keeps re-application idempotent."
 	| cls sel |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self].
 	sel := aChange selector asSymbol.
 	(cls includesSelector: sel) ifTrue: [cls removeSelector: sel]
-]
-
-{ #category : 'applying' }
-GsExtractSuperclassRefactoring >> dictObjectFor: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 ]
 
 { #category : 'applying' }
@@ -809,8 +823,8 @@ GsExtractSuperclassRefactoring >> dictObjectForNewClass [
 	 anchor's own dictionary."
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: anchorClass]].
-	^self dictObjectFor: anchorClass
+			ifNil: [environment dictionaryForNewVersionOf: anchorClass]].
+	^environment dictionaryForNewVersionOf: anchorClass
 ]
 
 { #category : 'serializing' }

@@ -1,11 +1,12 @@
 /**
- * Undoing a method edit — with no preview (issue #434).
+ * Undoing a method edit (issue #434).
  *
- * A refactoring can rewrite dozens of methods across a hierarchy, which is why undoing
- * one opens a preview panel with a row and a checkbox per change. A method edit is one
- * method (two, when a save creates one and a rename-shaped edit retires another), and
- * the user just did it: previewing it would be ceremony around a decision already made.
- * So this reverses and reports what it did. The dispatcher has already named the change and
+ * A refactoring's undo is PAGED FROM THE STONE, with a row and a checkbox per change, because
+ * its reversal can span dozens of methods across a hierarchy. A method edit is one method (two,
+ * when a save creates one and a rename-shaped edit retires another), so its plan is derived
+ * here from the recorded entry -- but it opens the same panel, so that "Undo" means one thing
+ * whichever machinery recorded the change (#396). This is what runs once that panel is
+ * accepted: it reverses and reports what it did. The dispatcher has already named the change and
  * had it confirmed (`confirmUndo` in `undoLastCommand`) — that question is WHICH change,
  * asked of every kind alike, and is not this module's business.
  *

@@ -33,7 +33,7 @@ import { showRenameClassEditor } from '../renameClassEditor';
 interface MockPanel {
   __emit: (m: unknown) => void;
   dispose: () => void;
-  webview: { postMessage: ReturnType<typeof vi.fn> };
+  webview: { html: string; postMessage: ReturnType<typeof vi.fn> };
 }
 function lastPanel(): MockPanel {
   const mock = vscode.window.createWebviewPanel as unknown as {
@@ -128,5 +128,33 @@ describe('showRenameClassEditor', () => {
       scope: { kind: 'dictionary', dictName: 'UserGlobals' },
       options: OPTS,
     });
+  });
+
+  // A class name does not identify a class -- the same name can be bound in several dictionaries,
+  // and a rename rewrites references image-wide. Both the tab and the heading say which one (#396).
+  it('names the dictionary in the tab title and the heading', () => {
+    void showRenameClassEditor({ oldName: 'Shadowed', dictName: 'DictionaryB' }, () => undefined);
+
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
+      expect.anything(),
+      'Rename Shadowed (DictionaryB)',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(lastPanel().webview.html).toContain(
+      'Rename class <code>Shadowed</code> in <code>DictionaryB</code>',
+    );
+  });
+
+  it('leaves both unqualified when no dictionary is known', () => {
+    void showRenameClassEditor({ oldName: 'Shadowed' }, () => undefined);
+
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
+      expect.anything(),
+      'Rename Shadowed',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(lastPanel().webview.html).toContain('Rename class <code>Shadowed</code></div>');
   });
 });

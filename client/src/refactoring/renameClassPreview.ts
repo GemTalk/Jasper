@@ -1,5 +1,6 @@
 import { asCount } from './previewCounts';
 import { ApplyResult as BaseApplyResult, parseApplyResultWith } from './previewEnvelope';
+import { classNameForRow } from './qualifiedClassName';
 /**
  * Pure helpers for the rename-class (R3) preview: parsing the server-side
  * engine's paginated preview envelope and the apply result, and validating a new
@@ -41,6 +42,11 @@ export interface ClassOutOfScope {
   descendants: number;
   skipped: number;
   collision: string | null;
+  /** The dictionary EARLIER in the symbol list that already binds the new name, or null.
+   *  Unlike `collision` this does not block the rename: it says that afterwards, every
+   *  unqualified reference to the new name -- including the renamed class's own methods --
+   *  will resolve to THAT dictionary's class rather than this one (#396). */
+  shadowedFrom: string | null;
 }
 
 /** A method the engine could not rewrite (and skipped). */
@@ -71,6 +77,12 @@ export interface ApplyResult extends BaseApplyResult {
   committed?: boolean;
   /** Instances that failed to migrate (only meaningful when migrate was on). */
   migratedFailures?: number;
+  /** True when the #classRename itself failed, so the class is NOT bound under the new name.
+   *  Nothing may arm an Undo that renames the new name back: that name reaches whatever else
+   *  binds it, and the reversal would rename a class the user never touched (#396). A failed
+   *  #classReparent after it stops the apply too, but the rename has landed and this stays
+   *  false -- that partial apply is what an Undo is for. */
+  renameFailed?: boolean;
 }
 
 function parseChange(raw: unknown, i: number): ClassRenameChange {
@@ -157,6 +169,7 @@ export function parseStartPreview(json: string): StartClassPreview {
       descendants: asCount(oos.descendants),
       skipped: asCount(oos.skipped),
       collision: typeof oos.collision === 'string' ? oos.collision : null,
+      shadowedFrom: typeof oos.shadowedFrom === 'string' ? oos.shadowedFrom : null,
     },
     skippedMethods: parseSkipped(env.skippedMethods),
     page,
@@ -175,6 +188,7 @@ export function parseApplyResult(json: string): ApplyResult {
   return parseApplyResultWith(json, (env) => ({
     committed: env.committed === true,
     migratedFailures: asCount(env.migratedFailures),
+    renameFailed: env.renameFailed === true,
   }));
 }
 
@@ -183,13 +197,18 @@ export function isStructuralChange(change: ClassRenameChange): boolean {
   return change.kind === 'classRename' || change.kind === 'classReparent';
 }
 
-/** A human label for a preview row. */
-export function classChangeLabel(change: ClassRenameChange): string {
+/** A human label for a preview row. `ambiguous` is the set of class names this change set
+ *  claims from more than one dictionary; those rows carry their dictionary (#396). */
+export function classChangeLabel(
+  change: ClassRenameChange,
+  ambiguous?: ReadonlySet<string>,
+): string {
   const side = change.isMeta ? ' class' : '';
+  const name = classNameForRow(change.className, change.dictName, ambiguous);
   if (change.kind === 'methodRecompile') {
-    return `${change.className}${side}>>${change.selector ?? '?'}`;
+    return `${name}${side}>>${change.selector ?? '?'}`;
   }
-  return `${change.className}${side}`;
+  return `${name}${side}`;
 }
 
 /** Validate a proposed new class name against the old name. Returns an error

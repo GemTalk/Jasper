@@ -23,6 +23,9 @@ GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
     building/applying compiles-in-stone-only and never commits.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it (children first).
+
+The `tests - shadowed class name` category covers #396, both halves: the re-versioned anchor, and
+the placement of the brand-new superclass (`dictObjectForNewClass`).
 "
 Class {
 	#name : 'GsExtractSuperclassRefactoringTest',
@@ -157,6 +160,74 @@ GsExtractSuperclassRefactoringTest >> testInsertEmptySuperclassStagesClassAdd [
 	self assert: add notNil.
 	self assert: add className equals: 'GsESPet'.
 	self assert: (self changeOfKind: #classDefinitionEdit for: 'GsESDog' in: cs) notNil
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsExtractSuperclassRefactoringTest >> withAnchorInAnUnnamedDictionaryDo: aBlock [
+	"A class in a dictionary with NO name -- which is what `SymbolDictionary new` answers, since a
+	 name only exists if someone sets one. Evaluates aBlock with the anchor and the dictionary."
+	| sl at d anchor |
+	sl := System myUserProfile symbolList.
+	at := sl size + 1.
+	d := SymbolDictionary new.
+	System myUserProfile insertDictionary: d at: at.
+	[anchor := Object
+		subclass: 'GsESNoName'
+		instVarNames: #('own')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: d.
+	 aBlock value: anchor value: d]
+		ensure: [
+			d removeKey: #GsESNoNamePet ifAbsent: [].
+			d removeKey: #GsESNoName ifAbsent: [].
+			System myUserProfile removeDictionaryAt: at]
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsExtractSuperclassRefactoringTest >> testInsertSuperclassPreviewsForAnAnchorInAnUnnamedDictionary [
+	"The generated definition writes `inDictionary: <name>` as Smalltalk source, and took that name
+	 from the anchor's own dictionary. A nameless dictionary answered nil, and concatenating nil
+	 raised ArgumentTypeError 2283 -- so a refactoring that applies perfectly well could not even
+	 be PREVIEWED. Nothing that does the work needs a name: the change carries the dictionary
+	 itself."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | ref cs |
+		ref := GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil.
+		cs := ref changeSet.
+
+		self assert: ref decline isNil.
+		self assert: (cs changes detect: [:c | c kind = #classAdd] ifNone: [nil]) notNil]
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsExtractSuperclassRefactoringTest >> testTheDefinitionNamesTheDictionaryTheApplyWillUse [
+	"Display and apply must describe one dictionary, not two. The definition on screen read the
+	 ANCHOR's dictionary while the apply files the class through dictObjectForNewClass; they
+	 happen to agree, until one of them cannot answer. A nameless dictionary is written by its
+	 symbol-list position, which is unambiguous and valid Smalltalk."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | ref idx |
+		ref := GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil.
+		"the definition is built from the analysis, so stage the change set first"
+		ref changeSet.
+		idx := System myUserProfile symbolList indexOf: d.
+
+		self assert: ref newClassDefinition
+			includesSubstring: 'symbolList at: ', idx printString]
+]
+
+{ #category : 'tests - unnamed dictionary' }
+GsExtractSuperclassRefactoringTest >> testInsertSuperclassFilesTheNewClassInTheUnnamedDictionary [
+	"And it really applies: the new superclass lands in the dictionary the anchor lives in, which
+	 is the point -- declining would have made the refactoring simply unavailable there."
+	self withAnchorInAnUnnamedDictionaryDo: [:anchor :d | | json |
+		json := (GsExtractSuperclassRefactoring
+			class: anchor insertSuperclassNamed: 'GsESNoNamePet' inDictionary: nil)
+				applyDeselected: #().
+
+		self assert: json includesSubstring: '"failed":[]'.
+		self assert: (d at: #GsESNoNamePet ifAbsent: [nil]) notNil.
+		self assert: (d at: #GsESNoName) superclass == (d at: #GsESNoNamePet)]
 ]
 
 { #category : 'tests - V6 insert' }
@@ -656,4 +727,63 @@ GsExtractSuperclassRefactoringTest >> testCandidatesJsonCarriesClassifiedMembers
 	self assert: json includesSubstring: '"kind":"identical"'.
 	self assert: json includesSubstring: '"kind":"divergent"'.
 	self assert: json includesSubstring: '"name":"name"'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractSuperclassRefactoringTest >> testExtractBindsTheReversionedAnchorInItsOwnDictionary [
+	"Extracting a superclass re-versions the anchor and its siblings, each bound through
+	 `dictionaryForNewVersionOf:` -- by class NAME, first match. A decoy binding GsESDog ahead of UserGlobals
+	 used to take the anchor's new version (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the anchor the user picked is the one re-parented onto the new superclass"
+	 self assert: (UserGlobals at: #GsESDog) superclass name asString equals: 'GsESPet'.
+	 self assert: (decoy at: #GsESDog) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsExtractSuperclassRefactoringTest >> testExtractPlacesTheNewSuperclassInTheAnchorOwnDictionary [
+	"`dictObjectForNewClass` falls through to `dictionaryForNewVersionOf: anchorClass` when the caller names no
+	 dictionary, so a shadowed ANCHOR name used to misfile the brand-new superclass too, creating it in
+	 the decoy rather than beside the anchor. Distinct from the re-versioning defect: this one
+	 misplaces a class that did not exist before. See #396."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsESShadowNewDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsESDog'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet'
+		inDictionary: nil
+		siblings: #('GsESCat')
+		hoistMethods: #()
+		hoistInstVars: #('name' 'age')) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 "the new superclass belongs beside its anchor, not in the shadowing dictionary"
+	 self deny: (UserGlobals at: #GsESPet ifAbsent: [nil]) isNil.
+	 self assert: (decoy at: #GsESPet ifAbsent: [nil]) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1.
+			UserGlobals removeKey: #GsESPet ifAbsent: []]
 ]

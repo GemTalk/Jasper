@@ -11,7 +11,13 @@ export function multipleSessionMode(): boolean {
 }
 
 export function describeSession(session: ActiveSession): string {
-  return `Session ${session.id} · ${loginLabel(session.login)}`;
+  return `${sessionTag(session.id)} · ${loginLabel(session.login)}`;
+}
+
+// The short form, for tab and panel titles where the login does not fit. The
+// number alone is enough because the session's row shows it too.
+export function sessionTag(sessionId: number): string {
+  return `Session ${sessionId}`;
 }
 
 /**
@@ -33,6 +39,50 @@ export async function chooseActiveSession(sessionManager: SessionManager): Promi
     alwaysAsk: true,
     placeHolder: 'Select the active GemStone session',
   });
+}
+
+export function onDidChangeSessionMode(listener: () => void): vscode.Disposable {
+  return vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration('gemstone.sessionMode')) listener();
+  });
+}
+
+/**
+ * The title of a panel bound to one session (a debugger, an inspector, the
+ * Spotter): its own title, plus {@link sessionTag} in multiple-session mode.
+ * The panel's title must be set through {@link setTitle}, or the tag is lost.
+ */
+export class SessionPanelTitle implements vscode.Disposable {
+  private readonly subscription: vscode.Disposable;
+
+  constructor(
+    private readonly panel: { title: string },
+    private sessionId: number,
+    private title: string,
+  ) {
+    this.apply();
+    this.subscription = onDidChangeSessionMode(() => this.apply());
+  }
+
+  setTitle(title: string): void {
+    this.title = title;
+    this.apply();
+  }
+
+  setSession(sessionId: number): void {
+    this.sessionId = sessionId;
+    this.apply();
+  }
+
+  private apply(): void {
+    this.panel.title = multipleSessionMode()
+      ? `${this.title} · ${sessionTag(this.sessionId)}`
+      : this.title;
+  }
+
+  dispose(): void {
+    this.subscription.dispose();
+  }
 }
 
 /** Fires whenever the active session, or the set of sessions, changes. */
@@ -67,9 +117,7 @@ export class WorkspaceSessionLensProvider implements vscode.CodeLensProvider, vs
   constructor(private readonly sessionManager: SessionManager) {
     this.subscription = vscode.Disposable.from(
       onDidChangeActiveSession(sessionManager, () => this.changed.fire()),
-      vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('gemstone.sessionMode')) this.changed.fire();
-      }),
+      onDidChangeSessionMode(() => this.changed.fire()),
     );
   }
 

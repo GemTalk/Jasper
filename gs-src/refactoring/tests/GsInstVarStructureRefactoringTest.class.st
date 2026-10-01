@@ -24,6 +24,11 @@ This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
     correctly parented, and building compiles/commits nothing.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
+
+The `tests - shadowed class name` category covers #396. The dictionary-scope tests above cover
+which class a move BINDS; this one covers where the reshaped class is then WRITTEN, which is the
+half `dictionaryForNewVersionOf:` used to get wrong, and what a same-named class in another dictionary keeps
+when it is re-versioned because it sits inside the reshaped subtree.
 "
 Class {
 	#name : 'GsInstVarStructureRefactoringTest',
@@ -906,4 +911,139 @@ GsInstVarStructureRefactoringTest >> testPushUpLeavesAMultiStatementSetterBehind
 
 	self assert: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
 	self deny: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:')
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testPushUpBindsTheDestinationNewVersionInItsOwnDictionary [
+	"The existing dictionary-scope tests here stop at the change set -- which class the move BINDS as
+	 its destination. This is the apply half. Both classes a push-up reshapes (source and
+	 destination) are re-created through `dictionaryForNewVersionOf:`, which picks their dictionary by NAME, so a
+	 decoy binding GsVSBase ahead of UserGlobals used to take the destination's new version (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsVSShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsVSBase'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushUpInstVar: 'mid')
+		applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: ((UserGlobals at: #GsVSBase) instVarNames includes: #mid).
+	 self assert: (decoy at: #GsVSBase) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testPushUpWithAccessorsKeepsTheMethodsOfASameNamedSiblingInAnotherDictionary [
+	"A push-up re-versions every descendant of the destination, and a same-named class in another
+	 dictionary can be one of them. Here a second GsVSMid, in its own dictionary, also subclasses
+	 GsVSBase and has its own #pushable / #pushable: -- unrelated to the ivar being pushed. The
+	 accessors skipped when a class is carried forward used to be keyed by class NAME, so that
+	 class's methods matched and were silently not copied onto its new version."
+	| mid twinDict twin json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable: aValue pushable := aValue' in: mid.
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSMid'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'pushable ^ #twinGetter' in: twin.
+	 self compile: 'pushable: aValue ^ aValue' in: twin.
+	 json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	 self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	 "The other GsVSMid really was carried forward, so the assertions below are about the copy."
+	 self deny: (twinDict at: #GsVSMid) == twin.
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #pushable).
+	 self assert: ((twinDict at: #GsVSMid) includesSelector: #'pushable:')]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testConvertTempKeepsTheMethodOfASameNamedDescendantInAnotherDictionary [
+	"Converting a temporary re-versions the class and every descendant, and skips carrying the
+	 rewritten method's OLD source forward because the staged recompile installs the new one. That
+	 skip used to be keyed by class NAME, so a descendant in another dictionary that happens to share
+	 the name -- and has its own, unrelated #compute -- lost that method on its new version."
+	| twinDict twin json |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self compile: 'compute ^ #twinCompute' in: twin.
+	 json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false)
+		applyDeselected: #().
+
+	 self deny: json includesSubstring: '"failed":[{'.
+	 self assert: (self ownIvarsOf: 'GsVSBase') includes: 't'.
+	 self deny: (twinDict at: #GsVSBase) == twin.
+	 self assert: ((twinDict at: #GsVSBase) includesSelector: #compute).
+	 self
+		assert: ((twinDict at: #GsVSBase) compiledMethodAt: #compute environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'twinCompute']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testMoveDownDeclinesATargetNameTwoDescendantsShare [
+	"A move names its destinations, and each name is resolved within the source's lineage. When a
+	 second GsVSLeaf, in another dictionary, also descends from GsVSMid, the name means two classes
+	 there -- and the first one the descendant walk reached used to be taken, which may be the one
+	 the user did not pick. The engine cannot tell which was meant, so it has to say so rather than
+	 move the variable into either."
+	| twinDict ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[(self classNamed: 'GsVSMid')
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInstVarStructureRefactoringTest >> testMoveUpDeclinesATargetNameTwoAncestorsShare [
+	"The #up half. A class whose superclass has the same name as one of ITS ancestors -- a second
+	 GsVSBase, in another dictionary, subclassing the real one -- gives the name two meanings in the
+	 source's ancestry."
+	| twinDict twin leafUnderTwin ref |
+	twinDict := SymbolDictionary new name: #GsVSTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 leafUnderTwin := twin
+		subclass: 'GsVSTwinLeaf'
+		instVarNames: #('twinOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: leafUnderTwin moveInstVar: 'twinOwn' toClasses: #('GsVSBase') direction: #up.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]
