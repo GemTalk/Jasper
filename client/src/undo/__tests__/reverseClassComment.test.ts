@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
-  getClassComment: vi.fn(),
+  getStoredClassComment: vi.fn(),
   setClassComment: vi.fn(),
 }));
 vi.mock('../afterUndo', () => ({
@@ -12,7 +12,7 @@ vi.mock('../afterUndo', () => ({
 }));
 
 import * as vscode from 'vscode';
-import { getClassComment, setClassComment } from '../../browserQueries';
+import { getStoredClassComment, setClassComment } from '../../browserQueries';
 import { reloadGemstoneEditors } from '../afterUndo';
 import { reverseClassComment } from '../reverseClassComment';
 import { ClassCommentUndoEntry } from '../undoTypes';
@@ -47,7 +47,7 @@ beforeEach(() => {
 
 describe('reverseClassComment', () => {
   it('writes the earlier comment back and reports it', async () => {
-    vi.mocked(getClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
 
     expect(await reverseClassComment(session, entry())).toBe(true);
 
@@ -58,7 +58,7 @@ describe('reverseClassComment', () => {
   });
 
   it('reloads open editors, so the comment tab stops showing what the undo discarded', async () => {
-    vi.mocked(getClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
 
     await reverseClassComment(session, entry());
 
@@ -66,14 +66,14 @@ describe('reverseClassComment', () => {
   });
 
   it('does nothing when the comment is already back the way it was', async () => {
-    vi.mocked(getClassComment).mockReturnValue('the old comment');
+    vi.mocked(getStoredClassComment).mockReturnValue('the old comment');
 
     expect(await reverseClassComment(session, entry())).toBe(true);
     expect(setClassComment).not.toHaveBeenCalled();
   });
 
   it('warns before discarding a comment edited since, and undoes anyway when told to', async () => {
-    vi.mocked(getClassComment).mockReturnValue('someone else edited this');
+    vi.mocked(getStoredClassComment).mockReturnValue('someone else edited this');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     expect(await reverseClassComment(session, entry())).toBe(true);
@@ -87,7 +87,7 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the drift warning is declined', async () => {
-    vi.mocked(getClassComment).mockReturnValue('someone else edited this');
+    vi.mocked(getStoredClassComment).mockReturnValue('someone else edited this');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     expect(await reverseClassComment(session, entry())).toBe(false);
@@ -96,7 +96,7 @@ describe('reverseClassComment', () => {
 
   it('reports a write the stone refused rather than claiming the undo landed', async () => {
     // setClassComment answers a status string instead of throwing when the class is gone.
-    vi.mocked(getClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
     vi.mocked(setClassComment).mockReturnValue('Class not found: Account');
 
     expect(await reverseClassComment(session, entry())).toBe(false);
@@ -108,7 +108,7 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the write itself raises', async () => {
-    vi.mocked(getClassComment).mockReturnValue('the new comment');
+    vi.mocked(getStoredClassComment).mockReturnValue('the new comment');
     vi.mocked(setClassComment).mockImplementation(() => {
       throw new Error('session busy');
     });
@@ -121,7 +121,7 @@ describe('reverseClassComment', () => {
   });
 
   it('keeps the entry on offer when the current comment cannot be read', async () => {
-    vi.mocked(getClassComment).mockImplementation(() => {
+    vi.mocked(getStoredClassComment).mockImplementation(() => {
       throw new Error('session busy');
     });
 

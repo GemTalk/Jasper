@@ -124,6 +124,144 @@ describe('GemStoneHoverProvider', () => {
       expect(md.value).toContain('0 implementors](command:gemstone.implementorsOfSelector?');
     });
 
+    it('sweeps environments 0..maxEnvironment rather than asking the ceiling alone', async () => {
+      // maxEnvironment is a CEILING. Asking environment 1 alone answered no senders and no
+      // implementors for every selector -- almost nothing is compiled above 0 -- and a hover
+      // with nothing to report returns null, so the senders/implementors line simply vanished.
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+        env === 0
+          ? [
+              {
+                dictName: 'Globals',
+                className: 'Array',
+                isMeta: false,
+                selector: 'size',
+                category: 'accessing',
+                environmentId: 0,
+              },
+            ]
+          : [],
+      );
+      mockSendersOf.mockImplementation((_session, _selector, env) =>
+        env === 0 ? Array.from({ length: 5 }, () => ({}) as never) : [],
+      );
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect(mockImplementorsOf.mock.calls.map((c) => c[2])).toEqual([0, 1]);
+      expect(mockSendersOf.mock.calls.map((c) => c[2])).toEqual([0, 1]);
+      expect(result).not.toBeNull();
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('5 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('1 implementor](command:gemstone.implementorsOfSelector?');
+    });
+
+    it('adds up the counts found across environments', async () => {
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env = 0) => [
+        {
+          dictName: 'Globals',
+          className: env === 0 ? 'Array' : 'String',
+          isMeta: false,
+          selector: 'size',
+          category: 'accessing',
+          environmentId: env,
+        },
+      ]);
+      mockSendersOf.mockImplementation(() => Array.from({ length: 2 }, () => ({}) as never));
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('4 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('2 implementors](command:gemstone.implementorsOfSelector?');
+      expect(md.value).toContain('`Array` (accessing)');
+      expect(md.value).toContain('`String` (accessing)');
+    });
+
+    it('keeps what the other environments found when one of them throws', async () => {
+      // The guard sits inside the sweep, not around it: a throw in the last environment used
+      // to discard the rows the earlier ones had already returned.
+      __setConfig('gemstone', 'maxEnvironment', 2);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) => {
+        if (env === 2) throw new Error('session busy');
+        return [
+          {
+            dictName: 'Globals',
+            className: env === 0 ? 'Array' : 'String',
+            isMeta: false,
+            selector: 'size',
+            category: 'accessing',
+            environmentId: env as number,
+          },
+        ];
+      });
+      mockSendersOf.mockImplementation((_session, _selector, env) => {
+        if (env === 2) throw new Error('session busy');
+        return Array.from({ length: 3 }, () => ({}) as never);
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('2 implementors](command:gemstone.implementorsOfSelector?');
+      expect(md.value).toContain('6 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('`Array` (accessing)');
+      expect(md.value).toContain('`String` (accessing)');
+    });
+
+    it('does not cache a senders count an environment failed to contribute to', async () => {
+      // Nothing clears the cache short of a new session, so a count taken while one
+      // environment was throwing would stick — the hover would keep under-reporting senders
+      // for that selector long after the stone was healthy again.
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      let failing = true;
+      mockSendersOf.mockImplementation((_session, _selector, env) => {
+        if (env === 1 && failing) throw new Error('session busy');
+        return Array.from({ length: 2 }, () => ({}) as never);
+      });
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+
+      const first = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+      expect((first!.contents as unknown as MarkdownString).value).toContain(
+        '2 senders](command:gemstone.sendersOfSelector?',
+      );
+
+      failing = false;
+      const second = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+      expect((second!.contents as unknown as MarkdownString).value).toContain(
+        '4 senders](command:gemstone.sendersOfSelector?',
+      );
+    });
+
+    it('names the environment on an implementor found above 0', async () => {
+      // Two environments can implement the same selector on the same class. Both rows are
+      // kept on purpose, so without the suffix the list shows the same line twice.
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) => [
+        {
+          dictName: 'Globals',
+          className: 'Array',
+          isMeta: false,
+          selector: 'size',
+          category: 'accessing',
+          environmentId: env as number,
+        },
+      ]);
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('- `Array` (accessing)\n');
+      expect(md.value).toContain('- `Array` (accessing) · env 1\n');
+    });
+
     it('survives implementorsOf throwing — degrades to senders-only, does not kill the hover', async () => {
       // A thrown GCI query (busy session, browser/RB plugin absent) must not reject
       // the whole hover and silently show nothing.

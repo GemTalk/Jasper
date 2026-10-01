@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from '../activeSessionDisplay';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugQueries';
@@ -117,6 +118,8 @@ export class EnhancedInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  // Titles go through this, never `panel.title`, so they keep the session tag.
+  private readonly title: SessionPanelTitle;
   private currentOop: bigint;
   private currentLabel: string;
   /** Monotonic id handed to each miller column; the root column is 0. */
@@ -163,6 +166,8 @@ export class EnhancedInspector {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    this.title = new SessionPanelTitle(panel, session.id, 'Inspector');
+    this.disposables.push(this.title);
     this.currentOop = oop;
     this.currentLabel = label;
     this.panel.webview.html = this.getHtml();
@@ -214,7 +219,7 @@ export class EnhancedInspector {
     switch (msg.command) {
       case 'ready': {
         const payload = this.buildColumnPayload(this.currentOop);
-        this.panel.title = payload.title;
+        this.title.setTitle(payload.title);
         this.panel.webview.postMessage({
           command: 'enhancedInspectorViewSpecs',
           columnId: this.rootColumnId,
@@ -428,7 +433,7 @@ export class EnhancedInspector {
       }
 
       case 'setTitle': {
-        this.panel.title = msg.title;
+        this.title.setTitle(msg.title);
         break;
       }
 
@@ -1417,10 +1422,12 @@ export class EnhancedInspector {
           '<div style="font-size:0.75em;color:var(--vscode-descriptionForeground);margin-bottom:2px">Class</div>' +
           '<div style="font-family:var(--vscode-editor-font-family);font-size:1.15em;font-weight:600;word-break:break-all">' + esc(className) + '</div>' +
         '</div>' +
-        // Info bar: Superclass | Package | Tag
+        // Info bar: Superclass | Class Category | OOP. The middle field is the
+        // class's category — what the Explorer's Class Categories pane lists,
+        // not a Rowan package, which is what labelling it "Package" claimed.
         '<div style="padding:2px 12px 6px 12px;flex-shrink:0;font-size:0.82em;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-panel-border);display:flex;gap:12px;flex-wrap:wrap">' +
           '<span>Superclass: <strong style="color:var(--vscode-foreground)">' + esc(superclass || '—') + '</strong></span>' +
-          '<span>Package: <strong style="color:var(--vscode-foreground)">' + esc(category || '—') + '</strong></span>' +
+          '<span>Class Category: <strong style="color:var(--vscode-foreground)">' + esc(category || '—') + '</strong></span>' +
           '<span>OOP: <strong style="color:var(--vscode-foreground)">' + esc(col.oop || '') + '</strong></span>' +
         '</div>' +
         // Sub-tab bar

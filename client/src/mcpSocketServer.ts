@@ -10,7 +10,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ActiveSession } from './sessionManager';
 import { registerMcpTools } from './mcpTools';
 import { appendSysadmin } from './sysadminChannel';
-import { defaultSidecarPath, deleteOwnerSidecar, writeOwnerSidecar } from './mcpOwnerSidecar';
+import {
+  NO_WORKSPACE_RECORDED,
+  defaultSidecarPath,
+  deleteOwnerSidecar,
+  writeOwnerSidecar,
+} from './mcpOwnerSidecar';
 import { extensionPathFrom } from './extensionPath';
 import { isWindows } from './wslBridge';
 
@@ -52,6 +57,11 @@ export function defaultSocketPath(): string {
 export interface McpSocketServerOptions {
   /** Returns the user's currently selected GemStone session, or undefined. */
   getSession: () => ActiveSession | undefined;
+  /** Told which session may have left or entered a transaction, after an MCP tool
+   *  that can move it — so the session row, the status bar and the transaction
+   *  context keys are not left describing the session as it was before Claude
+   *  committed or aborted it. */
+  onTransactionStateMayHaveMoved?: (sessionId: number) => void;
   /**
    * Override the socket path. Production code should let this default to
    * {@link defaultSocketPath}; tests use it to avoid the shared global path.
@@ -63,6 +73,19 @@ export interface McpSocketServerOptions {
    * to "(no workspace)" if not provided.
    */
   workspacePath?: string;
+  /**
+   * `vscode.workspace.name` — what this window's title bar says. Written into
+   * the sidecar so a passive window can name the owner the way its user would
+   * recognise it, rather than by a folder path that for a multi-root workspace
+   * names neither.
+   */
+  workspaceName?: string;
+  /**
+   * `vscode.workspace.workspaceFile` — present only for a multi-root
+   * workspace. Recorded so a passive window can tell that this owner cannot be
+   * reached by opening its first folder.
+   */
+  workspaceFile?: string;
   /**
    * Override the owner sidecar path. Tests use this to avoid touching the
    * shared global path; production code lets it default.
@@ -174,7 +197,7 @@ export class McpSocketServer {
   /**
    * Re-write the sidecar with the current session label. Call after a session
    * selection change in the owning window so passive Jasper windows see the
-   * new session in their MCP Server panel. No-op when not owner.
+   * new session on their own session rows. No-op when not owner.
    */
   refreshSidecar(): void {
     if (!this._isOwner) return;
@@ -187,7 +210,13 @@ export class McpSocketServer {
       writeOwnerSidecar(
         {
           pid: process.pid,
-          workspacePath: this.options.workspacePath ?? '(no workspace)',
+          workspacePath: this.options.workspacePath ?? NO_WORKSPACE_RECORDED,
+          ...(this.options.workspaceName !== undefined
+            ? { workspaceName: this.options.workspaceName }
+            : {}),
+          ...(this.options.workspaceFile !== undefined
+            ? { workspaceFile: this.options.workspaceFile }
+            : {}),
           socketPath: this.socketPath,
           claimedAt: this.claimedAtIso,
           ...(label !== undefined ? { selectedSession: label } : {}),
@@ -204,7 +233,11 @@ export class McpSocketServer {
   private handleConnection(socket: net.Socket): void {
     appendSysadmin('MCP client connected');
     const mcpServer = new McpServer({ name: MCP_SERVER_NAME, version: '1.0.0' });
-    registerMcpTools(mcpServer, this.options.getSession);
+    registerMcpTools(
+      mcpServer,
+      this.options.getSession,
+      this.options.onTransactionStateMayHaveMoved,
+    );
 
     const transport = new StdioServerTransport(socket, socket);
     mcpServer.connect(transport).catch((err) => {

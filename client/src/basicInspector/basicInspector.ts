@@ -14,6 +14,8 @@
  * evaluation go through the kernel sends in `debugQueries.ts`.
  */
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from '../activeSessionDisplay';
+import { EvalMode } from '../evaluateMode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
 import * as debug from '../debugQueries';
@@ -36,9 +38,14 @@ import {
   fetchBrowseLocation,
 } from './queries/basicInspectorQueries';
 
-// Both webview scripts are read at runtime and injected as <script> tags — they
-// are NOT compiled into the bundle (see webviewAssets.ts, and the `!` lines in
-// .vscodeignore that keep them in the package).
+// All three webview scripts are read at runtime and injected as <script> tags —
+// they are NOT compiled into the bundle (see webviewAssets.ts, and the `!` lines
+// in .vscodeignore that keep them in the package).
+// The evaluate tab's keys and expression history, shared with the debugger's
+// evaluate pane so the same gesture cannot mean two things (see
+// client/src/webview/evaluatePane.js). basicInspectorView.js wires its tab
+// through the global this registers, so it has to be injected first.
+const evaluatePaneJs = readWebviewScript('evaluatePane.js', 'webview');
 const millerColumnsJs = readWebviewScript('millerColumns.js', 'webview');
 const basicInspectorViewJs = readWebviewScript('basicInspectorView.js', 'basicInspector');
 
@@ -118,7 +125,7 @@ type BasicInspectorMessage =
       columnId: number;
       oop: string;
       expression: string;
-      mode: 'display' | 'execute' | 'inspect';
+      mode: EvalMode;
     }
   | {
       command: 'setSlot';
@@ -145,6 +152,7 @@ type BasicInspectorMessage =
       isClassSide: boolean;
     }
   | { command: 'browseClass'; oop: string }
+  | { command: 'browseMethod'; oop: string; selector: string; isMeta: boolean }
   | { command: 'copyText'; text: string; what: string }
   | { command: 'openSetting'; id: string }
   | { command: 'setTitle'; title: string }
@@ -155,6 +163,8 @@ export class BasicInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  // Titles go through this, never `panel.title`, so they keep the session tag.
+  private readonly title: SessionPanelTitle;
   /** Monotonic id handed to each miller column; the root column is 0. */
   private nextColumnId = 1;
 
@@ -242,6 +252,8 @@ export class BasicInspector {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    this.title = new SessionPanelTitle(panel, session.id, 'Inspector');
+    this.disposables.push(this.title);
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
@@ -317,6 +329,9 @@ export class BasicInspector {
         case 'browseClass':
           this.browseClass(BigInt(msg.oop));
           return;
+        case 'browseMethod':
+          this.browseMethod(BigInt(msg.oop), msg.selector, msg.isMeta);
+          return;
         case 'copyText':
           void vscode.env.clipboard.writeText(msg.text).then(() => {
             vscode.window.setStatusBarMessage(`${msg.what} copied`, 2000);
@@ -333,7 +348,7 @@ export class BasicInspector {
           }
           return;
         case 'setTitle':
-          this.panel.title = msg.title ? `Inspector: ${msg.title}` : 'Inspector';
+          this.title.setTitle(msg.title ? `Inspector: ${msg.title}` : 'Inspector');
           return;
         case 'closePanel':
           this.panel.dispose();
@@ -669,12 +684,7 @@ export class BasicInspector {
    * prints it, Execute It is silent bar a status-bar line, Inspect It opens it
    * in a new column.
    */
-  private evaluate(
-    columnId: number,
-    oop: bigint,
-    expression: string,
-    mode: 'display' | 'execute' | 'inspect',
-  ): void {
+  private evaluate(columnId: number, oop: bigint, expression: string, mode: EvalMode): void {
     const busy = this.busyError();
     if (busy) {
       this.panel.webview.postMessage({ command: 'evalResult', columnId, ok: false, text: busy });
@@ -720,6 +730,9 @@ export class BasicInspector {
    * class and opens its definition; it is handed the dictionary this session
    * resolved as the class's home, so a name shadowed across dictionaries lands
    * on THIS class rather than on the first of its name.
+   *
+   * {@link browseMethod} is the same gesture one level in — the Meta tab's
+   * selector rows — and lands in the same place, on the selector.
    */
   private browseClass(oop: bigint): void {
     const location = fetchBrowseLocation(this.makeExecutor(), oop);
@@ -734,6 +747,32 @@ export class BasicInspector {
       location.className,
       this.sessionId,
       location.dictName,
+    );
+  }
+
+  /**
+   * Browse one of the Meta tab's selectors — the same Explorer landing as
+   * {@link browseClass}, refined to the method. `findClass`'s fourth argument
+   * cascades the Methods pane to the selector and opens its source, which is
+   * where the debugger's frame Browse already goes.
+   *
+   * `isMeta` is the Meta tab's own Instance/Class Methods sub-tab, so the class
+   * side of a selector that exists on both lands on the class side.
+   */
+  private browseMethod(oop: bigint, selector: string, isMeta: boolean): void {
+    const location = fetchBrowseLocation(this.makeExecutor(), oop);
+    if (!location || !location.dictName) {
+      void vscode.window.showWarningMessage(
+        `Cannot browse #${selector}: failed to locate its class in GemStone.`,
+      );
+      return;
+    }
+    void vscode.commands.executeCommand(
+      'gemstone.explorer.findClass',
+      location.className,
+      this.sessionId,
+      location.dictName,
+      { selector, isMeta },
     );
   }
 
@@ -999,6 +1038,9 @@ export class BasicInspector {
     .eval-var-copy:hover { opacity: 1; }
     .eval-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
     .eval-hint.armed { color: var(--vscode-textLink-foreground); }
+    /* A transient answer that is not a result -- "there is nothing to recall". Tinted so it reads as
+       a reply to the keystroke rather than as the chord hint having changed wording. */
+    .eval-hint.flash { color: var(--vscode-foreground); font-style: italic; }
     .eval-out {
       flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; word-break: break-word;
       font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
@@ -1052,12 +1094,27 @@ export class BasicInspector {
     <div class="ctx-sep"></div>
     <div class="ctx-item" data-action="browse">Browse Class</div>
   </div>
+  <!-- The Meta tab's selector rows are not table rows, so they get their own
+       menu rather than a mostly-hidden copy of the row menu above. Its one item
+       is also why the rows suppress the host's Cut/Copy/Paste: all three are
+       meaningless over a selector, and none of them takes you to the method. -->
+  <div id="methodCtxMenu" class="ctx-menu">
+    <div class="ctx-item" data-action="browseMethod">Browse Method</div>
+  </div>
+  <!-- The column header and the Meta tab's header are read-only labels, so the
+       host's Cut and Paste mean nothing over them; this menu keeps only Copy. -->
+  <div id="headerCtxMenu" class="ctx-menu">
+    <div class="ctx-item" data-action="copy">Copy</div>
+  </div>
+  <script nonce="${nonce}">${evaluatePaneJs}</script>
   <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">${basicInspectorViewJs}</script>
   <script nonce="${nonce}">
     BasicInspectorView.init({
       strip: document.getElementById('columnStrip'),
       ctxMenu: document.getElementById('rowCtxMenu'),
+      methodCtxMenu: document.getElementById('methodCtxMenu'),
+      headerCtxMenu: document.getElementById('headerCtxMenu'),
       vscode: acquireVsCodeApi(),
       pageSize: ${PAGE_SIZE},
       defaultColumnWidth: ${DEFAULT_COLUMN_WIDTH},

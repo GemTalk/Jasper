@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { requireGciCapability } from './requireGciCapability';
 
 /**
  * The GCI's direct-access family: reading and writing an object's bytes and
@@ -187,6 +188,119 @@ describe('GCI byte and OOP fetch/store (integration)', () => {
         200n,
         300n,
       ]);
+    });
+  });
+
+  describe('GciTsFetchNamedOops', () => {
+    it('fetches named inst vars from an Association', (ctx) => {
+      requireGciCapability('GciTsFetchNamedOops', ctx, gci);
+
+      const assoc = execute('Association new key: #myKey value: 42');
+
+      const { result, oops, err } = gci.GciTsFetchNamedOops(session, assoc, 1n, 2);
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(2);
+      expect(oops[0]).toBe(execute('#myKey'));
+      expect(integerAt(oops, 1)).toBe(42n);
+    });
+  });
+
+  describe('GciTsFetchVaryingOops', () => {
+    it('fetches varying elements from an Array', (ctx) => {
+      requireGciCapability('GciTsFetchVaryingOops', ctx, gci);
+
+      const array = execute('#(7 8 9)');
+
+      const { result, oops, err } = gci.GciTsFetchVaryingOops(session, array, 1n, 3);
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(3);
+      expect(oops.map((oop) => gci.GciTsOopToI64(session, oop).value)).toEqual([7n, 8n, 9n]);
+    });
+  });
+
+  describe('GciTsStoreNamedOops', () => {
+    it('stores into named inst vars of an Association', (ctx) => {
+      requireGciCapability('GciTsStoreNamedOops', ctx, gci);
+
+      const assoc = execute('Association new');
+      const key = gci.GciTsNewSymbol(session, 'testKey').result;
+      const value = gci.GciTsI64ToOop(session, 77n).result;
+
+      const { success, err } = gci.GciTsStoreNamedOops(session, assoc, 1n, [key, value]);
+
+      expect(err.number).toBe(0);
+      expect(success).toBe(true);
+      const { data: keyData } = gci.GciTsPerformFetchBytes(session, assoc, 'key', [], 1024);
+      expect(keyData).toBe('testKey');
+      const valueResult = gci.GciTsPerform(session, assoc, OOP_ILLEGAL, 'value', [], 0, 0);
+      expect(gci.GciTsOopToI64(session, valueResult.result).value).toBe(77n);
+    });
+  });
+
+  describe('GciTsStoreIdxOops', () => {
+    it('stores into varying (indexed) slots of an Array', (ctx) => {
+      requireGciCapability('GciTsStoreIdxOops', ctx, gci);
+      requireGciCapability('GciTsFetchVaryingOops', ctx, gci);
+
+      const array = execute('Array new: 4');
+      const oop10 = gci.GciTsI64ToOop(session, 10n).result;
+      const oop20 = gci.GciTsI64ToOop(session, 20n).result;
+
+      // Store at varying index 2 and 3
+      const { success, err } = gci.GciTsStoreIdxOops(session, array, 2n, [oop10, oop20]);
+
+      expect(err.number).toBe(0);
+      expect(success).toBe(true);
+      // Verify: slot 1=nil, 2=10, 3=20, 4=nil
+      const fetched = gci.GciTsFetchVaryingOops(session, array, 1n, 4);
+      expect(fetched.oops[0]).toBe(OOP_NIL);
+      expect(gci.GciTsOopToI64(session, fetched.oops[1]).value).toBe(10n);
+      expect(gci.GciTsOopToI64(session, fetched.oops[2]).value).toBe(20n);
+      expect(fetched.oops[3]).toBe(OOP_NIL);
+    });
+  });
+
+  describe('GciTsAddOopsToNsc / GciTsRemoveOopsFromNsc', () => {
+    it('adds OOPs to an IdentityBag and removes them', (ctx) => {
+      requireGciCapability('GciTsAddOopsToNsc', ctx, gci);
+
+      const bag = execute('IdentityBag new');
+      const string1 = gci.GciTsNewString(session, 'nsc-test-1').result;
+      const string2 = gci.GciTsNewString(session, 'nsc-test-2').result;
+
+      const { success: addOk, err: addErr } = gci.GciTsAddOopsToNsc(session, bag, [
+        string1,
+        string2,
+      ]);
+
+      expect(addErr.number).toBe(0);
+      expect(addOk).toBe(true);
+      const size = gci.GciTsPerform(session, bag, OOP_ILLEGAL, 'size', [], 0, 0).result;
+      expect(gci.GciTsOopToI64(session, size).value).toBe(2n);
+
+      const { result: removeResult, err: removeErr } = gci.GciTsRemoveOopsFromNsc(session, bag, [
+        string1,
+        string2,
+      ]);
+
+      expect(removeErr.number).toBe(0);
+      expect(removeResult).toBe(1); // 1 = all elements were present
+      const sizeAfter = gci.GciTsPerform(session, bag, OOP_ILLEGAL, 'size', [], 0, 0).result;
+      expect(gci.GciTsOopToI64(session, sizeAfter).value).toBe(0n);
+    });
+
+    it('returns 0 when removing OOPs not present in the NSC', () => {
+      // No requireGciCapability: GciTsRemoveOopsFromNsc is in all vendored headers, so it's
+      // not in the optional-functions registry.
+      const bag = execute('IdentityBag new');
+      const string = gci.GciTsNewString(session, 'not-in-bag').result;
+
+      const { result, err } = gci.GciTsRemoveOopsFromNsc(session, bag, [string]);
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(0); // 0 = not all elements were present
     });
   });
 });

@@ -104,7 +104,9 @@ export function renderClassEditorHtml(opts: ClassEditorHtmlOptions): string {
 </head>
 <body>
   <header>
-    <div class="title">Rename class <code>${escapeHtml(oldName)}</code></div>
+    <div class="title">Rename class <code>${escapeHtml(oldName)}</code>${
+      dictName ? ` in <code>${escapeHtml(dictName)}</code>` : ''
+    }</div>
     <div class="actions">
       <button id="ok">Preview…</button>
       <button id="cancel" class="secondary">Cancel</button>

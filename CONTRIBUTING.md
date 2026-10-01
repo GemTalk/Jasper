@@ -131,4 +131,4 @@ CI runs on **GitHub Actions**. The [Health Check workflow](.github/workflows/hea
 
 ## Publishing a release
 
-Publishing to the VS Code Marketplace and Open VSX needs a personal access token for the `gemtalksystems` publisher on each registry, so it falls to a maintainer rather than to contributors. The procedure — pre-flight token checks, the version-bump and changelog sweep, packaging, and what the registries do after a publish reports success — is in [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md).
+Publishing to the VS Code Marketplace and Open VSX needs a personal access token for the `gemtalksystems` publisher on each registry, so it falls to a maintainer rather than to contributors. A release is a human-authored release PR (version bump and changelog) followed by the manual `Release` workflow, which tags, packages, publishes and announces it. Both halves are in [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md).

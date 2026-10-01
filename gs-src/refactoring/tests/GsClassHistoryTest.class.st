@@ -14,6 +14,12 @@ native classHistory:
 
 setUp builds a two-version fixture in UserGlobals (a shape change plus a modified,
 an unchanged, and an added method) and tearDown removes it.
+
+The `tests - shadowed class name` category covers #396. Both the read and the restore take a
+dictionary, because resolving a class name alone answers the first binding on the symbol list --
+a different class when the name is shadowed, whose history was shown and, on Restore, rewritten.
+The client always knows the dictionary (it is the Explorer selection), so the dictionary-scoped
+selectors are the ones under test; the unscoped ones remain for callers with nothing to give.
 "
 Class {
 	#name : 'GsClassHistoryTest',
@@ -237,4 +243,50 @@ GsClassHistoryTest >> testRemoveVersionDoesNotCommit [
 GsClassHistoryTest >> testRevertOutOfRangeIsError [
 	self assert: (GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 99)
 		includesSubstring: '"error"'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsClassHistoryTest >> testForClassNamedReadsTheDictionaryScopedClassNotAGlobalFirstMatch [
+	"The read must describe the class in the dictionary the user selected. Resolving the name alone
+	 through `symbolList objectNamed:` describes the first binding on the symbol list instead -- a
+	 different class's versions, definitions and changed methods (#396). The client always knows
+	 the dictionary (it is the Explorer selection), so the scoped selector is what it calls."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsCHShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := GsClassHistory forClassNamed: 'GsCHFixture' inDictionary: 'UserGlobals'.
+
+	 "the history read belongs to the fixture, which never had an instance variable named decoyOwn"
+	 self deny: json includesSubstring: 'decoyOwn']
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsClassHistoryTest >> testRevertActsOnTheDictionaryScopedClassNotAGlobalFirstMatch [
+	"The destructive half. A restore hands the resolved class to GsRenameClassRefactoring
+	 restoreClass:toVersion:, which re-parents subclasses and rewrites references image-wide, so
+	 resolving the name alone aimed all of that at a class the user never selected (#396)."
+	| decoy decoyClass res |
+	decoy := SymbolDictionary new name: #GsCHShadowRevertDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsCHFixture'
+		instVarNames: #('decoyOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 res := GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 1 inDictionary: 'UserGlobals'.
+
+	 self assert: res includesSubstring: '"reverted":true'.
+	 "the restore applied in full"
+	 self assert: res includesSubstring: '"failed":[]'.
+	 "the fixture is the class restored to its version-1 shape"
+	 self assert: (UserGlobals at: #GsCHFixture) instVarNames asArray equals: #(#'a').
+	 "and the shadowing dictionary's class is left alone"
+	 self assert: (decoy at: #GsCHFixture) == decoyClass]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

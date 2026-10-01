@@ -18,6 +18,7 @@
  * instVarRefactorPanelView.js for the DOM behaviour.
  */
 import { InstVarChange, InstVarOutOfScope, instVarChangeLabel } from './instVarRefactorPreview';
+import { ambiguousClassNames } from './qualifiedClassName';
 
 function escapeHtml(s: string): string {
   return s
@@ -57,8 +58,8 @@ function renderDiff(change: InstVarChange): string {
   return [...head, ...del, ...add, ...tail].join('');
 }
 
-function renderCard(change: InstVarChange): string {
-  const label = escapeHtml(instVarChangeLabel(change));
+function renderCard(change: InstVarChange, ambiguous: ReadonlySet<string>): string {
+  const label = escapeHtml(instVarChangeLabel(change, ambiguous));
   const isEdit = change.kind === 'classDefinitionEdit';
   const kindBadge = isEdit
     ? '<span class="badge">edit</span>'
@@ -81,7 +82,10 @@ function renderCard(change: InstVarChange): string {
 
 /** Render a batch of cards. Pure. */
 export function renderInstVarCards(changes: InstVarChange[]): string {
-  return changes.map((c) => renderCard(c)).join('\n');
+  // Rows whose class name this change set claims from more than one dictionary carry it, so
+  // two rows naming the same class can be told apart (#396).
+  const ambiguous = ambiguousClassNames(changes);
+  return changes.map((c) => renderCard(c, ambiguous)).join('\n');
 }
 
 function renderDeclineBanner(oos: InstVarOutOfScope): string {

@@ -10,17 +10,31 @@ import * as vscode from 'vscode';
 import { rememberDirectory, rememberedDirectory } from './directory';
 
 /**
- * Save-dialog file types, deliberately the same set File In offers (`FILE_IN_FILTERS`).
+ * Save-dialog file types for a CHUNK (Topaz) file out — the same set the chunk File
+ * In offers (`FILE_IN_FILTERS`), so everything written here can be read back.
  *
- * A file-out is Topaz chunk format whatever it is named, but `.st` is mapped to the
- * `gemstone-tonel` language, and every route back in is gated on `gemstone-topaz`:
- * the "File In to GemStone" lens, the editor title-bar and context-menu entries, the
- * VS Code Explorer entry, and the File In open dialog's own filters. Saving through an
- * `.st` filter would therefore write a file none of the other half of this feature can
- * see — so the only extensions offered are the ones that file back in.
+ * `.st` is deliberately NOT here, and the reason has changed. It used to be that
+ * nothing could read a `.st` file back at all. Now Tonel file in can (issue #616) —
+ * but it is a different reader for a different format, with its own filters
+ * ({@link TONEL_FILE_OUT_FILTERS}). Keeping the two sets apart is what stops a user
+ * saving Tonel through the chunk dialog and then filing it into the Topaz reader,
+ * which fails in a way that reads as a broken file rather than the wrong command.
  */
 export const FILE_OUT_FILTERS: Record<string, string[]> = {
   'GemStone Files': ['gs', 'tpz'],
+  'All Files': ['*'],
+};
+
+/**
+ * Save-dialog file types for a TONEL file out.
+ *
+ * `.st` is Tonel's own extension, and `languageIds.ts` already maps it to the
+ * `gemstone-tonel` language — so a file saved here opens with Tonel highlighting and
+ * is offered the Tonel File In lens. Deliberately disjoint from
+ * {@link FILE_OUT_FILTERS}; see the note there.
+ */
+export const TONEL_FILE_OUT_FILTERS: Record<string, string[]> = {
+  'Tonel Files': ['st'],
   'All Files': ['*'],
 };
 
@@ -89,13 +103,15 @@ export async function saveFileOut(options: {
   build: () => string;
   /** Where the last-used directory is remembered, shared with File In (globalState). */
   store?: vscode.Memento;
+  /** Save-dialog types; defaults to the chunk set. Tonel passes its own. */
+  filters?: Record<string, string[]>;
 }): Promise<vscode.Uri | undefined> {
   const uri = await vscode.window.showSaveDialog({
     title: options.title,
     defaultUri: vscode.Uri.file(
       path.join(rememberedDirectory(options.store), options.defaultFileName),
     ),
-    filters: FILE_OUT_FILTERS,
+    filters: options.filters ?? FILE_OUT_FILTERS,
   });
   if (!uri) return undefined;
 

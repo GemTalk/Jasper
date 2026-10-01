@@ -185,11 +185,13 @@ GsInstVarRefactoring >> ensureAnalysis [
 
 { #category : 'private - analysis' }
 GsInstVarRefactoring >> computeAnalysis [
-	"Set decline (nil when viable), newIvarLists (className -> new own-ivar Array for each edited
+	"Set decline (nil when viable), newIvarLists (class -> new own-ivar Array for each edited
 	 class), affected (classes to version, top-down), and willNotRecompile (className -> selectors
 	 of methods that will lose the variable). Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	willNotRecompile := OrderedCollection new.
 	operation == #add ifTrue: [^self analyzeAdd].
 	operation == #remove ifTrue: [^self analyzeRemove].
@@ -221,7 +223,7 @@ GsInstVarRefactoring >> analyzeAdd [
 			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
 			' an instance variable of that name; adding it to ', definingClass name asString,
 			' would duplicate that variable.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
 ]
@@ -232,7 +234,7 @@ GsInstVarRefactoring >> analyzeRemove [
 	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
 	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileLosing: definingClass
 ]
@@ -297,15 +299,19 @@ GsInstVarRefactoring >> actedOnClassName [
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> isEditedClassNamed: aName [
-	^newIvarLists includesKey: aName
+GsInstVarRefactoring >> isEditedClass: aClass [
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsInstVarRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -335,9 +341,9 @@ GsInstVarRefactoring >> buildChangeSet [
 { #category : 'building' }
 GsInstVarRefactoring >> stageClassChange: aClass into: cs [
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
@@ -357,7 +363,7 @@ GsInstVarRefactoring >> previewDefinitionFor: aClass oldDef: defString [
 	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
-		with: (newIvarLists at: aClass name asString ifAbsent: [environment ownInstVarNamesOf: aClass])
+		with: (newIvarLists at: aClass ifAbsent: [environment ownInstVarNamesOf: aClass])
 ]
 
 { #category : 'building' }
@@ -627,10 +633,10 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 	 computed own-instVar list and its preserved-or-edited options -- copy its methods forward, and
 	 record the old->new mapping so its own descendants re-parent onto it. No commit here."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
 	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
 	 could raise. If it does, this class's new version is already a real staged mutation, so the
@@ -643,8 +649,10 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 { #category : 'applying' }
 GsInstVarRefactoring >> optionsForApply: aClass [
 	"The class-creation option list aClass's new version is built with: the user-edited set for the
-	 acted-on class (when they changed it), otherwise the class's own preserved options."
-	(editedOptions notNil and: [aClass name asString = self actedOnClassName])
+	 acted-on class (when they changed it), otherwise the class's own preserved options. The
+	 acted-on class is matched by identity -- by name, a same-named class in another dictionary
+	 would be rebuilt with options the user chose for a class they never touched (#396)."
+	(editedOptions notNil and: [aClass == definingClass])
 		ifTrue: [^editedOptions].
 	^self optionsOf: aClass
 ]
@@ -661,7 +669,7 @@ GsInstVarRefactoring >> makeNewVersionOf: old superclass: sup instVarNames: ivar
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: (opts collect: [:e | e asSymbol])
@@ -715,16 +723,6 @@ GsInstVarRefactoring >> compileAccessors: accessorPairs onFailures: failures [
 					with: 'accessor:', sel
 					with: target name asString
 					with: 'accessor ', sel, ' could not be compiled onto the new class version: ', text)]]]
-]
-
-{ #category : 'applying' }
-GsInstVarRefactoring >> dictObjectFor: aClass [
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 ]
 
 { #category : 'serializing' }

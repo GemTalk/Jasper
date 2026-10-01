@@ -88,6 +88,12 @@ export interface OmniViewData {
   /** Breadcrumb title while pivoted (e.g. "Senders of printString"). Just the title: the way out
    *  travels separately, in `pivotHint`. */
   pivotTitle?: string;
+  /** The symbol the pivot is references OF — the selector, or the class name, that was pivoted on.
+   *  The preview pane marks where it is SENT in each reference's source, which it cannot do from the
+   *  typed query: the box still holds what was typed to FIND the row (`on:do:`), and a keyword
+   *  selector never appears in source as one token, so highlighting that literally finds nothing.
+   *  Set only while pivoted. */
+  pivotTarget?: string;
   /** How to leave the pivot, offered ALONGSIDE `pivotTitle` rather than glued into it, so each host
    *  decides how to present it: the webview renders it as a quieter aside beside the breadcrumb, and a
    *  host whose own chrome already shows an exit can simply ignore the field. Set only while pivoted;
@@ -128,7 +134,11 @@ export interface ReferenceView {
  *  when one is opened. Unlike the pivot this leaves the search list (and all search state) untouched. */
 export interface ReferencePreview {
   title: string;
-  /** The symbol to highlight in an expanded sender's source (the selector / class name searched). */
+  /** The symbol to mark in an expanded sender's source: the selector, or the class name, that the
+   *  list is references OF. The webview marks where it is SENT rather than where the characters
+   *  occur — each keyword part of a keyword send, the selector token of a unary or binary send, the
+   *  name of a global reference — so a keyword selector is found at all and a shorter selector is
+   *  not found inside a longer one (see `sendRanges` in omniSearchView.js). */
   highlightTerm?: string;
   rows: OmniViewRow[];
 }
@@ -414,6 +424,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         truncations: [],
         pivot: true,
         pivotTitle: pivot?.title,
+        pivotTarget: pivot?.target,
         pivotHint: pivot ? PIVOT_EXIT_HINT : undefined,
       },
       // Reference rows are already the senders/references; don't offer a further pivot on them.

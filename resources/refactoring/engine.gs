@@ -120,7 +120,7 @@ removeallclassmethods GsClassHistory
 doit
 | cls |
 cls := Object subclass: 'GsExtractMethodRefactoring'
-  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newSelector' 'replaceSimilar' 'changeSet' 'analysisDone' 'selectedNodes' 'isExpression' 'firstStart' 'lastStop' 'argNames' 'returnVar' 'internalTempNames' 'structuralDecline')
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newSelector' 'replaceSimilar' 'changeSet' 'analysisDone' 'selectedNodes' 'isExpression' 'firstStart' 'lastStop' 'argNames' 'returnVar' 'internalTempNames' 'structuralDecline' 'selectedSequence')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -146,7 +146,9 @@ only inside the selection is moved into the new method.
 
 The selection is DECLINED (an empty change set + a declineReason, surfaced in the
 preview, Apply blocked) when it does not resolve to whole statements / a single
-expression, assigns more than one variable used later, contains a ^ return, sends
+expression -- including a selection that takes in part of a statement, such as the
+closing ] of a block it started inside, though NOT one that merely takes in the
+enclosing sequence''s | temps | declaration -- assigns more than one variable used later, contains a ^ return, sends
 to super, uses thisContext, or the new selector''s arity does not match the argument
 count. A new selector already implemented in the hierarchy is a SOFT collision
 WARNING (surfaced, Apply still allowed).
@@ -419,7 +421,7 @@ removeallclassmethods GsInstVarRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'ambiguousTarget' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -493,7 +495,7 @@ removeallclassmethods GsInstVarStructureRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsMoveMethodRefactoring'
-  instVarNames: #('environment' 'sourceClass' 'selectors' 'isMeta' 'targetName' 'toMeta' 'targetClass' 'changeSet' 'analysisDone' 'globalDecline' 'declines')
+  instVarNames: #('environment' 'sourceClass' 'selectors' 'isMeta' 'targetName' 'targetDictName' 'toMeta' 'targetClass' 'changeSet' 'analysisDone' 'globalDecline' 'declines')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -646,7 +648,7 @@ removeallclassmethods GsPushUpMethodRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsRefactoringChange'
-  instVarNames: #('id' 'kind' 'dictName' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource' 'warning')
+  instVarNames: #('id' 'kind' 'dict' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource' 'warning')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -1313,10 +1315,12 @@ keyForClass: aClass isMeta: aBool
 
 category: 'private'
 method: GsChangeSignatureRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -1445,7 +1449,7 @@ stageImplementorRename: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -1485,7 +1489,7 @@ stageSenderRewrite: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel
@@ -1657,7 +1661,7 @@ applyChange: aChange
 	"Apply one staged change in the stone WITHOUT committing: compile the new source,
 	 and for a genuine rename (selector actually changed) remove the old method."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -1815,13 +1819,38 @@ clearToken: token
 	^'ok'
 %
 
+category: 'private'
+classmethod: GsClassHistory
+classNamed: aName inDictionary: aDictRef
+	"The class bound to aName, scoped to aDictRef -- a 1-based SymbolList index (canonical, and
+	 what the client sends), a dictionary name, or nil for the old unscoped lookup.
+
+	 Delegates to GsRefactoringEnvironment, which is the one home for this question. It used to be
+	 a second copy with the same intent, and two resolvers for ''class X in dictionary Y'' is how
+	 they drift apart (#396 review, D3)."
+	^GsRefactoringEnvironment new classNamed: aName inDictionaryNamed: aDictRef
+%
+
 category: 'accessing'
 classmethod: GsClassHistory
 forClassNamed: aName
 	"A JSON array of the class's definition versions, newest first, or an error
-	 envelope if the name is unbound. Read-only."
+	 envelope if the name is unbound. Read-only.
+
+	 Unscoped, so it answers the first binding on the symbol list. Prefer
+	 #forClassNamed:inDictionary:, which cannot describe a same-named class from another
+	 dictionary (#396); this is kept for callers that have no dictionary to give."
+	^self forClassNamed: aName inDictionary: nil
+%
+
+category: 'accessing'
+classmethod: GsClassHistory
+forClassNamed: aName inDictionary: aDictRef
+	"A JSON array of the class's definition versions, newest first, or an error envelope if the
+	 name is unbound in aDictRef. aDictRef is a 1-based SymbolList index, a dictionary name, or
+	 nil for the unscoped lookup. Read-only."
 	| cls hist ws n |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.
@@ -1908,6 +1937,15 @@ source: sel in: aClass
 category: 'redo'
 classmethod: GsClassHistory
 revertClassNamed: aName toIndex: anInt
+	"Unscoped; see #revertClassNamed:toIndex:inDictionary:, which this delegates to. Kept for
+	 callers that have no dictionary to give -- but a shadowed name resolves to the first binding
+	 on the symbol list, and this operation REWRITES whatever it resolves (#396)."
+	^self revertClassNamed: aName toIndex: anInt inDictionary: nil
+%
+
+category: 'redo'
+classmethod: GsClassHistory
+revertClassNamed: aName toIndex: anInt inDictionary: aDictRef
 	"Restore a class to the definition (name, shape, AND methods) of the version at
 	 index anInt, as a NEW version -- a redo. This is the same operation as a rename to
 	 that version's name: it re-parents every subclass onto the restored version and,
@@ -1916,7 +1954,7 @@ revertClassNamed: aName toIndex: anInt
 	 {reverted, index, newIndex, name, failed} or an error envelope. `name` is the
 	 restored class's (possibly changed) name so the client can re-key its view."
 	| cls hist target ref restored applied |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"reverted":false,"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.
@@ -1927,7 +1965,9 @@ revertClassNamed: aName toIndex: anInt
 		ifTrue: [^'{"reverted":false,"error":"that version is already current"}'].
 	ref := (self resolve: #GsRenameClassRefactoring) restoreClass: cls toVersion: target.
 	applied := ref applyDeselected: #().
-	restored := System myUserProfile symbolList objectNamed: target name asSymbol.
+	"Scoped the same way: the restored class is bound in the dictionary we acted in, and an
+	 unscoped re-read would report another dictionary's same-named class's version index."
+	restored := self classNamed: target name asString inDictionary: aDictRef.
 	^'{"reverted":true,"index":', anInt printString,
 	  ',"name":', (self jsonQuote: target name asString),
 	  ',"newIndex":', (restored isNil ifTrue: ['0'] ifFalse: [(restored classHistory indexOf: restored) printString]),
@@ -1937,6 +1977,13 @@ revertClassNamed: aName toIndex: anInt
 category: 'redo'
 classmethod: GsClassHistory
 removeVersionOf: aName index: anInt
+	"Unscoped; see #removeVersionOf:index:inDictionary:, which this delegates to (#396)."
+	^self removeVersionOf: aName index: anInt inDictionary: nil
+%
+
+category: 'redo'
+classmethod: GsClassHistory
+removeVersionOf: aName index: anInt inDictionary: aDictRef
 	"Remove the version at index anInt from the named class's class history
 	 (ClassHistory>>removeVersion:), so it no longer appears in the history. The
 	 currently-bound version cannot be removed. Does NOT commit -- the user commits.
@@ -1944,7 +1991,7 @@ removeVersionOf: aName index: anInt
 	 that still has (un-migrated) instances leaves those instances referring to a
 	 version no longer in the history; the client warns before calling."
 	| cls hist target |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"removed":false,"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.
@@ -2179,18 +2226,32 @@ computeAnalysis
 	isExpression := false.
 	selectedNodes := #().
 	structuralDecline := nil.
+	selectedSequence := nil.
 	tree := self parseTree.
 	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
 	stmts := self selectedStatementsIn: tree.
+	"Whole statements count only when they account for the whole selection. A
+	 selection that also takes in part of a statement -- e.g. the closing ] of a block
+	 it started inside -- would otherwise extract less than was selected, silently.
+	 The enclosing sequence's `| temps |` declaration is the one exception: it is not code
+	 the extract would leave behind, so a selection dragged from the top of a body is not a
+	 cut (see leadingSelectionIsOnly:upTo:)."
+	(stmts notEmpty and: [(self selectionOutside: (stmts first start to: stmts last stop) isOnly: '.') not])
+		ifTrue: [stmts := #()].
 	stmts notEmpty
 		ifTrue: [
 			selectedNodes := stmts.
 			firstStart := stmts first start.
 			lastStop := stmts last stop]
 		ifFalse: [
+			"The declaration allowance belongs to the whole-statements path. An expression
+			 stands on its own, and a selection reaching back over a `| temps |` to grab one
+			 has taken in code between the two that the extract would leave behind."
+			selectedSequence := nil.
 			node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
 			(node notNil and: [node isValue and: [node isReturn not
-				and: [node start >= (selStart - 1) and: [node stop <= (selStop + 1)]]]])
+				and: [(self selectionFits: node)
+				and: [self selectionOutside: (node start to: node stop) isOnly: '()']]]])
 				ifTrue: [
 					isExpression := true.
 					selectedNodes := Array with: node.
@@ -2209,9 +2270,6 @@ computeAnalysis
 category: 'private - analysis'
 method: GsExtractMethodRefactoring
 selectedStatementsIn: tree
-	"The statements of the deepest sequence covering the selection that OVERLAP the
-	 selection interval, in source order. Empty when the selection is not a statement
-	 run (it may be a single expression, resolved separately)."
 	"The statements FULLY inside the selection, taken from the OUTERMOST sequence that
 	 has any. Only whole-statement containment matters -- NOT where the sequence itself
 	 begins -- so selecting the leading indentation of the first line (or a trailing
@@ -2219,7 +2277,10 @@ selectedStatementsIn: tree
 	 (e.g. the inner expression of a ^-return) covers no whole statement here and is
 	 handled as a single-expression extract instead. Picking the outermost qualifying
 	 sequence means selecting a whole control-flow statement extracts that statement,
-	 not the contents of the block nested inside it."
+	 not the contents of the block nested inside it.
+
+	 The winning sequence is kept in selectedSequence: it owns the `| temps |` declaration
+	 the selection may have taken in, which the slack check has to recognise."
 	| best bestStmts |
 	best := nil.
 	bestStmts := nil.
@@ -2229,7 +2290,87 @@ selectedStatementsIn: tree
 			covered := n statements select: [:s | s start >= selStart and: [s stop <= selStop]].
 			covered notEmpty ifTrue: [
 				(best isNil or: [n start < best start]) ifTrue: [best := n. bestStmts := covered]]]].
+	selectedSequence := best.
 	^bestStmts ifNil: [OrderedCollection new]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectionFits: aNode
+	"Whether aNode lies within the selection. A parenthesised node's interval includes
+	 its parentheses, so selecting just the inside of (n * n) leaves it one character
+	 wider on each side -- allowed only when that character IS the parenthesis, so a
+	 selection that stops short of a block's closing ] does not stretch to take it."
+	| src |
+	src := self sourceString.
+	^(aNode start >= selStart or: [aNode start = (selStart - 1) and: [(src at: aNode start) = $(]])
+		and: [aNode stop <= selStop or: [aNode stop = (selStop + 1) and: [(src at: aNode stop) = $)]]]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectionOutside: anInterval isOnly: punctuation
+	"Whether the selected text outside anInterval is only whitespace, comments and the
+	 characters in punctuation -- statement periods around whole statements, parentheses
+	 around an expression. That is the slack a selection dragged line to line picks up;
+	 anything else is code the extract would leave behind."
+	| src |
+	src := self sourceString.
+	^(self leadingSelectionIsOnly: punctuation upTo: anInterval first - 1)
+		and: [self isSlack: src from: anInterval last + 1 to: selStop allowing: punctuation]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+leadingSelectionIsOnly: punctuation upTo: stop
+	"The selected text BEFORE the resolved code -- ordinarily whitespace, comments and
+	 punctuation, as isSlack: decides.
+
+	 One more thing counts as slack here: the enclosing sequence's `| temps |` declaration.
+	 Dragging from the top of a method body takes it in, and it is not code the extract would
+	 leave behind -- the declaration stays with the method it is in either way, whatever the
+	 extract moves. Refusing those selections declined a perfectly ordinary gesture with a
+	 message telling the user to select whole statements, which is what they had done.
+
+	 ONLY the declaration is forgiven, and only where it actually is. The text on either side
+	 of it must still be slack, so a selection that opened a block (`[:x |`) and resolved
+	 against the block's own body is still a cut."
+	| src decl |
+	src := self sourceString.
+	decl := self selectedTemporariesDeclaration.
+	decl isNil ifTrue: [^self isSlack: src from: selStart to: stop allowing: punctuation].
+	^(self isSlack: src from: selStart to: decl first - 1 allowing: punctuation)
+		and: [self isSlack: src from: decl last + 1 to: stop allowing: punctuation]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectedTemporariesDeclaration
+	"The bar-to-bar interval of the enclosing sequence's temporaries declaration, when the
+	 selection reaches into it -- otherwise nil. A sequence that declares nothing has no bars,
+	 and a selection starting past the closing bar never touched the declaration."
+	| seq |
+	seq := selectedSequence.
+	seq isNil ifTrue: [^nil].
+	(seq leftBar isNil or: [seq rightBar isNil]) ifTrue: [^nil].
+	selStart > seq rightBar ifTrue: [^nil].
+	^seq leftBar to: seq rightBar
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+isSlack: aString from: start to: stop allowing: punctuation
+	| i ch |
+	i := start max: 1.
+	[i <= (stop min: aString size)] whileTrue: [
+		ch := aString at: i.
+		ch = $"
+			ifTrue: [
+				i := (aString indexOf: $" startingAt: i + 1) ifNil: [0].
+				(i = 0 or: [i > stop]) ifTrue: [^false]]
+			ifFalse: [(ch isSeparator or: [punctuation includes: ch]) ifFalse: [^false]].
+		i := i + 1].
+	^true
 %
 
 category: 'private - analysis'
@@ -2537,10 +2678,12 @@ methodCategory
 
 category: 'private'
 method: GsExtractMethodRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -2608,7 +2751,7 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	self declineReason notNil ifTrue: [^cs].
-	dict := self dictNameForClass: definingClass.
+	dict := self dictForClass: definingClass.
 	cs
 		addMethodAddInDictionary: dict
 		className: definingClass name
@@ -2671,7 +2814,7 @@ stageSimilarInClass: cls selector: sel into: cs
 			lStop := window last stop.
 			call := self sendSourceWithArgs: (argNames collect: [:nm | binding at: nm ifAbsent: [nm]]).
 			cs
-				addMethodRecompileInDictionary: (self dictNameForClass: cls)
+				addMethodRecompileInDictionary: (self dictForClass: cls)
 				className: cls thisClass name
 				isMeta: cls isMeta
 				selector: sel
@@ -2833,7 +2976,7 @@ applyMethodCompile: aChange
 	"Compile the change's new source (a new method for #methodAdd, the rewritten
 	 method for #methodRecompile) in the stone. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -3010,7 +3153,10 @@ computeAnalysis
 	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
 	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
 	 rather than clobbered, but shadowing an existing global with a new class is its own
-	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 trap. STRICTER than GsRenameClassRefactoring>>newNameCollision, which asks only about
+	 the destination dictionary and lets a rename shadow after a warning: a rename moves a
+	 class the user already has, while this creates one that does not exist yet, so there
+	 is nothing to weigh against picking a free name (#396).
 	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
 	 class, where grabbing a same-named class from another dictionary would be wrong.)
 	 The decline names the symbol list so it cannot be read as a collision in the
@@ -3272,7 +3418,7 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -3294,7 +3440,7 @@ stageExtractedEdit: aClass into: cs
 	oldDef := aClass definition.
 	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
 	cs
-		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
@@ -3308,7 +3454,7 @@ stageReparent: aClass into: cs
 	| oldDef |
 	oldDef := aClass definition.
 	cs
-		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		addClassReparentInDictionary: (self dictForClass: aClass)
 		className: aClass name asString
 		oldSource: oldDef
 		newSource: oldDef
@@ -3324,7 +3470,7 @@ stageHoistOf: aSelector into: cs
 	src := self sourceOf: aSelector in: anchorClass.
 	cat := self categoryOf: aSelector in: anchorClass.
 	cs
-		addMethodAddInDictionary: (self newClassDictName)
+		addMethodAddInDictionary: (self dictObjectForNewClass)
 		className: newName
 		isMeta: false
 		selector: aSelector
@@ -3333,7 +3479,7 @@ stageHoistOf: aSelector into: cs
 	extractedClasses do: [:e |
 		(e includesSelector: aSelector) ifTrue: [
 			cs
-				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				addMethodRemoveInDictionary: (self dictForClass: e)
 				className: e name asString
 				isMeta: false
 				selector: aSelector
@@ -3404,18 +3550,38 @@ quotedList: aCollection
 category: 'private'
 method: GsExtractSuperclassRefactoring
 newClassDictName
-	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
-	 dictionary."
+	"What to WRITE in the generated `inDictionary:` of the new class's definition -- display only.
+
+	 It reads the dictionary dictObjectForNewClass answers, which is the one the apply actually
+	 files the class into, so the definition on screen cannot name a different dictionary from
+	 the one the refactoring writes to. It used to read the ANCHOR's dictionary instead: the two
+	 agree in the ordinary case, and disagreeing about which dictionary is exactly the defect
+	 this branch exists to remove.
+
+	 A dictionary with NO name -- what `SymbolDictionary new` answers until someone names one --
+	 is written by its symbol-list position, which is unambiguous and is valid Smalltalk. Asking
+	 for its name answered nil, and concatenating nil into the definition raised, so a
+	 refactoring that applies perfectly well could not even be previewed there. Nothing that does
+	 the work ever needed a name: the staged change carries the dictionary itself."
+	| d idx |
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: anchorClass
+	d := self dictObjectForNewClass.
+	d isNil ifTrue: [^'UserGlobals'].
+	d name ifNotNil: [:n | ^n asString].
+	idx := environment symbolList indexOf: d.
+	^idx = 0
+		ifTrue: ['UserGlobals']
+		ifFalse: ['(System myUserProfile symbolList at: ', idx printString, ')']
 %
 
 category: 'private'
 method: GsExtractSuperclassRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -3581,7 +3747,7 @@ applyClassChange: aChange
 	 own-instVar list, copy its methods forward (skipping the hoisted selectors for an extracted
 	 class), and record the old->new mapping."
 	| old isExtracted parentNew list new skip |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	isExtracted := aChange kind == #classDefinitionEdit.
 	parentNew := isExtracted
@@ -3608,7 +3774,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -3631,7 +3797,7 @@ applyMethodAdd: aChange
 	| target |
 	target := aChange className = newName
 		ifTrue: [newClass]
-		ifFalse: [environment classNamed: aChange className].
+		ifFalse: [environment classForChange: aChange].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	environment
 		compile: aChange newSource
@@ -3645,20 +3811,10 @@ applyMethodRemove: aChange
 	"A hoisted method's removal from an extracted class. copyMethodsFrom:to:skipping: already
 	 left it off the new version, so this is a guarded no-op that keeps re-application idempotent."
 	| cls sel |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self].
 	sel := aChange selector asSymbol.
 	(cls includesSelector: sel) ifTrue: [cls removeSelector: sel]
-%
-
-category: 'applying'
-method: GsExtractSuperclassRefactoring
-dictObjectFor: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 %
 
 category: 'applying'
@@ -3668,8 +3824,8 @@ dictObjectForNewClass
 	 anchor's own dictionary."
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: anchorClass]].
-	^self dictObjectFor: anchorClass
+			ifNil: [environment dictionaryForNewVersionOf: anchorClass]].
+	^environment dictionaryForNewVersionOf: anchorClass
 %
 
 category: 'serializing'
@@ -4061,7 +4217,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -4196,10 +4352,12 @@ methodCategory
 
 category: 'private'
 method: GsExtractTemporaryRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -4302,7 +4460,7 @@ method: GsExtractTemporaryRefactoring
 applyMethodRecompile: aChange
 	"Recompile the one method with its rewritten source. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -4827,10 +4985,12 @@ categoryOfClass: aBehavior selector: aSelector
 
 category: 'private'
 method: GsInlineMethodRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -4861,7 +5021,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -4870,7 +5030,7 @@ buildChangeSet
 		newSource: self rewrittenSource.
 	lastSender ifTrue: [
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClass: targetClass thisClass)
+			addMethodRemoveInDictionary: (self dictForClass: targetClass thisClass)
 			className: targetClass thisClass name
 			isMeta: targetClass isMeta
 			selector: targetSelector
@@ -4988,7 +5148,7 @@ method: GsInlineMethodRefactoring
 applyMethodRecompile: aChange
 	"Recompile the caller with its rewritten (inlined) source. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -5012,7 +5172,7 @@ applyMethodRemove: aChange
 	 often that can happen, but not whether it loses the method when it does. No commit."
 	| cls target |
 	callerRecompiled ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	target removeSelector: aChange selector asSymbol.
@@ -5358,7 +5518,7 @@ buildChangeSet
 	self ensureAnalysis.
 	declineString notNil ifTrue: [^cs].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -5486,10 +5646,12 @@ methodCategory
 
 category: 'private'
 method: GsInlineTemporaryRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -5589,7 +5751,7 @@ method: GsInlineTemporaryRefactoring
 applyMethodRecompile: aChange
 	"Recompile the one method with its rewritten source. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -5744,11 +5906,13 @@ ensureAnalysis
 category: 'private - analysis'
 method: GsInstVarRefactoring
 computeAnalysis
-	"Set decline (nil when viable), newIvarLists (className -> new own-ivar Array for each edited
+	"Set decline (nil when viable), newIvarLists (class -> new own-ivar Array for each edited
 	 class), affected (classes to version, top-down), and willNotRecompile (className -> selectors
 	 of methods that will lose the variable). Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	willNotRecompile := OrderedCollection new.
 	operation == #add ifTrue: [^self analyzeAdd].
 	operation == #remove ifTrue: [^self analyzeRemove].
@@ -5781,7 +5945,7 @@ analyzeAdd
 			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
 			' an instance variable of that name; adding it to ', definingClass name asString,
 			' would duplicate that variable.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
 %
@@ -5793,7 +5957,7 @@ analyzeRemove
 	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
 	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileLosing: definingClass
 %
@@ -5864,16 +6028,20 @@ actedOnClassName
 
 category: 'private'
 method: GsInstVarRefactoring
-isEditedClassNamed: aName
-	^newIvarLists includesKey: aName
+isEditedClass: aClass
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 %
 
 category: 'private'
 method: GsInstVarRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -5907,9 +6075,9 @@ category: 'building'
 method: GsInstVarRefactoring
 stageClassChange: aClass into: cs
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
@@ -5930,7 +6098,7 @@ previewDefinitionFor: aClass oldDef: defString
 	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
-		with: (newIvarLists at: aClass name asString ifAbsent: [environment ownInstVarNamesOf: aClass])
+		with: (newIvarLists at: aClass ifAbsent: [environment ownInstVarNamesOf: aClass])
 %
 
 category: 'building'
@@ -6215,10 +6383,10 @@ applyClassChange: aChange
 	 computed own-instVar list and its preserved-or-edited options -- copy its methods forward, and
 	 record the old->new mapping so its own descendants re-parent onto it. No commit here."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
 	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
 	 could raise. If it does, this class's new version is already a real staged mutation, so the
@@ -6232,8 +6400,10 @@ category: 'applying'
 method: GsInstVarRefactoring
 optionsForApply: aClass
 	"The class-creation option list aClass's new version is built with: the user-edited set for the
-	 acted-on class (when they changed it), otherwise the class's own preserved options."
-	(editedOptions notNil and: [aClass name asString = self actedOnClassName])
+	 acted-on class (when they changed it), otherwise the class's own preserved options. The
+	 acted-on class is matched by identity -- by name, a same-named class in another dictionary
+	 would be rebuilt with options the user chose for a class they never touched (#396)."
+	(editedOptions notNil and: [aClass == definingClass])
 		ifTrue: [^editedOptions].
 	^self optionsOf: aClass
 %
@@ -6251,7 +6421,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars options: opts
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: (opts collect: [:e | e asSymbol])
@@ -6308,17 +6478,6 @@ compileAccessors: accessorPairs onFailures: failures
 					with: 'accessor:', sel
 					with: target name asString
 					with: 'accessor ', sel, ' could not be compiled onto the new class version: ', text)]]]
-%
-
-category: 'applying'
-method: GsInstVarRefactoring
-dictObjectFor: aClass
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 %
 
 category: 'serializing'
@@ -6433,6 +6592,15 @@ setMoveTargets: anArrayOfClasses direction: aSymbol
 	^self
 %
 
+category: 'private'
+method: GsInstVarStructureRefactoring
+setAmbiguousTarget: aCollectionOrNil
+	"The same-named classes one requested destination name matched in the lineage, or nil when
+	 every name meant exactly one class. Answers self."
+	ambiguousTarget := aCollectionOrNil.
+	^self
+%
+
 category: 'accessing'
 method: GsInstVarStructureRefactoring
 effectiveDirection
@@ -6504,10 +6672,12 @@ ensureAnalysis
 category: 'private - analysis'
 method: GsInstVarStructureRefactoring
 computeAnalysis
-	"Set decline (nil when viable), topClass, newIvarLists (class name -> new own-ivar
+	"Set decline (nil when viable), topClass, newIvarLists (class -> new own-ivar
 	 Array), and, for V5, methodRewrite. Dispatches on the operation."
 	decline := nil.
-	newIvarLists := Dictionary new.
+	"Keyed by the class ITSELF, never its name: a subclass in another dictionary can carry the
+	 same name, and a name key would hand it the other class's ivar list (#396)."
+	newIvarLists := IdentityDictionary new.
 	accessorRemovals := OrderedCollection new.
 	accessorAdds := OrderedCollection new.
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
@@ -6550,7 +6720,7 @@ analyzeConvertTemp
 		newDecl,
 		(src copyFrom: tree body rightBar + 1 to: src size).
 	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
 %
 
 category: 'private - analysis'
@@ -6570,8 +6740,8 @@ analyzePushUp
 	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 %
 
@@ -6601,9 +6771,9 @@ analyzePushDown
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
-	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
+		newIvarLists at: sub put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 %
 
@@ -6628,6 +6798,17 @@ analyzeMove
 		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
 	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
 		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	ambiguousTarget isNil ifFalse: [
+		^decline := 'Cannot move ', varName, ' to ', ambiguousTarget first name asString, ': ',
+			ambiguousTarget size printString, ' ',
+			(dir == #up ifTrue: ['ancestors'] ifFalse: ['descendants']), ' of ', def name asString,
+			' have that name, in ',
+			((ambiguousTarget collect: [:c |
+				(environment dictionaryDefiningClass: c)
+					ifNil: ['an unknown dictionary']
+					ifNotNil: [:d | d name ifNil: ['an unnamed dictionary'] ifNotNil: [:nm | nm asString]]])
+				inject: '' into: [:acc :e | acc isEmpty ifTrue: [e] ifFalse: [acc, ', ', e]]),
+			'. The destination is chosen by name, so which of them was meant cannot be told.'].
 	(targetClasses includes: def) ifTrue: [
 		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
 	dir == #up
@@ -6678,9 +6859,9 @@ analyzeMove
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
 				(self selectorListString: users), '.']].
-	newIvarLists at: def name asString put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
+	newIvarLists at: def put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
 	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
+		newIvarLists at: t put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 %
 
@@ -6767,9 +6948,11 @@ planAccessorMovesFrom: srcClass to: destClasses
 				ifFalse: [t includesSelector: sel]].
 		(self effectiveDirection == #up and: [targets isEmpty])
 			ifFalse: [
-				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
+				accessorRemovals add: ((Array with: sel with: srcClass name asString with: src with: cat)
+					copyWith: srcClass).
 				targets do: [:t |
-					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+					accessorAdds add: ((Array with: sel with: t name asString with: src with: cat)
+						copyWith: t)]]]
 %
 
 category: 'private - accessors'
@@ -6837,7 +7020,11 @@ simpleAccessorKindOf: tree forVar: v
 
 category: 'private'
 method: GsInstVarStructureRefactoring
-dictNameForClassNamed: aName
+dictForClassNamed: aName
+	"DEPRECATED, and kept only so an external caller does not break: a NAME cannot say which
+	 dictionary is meant when the name is shadowed, and answering the first match is what sent
+	 staged changes to the wrong class (#396). Use #dictForClass:, which resolves the class
+	 object by identity. Nothing in the engine calls this."
 	| dicts |
 	dicts := environment dictionariesDefiningClassNamed: aName.
 	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
@@ -6864,14 +7051,20 @@ spaceList: aCollection
 
 category: 'private'
 method: GsInstVarStructureRefactoring
-isEditedClassNamed: aName
-	^newIvarLists includesKey: aName
+isEditedClass: aClass
+	"Whether aClass ITSELF is one this refactoring reshapes. By identity -- a same-named
+	 class in another dictionary is a different class and is not edited (#396)."
+	^newIvarLists includesKey: aClass
 %
 
 category: 'private'
 method: GsInstVarStructureRefactoring
-dictNameForClass: aClass
-	^self dictNameForClassNamed: aClass name
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -6904,7 +7097,7 @@ buildChangeSet
 	affected do: [:cls | self stageClassChange: cls into: cs].
 	accessorRemovals do: [:r |
 		cs
-			addMethodRemoveInDictionary: (self dictNameForClassNamed: (r at: 2))
+			addMethodRemoveInDictionary: (self dictForClass: (r at: 5))
 			className: (r at: 2)
 			isMeta: false
 			selector: (r at: 1)
@@ -6912,7 +7105,7 @@ buildChangeSet
 			oldSource: (r at: 3)].
 	accessorAdds do: [:a |
 		cs
-			addMethodAddInDictionary: (self dictNameForClassNamed: (a at: 2))
+			addMethodAddInDictionary: (self dictForClass: (a at: 5))
 			className: (a at: 2)
 			isMeta: false
 			selector: (a at: 1)
@@ -6926,14 +7119,14 @@ category: 'building'
 method: GsInstVarStructureRefactoring
 stageClassChange: aClass into: cs
 	| dn oldDef |
-	dn := self dictNameForClass: aClass.
+	dn := self dictForClass: aClass.
 	oldDef := aClass definition.
-	(self isEditedClassNamed: aClass name asString)
+	(self isEditedClass: aClass)
 		ifTrue: [cs
 			addClassDefinitionEditInDictionary: dn
 			className: aClass name asString
 			oldSource: oldDef
-			newSource: (self definitionWithIvars: (newIvarLists at: aClass name asString) in: oldDef)]
+			newSource: (self definitionWithIvars: (newIvarLists at: aClass) in: oldDef)]
 		ifFalse: [cs
 			addClassReparentInDictionary: dn
 			className: aClass name asString
@@ -6949,7 +7142,7 @@ stageMethodRewriteInto: cs
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	cat := (behavior categoryOfSelector: methodSelector environmentId: 0) ifNil: ['as yet unclassified'].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: (methodRewrite at: 1)
 		isMeta: (methodRewrite at: 3)
 		selector: (methodRewrite at: 2)
@@ -7152,7 +7345,7 @@ applyMethodRemove: aChange
 	 class. #copyMethodsFrom:to: already skips carrying it forward, so this is normally a no-op;
 	 the guard also keeps re-application idempotent and avoids removeSelector: on an absent one."
 	| cls target sel |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	sel := aChange selector asSymbol.
@@ -7164,7 +7357,7 @@ method: GsInstVarStructureRefactoring
 applyMethodAdd: aChange
 	"Accessor move: compile the accessor onto its (freshly versioned) target class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -7180,10 +7373,10 @@ applyClassChange: aChange
 	 with its computed own-instVar list -- copy its methods forward, and record the
 	 old->new mapping so its own descendants re-parent onto it. No commit."
 	| old parentNew list new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
+	list := newIvarLists at: old ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
@@ -7204,7 +7397,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -7222,10 +7415,14 @@ copyMethodsFrom: old to: new
 	    accessor is instead added to the target class as its own #methodAdd;
 	  - methods this refactoring stages a #methodRecompile for: their rewritten source is what
 	    belongs on the new version, and it is installed by that change (see
-	    #rewriteSelectorsFor:)."
+	    #rewriteSelectorsFor:).
+
+	 Both are matched to old by the class, never by its name: a same-named class in another
+	 dictionary can sit inside the reshaped subtree too, and it is re-versioned alongside. Keyed by
+	 name, its own methods of those selectors matched and were silently not carried forward (#396)."
 	| skip |
-	skip := self accessorRemovalSelectorsFor: old name asString.
-	skip addAll: (self rewriteSelectorsFor: old name asString).
+	skip := self accessorRemovalSelectorsFor: old.
+	skip addAll: (self rewriteSelectorsFor: old).
 	old selectors do: [:sel |
 		(skip includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
 	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
@@ -7233,9 +7430,9 @@ copyMethodsFrom: old to: new
 
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-rewriteSelectorsFor: aClassName
-	"The instance-side selectors this refactoring stages a #methodRecompile for on the named
-	 class, so #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
+rewriteSelectorsFor: aClass
+	"The instance-side selectors this refactoring stages a #methodRecompile for on aClass, so
+	 #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
 
 	 Carrying it forward is not merely redundant, it FAILS: converting a method temporary into
 	 an instance variable leaves the old source declaring a temporary the new version now
@@ -7243,24 +7440,32 @@ rewriteSelectorsFor: aClassName
 	 already been declared'). Skipping is safe because the recompile always runs -- this
 	 refactoring is all-or-nothing, so deselection is ignored -- and a rewrite that genuinely
 	 fails is reported by the apply loop like any other change."
-	| set |
+	| set mine |
 	set := IdentitySet new.
+	mine := environment lineageOf: aClass.
 	self changeSet changes do: [:c |
 		(c kind == #methodRecompile
-			and: [c isMeta ~~ true and: [c className asString = aClassName]])
+			and: [c isMeta ~~ true
+			and: [c className asString = aClass name asString
+			and: [| cls |
+				cls := environment classForChange: c.
+				mine isNil
+					ifTrue: [cls == aClass]
+					ifFalse: [(environment lineageOf: cls) == mine]]]])
 				ifTrue: [set add: c selector asSymbol]].
 	^set
 %
 
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-accessorRemovalSelectorsFor: aClassName
-	"The set of (instance-side) selectors being moved OUT of the named class, so
-	 #copyMethodsFrom:to: can skip carrying them onto the new version."
+accessorRemovalSelectorsFor: aClass
+	"The set of (instance-side) selectors being moved OUT of aClass, so #copyMethodsFrom:to: can
+	 skip carrying them onto the new version. Slot 5 of each removal is the class it was staged
+	 against, and aClass is still that same object here: it has not been re-versioned yet."
 	| set |
 	set := IdentitySet new.
 	accessorRemovals do: [:r |
-		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
+		(r at: 5) == aClass ifTrue: [set add: (r at: 1)]].
 	^set
 %
 
@@ -7270,24 +7475,13 @@ applyMethodRecompile: aChange
 	"Recompile the converted method (V5) with the temporary declaration removed, onto the
 	 current (freshly versioned) class."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
 		compile: aChange newSource
 		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
-%
-
-category: 'applying'
-method: GsInstVarStructureRefactoring
-dictObjectFor: aClass
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 %
 
 category: 'serializing'
@@ -7358,8 +7552,12 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
 	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
 	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
-	 name yields nil and declines as a destination that could not be found."
-	| ref env dir lineage targets |
+	 name yields nil and declines as a destination that could not be found.
+
+	 A name that TWO classes in the lineage answer to -- same-named classes in different
+	 dictionaries -- is recorded and declined in analysis. Taking the first the walk reached moved
+	 the variable into whichever that was, which need not be the one the user picked (#396)."
+	| ref env dir lineage targets ambiguous |
 	env := GsRefactoringEnvironment new.
 	dir := aSymbol asSymbol.
 	ref := self new
@@ -7372,10 +7570,13 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	lineage := dir == #up
 		ifTrue: [ref ancestorsOf: aClass]
 		ifFalse: [env descendantsOf: aClass].
-	targets := classNames collect: [:n |
-		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
-			ifNil: [env classNamed: n asString]].
-	^ref setMoveTargets: targets direction: dir
+	targets := classNames collect: [:n | | matches |
+		matches := lineage select: [:c | c name asString = n asString].
+		(matches size > 1 and: [ambiguous isNil]) ifTrue: [ambiguous := matches].
+		matches isEmpty
+			ifTrue: [env classNamed: n asString]
+			ifFalse: [matches first]].
+	^(ref setMoveTargets: targets direction: dir) setAmbiguousTarget: ambiguous
 %
 
 category: 'instance creation'
@@ -7450,11 +7651,25 @@ clearToken: token
 category: 'private'
 method: GsMoveMethodRefactoring
 setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	^self
+		setEnvironment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool
 	environment := anEnvironment.
 	sourceClass := aClass.
 	selectors := aCollection collect: [:s | s asSymbol].
 	isMeta := aBool.
 	targetName := aName asString.
+	targetDictName := aDictOrNil.
 	toMeta := metaBool.
 	analysisDone := false
 %
@@ -7503,9 +7718,11 @@ computeAnalysis
 	 (nil when movable)."
 	globalDecline := nil.
 	declines := Dictionary new.
-	targetClass := environment classNamed: targetName.
+	targetClass := environment classNamed: targetName inDictionaryNamed: targetDictName.
 	targetClass isNil ifTrue: [
-		^globalDecline := 'Target class ', targetName, ' was not found.'].
+		^globalDecline := 'Target class ', targetName,
+			(targetDictName isNil ifTrue: [''] ifFalse: [' in ', targetDictName asString]),
+			' was not found.'].
 	(targetClass == sourceClass and: [toMeta == isMeta]) ifTrue: [
 		^globalDecline := 'The source and target are the same class and side; nothing to move.'].
 	selectors do: [:sel | declines at: sel put: (self computeDeclineFor: sel)]
@@ -7554,10 +7771,12 @@ commaList: aCollection
 
 category: 'private'
 method: GsMoveMethodRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -7630,14 +7849,14 @@ stageMoveOf: aSelector into: cs
 	src := method sourceString.
 	cat := self categoryOfSelector: aSelector.
 	cs
-		addMethodAddInDictionary: (self dictNameForClass: targetClass)
+		addMethodAddInDictionary: (self dictForClass: targetClass)
 		className: targetClass name asString
 		isMeta: toMeta
 		selector: aSelector
 		category: cat
 		newSource: src.
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -7784,7 +8003,7 @@ method: GsMoveMethodRefactoring
 applyMethodAdd: aChange
 	"Compile the moved method onto the target class/side. No commit."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -7801,7 +8020,7 @@ applyMethodRemove: aChange
 	 a deselected or failed add never leaves the method in neither class. No commit."
 	| cls target |
 	(self targetBehavior includesSelector: aChange selector asSymbol) ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	target removeSelector: aChange selector asSymbol.
@@ -7830,25 +8049,57 @@ category: 'instance creation'
 classmethod: GsMoveMethodRefactoring
 sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
 	"Move aCollection of selectors from aClass (the aBool side) to the metaBool side of
-	 the class named aName."
+	 the class named aName, resolved wherever the symbol list finds it first. Prefer the
+	 inDictionary: form: a name that several dictionaries bind resolves to whichever comes
+	 first, which for a shadowed name is not the class the user picked (#396)."
+	^self
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+%
+
+category: 'instance creation'
+classmethod: GsMoveMethodRefactoring
+sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool
+	"Move aCollection of selectors from aClass (the aBool side) to the metaBool side of
+	 the class named aName in aDictOrNil -- a SymbolDictionary name, its index in the
+	 symbol list, or nil for the first match."
 	^self
 		environment: GsRefactoringEnvironment new
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool
 %
 
 category: 'instance creation'
 classmethod: GsMoveMethodRefactoring
 environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	^self
+		environment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+%
+
+category: 'instance creation'
+classmethod: GsMoveMethodRefactoring
+environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool
 	^self new
 		setEnvironment: anEnvironment
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool
 %
 
@@ -7857,11 +8108,26 @@ classmethod: GsMoveMethodRefactoring
 analyzeForClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
 	"A pre-flight the client runs before opening the preview: the target class, a
 	 per-selector decline reason (nil when movable), and the count that will move."
+	^self
+		analyzeForClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		inDictionary: nil
+		toMeta: metaBool
+%
+
+category: 'preconditions'
+classmethod: GsMoveMethodRefactoring
+analyzeForClass: aClass selectors: aCollection meta: aBool toClassNamed: aName inDictionary: aDictOrNil toMeta: metaBool
+	"A pre-flight the client runs before opening the preview: the target class, a
+	 per-selector decline reason (nil when movable), and the count that will move."
 	^(self
 		sourceClass: aClass
 		selectors: aCollection
 		meta: aBool
 		toClassNamed: aName
+		inDictionary: aDictOrNil
 		toMeta: metaBool) analysisJsonString
 %
 
@@ -7987,10 +8253,12 @@ tree: aTree referencesName: aName
 
 category: 'private'
 method: GsPushDownMethodRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -8106,14 +8374,14 @@ stagePushOf: aSelector into: cs
 		existing := self existingSourceIn: sub for: aSelector.
 		existing isNil
 			ifTrue: [cs
-				addMethodAddInDictionary: (self dictNameForClass: sub)
+				addMethodAddInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
 				category: cat
 				newSource: src]
 			ifFalse: [cs
-				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				addMethodOverwriteInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
@@ -8122,7 +8390,7 @@ stagePushOf: aSelector into: cs
 				newSource: src
 				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -8278,7 +8546,7 @@ applyMethodAdd: aChange
 	 already understood the selector via its own override). The compile RAISES when it fails, so
 	 the record is only reached once the method is actually installed on the subclass."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -8302,7 +8570,7 @@ applyMethodRemove: aChange
 	(appliedAddSelectors includes: sel) ifFalse: [^false].
 	(subClasses allSatisfy: [:s | (self behaviorFor: s) includesSelector: sel])
 		ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	(aChange isMeta ifTrue: [cls class] ifFalse: [cls]) removeSelector: sel.
 	^true
@@ -8557,10 +8825,12 @@ commaList: aCollection
 
 category: 'private'
 method: GsPushUpMethodRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -8644,14 +8914,14 @@ stagePushOf: aSelector into: cs
 	existing := self targetExistingSourceFor: aSelector.
 	existing isNil
 		ifTrue: [cs
-			addMethodAddInDictionary: (self dictNameForClass: superClass)
+			addMethodAddInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
 			category: cat
 			newSource: src]
 		ifFalse: [cs
-			addMethodOverwriteInDictionary: (self dictNameForClass: superClass)
+			addMethodOverwriteInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
@@ -8660,7 +8930,7 @@ stagePushOf: aSelector into: cs
 			newSource: src
 			warning: (self overwriteWarningFor: aSelector)].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -8818,7 +9088,7 @@ applyMethodAdd: aChange
 	 fails, so the record -- and with it the paired remove's authority to strip the source -- is
 	 only reached once the method is actually installed on the superclass."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -8840,7 +9110,7 @@ applyMethodRemove: aChange
 	 and strip the source. No commit."
 	| cls target |
 	(appliedAddSelectors includes: aChange selector asSymbol) ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	target removeSelector: aChange selector asSymbol.
@@ -8934,8 +9204,31 @@ className
 
 category: 'accessing'
 method: GsRefactoringChange
+dict
+	"The SymbolDictionary this change was computed against, pinned as the OBJECT.
+
+	 A name is not an identity. Two dictionaries can share one, and a dictionary made by
+	 `SymbolDictionary new` has none at all -- that is simply what a fresh one answers -- so a
+	 change that recorded only the name recorded nil for it, and the apply fell back to
+	 first-match across the symbol list: someone else's same-named class, re-versioned in
+	 silence (#396). The environment already resolves the dictionary by identity; this is that
+	 answer kept rather than flattened to a string one line later. Same rule as the undo plan,
+	 which pins its dictionaries too (GsRefactoringUndo>>dictRefForEntry:).
+
+	 May be nil, for a change staged by a caller that had no dictionary to give."
+	^dict
+%
+
+category: 'accessing'
+method: GsRefactoringChange
 dictName
-	^dictName
+	"What to CALL this change's dictionary -- for the preview panel and for nothing else.
+	 Resolution uses #dict. nil when the dictionary has no name, or when there is no
+	 dictionary; both read as 'unlabelled' to a human and neither is something to resolve by."
+	^dict ifNil: [nil] ifNotNil: [:d |
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [d name ifNil: [nil] ifNotNil: [:n | n asString]]
+			ifFalse: [d asString]]
 %
 
 category: 'serializing'
@@ -8997,7 +9290,7 @@ jsonOn: aStream
 	aStream nextPutAll: ',"kind":'.
 	self jsonValue: kind on: aStream.
 	aStream nextPutAll: ',"dictName":'.
-	self jsonValue: dictName on: aStream.
+	self jsonValue: self dictName on: aStream.
 	aStream nextPutAll: ',"className":'.
 	self jsonValue: className on: aStream.
 	aStream nextPutAll: ',"isMeta":'.
@@ -9112,10 +9405,10 @@ setNewSelector: aSelector
 
 category: 'private'
 method: GsRefactoringChange
-setId: anId kind: aKind dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
+setId: anId kind: aKind dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 	id := anId.
 	kind := aKind.
-	dictName := dn.
+	dict := dn.
 	className := cn.
 	isMeta := aBool.
 	selector := sel.
@@ -9126,35 +9419,35 @@ setId: anId kind: aKind dictName: dn className: cn isMeta: aBool selector: sel c
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classDefinitionEditId: anId dictName: dn className: cn oldSource: os newSource: ns
+classDefinitionEditId: anId dict: dn className: cn oldSource: os newSource: ns
 	^self new
-		setId: anId kind: #classDefinitionEdit dictName: dn className: cn
+		setId: anId kind: #classDefinitionEdit dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRecompileId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
+methodRecompileId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 	^self new
-		setId: anId kind: #methodRecompile dictName: dn className: cn
+		setId: anId kind: #methodRecompile dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
+methodAddId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
 	"A brand-new method to compile (it does not yet exist in the class): apply =
 	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
 	 diff renders as an all-added method. Used by extract-method for the extracted
 	 method."
 	^self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
+methodOverwriteId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
 	"A method to compile onto a class that ALREADY defines the selector: apply = compile
 	 newSource, exactly like a #methodAdd (the kind IS #methodAdd, so the apply path is
 	 unchanged). Unlike a plain add, oldSource carries the class's EXISTING definition so
@@ -9163,49 +9456,49 @@ methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel c
 	 superclass that already implements the selector) and push-down (onto a subclass that
 	 already overrides it) as an opt-in, data-losing change."
 	^(self new
-		setId: anId kind: #methodAdd dictName: dn className: cn
+		setId: anId kind: #methodAdd dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns)
 		setWarning: w
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
+methodRemoveId: anId dict: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
 	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
 	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
 	 renders as an all-removed method."
 	^self new
-		setId: anId kind: #methodRemove dictName: dn className: cn
+		setId: anId kind: #methodRemove dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-methodRenameId: anId dictName: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns
+methodRenameId: anId dict: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns
 	"A method whose selector changes: apply = compile newSource (under newSel),
 	 then remove the old-selector method. `selector` holds the old selector."
 	^(self new
-		setId: anId kind: #methodRename dictName: dn className: cn
+		setId: anId kind: #methodRename dict: dn className: cn
 		isMeta: aBool selector: oldSel category: cat oldSource: os newSource: ns)
 		setNewSelector: newSel
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classRenameId: anId dictName: dn className: cn newName: nn oldSource: os newSource: ns
+classRenameId: anId dict: dn className: cn newName: nn oldSource: os newSource: ns
 	"The target class of a rename: `className` holds the OLD name, `newName` the new.
 	 Apply (server-side) creates a new version under the new name, copies the old
 	 version's methods forward, then rebinds the dictionary key (add new, remove old).
 	 oldSource/newSource are the old/new class definitions, for the before/after diff."
 	^(self new
-		setId: anId kind: #classRename dictName: dn className: cn
+		setId: anId kind: #classRename dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns)
 		setNewName: nn
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
+classAddId: anId dict: dn className: cn superclassName: sn newSource: ns
 	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
 	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
 	 unlike #classReparent there is no old version to version off. `className` is the new class's
@@ -9213,33 +9506,33 @@ classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
 	 generated class definition. oldSource is nil so the before/after diff renders as an
 	 all-added class."
 	^(self new
-		setId: anId kind: #classAdd dictName: dn className: cn
+		setId: anId kind: #classAdd dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
 		setNewName: sn
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classRemoveId: anId dictName: dn className: cn oldSource: os
+classRemoveId: anId dict: dn className: cn oldSource: os
 	"A class to UNBIND from its dictionary. Staged only by an UNDO: a refactoring that CREATED a
 	 class (extract-superclass's inserted parent, split-class's component) has no earlier version
 	 to revert that class to, so reversing it means taking the name back out. oldSource is the
 	 class's current definition and newSource is nil, so the before/after diff renders as an
 	 all-removed class. No forward refactoring stages this kind."
 	^self new
-		setId: anId kind: #classRemove dictName: dn className: cn
+		setId: anId kind: #classRemove dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: nil
 %
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
-classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns
+classReparentId: anId dict: dn className: cn oldSource: os newSource: ns
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
 	 child, so its definition names the new superclass). `className` is the descendant's
 	 own (unchanged) name. oldSource/newSource are its old/new definition."
 	^self new
-		setId: anId kind: #classReparent dictName: dn className: cn
+		setId: anId kind: #classReparent dict: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns
 %
 
@@ -9250,7 +9543,7 @@ addClassDefinitionEditInDictionary: dn className: cn oldSource: os newSource: ns
 	 commits. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classDefinitionEditId: self nextIdString dictName: dn className: cn
+		classDefinitionEditId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9265,7 +9558,7 @@ addMethodRecompileInDictionary: dn className: cn isMeta: aBool selector: sel cat
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRecompileId: self nextIdString dictName: dn className: cn
+		methodRecompileId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9280,7 +9573,7 @@ addMethodAddInDictionary: dn className: cn isMeta: aBool selector: sel category:
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodAddId: self nextIdString dictName: dn className: cn
+		methodAddId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat newSource: ns.
 	changes add: change.
 	^change
@@ -9297,7 +9590,7 @@ addMethodOverwriteInDictionary: dn className: cn isMeta: aBool selector: sel cat
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodOverwriteId: self nextIdString dictName: dn className: cn
+		methodOverwriteId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w.
 	changes add: change.
 	^change
@@ -9311,7 +9604,7 @@ addMethodRemoveInDictionary: dn className: cn isMeta: aBool selector: sel catego
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRemoveId: self nextIdString dictName: dn className: cn
+		methodRemoveId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os.
 	changes add: change.
 	^change
@@ -9325,7 +9618,7 @@ addMethodRenameInDictionary: dn className: cn isMeta: aBool oldSelector: oldSel 
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRenameId: self nextIdString dictName: dn className: cn
+		methodRenameId: self nextIdString dict: dn className: cn
 		isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat
 		oldSource: os newSource: ns.
 	changes add: change.
@@ -9341,7 +9634,7 @@ addClassRenameInDictionary: dn className: cn newName: nn oldSource: os newSource
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classRenameId: self nextIdString dictName: dn className: cn
+		classRenameId: self nextIdString dict: dn className: cn
 		newName: nn oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9355,7 +9648,7 @@ addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns
 	 superclassName. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classAddId: self nextIdString dictName: dn className: cn
+		classAddId: self nextIdString dict: dn className: cn
 		superclassName: sn newSource: ns.
 	changes add: change.
 	^change
@@ -9366,10 +9659,10 @@ method: GsRefactoringChangeSet
 addClassRemoveInDictionary: dn className: cn oldSource: os
 	"Stage the UNBINDING of a class. Records the change only; NEVER removes or commits. Staged
 	 only by an undo reversing a refactoring that created the class -- see
-	 GsRefactoringChange class>>classRemoveId:dictName:className:oldSource:."
+	 GsRefactoringChange class>>classRemoveId:dict:className:oldSource:."
 	| change |
 	change := GsRefactoringChange
-		classRemoveId: self nextIdString dictName: dn className: cn oldSource: os.
+		classRemoveId: self nextIdString dict: dn className: cn oldSource: os.
 	changes add: change.
 	^change
 %
@@ -9383,7 +9676,7 @@ addClassReparentInDictionary: dn className: cn oldSource: os newSource: ns
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classReparentId: self nextIdString dictName: dn className: cn
+		classReparentId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -9547,18 +9840,62 @@ sendersOf: aSelector
 	^(ClassOrganizer new sendersOf: aSelector asSymbol) at: 1
 %
 
+category: 'dictionaries'
+method: GsRefactoringEnvironment
+dictionaryForNewVersionOf: aClass
+	"The SymbolDictionary a new version of aClass is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name.
+
+	 Every refactoring that re-versions a class binds the new version this way, so the rule lives
+	 here rather than in a copy per refactoring."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [self symbolList objectNamed: #UserGlobals]
+%
+
+category: 'dictionaries'
+method: GsRefactoringEnvironment
+dictionaryPinnedForClass: aClass
+	"The dictionary that binds aClass ITSELF, pinned on a staged change so the apply can find
+	 its way back to the same class. Resolved by identity: taking the first dictionary that
+	 binds the NAME finds a different class's dictionary whenever the name is shadowed, and the
+	 apply then writes the change there (#396).
+
+	 The OBJECT, not its name. This used to answer `dict name`, which threw the identity away
+	 one line after establishing it -- and a name cannot stand in for a dictionary: two can
+	 share one, and `SymbolDictionary new` has none at all, so a class in a nameless dictionary
+	 recorded nil and fell straight into the first-match path this engine exists to remove.
+
+	 nil when no dictionary binds the class under its own name, which the apply falls back on
+	 as before. Every refactoring pins a change this way, so it lives here rather than in each
+	 of them: seventeen copies of one method is seventeen places for the identity rule to be
+	 lost."
+	^self dictionaryDefiningClass: aClass
+%
+
+category: 'selectors'
+method: GsRefactoringEnvironment
+referencesToClass: aClass
+	"Every method whose compiled code references aClass ITSELF, as an Array of GsNMethod.
+	 These are the method bodies whose source names the class as a global -- exactly the
+	 references a rename must rewrite. Identity, not name: when several dictionaries bind
+	 the name, referencesToClassNamed: would answer some other dictionary's class's
+	 referencers and miss this class's own (#396). Uses the same ClassOrganizer reflection
+	 the client's referencesToObject query uses. Read-only."
+	aClass isNil ifTrue: [^Array new].
+	^(ClassOrganizer new referencesToObject: aClass) asArray
+%
+
 category: 'selectors'
 method: GsRefactoringEnvironment
 referencesToClassNamed: aName
-	"Every method whose compiled code references the class currently bound to aName
-	 (across all dictionaries), as an Array of GsNMethod. These are the method bodies
-	 whose source names the class as a global -- exactly the references a rename must
-	 rewrite. Uses the same ClassOrganizer reflection the client's referencesToObject
-	 query uses. Read-only; returns an empty Array if the name is unbound."
-	| obj |
-	obj := self classNamed: aName.
-	obj isNil ifTrue: [^Array new].
-	^(ClassOrganizer new referencesToObject: obj) asArray
+	"referencesToClass: for the class the symbol list binds to aName FIRST. Only for a
+	 caller that has a name and no class; a caller holding the class must use
+	 referencesToClass:, or a shadowed name sends it to the wrong class's referencers."
+	^self referencesToClass: (self classNamed: aName)
 %
 
 category: 'enumerating'
@@ -9659,6 +9996,110 @@ classNamed: aName
 	self dictionariesDo: [:dict |
 		(dict at: sym ifAbsent: [nil]) ifNotNil: [:v |
 			(v isKindOf: Class) ifTrue: [^v]]].
+	^nil
+%
+
+category: 'accessing'
+method: GsRefactoringEnvironment
+lineageOf: aClass
+	"aClass's class history -- the one object every version of it shares, and no other class
+	 does. nil for a class with no history; the caller then falls back to plain identity rather
+	 than letting two history-less classes match on a shared nil.
+
+	 This is how a staged change is matched to a class during copy-forward: by then the change's
+	 dictionary binds the NEW version while the class being carried forward is still the old one,
+	 so identity misses, and a name matches a same-named class in another dictionary too (#396)."
+	aClass isNil ifTrue: [^nil].
+	^[aClass classHistory] on: Error do: [:e | nil]
+%
+
+category: 'accessing'
+method: GsRefactoringEnvironment
+dictionaryDefiningClass: aClass
+	"The SymbolDictionary that binds aClass ITSELF under its own name, compared by IDENTITY,
+	 or nil when no dictionary does.
+
+	 This is the one right answer to 'where does this class live', and the reason it exists is
+	 that the obvious wrong answer -- take the class's name and use the first dictionary that
+	 binds it -- silently picks a DIFFERENT class whenever the name is shadowed. Refactoring
+	 wrote that wrong answer in three places (#396): the dictionary a reshaped class was rebound
+	 into, the dictionary pinned on a staged change, and the class a change was applied
+	 to. All three now come through here.
+
+	 Identity also makes the answer honest when it cannot be given: a class that is unbound, or
+	 bound only under some other name, answers nil rather than a plausible-looking wrong
+	 dictionary. Callers decide what to do with that."
+	| sym |
+	sym := aClass name asSymbol.
+	self dictionariesDo: [:dict |
+		((dict at: sym ifAbsent: [nil]) == aClass) ifTrue: [^dict]].
+	^nil
+%
+
+category: 'accessing'
+method: GsRefactoringEnvironment
+classForChange: aChange
+	"The class a staged change was computed against, or nil.
+
+	 A change records its class as a NAME plus the DICTIONARY it was found in -- the dictionary
+	 object, pinned at staging time -- so this asks that dictionary directly. Resolving the name
+	 alone is what `classNamed:` does, and it answers the first binding on the symbol list --
+	 which, for a shadowed name, is a different class from the one the refactoring analysed.
+	 Applying a change to it writes the user's refactoring onto a class they never chose (#396).
+
+	 Asking the pinned dictionary settles every shape a name cannot: two dictionaries sharing a
+	 name, a dictionary with NO name, two dictionaries with no name, and a symbol list reordered
+	 between the preview and the apply. It also answers nil, rather than somebody else's class,
+	 for a dictionary that has since left the symbol list -- which callers turn into
+	 'Class not found: ...', a decline the user can act on rather than damage they cannot see.
+
+	 A change with no dictionary at all falls back to `classNamed:`. That is the pre-#396
+	 behaviour and is kept deliberately: a change staged by a caller that has no dictionary to
+	 give still applies as well as it ever did."
+	aChange isNil ifTrue: [^nil].
+	aChange dict ifNotNil: [:d |
+		"A pinned dictionary answers for itself. A NAME (or a SymbolList index) still arrives
+		 from the undo plan's older records, which resolve as they always did."
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [^d at: aChange className asSymbol otherwise: nil]
+			ifFalse: [^self classNamed: aChange className inDictionaryNamed: d]].
+	^self classNamed: aChange className inDictionaryNamed: nil
+%
+
+category: 'accessing'
+method: GsRefactoringEnvironment
+classNamed: aName inDictionaryNamed: aDictName
+	"The class bound to aName in aDictName, or nil.
+
+	 aDictName is a 1-based SymbolList INDEX (unambiguous, and what the client sends), a
+	 dictionary name, or nil.
+
+	 nil falls back to #classNamed:, which is first-match across the symbol list. That one case is
+	 the compatibility path: a record made before #396, or a caller with no dictionary to give.
+
+	 EVERY OTHER MISS ANSWERS NIL. Being told which dictionary and not finding the class there
+	 means the answer is not known -- and for a shadowed name, falling back then picks the OTHER
+	 dictionary''s class, which is the write-to-the-wrong-class defect this engine exists to
+	 remove. This branch was bitten by exactly that once already: an index stringified to ''10'',
+	 matched no dictionary name, and fell silently back to the first match. Callers turn nil into
+	 ''Class not found: ...'', which is a decline the user can act on rather than damage they
+	 cannot see."
+	| sym |
+	aDictName isNil ifTrue: [^self classNamed: aName].
+	sym := aName asSymbol.
+	"`isKindOf: Integer` rather than `isInteger`, which String does not implement on the
+	 supported releases."
+	(aDictName isKindOf: Integer) ifTrue: [
+		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^nil].
+		^((symbolList at: aDictName) at: sym ifAbsent: [nil])
+			ifNil: [nil]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [nil]]].
+	self dictionariesDo: [:dict | | bound |
+		(dict name notNil and: [dict name asSymbol == aDictName asSymbol])
+			ifTrue: [
+				bound := dict at: sym ifAbsent: [nil].
+				^(bound notNil and: [bound isKindOf: Class]) ifTrue: [bound] ifFalse: [nil]]].
+	"The named dictionary is not on the symbol list at all."
 	^nil
 %
 
@@ -9887,12 +10328,76 @@ copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failur
 	| cat text label |
 	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
-	text isNil ifTrue: [^true].
+	text isNil ifTrue: [
+		self recordHistoryFor: sel from: srcCls to: dstCls source: source category: cat asString.
+		^true].
 	label := isMeta
 		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
 		ifFalse: [dstCls name asString, '>>', sel asString].
 	failures add: (Array with: label with: label with: 'did not recompile: ', text).
 	^false
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+recordHistoryFor: sel from: srcCls to: dstCls source: newSource category: aCategory
+	"Add the version this copy-forward just compiled to sel's method history, when it really is a
+	 new version.
+
+	 This is the history hook for every refactoring that RE-VERSIONS a class -- rename instance
+	 variable, add/remove instance variable, rename class, split class, extract superclass, the
+	 class-variable engines. Those do not route through GsRefactoringUndo (each calls its own
+	 applyForToken: directly), so the hook there reaches only the method-level refactorings; this
+	 one reaches the rest, because a new class version starts with an empty method dictionary and
+	 EVERY method it keeps comes through here.
+
+	 Which is exactly why the unchanged case has to be excluded. A re-version carries the whole
+	 method dictionary across, and for the methods the refactoring did not touch `source` is just
+	 what srcCls already had. Recording those would stamp a version onto every method of the class
+	 -- turning one instance-variable rename into a hundred spurious history entries -- so a method
+	 whose source is byte-for-byte what it was is skipped here.
+
+	 The old source is read off srcCls and the entry is keyed on dstCls, and the split matters. The
+	 history key carries the DEFINING DICTIONARY, resolved BY IDENTITY, and by the time methods are
+	 carried across the new class version is already the one bound to the name -- so keying on
+	 srcCls resolves to no dictionary at all and files the version under a key no later read will
+	 look at, leaving the method's history frozen at its last hand edit. dstCls is the version that
+	 is bound now and the version a read will resolve, so it is the one that produces the same key
+	 on both sides of the re-version.
+
+	 The recorder is JasperMethodHistory, installed into SessionTemps by the Jasper client at
+	 login; absent on a session that never ran that bootstrap, where this is a no-op. Guarded
+	 throughout: a refactoring must never fail because history could not be written."
+	[ | hist m old |
+	  hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	  hist isNil ifTrue: [^self].
+	  m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
+	  old := m isNil ifTrue: [nil] ifFalse: [m sourceString].
+	  (old notNil and: [self source: old matches: newSource]) ifTrue: [^self].
+	  hist
+	    recordRefactoredIn: dstCls
+	    selector: sel
+	    oldSource: old
+	    newSource: newSource
+	    category: aCategory ]
+		on: Error do: [:e | nil]
+%
+
+category: 'private'
+method: GsRefactoringEnvironment
+source: a matches: b
+	"Whether two method sources are the same text, compared CHARACTER BY CHARACTER (a GemStone
+	 Character is unique per code point, so == is exact).
+
+	 Deliberately not a plain = comparison: the source read back off an installed method and the
+	 source an engine built with the AST rewriter are not guaranteed to be the same String class,
+	 and on 3.6.x comparing a byte String against a Unicode-promoted one RAISES ArgumentError 2718
+	 instead of answering false. Mirrors GsRefactoringUndo>>source:matches: and
+	 JasperMethodHistory>>source:matches:, which exist for the same reason."
+	(a isNil or: [b isNil]) ifTrue: [^a isNil and: [b isNil]].
+	a size = b size ifFalse: [^false].
+	1 to: a size do: [:i | ((a at: i) == (b at: i)) ifFalse: [^false]].
+	^true
 %
 
 category: 'private'
@@ -10049,7 +10554,7 @@ removePlan
 
 category: 'history revert'
 method: GsRefactoringUndo
-discardedMethodsFor: aClassName atIndex: anIndex
+discardedMethodsFor: aClassName atIndex: anIndex inDictionary: aDictName
 	"The methods reverting aClassName to version anIndex would DISCARD: those the class has NOW
 	 that the target version either lacks, or holds different source for. This is what makes the
 	 reversal a return to the PRE-REFACTORING STATE rather than a merge, and naming them is the
@@ -10057,7 +10562,7 @@ discardedMethodsFor: aClassName atIndex: anIndex
 	 'Foo>>bar' / 'Foo class>>bar' strings, both sides."
 	| env cls hist target out |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aClassName.
+	cls := env classNamed: aClassName inDictionaryNamed: aDictName.
 	cls isNil ifTrue: [^Array new].
 	hist := cls classHistory.
 	(anIndex < 1 or: [anIndex > hist size]) ifTrue: [^Array new].
@@ -10094,6 +10599,42 @@ commaList: aCollection
 
 category: 'history revert'
 method: GsRefactoringUndo
+dictRefForEntry: anEntry
+	"How to address a revert-plan entry's dictionary in a lookup: its CURRENT SymbolList index,
+	 found from the dictionary object the capture pinned -- 0 when that dictionary is no longer on
+	 the list, which resolves to no class and is reported rather than redirected. A plan recorded
+	 before the object was pinned has only the name (slot 4), or nothing, and scopes as it did."
+	| home sl |
+	home := anEntry size >= 5 ifTrue: [anEntry at: 5] ifFalse: [nil].
+	home isNil ifTrue: [^anEntry size >= 4 ifTrue: [anEntry at: 4] ifFalse: [nil]].
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == home ifTrue: [^i]].
+	^0
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+createdClassesDictionary
+	"The dictionary the refactoring filed the classes it CREATED in -- its anchor's, the revert
+	 plan's root -- as the SymbolDictionary the capture pinned, or nil when none was recorded.
+	 Every caller today files a created class next to its anchor (none passes a dictionary of its
+	 own), so the root's dictionary is the created classes' dictionary."
+	| root |
+	(revertPlan isNil or: [revertPlan isEmpty]) ifTrue: [^nil].
+	root := revertPlan first.
+	^root size >= 5 ifTrue: [root at: 5] ifFalse: [nil]
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+createdClassesDictionaryName
+	"The created classes' dictionary by name, for a plan recorded before the object was pinned."
+	(revertPlan isNil or: [revertPlan isEmpty or: [revertPlan first size < 4]]) ifTrue: [^nil].
+	^revertPlan first at: 4
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
 revertChangeSet
 	"A synthetic change set describing the reversal, so it previews through the same panel as
 	 everything else: one #classDefinitionEdit per class to revert -- a real definition diff, what
@@ -10103,29 +10644,108 @@ revertChangeSet
 	| env cs |
 	env := GsRefactoringEnvironment new.
 	cs := GsRefactoringChangeSet new.
-	revertPlan do: [:entry | | cls hist target discarded change |
-		cls := env classNamed: (entry at: 1).
+	revertPlan do: [:entry | | cls hist target discarded change entryDict |
+		entryDict := self dictRefForEntry: entry.
+		cls := env classNamed: (entry at: 1) inDictionaryNamed: entryDict.
 		cls isNil ifFalse: [
 			hist := cls classHistory.
 			target := ((entry at: 2) between: 1 and: hist size)
 				ifTrue: [hist at: (entry at: 2)]
 				ifFalse: [nil].
 			change := cs
-				addClassDefinitionEditInDictionary: nil
+				addClassDefinitionEditInDictionary: (entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil])
 				className: (entry at: 1)
 				oldSource: cls definition
 				newSource: (target isNil ifTrue: [entry at: 3] ifFalse: [target definition]).
-			discarded := self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2).
+			discarded := self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2) inDictionary: entryDict.
 			discarded isEmpty ifFalse: [
 				change setWarning: 'Returning ', (entry at: 1),
 					' to its pre-refactoring state DISCARDS ', discarded size printString,
 					' method', (discarded size = 1 ifTrue: [''] ifFalse: ['s']),
 					' written since: ', (self commaList: discarded)]]].
-	self removePlan do: [:name | | cls |
-		cls := env classNamed: name.
-		cls isNil ifFalse: [
-			cs addClassRemoveInDictionary: nil className: name oldSource: cls definition]].
+	"A created class is unbound from the dictionary the refactoring filed it in, which is the
+	 dictionary its anchor lives in -- the revert plan's root. Scoping by that rather than by
+	 first-match keeps the unbind off a same-named class elsewhere on the symbol list (#396)."
+	self removePlan do: [:name | | cls home |
+		home := self createdClassesDictionary.
+		cls := home isNil
+			ifTrue: [env classNamed: name inDictionaryNamed: self createdClassesDictionaryName]
+			ifFalse: [home at: name asSymbol ifAbsent: [nil]].
+		(cls isKindOf: Class) ifTrue: [
+			cs
+				addClassRemoveInDictionary: self createdClassesDictionaryName
+				className: name
+				oldSource: cls definition]].
 	^cs
+%
+
+category: 'reverse rename'
+method: GsRefactoringUndo
+describeClass: aClass
+	"`Shadowed in DictionaryA` -- a class named together with the dictionary it actually lives in,
+	 for the text of a decline.
+
+	 A decline that names only the class cannot be checked against what the user meant: when the
+	 name is shadowed there are two classes it could be about, and WHICH ONE the reversal resolved
+	 is the whole question (#396). Naming it turns 'Shadowed no longer declares abc' -- which reads
+	 as a bug in the undo -- into 'Shadowed in DictionaryA no longer declares abc', which says
+	 plainly that the reversal is looking at the wrong class and why."
+	| dict |
+	aClass isNil ifTrue: [^'the class'].
+	dict := GsRefactoringEnvironment new dictionaryDefiningClass: aClass.
+	^dict isNil
+		ifTrue: [aClass name asString, ' (in no dictionary)']
+		ifFalse: [aClass name asString, ' in ',
+			(dict name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [dict name asString])]
+%
+
+category: 'reverse rename'
+method: GsRefactoringUndo
+reverseOpClassDict
+	"The SymbolDictionary recorded as the home of the reverse operation's class, or nil. An op
+	 recorded before #396 has six slots and no dictionary; nil scopes exactly as it did then.
+	 An op recorded by an older build of this fix may hold an index or a name instead, so those
+	 are still resolved rather than rejected."
+	| raw |
+	reverseOp isNil ifTrue: [^nil].
+	raw := reverseOp size >= 7 ifTrue: [reverseOp at: 7] ifFalse: [nil].
+	raw isNil ifTrue: [^nil].
+	(raw isKindOf: SymbolDictionary) ifTrue: [^raw].
+	^GsRefactoringUndo dictionaryObjectFor: raw
+%
+
+category: 'reverse rename'
+method: GsRefactoringUndo
+reverseOpClassLineage
+	"The class history pinned for the reverse operation's class, or nil when none was recorded."
+	reverseOp isNil ifTrue: [^nil].
+	^reverseOp size >= 8 ifTrue: [reverseOp at: 8] ifFalse: [nil]
+%
+
+category: 'reverse rename'
+method: GsRefactoringUndo
+reverseOpClass
+	"The class the reversal acts on, resolved through the dictionary pinned at record time.
+
+	 Three things have to still hold, and none of them is checked by resolving a name:
+	 1. the recorded dictionary is still on the symbol list -- the user can remove one;
+	 2. it still binds a class under the recorded name;
+	 3. that class is still the SAME class, by class history -- renaming a class away and
+	    creating a fresh one under the old name leaves the name bound and the lineage changed.
+	 A miss answers nil, and the caller declines with a reason rather than reshaping whatever
+	 the name happens to reach (#396)."
+	| dict bound recorded |
+	reverseOp isNil ifTrue: [^nil].
+	dict := self reverseOpClassDict.
+	dict isNil ifTrue: [^GsRefactoringEnvironment new classNamed: (reverseOp at: 2)].
+	(System myUserProfile symbolList includesIdentical: dict) ifFalse: [^nil].
+	bound := dict at: (reverseOp at: 2) asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	recorded := self reverseOpClassLineage.
+	recorded isNil ifTrue: [^bound].
+	^([bound classHistory] on: Error do: [:e | nil]) == recorded
+		ifTrue: [bound]
+		ifFalse: [nil]
 %
 
 category: 'history revert'
@@ -10136,7 +10756,10 @@ totalDiscardedCount
 	revertPlan isNil ifTrue: [^0].
 	n := 0.
 	revertPlan do: [:entry |
-		n := n + (self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2)) size].
+		n := n + (self
+			discardedMethodsFor: (entry at: 1)
+			atIndex: (entry at: 2)
+			inDictionary: (self dictRefForEntry: entry)) size].
 	^n
 %
 
@@ -10153,7 +10776,13 @@ applyHistoryRevert
 	failures := OrderedCollection new.
 	revertPlan do: [:entry |
 		[| answer |
-		 answer := GsClassHistory revertClassNamed: (entry at: 1) toIndex: (entry at: 2).
+		 "Scoped to the dictionary the capture pinned for THIS class. Reverting by name alone
+		  rewrote whichever same-named class the symbol list reached first, and a dictionary
+		  NAME reaches the first of two same-named dictionaries (#396)."
+		 answer := GsClassHistory
+			revertClassNamed: (entry at: 1)
+			toIndex: (entry at: 2)
+			inDictionary: (self dictRefForEntry: entry).
 		 (answer indexOfSubCollection: '"reverted":true') > 0
 			ifTrue: [applied := applied + 1]
 			ifFalse: [
@@ -10163,10 +10792,22 @@ applyHistoryRevert
 			on: Error do: [:e |
 				failures add: (Array with: (entry at: 1) with: (entry at: 1) with: e messageText)]].
 	env := GsRefactoringEnvironment new.
-	self removePlan do: [:name |
-		[| removed |
+	"Unbind the created class from the ONE dictionary the refactoring filed it in -- the
+	 dictionary its anchor lives in, which is the revert plan's root. Sweeping every dictionary
+	 that binds the name unbinds unrelated same-named classes too, and so does every dictionary
+	 that merely shares the recorded dictionary's NAME (#396)."
+	self removePlan do: [:name | | home homeName |
+		home := self createdClassesDictionary.
+		homeName := self createdClassesDictionaryName.
+		[| removed target |
 		 removed := false.
-		 (env dictionariesDefiningClassNamed: name) do: [:d |
+		 target := home notNil
+			ifTrue: [Array with: home]
+			ifFalse: [homeName isNil
+				ifTrue: [env dictionariesDefiningClassNamed: name]
+				ifFalse: [(env symbolList select: [:d |
+					d name notNil and: [d name asSymbol == homeName asSymbol]])]].
+		 target do: [:d |
 			(d removeKey: name asSymbol ifAbsent: [nil]) isNil ifFalse: [removed := true]].
 		 removed ifTrue: [applied := applied + 1]]
 			on: Error do: [:e |
@@ -10240,11 +10881,10 @@ reverseRefactoring
 	 and the apply must run against the SAME object, or the apply would re-derive a change set
 	 from a stone the preview has already described (and the change ids the client deselected
 	 would not match). Answers nil when the class can no longer be resolved."
-	| env cls kind |
+	| cls kind |
 	reverseRef isNil ifFalse: [^reverseRef].
 	reverseOp isNil ifTrue: [^nil].
-	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2).
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [^nil].
 	kind := reverseOp at: 1.
 	kind == #classRename ifTrue: [
@@ -10294,30 +10934,39 @@ reverseUnavailableReason
 	| env cls ref |
 	revertPlan isNil ifFalse: [
 		env := GsRefactoringEnvironment new.
-		(revertPlan anySatisfy: [:e | (env classNamed: (e at: 1)) notNil]) ifFalse: [
+		"Through dictRefForEntry:, which is what the REVERSAL uses. This asked by dictionary NAME
+		 while the revert asks the dictionary the capture pinned, so the gate and the work could
+		 disagree about which class they meant -- both ways round. With two dictionaries of one
+		 name and the class in the second, the name found the first, saw nothing, and refused an
+		 undo that would have worked; with the pinned dictionary gone and a twin still binding
+		 that name, the name found the twin's class, let the undo through, and every entry then
+		 failed on apply. A gate has to ask the question the work will ask."
+		(revertPlan anySatisfy: [:e |
+			(env classNamed: (e at: 1)
+				inDictionaryNamed: (self dictRefForEntry: e)) notNil]) ifFalse: [
 			^'None of the classes this refactoring reshaped still exist, so it cannot be reversed.'].
 		^nil].
 	reverseOp isNil ifTrue: [^nil].
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2).
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [
 		^'Class ', (reverseOp at: 2), ' no longer exists, so the rename cannot be reversed.'].
 	"An instance-variable rename has no collision check of its own, so make the one that matters
 	 here explicitly: the name we would rename back TO must not already be declared."
 	(reverseOp at: 1) == #instVarRename ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 4)) ifTrue: [
-			^'Cannot rename back: ', (reverseOp at: 2), ' already declares an instance variable named ',
+			^'Cannot rename back: ', (self describeClass: cls), ' already declares an instance variable named ',
 			  (reverseOp at: 4), '.']].
 	"Reversing an ADD means removing the variable -- pointless, and misleading to offer, if it is
 	 no longer there. Reversing a REMOVE means adding it back, which duplicates it if something
 	 has re-declared the name (the class-creation primitive rejects that mid-apply, error 2271)."
 	(reverseOp at: 1) == #instVarAdd ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifFalse: [
-			^(reverseOp at: 2), ' no longer declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' no longer declares an instance variable named ', (reverseOp at: 3),
 			  ', so there is nothing to take back out.']].
 	(reverseOp at: 1) == #instVarRemove ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifTrue: [
-			^(reverseOp at: 2), ' already declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' already declares an instance variable named ', (reverseOp at: 3),
 			  ' again, so it cannot be added back.']].
 	ref := self reverseRefactoring.
 	ref isNil ifTrue: [
@@ -10370,7 +11019,7 @@ method: GsRefactoringUndo
 warningFor: aChange in: env
 	"The drift warning for one inverse change, or nil when undoing it is clean."
 	| cls target live |
-	cls := env classNamed: aChange className.
+	cls := env classForChange: aChange.
 	cls isNil ifTrue: [^'Class ', aChange className asString, ' no longer exists; this cannot be undone.'].
 	target := aChange isMeta == true ifTrue: [cls class] ifFalse: [cls].
 	live := target compiledMethodAt: aChange selector asSymbol environmentId: 0 otherwise: nil.
@@ -10438,7 +11087,7 @@ applyChange: aChange
 	 than counted as a successful undo."
 	| env cls target |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aChange className.
+	cls := env classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className asString].
 	target := aChange isMeta == true ifTrue: [cls class] ifFalse: [cls].
 	aChange kind == #methodRemove ifTrue: [
@@ -10601,14 +11250,23 @@ recordAndApplyForToken: token engine: engineName deselected: deselectedIds label
 	 Recording is strictly best-effort and never allowed to break an apply: if the
 	 snapshot or the diff raises, the previous entry is cleared (never left stale) and
 	 the apply's own result is returned unchanged."
-	| ref slots before result after undo recorded |
+	| ref slots before result after undo recorded histSlots histBefore |
 	ref := SessionTemps current at: token asSymbol ifAbsent: [nil].
 	ref isNil ifTrue: [^'{"applied":0,"failed":[],"error":"preview session expired","undoRecorded":false}'].
 	slots := [self slotsTouchedIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
 	before := slots isNil ifTrue: [nil] ifFalse: [[self snapshot: slots] on: Error do: [:ex | nil]].
+	"Method HISTORY is not bound to undo eligibility. slotsTouchedIn: answers nil as soon as any
+	 change reshapes a class, because no Tier-1 undo can reverse that -- but the method changes in
+	 that same change set still happened, and their history is still owed. So the history pair is
+	 taken over the method slots alone, whether or not an undo entry will be recorded."
+	histSlots := [self methodSlotsIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
+	histBefore := histSlots isNil ifTrue: [nil] ifFalse: [[self snapshot: histSlots] on: Error do: [:ex | nil]].
 	"The apply itself is NEVER wrapped: it must behave exactly as it does without undo."
 	result := ref applyDeselected: deselectedIds.
 	recorded := false.
+	histBefore isNil ifFalse: [
+		[self recordMethodHistoryFrom: histBefore to: (self snapshot: histSlots)]
+			on: Error do: [:ex | nil]].
 	before isNil
 		ifTrue: [self clear]
 		ifFalse: [
@@ -10621,6 +11279,73 @@ recordAndApplyForToken: token engine: engineName deselected: deselectedIds label
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+methodSlotsIn: aChangeSet deselected: deselectedIds
+	"Every METHOD SLOT the applying changes touch, de-duplicated -- the same list
+	 slotsTouchedIn: builds, except that a change which is NOT a method change is skipped rather
+	 than abandoning the whole answer.
+
+	 That difference is the point. slotsTouchedIn: answers nil for a change set that reshapes a
+	 class, because undo cannot reverse one; method history has no such limit, and the methods such
+	 a refactoring recompiles are owed their versions either way."
+	| ids kinds slots seen |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	kinds := self methodKinds asIdentitySet.
+	slots := OrderedCollection new.
+	seen := Set new.
+	aChangeSet changes do: [:change |
+		((ids includes: change id asSymbol) not
+			and: [kinds includes: change kind asSymbol]) ifTrue: [
+				self add: change selector forChange: change to: slots seen: seen.
+				change newSelector isNil ifFalse: [
+					self add: change newSelector forChange: change to: slots seen: seen]]].
+	^slots asArray
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+recordMethodHistoryFrom: beforeStates to: afterStates
+	"Add the version this refactoring just compiled to each recompiled method's history.
+
+	 Method history is otherwise bracketed around the CLIENT's compile query only, so a
+	 method changed by a refactoring gained no version and its history silently stopped at
+	 the last hand edit. This is the one place that fixes it for every refactoring at once:
+	 the before/after snapshots taken for the undo entry are exactly the pair history wants,
+	 already narrowed to the method slots the change set touched.
+
+	 Only slots that EXIST afterwards are recorded -- the old selector of a rename is gone,
+	 and a removal is not a version of anything. A slot that did not exist before (the new
+	 selector of a rename) has nothing to seed, so its history starts at the source the
+	 rename compiled.
+
+	 The recorder is JasperMethodHistory, which the Jasper client installs into SessionTemps
+	 at login; it is absent on a session that never ran that bootstrap (a plain topaz login,
+	 say), and this is then a no-op. Guarded and best-effort throughout, exactly like the
+	 undo recording it rides along with: a refactoring must never fail because history could
+	 not be written."
+	| hist env |
+	hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	hist isNil ifTrue: [^self].
+	env := GsRefactoringEnvironment new.
+	1 to: beforeStates size do: [:i |
+		[| b a slot cls target |
+		 b := beforeStates at: i.
+		 a := afterStates at: i.
+		 (a at: 2) ifTrue: [
+			slot := a at: 1.
+			cls := env classNamed: (slot at: 2) inDictionaryNamed: (slot at: 1).
+			cls isNil ifFalse: [
+				target := (slot at: 3) ifTrue: [cls class] ifFalse: [cls].
+				hist
+					recordRefactoredIn: target
+					selector: (slot at: 4) asSymbol
+					oldSource: ((b at: 2) ifTrue: [b at: 3] ifFalse: [nil])
+					newSource: (a at: 3)
+					category: (a at: 4)]]]
+			on: Error do: [:ex | nil]]
 %
 
 category: 'recording'
@@ -10658,6 +11383,16 @@ deselectionFor: aKind
 category: 'recording'
 classmethod: GsRefactoringUndo
 recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn label: aLabel engine: engineName
+	"Unscoped; see the #classDictName: variant, which this delegates to. Kept so a caller that
+	 has no dictionary to give still records what it always did (#396)."
+	^self
+		recordReverseRename: aKind className: cn from: fromName to: toName
+		scopeKind: sk scopeDictName: sdn classDictName: nil label: aLabel engine: engineName
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn classDictName: cd label: aLabel engine: engineName
 	"Record that a reversible operation was applied, so it can be reversed by re-applying the
 	 opposite one. Named for its first use (renames); it now also records instance-variable
 	 add/remove, whose opposite is the other operation of the same engine.
@@ -10675,13 +11410,27 @@ recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk
 	"Filled slot by slot rather than with a six-argument `Array with:...`: 3.6.2's Array class
 	 does not implement past four (MessageNotUnderstood 2010), so the longer forms are a 3.7-only
 	 convenience the matrix cannot use."
-	op := Array new: 6.
+	op := Array new: 8.
 	op at: 1 put: kind.
 	op at: 2 put: cn asString.
 	op at: 3 put: fromName asString.
 	op at: 4 put: toName asString.
 	op at: 5 put: (sk isNil ifTrue: [nil] ifFalse: [sk asSymbol]).
 	op at: 6 put: (sdn isNil ifTrue: [nil] ifFalse: [sdn asString]).
+	"Slot 7 is the HOME dictionary of `cn` -- distinct from slot 6, which is a rename's SCOPE.
+	 Without it the reversal re-resolved `cn` by first-match and re-applied the opposite
+	 operation to a same-named class in another dictionary (#396).
+
+	 It is the SymbolDictionary OBJECT, resolved here, at record time. The client sends a
+	 SymbolList index, and an index is only meaningful while the list keeps its order -- Jasper
+	 lets the user insert, remove and reorder dictionaries (and undo those edits) between a
+	 refactoring and its Undo, after which the index names a different dictionary and the
+	 reversal reshapes a class the user never touched. SessionTemps holds objects, so the
+	 reference can be pinned instead of re-derived. Slot 8 pins the class the same way: its
+	 class history, the one object every version of it shares and no other class does, so undo
+	 can tell 'the same class, re-versioned' from 'a different class of the same name'."
+	op at: 7 put: (self dictionaryObjectFor: cd).
+	op at: 8 put: (self lineageOfClassNamed: cn inDictionary: (op at: 7)).
 	SessionTemps current
 		at: self entryKey
 		put: (self new
@@ -10690,6 +11439,36 @@ recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk
 			sequence: self nextSequence
 			reverseOp: op).
 	^'ok'
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+dictionaryObjectFor: aDictRef
+	"The SymbolDictionary aDictRef names -- a SymbolList index, a dictionary name, an actual
+	 SymbolDictionary, or nil for 'no dictionary was recorded'. Answers nil when it resolves to
+	 nothing, which scopes exactly as an unrecorded dictionary does."
+	| sl |
+	aDictRef isNil ifTrue: [^nil].
+	(aDictRef isKindOf: SymbolDictionary) ifTrue: [^aDictRef].
+	sl := System myUserProfile symbolList.
+	(aDictRef isKindOf: Integer) ifTrue: [
+		^(aDictRef < 1 or: [aDictRef > sl size]) ifTrue: [nil] ifFalse: [sl at: aDictRef]].
+	sl do: [:d |
+		(d name notNil and: [d name asSymbol == aDictRef asSymbol]) ifTrue: [^d]].
+	^nil
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+lineageOfClassNamed: aName inDictionary: aDictOrNil
+	"The class history of the class aDictOrNil binds under aName, or nil when there is no such
+	 class (or no dictionary was recorded). Recorded so undo can require that the name still
+	 resolves to THAT class and not to a same-named replacement."
+	| bound |
+	aDictOrNil isNil ifTrue: [^nil].
+	bound := aDictOrNil at: aName asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	^[bound classHistory] on: Error do: [:e | nil]
 %
 
 category: 'constants'
@@ -10706,20 +11485,42 @@ captureClassHistoryOf: aRootClassName
 	"Snapshot, BEFORE a class-reshaping apply, the classHistory index of the named class and every
 	 descendant -- TOP-DOWN, which is the order the reversal must replay them in. Held pending
 	 until commitHistoryRevert:engine:created: promotes it. Answers 'ok', or 'not a class' when the
-	 name does not resolve (recording nothing rather than something wrong)."
+	 name does not resolve (recording nothing rather than something wrong).
+
+	 Unscoped; see #captureClassHistoryOf:inDictionary:."
+	^self captureClassHistoryOf: aRootClassName inDictionary: nil
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+captureClassHistoryOf: aRootClassName inDictionary: aDictName
+	"As #captureClassHistoryOf:, with the root resolved inside aDictName rather than by
+	 first-match across the symbol list -- which captured, and later reverted, a same-named class
+	 from another dictionary (#396).
+
+	 Each entry records the dictionary of ITS OWN class, not the root's: a subtree can span
+	 dictionaries, and the reversal has to put every class back where it actually lives. Slot 4
+	 is its name, for display; slot 5 is the dictionary OBJECT, which is what the reversal
+	 resolves through. Two dictionaries can share a name, and an index recorded now would name a
+	 different dictionary once the user inserts, removes or reorders one (#396)."
 	| env cls ordered plan |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aRootClassName.
+	cls := env classNamed: aRootClassName inDictionaryNamed: aDictName.
 	cls isNil ifTrue: [^'not a class'].
 	ordered := OrderedCollection new.
 	ordered add: cls.
 	ordered addAll: (env descendantsOf: cls).
-	plan := ordered collect: [:c | | triple |
-		triple := Array new: 3.
-		triple at: 1 put: c name asString.
-		triple at: 2 put: (c classHistory indexOf: c).
-		triple at: 3 put: c definition.
-		triple].
+	plan := ordered collect: [:c | | entry home |
+		home := env dictionaryDefiningClass: c.
+		entry := Array new: 5.
+		entry at: 1 put: c name asString.
+		entry at: 2 put: (c classHistory indexOf: c).
+		entry at: 3 put: c definition.
+		entry at: 4 put: (home isNil
+			ifTrue: [nil]
+			ifFalse: [home name ifNil: [nil] ifNotNil: [:nm | nm asString]]).
+		entry at: 5 put: home.
+		entry].
 	SessionTemps current at: self pendingCaptureKey put: plan asArray.
 	^'ok'
 %
@@ -10802,12 +11603,18 @@ slotsTouchedIn: aChangeSet deselected: deselectedIds
 category: 'recording'
 classmethod: GsRefactoringUndo
 add: aSelector forChange: aChange to: slots seen: seen
-	"Add the (class, side, selector) slot aChange addresses under aSelector, unless an
-	 identical slot is already in the list."
+	"Add the (dictionary, class, side, selector) slot aChange addresses under aSelector, unless an
+	 identical slot is already in the list.
+
+	 The dictionary is part of the key because a class name does not identify a class: a
+	 whole-system change set can touch the same selector on a same-named class in each of two
+	 dictionaries, and keyed by `Class>>selector` alone the second slot was dropped -- the undo
+	 then restored one class and reported success for both (#396)."
 	| meta key |
 	aSelector isNil ifTrue: [^self].
 	meta := aChange isMeta == true.
-	key := aChange className asString, (meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
+	key := aChange dictName printString, ' ', aChange className asString,
+		(meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
 	(seen includes: key) ifTrue: [^self].
 	seen add: key.
 	slots add: (Array
@@ -10827,7 +11634,7 @@ snapshot: slots
 	| env |
 	env := GsRefactoringEnvironment new.
 	^slots collect: [:slot | | cls target m |
-		cls := env classNamed: (slot at: 2).
+		cls := env classNamed: (slot at: 2) inDictionaryNamed: (slot at: 1).
 		target := cls isNil
 			ifTrue: [nil]
 			ifFalse: [(slot at: 3) ifTrue: [cls class] ifFalse: [cls]].
@@ -11032,15 +11839,28 @@ superclassForShapeSource: src of: old
 	 refactoring then left the class under a parent that was about to be unbound (#434).
 
 	 The historical version's superclass may itself be a superseded version of that parent, so it
-	 is resolved BY NAME to whatever version is current -- re-parenting onto a stale version would
-	 strand the class off the live hierarchy. If the name no longer resolves (the parent class is
-	 gone), the current superclass is kept: better a class in the wrong place than one that cannot
-	 be created at all."
-	| histSuper |
+	 is advanced to whatever version of THAT SAME parent is current -- re-parenting onto a stale
+	 version would strand the class off the live hierarchy. It is advanced through the parent's own
+	 classHistory, never by name: a name lookup lands on whichever dictionary comes first in the
+	 symbol list, so a shadowed parent name would re-parent the restored class under a different
+	 dictionary's class (#396). If the parent's history is gone, the current superclass is kept:
+	 better a class in the wrong place than one that cannot be created at all.
+
+	 A parent that is no longer BOUND anywhere is deliberately NOT one of those cases. The
+	 restored class goes back under it, and the result is a class hanging off an ancestor no
+	 dictionary names -- which is what that version's hierarchy actually was. Falling back to the
+	 current superclass here would hand back a class that never existed in that shape, and a
+	 restore's whole job is to reproduce a version. The two fallbacks above are for a version
+	 that cannot be rebuilt at all, which this is not. The Explorer's Hierarchy pane marks such
+	 an ancestor `(unbound)` and says what it is, so the user can see where their class has
+	 landed rather than meeting a mystery row."
+	| histSuper hist |
 	src == old ifTrue: [^old superclass].
 	histSuper := src superclass.
 	histSuper isNil ifTrue: [^old superclass].
-	^(environment classNamed: histSuper name asString) ifNil: [old superclass]
+	hist := [histSuper classHistory] on: Error do: [:e | nil].
+	(hist isNil or: [hist isEmpty]) ifTrue: [^old superclass].
+	^hist last ifNil: [old superclass]
 %
 
 category: 'private'
@@ -11148,7 +11968,7 @@ stageClassRenameInto: aChangeSet
 	oldDef := definingClass definition.
 	newDef := self renameClassNameIn: oldDef from: oldName to: newName.
 	aChangeSet
-		addClassRenameInDictionary: (self dictNameForClass: definingClass)
+		addClassRenameInDictionary: (self dictForClass: definingClass)
 		className: oldName
 		newName: newName
 		oldSource: oldDef
@@ -11172,7 +11992,7 @@ stageReparentsInto: aChangeSet
 			ifTrue: [self renameSuperclassNameIn: oldDef from: oldName to: newName]
 			ifFalse: [oldDef].
 		aChangeSet
-			addClassReparentInDictionary: (self dictNameForClass: sub)
+			addClassReparentInDictionary: (self dictForClass: sub)
 			className: sub name asString
 			oldSource: oldDef
 			newSource: newDef]
@@ -11189,7 +12009,10 @@ stageReferenceRecompilesInto: aChangeSet
 	"A same-name restore changes no name, so no external reference needs rewriting."
 	oldNameSym == newName asSymbol ifTrue: [^self].
 	subtree := self subtreeClassSet.
-	(environment referencesToClassNamed: oldName) do: [:m |
+	"By identity. Asking for the references of the NAME answers whichever dictionary binds it
+	 first -- another dictionary's class's referencers get rewritten and this class's own are
+	 missed, with nothing in failed to say so (#396)."
+	(environment referencesToClass: definingClass) do: [:m |
 		[| base |
 		 base := self baseClassOf: m.
 		 (subtree includes: base)
@@ -11215,7 +12038,7 @@ stageReferenceRewrite: aMethod base: base into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -11274,11 +12097,12 @@ hierarchyScopeClasses
 
 category: 'private'
 method: GsRenameClassRefactoring
-dictNameForClass: aClass
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'source rewriting'
@@ -11369,15 +12193,53 @@ node: aNode declaresName: aSymbol
 
 category: 'preconditions'
 method: GsRenameClassRefactoring
+newNameShadowedFrom
+	"The name of a dictionary EARLIER in the symbol list than the destination that already binds
+	 newName, or nil.
+
+	 This is the difference between a shadow that is harmless and one that is not. After the
+	 rename, every unqualified reference to newName -- the renamed class's own methods, and every
+	 referencer this refactoring rewrites -- resolves to the FIRST binding. A binding later in the
+	 list loses to the renamed class and changes nothing. An earlier one wins, and the rename
+	 quietly repoints the renamed class's own code at a class in another dictionary (#396).
+
+	 Answers only the first such dictionary: one concrete name is what a warning needs."
+	| sl dest sym |
+	dest := environment dictionaryForNewVersionOf: definingClass.
+	dest isNil ifTrue: [^nil].
+	sym := newName asSymbol.
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | | d |
+		d := sl at: i.
+		d == dest ifTrue: [^nil].
+		((d at: sym ifAbsent: [nil]) notNil) ifTrue: [
+			^d name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [d name asString]]].
+	^nil
+%
+
+category: 'preconditions'
+method: GsRenameClassRefactoring
 newNameCollision
-	"nil if the new name is free to use, otherwise a short reason string: the new name
-	 is already bound to some OTHER global anywhere on the symbol list. Building the
-	 change set does not enforce this (the preview surfaces it); the apply would fail."
-	| existing |
-	existing := environment symbolList objectNamed: newName asSymbol.
+	"nil if the new name is free in the dictionary the renamed class will be bound into,
+	 otherwise a short reason string. Building the change set does not enforce this (the preview
+	 surfaces it); the apply would fail.
+
+	 Scoped to that ONE dictionary, not the whole symbol list. A class name bound in another
+	 dictionary is a shadow, which GemStone allows and which this engine handles throughout
+	 (#396) -- refusing on it made a legitimate rename impossible. The case that showed it is
+	 the rename BACK that undoing a rename performs: rename DictionaryB's Shadowed to something
+	 else and the reversal was refused, because DictionaryA still binds Shadowed. There was
+	 nothing the user could do about that, and nothing wrong with the rename.
+
+	 Any binding counts, not just a class: `at:ifAbsent:` catches a non-class global of that name
+	 in the destination, which is what the old `objectNamed:` was reaching for."
+	| dict existing |
+	dict := environment dictionaryForNewVersionOf: definingClass.
+	existing := dict isNil ifTrue: [nil] ifFalse: [dict at: newName asSymbol ifAbsent: [nil]].
 	existing isNil ifTrue: [^nil].
 	existing == definingClass ifTrue: [^nil].
-	^'the name ', newName, ' is already in use'
+	^'the name ', newName, ' is already in use in ',
+	  (dict name isNil ifTrue: ['that dictionary'] ifFalse: [dict name asString])
 %
 
 category: 'accessing'
@@ -11397,7 +12259,10 @@ outOfScopeJsonString
 	  ',"descendants":', (environment descendantsOf: definingClass) size printString,
 	  ',"collision":', (self newNameCollision
 		ifNil: ['null']
-		ifNotNil: [:reason | self jsonQuote: reason]), '}'
+		ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"shadowedFrom":', (self newNameShadowedFrom
+		ifNil: ['null']
+		ifNotNil: [:dn | self jsonQuote: dn]), '}'
 %
 
 category: 'private'
@@ -11479,22 +12344,33 @@ applyDeselected: deselectedIds
 	 cleanly, so a partly-failed rename is left uncommitted for the user to inspect and
 	 abort rather than persisted half-done. With neither option (the safe path) nothing
 	 is committed, matching the other refactorings. Answers
-	 {applied, failed:[..], committed, migratedFailures}."
-	| ids applied failures migrated committed |
+	 {applied, failed:[..], committed, migratedFailures, renameFailed}."
+	| ids applied failures migrated committed halted renameFailed |
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	oldToNew := IdentityDictionary new.
 	applied := 0.
+	halted := false.
+	renameFailed := false.
 	failures := OrderedCollection new.
 	"The copy-forward loop runs deep inside a per-class change and must not raise (one
 	 method that will not recompile would abort the whole change), so it reports through
 	 this alias instead -- entries land in the same `failed` list as everything else."
 	copyFailures := failures.
 	self changeSet changes do: [:change |
-		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
-			ifFalse: [
-				[self applyChange: change. applied := applied + 1]
-				on: Error do: [:e |
-					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
+		"Once a STRUCTURAL change has failed, stop. After a failed #classRename the rename did not
+		 happen, so every #methodRecompile after it compiles the new name against whatever else
+		 binds it -- for a shadowed name, another dictionary's class -- and reports success. After a
+		 failed #classReparent the hierarchy is half-moved. Carrying on turned one failure into a
+		 body of code silently pointing at the wrong class (#396)."
+		halted ifFalse: [
+			(change kind == #methodRecompile and: [ids includes: change id asSymbol])
+				ifFalse: [
+					[self applyChange: change. applied := applied + 1]
+					on: Error do: [:e |
+						(change kind == #classRename or: [change kind == #classReparent])
+							ifTrue: [halted := true].
+						change kind == #classRename ifTrue: [renameFailed := true].
+						failures add: (Array with: change id with: change failureLabel with: e messageText)]]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -11510,9 +12386,15 @@ applyDeselected: deselectedIds
 			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: newName with: e messageText)]]].
+	"renameFailed tells the CLIENT whether the class is bound under the new name. It arms an
+	 Undo that renames `newName` back, and after a failed #classRename that name reaches some
+	 other dictionary's class -- which the reversal would then rename (#396). A failed
+	 #classReparent halts the apply too, but the rename before it HAS landed, so it does not
+	 count: that is exactly the partial apply an Undo exists for."
 	^'{"applied":', applied printString,
 	  ',"committed":', committed printString,
 	  ',"migratedFailures":', migrated printString,
+	  ',"renameFailed":', renameFailed printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -11571,7 +12453,7 @@ applyClassRename: aChange
 	 references). Record the old->new mapping for the descendant reparents, then, if
 	 the name actually changed, remove the old name binding."
 	| old src new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	src := self shapeSourceOr: old.
 	new := self
@@ -11592,7 +12474,7 @@ applyClassReparent: aChange
 	 freshly created parent-chain version, and copy its methods forward (rewriting any
 	 old-name reference). Its name is unchanged, so the primitive rebinds it in place."
 	| old parentNew new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	new := self makeNewVersionOf: old shapedLike: old named: old name asString superclass: parentNew.
@@ -11605,7 +12487,7 @@ method: GsRenameClassRefactoring
 applyMethodRecompile: aChange
 	"Recompile one external referencing method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure -- an unchecked send would
@@ -11639,7 +12521,7 @@ makeNewVersionOf: old shapedLike: shape named: aName superclass: sup
 		classVars: (shape classVarNames collect: [:e | e asString])
 		classInstVars: (shape class instVarNames collect: [:e | e asString])
 		poolDictionaries: shape sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([shape commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -11674,19 +12556,6 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta
 		source: (newSrc ifNil: [src])
 		meta: isMeta
 		into: copyFailures
-%
-
-category: 'applying'
-method: GsRenameClassRefactoring
-dictObjectFor: aClass
-	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:.
-	 Falls back to the user's default (UserGlobals) if none is found (should not happen
-	 for a bound class)."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 %
 
 category: 'applying'
@@ -11880,7 +12749,7 @@ stageClassDefinitionEditInto: aChangeSet
 	newDef := self renameClassVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -11917,7 +12786,7 @@ stageMethodRewrite: aMethod into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: sel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: sel
@@ -11938,11 +12807,12 @@ baseClassOf: aMethod
 
 category: 'private'
 method: GsRenameClassVariableRefactoring
-dictNameForClass: aClass
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'private'
@@ -12211,7 +13081,7 @@ applyClassDefinitionEdit: aChange
 	 method keeps a working, detached copy of the old association until it is recompiled
 	 to the new name."
 	| cls oldAssoc oldValue |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	oldAssoc := cls _classVars associationAt: oldNameSym ifAbsent: [nil].
 	oldValue := oldAssoc isNil ifTrue: [nil] ifFalse: [oldAssoc value].
@@ -12225,7 +13095,7 @@ method: GsRenameClassVariableRefactoring
 applyMethodRecompile: aChange
 	"Recompile one referencing method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure -- compileMethod: only
@@ -12314,13 +13184,12 @@ definingClass
 
 category: 'private'
 method: GsRenameInstanceVariableRefactoring
-dictNameForClass: aClass
-	"The name of the first dictionary that defines aClass, as a String, or nil.
-	 Informational for the client preview; the method lives on the class object
-	 regardless of how many dictionaries name it."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'accessing'
@@ -12445,7 +13314,7 @@ stageClassDefinitionEditInto: aChangeSet
 	newDef := self renameInstVarInDefinition: oldDef.
 	newDef = oldDef ifTrue: [^self].
 	aChangeSet
-		addClassDefinitionEditInDictionary: (self dictNameForClass: definingClass)
+		addClassDefinitionEditInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		oldSource: oldDef
 		newSource: newDef
@@ -12462,7 +13331,7 @@ stageMethodRecompilesInto: aChangeSet
 		inHierarchyOf: definingClass.
 	affected do: [:assoc | | cls dn |
 		cls := assoc key.
-		dn := self dictNameForClass: cls.
+		dn := self dictForClass: cls.
 		assoc value do: [:sel | | m oldSrc newSrc cat |
 			m := cls compiledMethodAt: sel environmentId: 0 otherwise: nil.
 			m ifNotNil: [
@@ -12500,27 +13369,31 @@ applyDeselected: deselectedIds
 	 the only way a method disappears here.
 
 	 Answers {applied, failed:[..]}."
-	| deselected failures applied newDefining |
+	| deselected failures applied newDefining oldToNew |
 	deselected := self deselectedSelectorsFrom: deselectedIds.
 	failures := OrderedCollection new.
 	applied := 0.
+	oldToNew := IdentityDictionary new.
 	newDefining := self
 		reversion: definingClass
 		superclass: definingClass superclass
 		instVarNames: (self renamedInstVarNamesOf: definingClass)
 		deselected: deselected
 		into: failures.
+	oldToNew at: definingClass put: newDefining.
 	applied := applied + 1.
 	(environment descendantsOf: definingClass) do: [:sub | | parent |
-		parent := (sub superclass == definingClass)
-			ifTrue: [newDefining]
-			ifFalse: [environment classNamed: sub superclass name].
-		self
+		"Identity, never name. A grandchild's parent is the version this loop just made,
+		 and looking that parent up by name lands on whichever dictionary comes first --
+		 which for a shadowed name is a different class entirely, and re-parents the
+		 grandchild onto it (#396)."
+		parent := oldToNew at: sub superclass ifAbsent: [sub superclass].
+		oldToNew at: sub put: (self
 			reversion: sub
 			superclass: parent
 			instVarNames: (sub instVarNames collect: [:e | e asString])
 			deselected: deselected
-			into: failures.
+			into: failures).
 		applied := applied + 1].
 	^self applyEnvelopeApplied: applied failures: failures
 %
@@ -12543,8 +13416,13 @@ applyEnvelopeApplied: applied failures: failures
 category: 'private - applying'
 method: GsRenameInstanceVariableRefactoring
 deselectedSelectorsFrom: deselectedIds
-	"The {className. selector} pairs the user chose not to carry forward, as a Set of
-	 'Class>>sel' keys. Ids that name no staged change are ignored.
+	"The methods the user chose not to carry forward, as an IdentityDictionary of
+	 class -> IdentitySet of selectors. Ids that name no staged change, and ids whose
+	 change names a class that no longer resolves, are ignored.
+
+	 Keyed by the CLASS, not by a 'Class>>sel' string: two dictionaries can bind the same
+	 class name, and a name key deselects the other dictionary's method too -- silently
+	 dropping it from its new version (#396).
 
 	 The ids arrive from the client as literals in GCI-compiled source, which 3.6.2 can
 	 promote to Unicode strings; comparing one of those to the change's own (byte)
@@ -12553,30 +13431,48 @@ deselectedSelectorsFrom: deselectedIds
 	 Symbols and never touches String comparison. (Same workaround as
 	 GsRenameMethodRefactoring.)"
 	| ids result |
-	result := Set new.
+	result := IdentityDictionary new.
 	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
-	self changeSet changes do: [:c |
+	self changeSet changes do: [:c | | cls |
 		((ids includes: c id asSymbol) and: [c kind = #methodRecompile])
-			ifTrue: [result add: (self keyForClassNamed: c className selector: c selector)]].
+			ifTrue: [
+				cls := environment classForChange: c.
+				cls notNil ifTrue: [
+					(result at: cls ifAbsentPut: [IdentitySet new]) add: c selector asSymbol]]].
 	^result
 %
 
 category: 'private - applying'
 method: GsRenameInstanceVariableRefactoring
-keyForClassNamed: aName selector: aSelector
-	^aName asString, '>>', aSelector asString
+deselected: aMap includes: aSelector for: aClass
+	"Whether aClass's aSelector is one the user deselected. By class identity."
+	^(aMap at: aClass ifAbsent: [nil])
+		ifNil: [false]
+		ifNotNil: [:sels | sels includes: aSelector asSymbol]
 %
 
 category: 'private - applying'
 method: GsRenameInstanceVariableRefactoring
 newSourceFor: aClass selector: aSelector
 	"The rewritten source staged for this method, or nil when no change was staged
-	 (the method does not access the variable and is carried forward verbatim)."
+	 (the method does not access the variable and is carried forward verbatim).
+
+	 The change is matched to aClass by LINEAGE, not by name. Matching on the name alone
+	 compiles a same-named class's rewritten source into this one (#396). It cannot match on
+	 the class object either: this runs during copy-forward, after the defining class has been
+	 re-versioned, so the change's dictionary already binds the NEW version while aClass is
+	 still the old one. A class history is shared by every version of one class and by no
+	 other class, which is exactly the distinction wanted."
+	| mine |
+	mine := environment lineageOf: aClass.
 	^(self changeSet changes
-		detect: [:c |
+		detect: [:c | | cls |
 			c kind = #methodRecompile
-				and: [c className asString = aClass name asString
-					and: [c selector asString = aSelector asString]]]
+				and: [c selector asString = aSelector asString
+					and: [cls := environment classForChange: c.
+						  mine isNil
+							ifTrue: [cls == aClass]
+							ifFalse: [(environment lineageOf: cls) == mine]]]]
 		ifNone: [nil])
 			ifNil: [nil]
 			ifNotNil: [:change | change newSource]
@@ -12620,7 +13516,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -12637,7 +13533,7 @@ copyMethodsFrom: old to: new deselected: deselected into: failures
 	 Class-side methods cannot reference an instance variable, so they are always
 	 copied verbatim and are never deselectable."
 	old selectors do: [:sel |
-		(deselected includes: (self keyForClassNamed: old name selector: sel))
+		(self deselected: deselected includes: sel for: old)
 			ifFalse: [self copyMethod: sel from: old to: new meta: false into: failures]].
 	old class selectors do: [:sel |
 		self copyMethod: sel from: old class to: new class meta: true into: failures]
@@ -12662,18 +13558,6 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
 		source: src
 		meta: isMeta
 		into: failures
-%
-
-category: 'private - applying'
-method: GsRenameInstanceVariableRefactoring
-dictObjectFor: aClass
-	"The SymbolDictionary that defines aClass's name, for inDictionary:. Falls back to
-	 UserGlobals if none is found (should not happen for a bound class)."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
 %
 
 category: 'serializing'
@@ -12826,11 +13710,12 @@ definingClass
 
 category: 'private'
 method: GsRenameMethodRefactoring
-dictNameForClass: aClass
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'accessing'
@@ -13007,9 +13892,10 @@ method: GsRenameMethodRefactoring
 applyChange: aChange
 	"Apply one staged change in the stone WITHOUT committing: compile the new
 	 source, and for a genuine rename (selector actually changed) remove the old
-	 method. The class is resolved across all dictionaries."
+	 method. The class is resolved through the dictionary the change recorded, so a
+	 shadowed class name cannot send the recompile to another dictionary's class (#396)."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	"Through the environment, which RAISES on a compile failure. Critical here: the old
@@ -13130,7 +14016,7 @@ stageImplementorRename: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -13156,7 +14042,7 @@ stageSenderRewrite: aMethod base: base isMeta: isMeta into: aChangeSet
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel
@@ -13455,7 +14341,7 @@ buildChangeSet
 			replaceFrom: node start to: node stop with: newName).
 		node token value: newName].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -13474,11 +14360,12 @@ methodCategory
 
 category: 'private'
 method: GsRenameTemporaryRefactoring
-dictNameForClass: aClass
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'preconditions'
@@ -13633,7 +14520,7 @@ method: GsRenameTemporaryRefactoring
 applyMethodRecompile: aChange
 	"Recompile the one method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -13931,8 +14818,10 @@ computeAnalysis
 	"classNamed: only matches a Class binding; a name bound to a NON-class global would
 	 otherwise slip past and be silently clobbered by applyClassAdd:'s
 	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
-	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
-	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 symbol list -- the same question GsExtractSuperclassRefactoring>>computeAnalysis asks,
+	 and stricter than GsRenameClassRefactoring>>newNameCollision, which is destination-only
+	 and lets a rename shadow after a warning. Creating a class is not moving one: there is
+	 nothing to weigh against a free name (#396). The split client validates only the
 	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
 	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
 	 source's own dictionary."
@@ -14036,9 +14925,9 @@ buildChangeSet
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	sn := sourceClass name asString.
-	srcDict := self dictNameForClass: sourceClass.
+	srcDict := self dictForClass: sourceClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -14059,7 +14948,7 @@ buildChangeSet
 		newSource: self sourceDefinitionAfterSplit.
 	(environment descendantsOf: sourceClass) do: [:d |
 		cs
-			addClassReparentInDictionary: (self dictNameForClass: d)
+			addClassReparentInDictionary: (self dictForClass: d)
 			className: d name asString
 			oldSource: d definition
 			newSource: d definition].
@@ -14201,16 +15090,38 @@ answersSelf: aSelector in: aClass
 category: 'private'
 method: GsSplitClassRefactoring
 newClassDictName
+	"What to WRITE in the generated `inDictionary:` of the new class's definition -- display only.
+
+	 It reads the dictionary dictObjectForNewClass answers, which is the one the apply actually
+	 files the class into, so the definition on screen cannot name a different dictionary from
+	 the one the refactoring writes to. It used to read the ANCHOR's dictionary instead: the two
+	 agree in the ordinary case, and disagreeing about which dictionary is exactly the defect
+	 this branch exists to remove.
+
+	 A dictionary with NO name -- what `SymbolDictionary new` answers until someone names one --
+	 is written by its symbol-list position, which is unambiguous and is valid Smalltalk. Asking
+	 for its name answered nil, and concatenating nil into the definition raised, so a
+	 refactoring that applies perfectly well could not even be previewed there. Nothing that does
+	 the work ever needed a name: the staged change carries the dictionary itself."
+	| d idx |
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: sourceClass
+	d := self dictObjectForNewClass.
+	d isNil ifTrue: [^'UserGlobals'].
+	d name ifNotNil: [:n | ^n asString].
+	idx := environment symbolList indexOf: d.
+	^idx = 0
+		ifTrue: ['UserGlobals']
+		ifFalse: ['(System myUserProfile symbolList at: ', idx printString, ')']
 %
 
 category: 'private'
 method: GsSplitClassRefactoring
-dictNameForClass: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+dictForClass: aClass
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 %
 
 category: 'serializing'
@@ -14352,7 +15263,7 @@ applyClassChange: aChange
 	 the component ivar, and drops the moved methods on copy-forward; a DESCENDANT (a #classReparent)
 	 just re-points at its freshly-versioned ancestor with its own shape unchanged."
 	| old isSource parentNew list skip new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	isSource := aChange kind == #classDefinitionEdit.
 	parentNew := isSource
@@ -14377,7 +15288,7 @@ makeNewVersionOf: old superclass: sup instVarNames: ivars
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -14399,7 +15310,7 @@ applyMethodAdd: aChange
 	| target |
 	target := aChange className = newName
 		ifTrue: [newClass]
-		ifFalse: [environment classNamed: aChange className].
+		ifFalse: [environment classForChange: aChange].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	environment
 		compile: aChange newSource
@@ -14409,21 +15320,11 @@ applyMethodAdd: aChange
 
 category: 'applying'
 method: GsSplitClassRefactoring
-dictObjectFor: aClass
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
-%
-
-category: 'applying'
-method: GsSplitClassRefactoring
 dictObjectForNewClass
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: sourceClass]].
-	^self dictObjectFor: sourceClass
+			ifNil: [environment dictionaryForNewVersionOf: sourceClass]].
+	^environment dictionaryForNewVersionOf: sourceClass
 %
 
 category: 'serializing'

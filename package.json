@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.9.0",
+  "version": "1.13.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -365,7 +365,13 @@
           "gemstone.rootPath": {
             "type": "string",
             "default": "~/Documents/GemStone",
-            "description": "Root directory for GemStone installations and databases. Supports ~ for home directory."
+            "description": "Root directory for GemStone installations and databases. Supports ~ for home directory.",
+            "markdownDescription": "Root directory for GemStone installations and databases. Supports `~` for your home directory. Everything the **Databases & Versions** panel lists is found here.\n\n▶ [Choose a folder…](command:gemstone.chooseRootPath) — picks it rather than typing the path, and writes it back to the settings layer this value is already coming from."
+          },
+          "jasper.mcp.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Serve the Jasper MCP server, so Claude Code and Claude Desktop can run GemStone tools against the session selected in this window. When off, Jasper claims no MCP socket, starts no HTTPS/SSE listener and writes no client configuration, and the MCP commands leave the UI — except Show MCP Server, whose tab is what reports that MCP is off. Takes effect on window reload."
           },
           "jasper.mcp.registerWithClaudeDesktop": {
             "type": "boolean",
@@ -429,22 +435,6 @@
             "type": "boolean",
             "default": false,
             "description": "Enable enhanced inspector perf tracking: count GCI round trips in the enhanced inspector. When enabled, shows a status bar counter and logs to the 'GemStone Enhanced Inspector Perf' output channel. Intended for performance tuning only."
-          },
-          "gemstone.rowan.loadAfterAddingDependency": {
-            "type": "string",
-            "enum": [
-              "ask",
-              "always",
-              "never"
-            ],
-            "enumDescriptions": [
-              "After adding a dependency while connected, offer to load the project so the database has its code.",
-              "Load the project automatically after adding a dependency.",
-              "Never offer to load after adding a dependency."
-            ],
-            "default": "ask",
-            "description": "What to do after adding a dependency to the open Rowan project while a database is connected. Adding a dependency only writes files on disk; the database does not have the code until the project is loaded. Only applies while connected. The buttons on the prompt update this setting.",
-            "scope": "window"
           },
           "gemstone.autoStartDatabase": {
             "type": "string",
@@ -672,21 +662,6 @@
           "icon": "$(key)"
         },
         {
-          "id": "gemstoneRowan",
-          "name": "Rowan",
-          "contextualTitle": "GemStone Rowan",
-          "type": "tree",
-          "icon": "$(package)"
-        },
-        {
-          "id": "jasperMcpServer",
-          "name": "MCP Server",
-          "contextualTitle": "Jasper MCP Server",
-          "type": "tree",
-          "icon": "$(remote-explorer)",
-          "visibility": "collapsed"
-        },
-        {
           "id": "gemstoneBreakpoints",
           "name": "Breakpoints",
           "contextualTitle": "GemStone Breakpoints",
@@ -709,21 +684,6 @@
       {
         "view": "gemstoneLogins",
         "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "Not connected.",
-        "when": "gemstone.workspaceIsRowanProject"
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "This folder isn't a Rowan project.\n[Create Rowan Project](command:gemstone.rowanInitHere)",
-        "when": "gemstone.rowanProjectChecked && !gemstone.workspaceIsRowanProject && workspaceFolderCount != 0"
-      },
-      {
-        "view": "gemstoneRowan",
-        "contents": "Open a folder to work with Rowan.\n[New Rowan Project…](command:gemstone.rowanNewProject)",
-        "when": "workspaceFolderCount == 0"
       },
       {
         "view": "gemstoneDatabases",
@@ -795,6 +755,18 @@
             },
             "completionEvents": [
               "onCommand:gemstone.inspectIt"
+            ]
+          },
+          {
+            "id": "notebook",
+            "title": "Try a notebook",
+            "description": "A notebook keeps code, results and notes together, one cell at a time. Open a blank one, or learn Smalltalk in one.\n[Open Notebook](command:gemstone.openNotebook)\n[Learn Smalltalk](command:gemstone.openTutorial)",
+            "media": {
+              "markdown": "resources/walkthrough/notebook.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.openNotebook",
+              "onCommand:gemstone.openTutorial"
             ]
           },
           {
@@ -871,6 +843,23 @@
       {
         "command": "jasper.claimMcpServer",
         "title": "Claim MCP Server",
+        "category": "GemStone",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "jasper.showMcpServer",
+        "title": "Show MCP Server",
+        "category": "GemStone",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "jasper.stopMcpServer",
+        "title": "Stop MCP Server",
+        "category": "GemStone"
+      },
+      {
+        "command": "jasper.requestMcpRelease",
+        "title": "Ask the Other Window to Release MCP",
         "category": "GemStone"
       },
       {
@@ -919,6 +908,17 @@
         "icon": "$(plug)"
       },
       {
+        "command": "gemstone.sessionBegin",
+        "title": "Begin Transaction",
+        "category": "GemStone",
+        "icon": "$(record)"
+      },
+      {
+        "command": "gemstone.setTransactionMode",
+        "title": "Set Transaction Mode",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.sessionCommit",
         "title": "Commit",
         "category": "GemStone",
@@ -961,6 +961,18 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "gemstone.switchSession",
+        "title": "Switch Session",
+        "category": "GemStone",
+        "icon": "$(database)"
+      },
+      {
+        "command": "gemstone.openNotebook",
+        "title": "Open Notebook",
+        "category": "GemStone",
+        "icon": "$(notebook-template)"
+      },
+      {
         "command": "gemstone.showSessionConfiguration",
         "title": "Session Configuration",
         "category": "GemStone",
@@ -968,7 +980,7 @@
       },
       {
         "command": "gemstone.openTutorial",
-        "title": "Open Tutorial Notebook",
+        "title": "Learn Smalltalk",
         "category": "GemStone",
         "icon": "$(mortar-board)"
       },
@@ -1455,6 +1467,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gemstone.explorer.removeMethods",
+        "title": "Remove…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.removeClass",
         "title": "Remove Class",
         "category": "GemStone",
@@ -1597,7 +1614,13 @@
       },
       {
         "command": "gemstone.explorer.fileOutClass",
-        "title": "File Out Class...",
+        "title": "File Out Class (.gs)...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClassTonel",
+        "title": "File Out Class (.st)...",
         "category": "GemStone",
         "icon": "$(export)"
       },
@@ -2052,6 +2075,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.chooseRootPath",
+        "title": "Choose the GemStone Folder…",
+        "category": "GemStone Admin",
+        "icon": "$(folder-opened)"
+      },
+      {
         "command": "gemstone.startDatabase",
         "title": "Start Database",
         "category": "GemStone Admin",
@@ -2170,7 +2199,7 @@
       "explorer/context": [
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceExtname == .gs || resourceExtname == .tpz",
+          "when": "resourceExtname == .gs || resourceExtname == .tpz || resourceExtname == .st",
           "group": "gemstone@0"
         }
       ],
@@ -2276,12 +2305,28 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.commit",
+          "command": "gemstone.sessionCommit",
+          "when": "gemstone.hasActiveSession && gemstone.canCommit"
+        },
+        {
+          "command": "gemstone.sessionAbort",
           "when": "gemstone.hasActiveSession"
         },
         {
-          "command": "gemstone.explorer.abort",
+          "command": "gemstone.sessionBegin",
+          "when": "gemstone.hasActiveSession && gemstone.canBegin"
+        },
+        {
+          "command": "gemstone.setTransactionMode",
           "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.commit",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "false"
         },
         {
           "command": "gemstone.explorer.removeDictionary",
@@ -2301,6 +2346,10 @@
         },
         {
           "command": "gemstone.explorer.fileOutClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassTonel",
           "when": "false"
         },
         {
@@ -2416,6 +2465,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeMethods",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeClass",
           "when": "false"
         },
@@ -2478,6 +2531,42 @@
         {
           "command": "gemstone.stopSeaside",
           "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.rowanAddRepo",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.rowanRefreshView",
+          "when": "false"
+        },
+        {
+          "command": "jasper.claimMcpServer",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.copyMcpUrl",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.copyMcpSocketPath",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.installMcpTlsCertificate",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.openMcpInspector",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.stopMcpServer",
+          "when": "jasper.mcpAvailable"
+        },
+        {
+          "command": "jasper.requestMcpRelease",
+          "when": "jasper.mcpAvailable"
         }
       ],
       "testing/item/context": [
@@ -2502,6 +2591,18 @@
         {
           "command": "gemstone.clearTestResults",
           "group": "gemstone@2"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "gemstone.switchSession",
+          "when": "notebookType == jupyter-notebook && gemstone.hasActiveSession && gemstone.multipleSessions && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\/(gemstone-smalltalk-kernel|gemstone-grail)$/",
+          "group": "navigation/session@1"
+        },
+        {
+          "command": "gemstone.openTutorial",
+          "when": "notebookType == jupyter-notebook && notebookKernel =~ /^gemtalksystems\\.gemstone-ide\\// && !gemstone.tutorialNotebookActive",
+          "group": "navigation/tutorial@1"
         }
       ],
       "view/title": [
@@ -2618,11 +2719,6 @@
           "group": "navigation@7"
         },
         {
-          "command": "gemstone.explorer.fileIn",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@7"
-        },
-        {
           "command": "gemstone.explorer.newClassCategory",
           "when": "view == gemstoneExplorerCategories",
           "group": "navigation@2"
@@ -2643,24 +2739,9 @@
           "group": "navigation@4"
         },
         {
-          "command": "gemstone.rowanNewProject",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@0"
-        },
-        {
           "command": "gemstone.rowanAddDependency",
           "when": "view == gemstoneRowanProject",
           "group": "navigation@0"
-        },
-        {
-          "command": "gemstone.rowanAddRepo",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@1"
-        },
-        {
-          "command": "gemstone.rowanRefreshView",
-          "when": "view == gemstoneRowan",
-          "group": "navigation@2"
         },
         {
           "command": "gemstone.addLogin",
@@ -2671,6 +2752,11 @@
           "command": "gemstone.openWorkspace",
           "when": "view == gemstoneLogins && gemstone.hasActiveSession",
           "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.openNotebook",
+          "when": "view == gemstoneLogins && gemstone.hasActiveSession",
+          "group": "navigation@3"
         },
         {
           "command": "gemstone.newDatabase",
@@ -2686,6 +2772,11 @@
           "command": "gemstone.refreshDatabases",
           "when": "view == gemstoneDatabases",
           "group": "navigation@3"
+        },
+        {
+          "command": "jasper.showMcpServer",
+          "when": "view == gemstoneDatabases",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -2760,9 +2851,19 @@
           "group": "4_fileout@0"
         },
         {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClasses && gemstone.tonelAvailable && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_fileout@1"
+        },
+        {
           "command": "gemstone.explorer.fileOutClass",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass/",
           "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassTonel",
+          "when": "view == gemstoneExplorerClassHierarchy && gemstone.tonelAvailable && viewItem =~ /^explorerHierClass/",
+          "group": "4_fileout@1"
         },
         {
           "command": "gemstone.explorer.fileOutProtocol",
@@ -3030,6 +3131,11 @@
           "group": "inline@6"
         },
         {
+          "command": "gemstone.explorer.removeMethods",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "5_remove@0"
+        },
+        {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
@@ -3110,41 +3216,6 @@
           "group": "inline@9"
         },
         {
-          "command": "gemstone.rowanUpdateRepo",
-          "when": "view == gemstoneRowan && viewItem =~ /^rowanRepo.*Git$/",
-          "group": "inline@0"
-        },
-        {
-          "command": "gemstone.rowanLoadRepo",
-          "when": "view == gemstoneRowan && (viewItem == rowanRepo || viewItem == rowanRepoGit || viewItem == rowanRepoWorkspace)",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.rowanRemoveRepo",
-          "when": "view == gemstoneRowan && viewItem =~ /^rowanRepo/ && viewItem != rowanRepoWorkspace && viewItem != rowanRepoWorkspaceNoSpec",
-          "group": "rowan@1"
-        },
-        {
-          "command": "gemstone.rowanOpenProjectDiff",
-          "when": "view == gemstoneRowan && viewItem == rowanChangesProject",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.rowanOpenProjectDiff",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@0"
-        },
-        {
-          "command": "gemstone.rowanExportProject",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@1"
-        },
-        {
-          "command": "gemstone.unloadRowanProject",
-          "when": "view == gemstoneRowan && viewItem == rowanLoadedProject",
-          "group": "rowan@2"
-        },
-        {
           "command": "gemstone.login",
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || (viewItem == gemstoneLoginConnected && gemstone.multipleSessions))",
           "group": "inline@1"
@@ -3165,51 +3236,61 @@
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.fileIn",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "2_transfer@0"
         },
         {
-          "command": "gemstone.sessionCommit",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionBegin",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession.*canBegin/",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.sessionAbort",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionCommit",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession.*canCommit/",
           "group": "inline@3"
         },
         {
-          "command": "gemstone.showSessionConfiguration",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.sessionAbort",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@4"
         },
         {
-          "command": "gemstone.sessionLogout",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "command": "gemstone.showSessionConfiguration",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "inline@5"
         },
         {
+          "command": "gemstone.sessionLogout",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
+          "group": "inline@6"
+        },
+        {
+          "command": "gemstone.setTransactionMode",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
+          "group": "1_transaction@1"
+        },
+        {
           "command": "gemstone.fullLogicalBackup",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "3_backup@1"
         },
         {
           "command": "gemstone.fullLogicalRestore",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/",
           "group": "3_backup@2"
         },
         {
           "command": "gemstone.exportClasses",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/"
         },
         {
           "command": "gemstone.selectSession",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession"
+          "when": "view == gemstoneLogins && viewItem =~ /^gemstoneSession/"
         },
         {
           "command": "gemstone.replaceExtent",
@@ -3313,7 +3394,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "navigation@0"
         },
         {
@@ -3405,7 +3486,7 @@
         },
         {
           "command": "gemstone.fileInFile",
-          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "when": "(resourceLangId == gemstone-topaz || resourceLangId == gemstone-tonel) && resourceScheme == file",
           "group": "1_gemstone@6"
         }
       ]
@@ -3587,12 +3668,15 @@
     "docs:fetch": "node scripts/fetch-gs-docs.mjs",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
     "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
+    "//lint:toolchain": "Asserts `tsc` on PATH is TypeScript 7. @typescript/native and the hoisted @typescript/old both claim the `tsc` bin and npm picks one silently; without this, a reshuffle would type-check everything on TS 6 unnoticed.",
+    "lint:toolchain": "node scripts/lint-toolchain.mjs",
     "//lint:gci-headers": "Asserts vendor/gci-headers/versions.md matches the committed header files (hashes, folder links, and no unreferenced folders). Run after adding a row.",
     "lint:gci-headers": "node scripts/lint-gci-header-versions.mjs",
-    "lint:lockfile": "lockfile-lint --path package-lock.json --allowed-hosts registry.npmjs.org --validate-https --validate-integrity --validate-package-names",
-    "//lint": "Results are cached under node_modules/.cache/eslint/, keyed on file content; run lint:cache:clear to force a full re-check.",
-    "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
-    "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
+    "//lint:lockfile": "The three --allowed-package-name-aliases entries are the TypeScript 7 side-by-side install: devDependencies alias `typescript` to the TS 6 API package (for typescript-eslint) and `@typescript/native` to TypeScript 7 itself (for the `tsc` bin), and `@typescript/typescript6` in turn aliases TS 6 as `@typescript/old`. --validate-package-names rejects every npm alias by default, so each has to be named. Retire them when typescript-eslint supports TS >=7.1 and `typescript` can go back to a plain ^7 range.",
+    "lint:lockfile": "lockfile-lint --path package-lock.json --allowed-hosts registry.npmjs.org --validate-https --validate-integrity --validate-package-names --allowed-package-name-aliases \"@typescript/native:typescript\" \"@typescript/old:typescript\" \"typescript:@typescript/typescript6\"",
+    "//lint": "Results are cached under node_modules/.cache/eslint/, keyed on file content; run lint:cache:clear to force a full re-check. NODE_OPTIONS silences MODULE_TYPELESS_PACKAGE_JSON -- cosmetic stderr from eslint.config.mjs importing the GCI registry as `.ts`; lint exits 0 without it. cross-env because `VAR=value cmd` is Unix shell syntax; the value is constant, so it replaces a contributor's own NODE_OPTIONS rather than merging with it.",
+    "lint": "cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint . --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
+    "lint:fix": "cross-env NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON eslint . --fix --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
     "lint:cache:clear": "rm -rf node_modules/.cache/eslint",
     "//format": "Results are cached under node_modules/.cache/prettier/, keyed on file content; run format:cache:clear to force a full re-check.",
     "format": "prettier --write --cache \"**/*.{ts,mts,cts,js,mjs,cjs}\"",
@@ -3603,6 +3687,9 @@
     "hooks:uninstall": "lefthook uninstall",
     "test": "npm run test --workspaces",
     "test:server:start": "npm run test:server:start --workspace client",
+    "//test:server:start:rowan3": "Starts a 3.7.5 stone on the rowan3 extent. The Tonel file out/in suites run ONLY against this stone and skip everywhere else, so verifying that feature means starting this and re-running the suite; a green `npm test` on the default stone says nothing about it.",
+    "test:server:start:rowan3": "npm run test:server:start:rowan3 --workspace client",
+    "test:server:stop:rowan3": "npm run test:server:stop:rowan3 --workspace client",
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
@@ -3624,27 +3711,29 @@
     "publish:ovsx": "ovsx publish"
   },
   "devDependencies": {
-    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "~22.15",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.7.1",
+    "@vscode/vsce": "^4.0.0",
+    "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
     "jsdom": "^30.0.1",
-    "lefthook": "^2.1.12",
+    "lefthook": "^2.1.14",
     "lockfile-lint": "^5.0.1",
-    "ovsx": "^1.1.1",
-    "playwright-bdd": "^9.2.0",
+    "ovsx": "^1.2.0",
+    "playwright-bdd": "^9.2.1",
     "prettier": "^3.9.6",
     "tsx": "^4.23.13",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.69.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.70.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
@@ -3658,11 +3747,11 @@
     "js-yaml": "^4.3.2"
   },
   "allowScripts": {
-    "@vscode/vsce-sign@2.0.9": true,
     "keytar@7.9.0": true,
     "fsevents": false,
     "esbuild@0.28.2": true,
     "koffi@2.16.3": true,
-    "lefthook@2.1.12": true
+    "lefthook": false,
+    "@vscode/vsce-sign@2.1.0": true
   }
 }

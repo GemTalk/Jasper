@@ -1,11 +1,13 @@
+import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { wrapExecuteCode } from './queries/executeCode';
-import { GemStoneNotebookKernel } from './gemstoneNotebookKernel';
-import { setTranscriptLive, settleNbResult } from './transcriptSink';
+import { GemStoneNotebookKernel, GEMSTONE_NOTEBOOK_TYPE } from './gemstoneNotebookKernel';
+import { startClientForwarderMode, endClientForwarderMode, settleNbResult } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { runNbCall } from './nbRunner';
 import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_UTF8 } from './gciConstants';
 import { SMALLTALK_LANGUAGE } from './languageIds';
+import { sessionKernelId } from './sessionKernels';
 
 // GemStone Smalltalk as a Jupyter kernel — see gemstoneNotebookKernel.ts for
 // the Jupyter integration mechanics. Each cell is an independent doit (the
@@ -29,9 +31,9 @@ export const SMALLTALK_LANGUAGE_ID = SMALLTALK_LANGUAGE;
 
 const MAX_CELL_RESULT = 256 * 1024;
 
-// Cells run on the NON-BLOCKING execute path with the transcript sink in live
-// mode, so `Transcript show:` output streams to the GemStone Transcript channel
-// while the cell runs (and a long cell doesn't freeze the extension host).
+// Cells run on the NON-BLOCKING execute path in clientForwarder mode, so
+// `Transcript show:` output streams to the GemStone Transcript channel while
+// the cell runs (and a long cell doesn't freeze the extension host).
 export async function evalSmalltalk(session: ActiveSession, source: string): Promise<string> {
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -41,7 +43,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
   }
 
   const code = wrapExecuteCode(source);
-  appendTranscriptOutput(setTranscriptLive(session, true));
+  appendTranscriptOutput(startClientForwarderMode(session, code));
   try {
     const resultOop = await runNbCall(
       session,
@@ -60,16 +62,41 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         );
         return { success, err };
       },
-      async () => {
-        const { result, err } = await settleNbResult(session, (text) =>
-          appendTranscriptOutput(text),
+      async (signal) => {
+        const { result, err } = await settleNbResult(
+          session,
+          (text) => appendTranscriptOutput(text),
+          signal,
         );
         if (err.number !== 0) {
+          // Clear the stopped process before giving up on it. This is
+          // defensive: wrapExecuteCode wraps every cell in `on: AbstractException
+          // do:`, so an ordinary error -- doesNotUnderstand, halt, ZeroDivide,
+          // even a cancel -- comes back inline with err.number 0 and never gets
+          // here (all four checked against a live 3.6.2 stone). What does get
+          // here is what bypasses Smalltalk handlers, chiefly a breakpoint
+          // signalled through the GCI debug channel. If that lands inside a
+          // Transcript write the process holds the session's Transcript
+          // semaphore, and there is no notebook debugger to hand it to, so
+          // leaving it suspended leaks both (#646). Execute It makes the same
+          // call after the user declines its Debug prompt.
+          // koffi hands a uint64 back as a number whenever it fits, so
+          // normalize before comparing against the bigint OOP constants.
+          const context = BigInt(err.context);
+          if (context !== OOP_NIL && context !== 0n) {
+            session.gci.GciTsClearStack(session.handle, context);
+          }
           throw new Error(err.message || `GCI error ${err.number}`);
         }
         return result;
       },
-      { title: 'GemStone: Running cell…' },
+      {
+        title: 'GemStone: Running cell…',
+        disposableProcess: true,
+        // The `finally`'s end is refused while a hard-broken cell is being
+        // collected; this is where it can succeed.
+        onAbandonedCollected: () => appendTranscriptOutput(endClientForwarderMode(session)),
+      },
     );
 
     // wrapExecuteCode printStrings server-side, so the result IS a string.
@@ -83,11 +110,65 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
     }
     return data;
   } finally {
-    appendTranscriptOutput(setTranscriptLive(session, false));
+    appendTranscriptOutput(endClientForwarderMode(session));
   }
 }
 
+const EXTENSION_ID = 'gemtalksystems.gemstone-ide';
+
+/**
+ * Build a notebook of Smalltalk cells that stays Smalltalk. VS Code round-trips
+ * a new notebook through the built-in ipynb serializer, which reads the cell
+ * language from `language_info` and falls back to Python when it is missing.
+ */
+export function smalltalkNotebookData(cells: vscode.NotebookCellData[]): vscode.NotebookData {
+  const data = new vscode.NotebookData(cells);
+  data.metadata = { metadata: { language_info: { name: SMALLTALK_LANGUAGE_ID } } };
+  return data;
+}
+
+/** A notebook whose code cells are all Smalltalk — Jasper's own, or one saved from them. */
+export function isSmalltalkNotebook(doc: vscode.NotebookDocument): boolean {
+  if (doc.notebookType !== GEMSTONE_NOTEBOOK_TYPE) return false;
+  const code = doc.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  return code.length > 0 && code.every((c) => c.document.languageId === SMALLTALK_LANGUAGE_ID);
+}
+
+/**
+ * Bind the active notebook editor to the Smalltalk kernel, so its first run
+ * doesn't stop at the kernel picker. `{ id, extension }` with no editor means
+ * "the active one" — pass it right after showNotebookDocument.
+ */
+export async function selectSmalltalkKernel(): Promise<void> {
+  try {
+    await vscode.commands.executeCommand('notebook.selectKernel', {
+      id: SMALLTALK_CONTROLLER_ID,
+      extension: EXTENSION_ID,
+    });
+  } catch {
+    // The Preferred affinity SmalltalkNotebookController sets on open still
+    // makes it the suggested kernel.
+  }
+}
+
+/** The Smalltalk kernel bound to one session — one per logged-in session, in multiple-session mode. */
+export function smalltalkSessionKernel(
+  sessionManager: SessionManager,
+  sessionId: number,
+): GemStoneNotebookKernel {
+  return new GemStoneNotebookKernel(sessionManager, {
+    id: sessionKernelId(SMALLTALK_CONTROLLER_ID, sessionId),
+    label: SMALLTALK_CONTROLLER_LABEL,
+    description: `Always runs Smalltalk in Session ${sessionId}`,
+    supportedLanguages: [SMALLTALK_LANGUAGE_ID],
+    evaluate: (session, source) => evalSmalltalk(session, source),
+    sessionId,
+  });
+}
+
 export class SmalltalkNotebookController extends GemStoneNotebookKernel {
+  private readonly openListener: vscode.Disposable;
+
   constructor(sessionManager: SessionManager) {
     super(sessionManager, {
       id: SMALLTALK_CONTROLLER_ID,
@@ -96,5 +177,20 @@ export class SmalltalkNotebookController extends GemStoneNotebookKernel {
       supportedLanguages: [SMALLTALK_LANGUAGE_ID],
       evaluate: (session, source) => evalSmalltalk(session, source),
     });
+    // Offer this kernel first for Smalltalk notebooks, including ones that
+    // hot-exit restored before the extension activated.
+    vscode.workspace.notebookDocuments.forEach((doc) => this.preferIfSmalltalk(doc));
+    this.openListener = vscode.workspace.onDidOpenNotebookDocument((doc) =>
+      this.preferIfSmalltalk(doc),
+    );
+  }
+
+  dispose(): void {
+    super.dispose();
+    this.openListener.dispose();
+  }
+
+  private preferIfSmalltalk(doc: vscode.NotebookDocument): void {
+    if (isSmalltalkNotebook(doc)) this.prefer(doc);
   }
 }

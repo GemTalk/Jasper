@@ -211,7 +211,7 @@ describe('Go Back puts the panes back on a landing, recomputed against the stone
 
     await ctl.history.back();
 
-    // Resolved to 2 from the name, which is the only thing the landing carries.
+    // Resolved to 2 from the name: the recorded index (1) now holds a different dictionary.
     expect(classEnvs).toHaveBeenCalledWith(expect.anything(), 2, CLASS, expect.anything());
     expect(ctl.history.currentIndex()).toBe(0);
   });
@@ -356,6 +356,51 @@ describe('Recent Locations lists the trail', () => {
   });
 });
 
+/** The session events the registration subscribes to, captured as they arrive. */
+let sessionListeners: {
+  selection: ((id: number | null) => void)[];
+  removal: ((id: number) => void)[];
+};
+
+function register() {
+  sessionListeners = { selection: [], removal: [] };
+  // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
+  // registerGemStoneExplorer subscribes to for the filter-commit-on-click wiring.
+  vi.mocked(vscode.window.createTreeView).mockImplementation(
+    () =>
+      ({
+        onDidChangeVisibility: vi.fn(),
+        onDidChangeCheckboxState: vi.fn(),
+        onDidChangeSelection: vi.fn(),
+        reveal: vi.fn(),
+        dispose: vi.fn(),
+      }) as never,
+  );
+  const context = {
+    subscriptions: [] as { dispose?: () => void }[],
+    globalState: { get: vi.fn(), update: vi.fn(async () => {}), keys: () => [] },
+    extensionPath: '/x',
+  } as unknown as vscode.ExtensionContext;
+  const sessionManager = {
+    getSelectedSession: () => ({ id: 1 }) as ActiveSession,
+    resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
+    onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
+      sessionListeners.selection.push(listener);
+      return { dispose: vi.fn() };
+    }),
+    onDidRemoveSession: vi.fn((listener: (id: number) => void) => {
+      sessionListeners.removal.push(listener);
+      return { dispose: vi.fn() };
+    }),
+  } as unknown as SessionManager;
+  const handle = registerGemStoneExplorer(context, sessionManager);
+  const handlers = new Map<string, (...a: unknown[]) => unknown>();
+  for (const call of vi.mocked(vscode.commands.registerCommand).mock.calls) {
+    handlers.set(call[0], call[1] as (...a: unknown[]) => unknown);
+  }
+  return { handlers, handle };
+}
+
 describe('the navigation commands are actually registered, not just contributed', () => {
   // explorerNavigationView.test.ts asserts the pane's buttons name commands the
   // manifest contributes. That leaves the other half open: a command can be in
@@ -367,51 +412,6 @@ describe('the navigation commands are actually registered, not just contributed'
     'gemstone.explorer.showHistory',
     'gemstone.explorer.clearHistory',
   ];
-
-  /** The session events the registration subscribes to, captured as they arrive. */
-  let sessionListeners: {
-    selection: ((id: number | null) => void)[];
-    removal: ((id: number) => void)[];
-  };
-
-  function register() {
-    sessionListeners = { selection: [], removal: [] };
-    // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
-    // registerGemStoneExplorer subscribes to for the filter-commit-on-click wiring.
-    vi.mocked(vscode.window.createTreeView).mockImplementation(
-      () =>
-        ({
-          onDidChangeVisibility: vi.fn(),
-          onDidChangeCheckboxState: vi.fn(),
-          onDidChangeSelection: vi.fn(),
-          reveal: vi.fn(),
-          dispose: vi.fn(),
-        }) as never,
-    );
-    const context = {
-      subscriptions: [] as { dispose?: () => void }[],
-      globalState: { get: vi.fn(), update: vi.fn(async () => {}), keys: () => [] },
-      extensionPath: '/x',
-    } as unknown as vscode.ExtensionContext;
-    const sessionManager = {
-      getSelectedSession: () => ({ id: 1 }) as ActiveSession,
-      resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
-      onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
-        sessionListeners.selection.push(listener);
-        return { dispose: vi.fn() };
-      }),
-      onDidRemoveSession: vi.fn((listener: (id: number) => void) => {
-        sessionListeners.removal.push(listener);
-        return { dispose: vi.fn() };
-      }),
-    } as unknown as SessionManager;
-    const handle = registerGemStoneExplorer(context, sessionManager);
-    const handlers = new Map<string, (...a: unknown[]) => unknown>();
-    for (const call of vi.mocked(vscode.commands.registerCommand).mock.calls) {
-      handlers.set(call[0], call[1] as (...a: unknown[]) => unknown);
-    }
-    return { handlers, handle };
-  }
 
   it('registers a handler for each one', () => {
     const { handlers } = register();
@@ -714,5 +714,123 @@ describe('Go Back gives up on a class the stone no longer has', () => {
     // Without the guard the walk would report success, leaving the trail pointing
     // at a class the panes never reached.
     expect(ctl.history.entries().map((l) => l.className)).toEqual(['Ledger']);
+  });
+});
+
+// Closing a webview panel makes VS Code activate whatever tab sits beside it. That is not a
+// navigation -- the user did not go anywhere, a panel went away -- but it fires the same event a
+// click does, and the follow then moved the Explorer onto THAT tab's class. Applying a
+// refactoring with any other GemStone editor open landed you in its dictionary rather than the
+// one you had just refactored in (#396).
+describe('a deliberate reveal survives a panel closing', () => {
+  const reshape = (ctl: unknown, className: string): Promise<void> =>
+    (ctl as { refreshAfterClassReshape(n: string): Promise<void> }).refreshAfterClassReshape(
+      className,
+    );
+  // What the panel-driven flows do, before they await the reveal.
+  const claim = (ctl: unknown): void =>
+    (ctl as { claimNextEditorActivation(): void }).claimNextEditorActivation();
+
+  it('ignores the activation that follows a post-refactoring reveal', async () => {
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+
+    claim(ctl);
+    await reshape(ctl, CLASS);
+    // the tab that was next to the panel surfaces -- a real, navigable GemStone URI, so the
+    // assertion fails if the claim is missing rather than passing for want of anywhere to go
+    await ctl.syncToEditor(vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`));
+
+    expect(ctl.state.dictName).toBe(DICT);
+    expect(ctl.state.className).toBe(CLASS);
+  });
+
+  it('spends the claim once, so the next real editor click still navigates', async () => {
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+    const other = vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`);
+
+    claim(ctl);
+    await reshape(ctl, CLASS);
+    await ctl.syncToEditor(other); // swallowed: the panel closing
+    expect(ctl.state.className).toBe(CLASS);
+
+    await ctl.syncToEditor(other); // a real click -- must be followed
+
+    expect(ctl.state.className).toBe('Other');
+  });
+
+  it('does not claim on its own: a refresh with no panel behind it swallows nothing', async () => {
+    // Adding or removing a class variable, and Class History Restore, close no panel. A claim
+    // made there has no stray activation to absorb, so the only thing it can swallow is the
+    // user's next real click.
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+
+    await reshape(ctl, CLASS);
+    await ctl.syncToEditor(vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`));
+
+    expect(ctl.state.className).toBe('Other');
+  });
+
+  it('lets an explicit Reveal through a standing claim', async () => {
+    // Reveal in GemStone Explorer (and GemStone Search) exist to move the tree, and they mark
+    // the open as theirs. A claim swallowing one meant the command appeared to do nothing.
+    const { ctl, clickDict, clickClass } = makeController();
+    clickDict();
+    clickClass();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'c' },
+      { className: 'Other', category: 'c' },
+    ]);
+    const other = vscode.Uri.parse(`gemstone://1/${DICT}/Other/definition?dict=1`);
+
+    claim(ctl);
+    ctl.markAttributedOpen(other);
+    await ctl.syncToEditor(other);
+
+    expect(ctl.state.className).toBe('Other');
+  });
+});
+
+describe('the registered entry points carry a dictionary position through', () => {
+  // Two dictionaries can share a name, so the position is what says which one is meant (#396).
+  it('forwards a GemStone Search category result position to the category reveal', async () => {
+    const reveal = vi
+      .spyOn(ExplorerController.prototype, 'revealCategoryByPath')
+      .mockResolvedValue(undefined);
+    const { handlers } = register();
+
+    await handlers.get('gemstone.explorer.revealCategory')!('Shared', 'Kernel', 1, 3);
+
+    expect(reveal).toHaveBeenCalledWith('Shared', 'Kernel', 1, 3);
+    reveal.mockRestore();
+  });
+
+  it('forwards a compiled class definition position to the Explorer', () => {
+    const compiled = vi
+      .spyOn(ExplorerController.prototype, 'onExternalClassCompiled')
+      .mockImplementation(() => {});
+    const { handle } = register();
+
+    handle.onClassCompiled(1, 'Shadowed', 'Shared', 3);
+
+    expect(compiled).toHaveBeenCalledWith(1, 'Shadowed', 'Shared', 3);
+    compiled.mockRestore();
   });
 });

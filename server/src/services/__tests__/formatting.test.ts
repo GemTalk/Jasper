@@ -47,6 +47,17 @@ describe('AST Formatter', () => {
       expect(result).toBe('method: Foo\nfoo\n  "A comment"\n\n  | x |\n  x := 1.\n  ^x\n%');
     });
 
+    it('keeps a method comment that contains a doubled-quote escape', () => {
+      // A comment escapes its own delimiter by doubling it, so `""` is one
+      // embedded quote rather than the close. The formatter emits the comment
+      // token verbatim, so a lexer that ended the comment at the first `"` of
+      // the pair left the rest of it out of the formatted method entirely —
+      // Format Document silently deleted the tail of the comment.
+      const input = 'method: Foo\nfoo "a comment with ""escaped"" quotes" ^self\n%';
+      const result = format(input);
+      expect(result).toBe('method: Foo\nfoo\n  "a comment with ""escaped"" quotes"\n\n  ^self\n%');
+    });
+
     it('formats method without comment', () => {
       const input = 'method: Foo\nfoo | x | x := 1. ^x\n%';
       const result = format(input);

@@ -19,7 +19,9 @@ function makeController(): ExplorerController {
   const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   const access = ctl as unknown as HierAccess;
-  access.hierChain = [{ className: 'Array', dictName: 'UserGlobals', kind: 'self' }];
+  access.hierChain = [
+    { className: 'Array', dictName: 'UserGlobals', kind: 'self', binding: 'bound' },
+  ];
   access.hierSubs = [];
   return ctl;
 }
@@ -66,6 +68,9 @@ describe('ExplorerController.revealHierarchySelf', () => {
   });
 });
 
+// The catch-up is the general per-pane one (onPaneVisibilityChanged); the cases
+// here are the Hierarchy pane's share of it. Its siblings are covered in
+// explorerPaneRevealGuard.test.ts, alongside the cascade guard itself.
 describe('ExplorerController re-reveals when the Hierarchy pane reappears', () => {
   it('catches up on a class navigated to while the pane was hidden', async () => {
     const ctl = makeController();
@@ -74,7 +79,7 @@ describe('ExplorerController re-reveals when the Hierarchy pane reappears', () =
     expect(hierarchy.reveal).not.toHaveBeenCalled();
 
     hierarchy.visible = true;
-    ctl.onHierarchyVisibilityChanged(true);
+    ctl.onPaneVisibilityChanged('hierarchy', true);
 
     await vi.waitFor(() => expect(hierarchy.reveal).toHaveBeenCalledTimes(1));
   });
@@ -83,7 +88,7 @@ describe('ExplorerController re-reveals when the Hierarchy pane reappears', () =
     const ctl = makeController();
     const hierarchy = withHierarchyView(ctl, true);
 
-    ctl.onHierarchyVisibilityChanged(false);
+    ctl.onPaneVisibilityChanged('hierarchy', false);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hierarchy.reveal).not.toHaveBeenCalled();

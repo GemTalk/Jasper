@@ -16,6 +16,7 @@ vi.mock('../../wslBridge', () => ({
 }));
 
 import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
+import { appendSysadmin } from '../../sysadminChannel';
 import { SysadminStorage } from '../../sysadminStorage';
 import { VersionManager } from '../versionManager';
 import { timestampForFileName } from '../databaseManager';
@@ -410,6 +411,53 @@ describe('VersionManager.fetchAvailableVersions', () => {
   );
 
   onSupportedPosixIt(
+    'includes a product directory whose version carries a pre-release tag',
+    async () => {
+      const storage = new SysadminStorage();
+      const manager = new VersionManager(storage);
+      const suffix = storage.getPlatformSuffix();
+
+      // The same private-build case as above, with the version spelled the way a
+      // pre-release build spells itself. The row was always produced; it was the
+      // minimum-version filter 28 lines later that threw on the tag, taking the
+      // whole Databases & Versions panel with it — nothing needed to be running.
+      const versionDir = path.join(tmpDir, `GemStone64Bit4.0.0-a3${suffix}`);
+      fs.mkdirSync(versionDir);
+      writeVersionTxt(
+        versionDir,
+        'GemStone/S 64 Bit\n4.0.0-a3 Build: 2026-09-01T10:00:00-07:00 abcdef\nprivate 4.0 build',
+      );
+
+      vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+      const versions = await manager.fetchAvailableVersions();
+
+      expect(versions).toHaveLength(1);
+      expect(versions[0].version).toBe('4.0.0-a3');
+      expect(versions[0].extracted).toBe(true);
+    },
+  );
+
+  onSupportedPosixIt('sorts a pre-release below its release and above the last one', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+
+    // The sort is the other half of the filter: both call the comparison, so a
+    // list holding a tagged build has to come back ordered rather than throwing.
+    for (const version of ['3.7.6', '4.0.0-a3', '4.0.0']) {
+      fs.mkdirSync(path.join(tmpDir, `GemStone64Bit${version}${suffix}`));
+    }
+
+    vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+    const versions = await manager.fetchAvailableVersions();
+
+    // Newest first, and the alpha sits under the release it leads to.
+    expect(versions.map((v) => v.version)).toEqual(['4.0.0', '4.0.0-a3', '3.7.6']);
+  });
+
+  onSupportedPosixIt(
     'lists a catalog version present as a real directory only once, marked extracted',
     async () => {
       const storage = new SysadminStorage();
@@ -506,5 +554,82 @@ describe('timestampForFileName', () => {
 
   it('pads every field, so the widths never move', () => {
     expect(timestampForFileName(new Date(2026, 0, 2, 3, 4, 5))).toBe('20260102-030405');
+  });
+});
+
+describe('a product directory whose version number cannot be read', () => {
+  // The name is whatever someone called the directory, and the minimum-version
+  // filter threw on one it could not parse — taking the whole list, and the
+  // panel built from it, rather than the single row.
+  onSupportedPosixIt('costs its own place in the order, not the whole list', () => {
+    // The mock is shared by every test in this file and nothing resets it.
+    vi.mocked(appendSysadmin).mockClear();
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    for (const name of ['3.7.5', '3.7', '3.6.6']) {
+      fs.mkdirSync(path.join(tmpDir, `GemStone64Bit${name}${suffix}`));
+    }
+
+    const versions = manager.getInstalledVersions();
+
+    // Readable rows keep their order, newest first; the unreadable one goes last.
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5', '3.6.6', '3.7']);
+    expect(appendSysadmin).toHaveBeenCalledWith(
+      expect.stringContaining('could not read the version number in 3.7 '),
+    );
+  });
+
+  // Nothing on this disk vouches for it, and it cannot be checked against the
+  // minimum — so it is dropped the way an old catalog version is.
+  onSupportedPosixIt('is dropped when only the catalog offers it', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const entry = (version: string) => ({
+      version,
+      fileName: `GemStone64Bit${version}-x86_64.Linux.zip`,
+      url: '',
+      date: '01-Jan-2026',
+      size: 1,
+    });
+
+    const versions = manager.versionsFrom([entry('3.7.5'), entry('3.7')]);
+
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5']);
+  });
+
+  // The panel re-reads the disk twice onevery open and again on every refresh, so a
+  // line per read buried the log in a folder that had not moved.
+  onSupportedPosixIt('is named once, not on every read', () => {
+    // The mock is shared by every test in this file and nothing resets it.
+    vi.mocked(appendSysadmin).mockClear();
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    fs.mkdirSync(path.join(tmpDir, `GemStone64Bit3.7${storage.getPlatformSuffix()}`));
+
+    manager.getInstalledVersions();
+    manager.getInstalledVersions();
+
+    const said = vi
+      .mocked(appendSysadmin)
+      .mock.calls.filter(([line]) => line.includes('could not read the version number'));
+    expect(said).toHaveLength(1);
+  });
+
+  // A symlinked build skips the minimum-version filter, so it used to reach the
+  // sort unchecked — where the comparison threw just the same.
+  onSupportedPosixIt('survives it on a local build too', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    const productDir = path.join(tmpDir, 'product');
+    fs.mkdirSync(productDir);
+    fs.symlinkSync(productDir, path.join(tmpDir, `GemStone64Bit4.0.0-alpha.1${suffix}`));
+    fs.mkdirSync(path.join(tmpDir, `GemStone64Bit3.7.5${suffix}`));
+
+    expect(manager.getInstalledVersions().map((v) => v.version)).toEqual([
+      '3.7.5',
+      '4.0.0-alpha.1',
+    ]);
   });
 });

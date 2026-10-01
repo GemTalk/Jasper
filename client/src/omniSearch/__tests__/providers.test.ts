@@ -7,7 +7,7 @@ import { NEVER_CANCELLED, OmniConfig } from '../omniTypes';
 import { createClassesProvider } from '../providers/classesProvider';
 import { createDictionariesProvider } from '../providers/dictionariesProvider';
 import { createGlobalsProvider } from '../providers/globalsProvider';
-import { createSourceProvider } from '../providers/sourceProvider';
+import { createSourceProvider, SourceSearchRunner } from '../providers/sourceProvider';
 import { createLiteralsProvider, isSymbolLiteral } from '../providers/literalsProvider';
 import { createCategoriesProvider } from '../providers/categoriesProvider';
 import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
@@ -124,6 +124,51 @@ describe('sourceProvider', () => {
 
     expect(p.search('ab', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)).toEqual([]);
     expect(runSearch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The chip is one global control, so a scope that silently ignores it tells the
+   * user something untrue — setting Prefix and getting `barfoo` back. Source used
+   * to run the identical substring scan in all three positions.
+   */
+  describe('honours the match-algorithm chip', () => {
+    const runWith = (matchMode: OmniConfig['matchMode']) => {
+      const runSearch = vi.fn<SourceSearchRunner>(() => rows);
+      const p = createSourceProvider(1, runSearch);
+      void p.search('foo', cfg({ methodMinQueryLength: 3, matchMode }), NEVER_CANCELLED);
+      return runSearch;
+    };
+
+    // Each chip position gets its own reading over a method body, and all three are
+    // distinct — the defect was that Source ran one scan whatever the chip said.
+    it.each([
+      ['prefix', 'wordStart'],
+      ['fuzzy', 'fuzzyToken'],
+      ['substring', 'substring'],
+    ] as const)('asks for the %s reading of the chip', (chip, scan) => {
+      expect(runWith(chip)).toHaveBeenCalledWith('foo', true, scan);
+    });
+
+    it('maps the three chip positions onto three different scans', () => {
+      const scans = (['prefix', 'fuzzy', 'substring'] as const).map(
+        (m) => runWith(m).mock.calls[0][2],
+      );
+      expect(new Set(scans).size).toBe(3);
+    });
+
+    // The scan mode is independent of case sensitivity; both reach the stone.
+    it('still passes case sensitivity alongside it', () => {
+      const runSearch = vi.fn(() => rows);
+      const p = createSourceProvider(1, runSearch);
+
+      void p.search(
+        'foo',
+        cfg({ methodMinQueryLength: 3, matchMode: 'prefix', caseSensitive: true }),
+        NEVER_CANCELLED,
+      );
+
+      expect(runSearch).toHaveBeenCalledWith('foo', false, 'wordStart');
+    });
   });
 
   it('groups its hits under the source category but still opens the method', () => {

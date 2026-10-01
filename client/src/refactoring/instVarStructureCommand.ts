@@ -13,6 +13,7 @@
  * panel labels them "(commits)"). So a run that enables either one does write to the database.
  */
 import * as vscode from 'vscode';
+import { dictionaryNameFor, qualifiedClassName } from './dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
@@ -141,7 +142,9 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     }
   };
   try {
-    queries.captureClassHistory(session, className);
+    // Scoped to the class's own dictionary: an unscoped capture snapshots, and later reverts,
+    // whichever same-named class the symbol list reaches first (#396).
+    queries.captureClassHistory(session, className, dict);
   } catch {
     /* best-effort: a reshape must not fail because its undo bookkeeping did */
   }
@@ -238,7 +241,7 @@ export async function moveInstVar(
       : targets.length >= 1 && targets.length <= namedLimit
         ? `down to ${targets.join(', ')}`
         : `down to ${targets.length} subclasses`;
-  const heading = `Move instance variable '${ivarName}' from ${className} ${where}`;
+  const heading = `Move instance variable '${ivarName}' from ${qualifiedClassName(className, dictionaryNameFor(session, dict))} ${where}`;
 
   return runInstVarStructure({
     session,

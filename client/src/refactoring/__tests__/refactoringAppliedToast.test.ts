@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import { checkRefactoringUndoAvailable, warnUndoUnsupported } from '../refactoringUndoAvailability';
 import { notifyRefactoringApplied } from '../refactoringAppliedToast';
 import { UNDO_COMMAND } from '../../undo/undoUi';
+import { REFACTORING_APPLIED_COMMAND } from '../refactoringAppliedEvent';
 import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { ActiveSession } from '../../sessionManager';
 
@@ -36,6 +37,75 @@ const status = (available: boolean, supported = true) => ({
 // dismisses it, and the refactoring must not stay "running" until then), so tests
 // let the microtask queue drain before asserting.
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+/**
+ * Telling the rest of the UI that a refactoring landed.
+ *
+ * An open method-history panel refreshes itself after a Save and must do the same after a
+ * refactoring: the method changed either way, and needing to close and reopen the panel to see the
+ * new version makes the history look unreliable. This notice is the one place every refactoring
+ * ends, so it is the one place that can say so — whether or not an undo was recorded, since the two
+ * are unrelated.
+ */
+describe('notifyRefactoringApplied — announcing the change to the UI', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+  });
+
+  it('announces the apply when an undo WAS recorded', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+
+    notifyRefactoringApplied(session, 'Renamed.');
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(REFACTORING_APPLIED_COMMAND, 7);
+  });
+
+  it('announces it just the same when NO undo was recorded', async () => {
+    // A stone whose engine records no undo still recompiled methods, so the panel is still stale.
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+
+    notifyRefactoringApplied(session, 'Renamed.');
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(REFACTORING_APPLIED_COMMAND, 7);
+  });
+
+  it('carries the session id, so only that session’s panels re-fetch', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+
+    notifyRefactoringApplied({ id: 42 } as ActiveSession, 'Renamed.');
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(REFACTORING_APPLIED_COMMAND, 42);
+  });
+
+  it('says nothing when there is no session to name', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+
+    notifyRefactoringApplied(undefined, 'Renamed.');
+    await settle();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      REFACTORING_APPLIED_COMMAND,
+      expect.anything(),
+    );
+  });
+
+  it('does not fail the refactoring when nothing is listening', async () => {
+    // No Explorer registered — the command is unknown and rejects. A redraw must never take the
+    // refactoring down with it.
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error('command not found'));
+
+    expect(() => notifyRefactoringApplied(session, 'Renamed.')).not.toThrow();
+    await settle();
+
+    expect(vscode.window.setStatusBarMessage).toHaveBeenCalled();
+  });
+});
 
 describe('notifyRefactoringApplied', () => {
   beforeEach(() => {

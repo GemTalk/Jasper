@@ -11,6 +11,7 @@ import type { ExplorerTestResult } from '../../gemstoneExplorer';
 import { Uri, window, commands, workspace, languages } from '../../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import { METHOD_LANGUAGE } from '../../languageIds';
+import { isExplorerRowUri } from '../../activeEditorDecoration';
 
 // Structural mirror of the (unexported) SelectorInfo the tree items carry.
 type SelectorInfo = {
@@ -64,9 +65,15 @@ function methodItem(over: Partial<SelectorInfo> = {}, isMeta = false): MethodIte
   return new MethodItem(isMeta, i, i.category);
 }
 
-// A minimal TreeView-shaped stub for setViews.
+// A minimal TreeView-shaped stub for setViews. `visible` matters: cascade reveals
+// are skipped while a pane is closed, so an expanded pane has to say it is open.
 function fakeView() {
-  return { reveal: vi.fn(async () => {}), selection: [] as unknown[], description: '' };
+  return {
+    reveal: vi.fn(async () => {}),
+    selection: [] as unknown[],
+    description: '',
+    visible: true,
+  };
 }
 function withViews(ctl: ExplorerController) {
   const method = fakeView();
@@ -88,6 +95,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.tabGroups.all = [];
   window.activeTextEditor = undefined;
+});
+
+describe('MethodItem', () => {
+  it("carries its method's source URI marked as a row, so the tab's session badge stays off it", () => {
+    const source = Uri.parse('gemstone://3/UserGlobals/Array/instance/accessing/at%3A');
+    const row = new MethodItem(false, info(), 'accessing', source);
+
+    expect(isExplorerRowUri(row.resourceUri as never)).toBe(true);
+    expect(row.resourceUri!.with({ fragment: '' }).toString()).toBe(source.toString());
+  });
 });
 
 describe('ExplorerController.openMethod', () => {

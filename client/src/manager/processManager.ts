@@ -134,10 +134,18 @@ export function parseGslist(output: string): GemStoneProcess[] {
   for (const line of output.split('\n')) {
     // Data row: {status}  {version}  {owner}  {pid} {port} {month} {day} {time} {type}  {name}
     // Status can be one word ("OK", "frozen", "killed", "exists", "unknown(EPERM)")
-    // or two ("exe deleted"). We anchor on the version, which always starts with a digit,
-    // so the non-greedy first capture absorbs the status without eating into version.
+    // or two ("exe deleted"). Both captures are greedy — nothing here is non-greedy —
+    // and the optional second word needs exactly one space, so padded columns never
+    // engage it. Where a long status does leave a single space ("unknown(EPERM) 4.0.0.a2
+    // …") the first capture reaches across and takes the version, and the version group's
+    // leading \d is the constraint that fails and backtracks it off. On real rows the
+    // tail (owner, pid, port, date, type) is enough to force the same split on its own,
+    // so the \d buys intent and an early exit rather than being the only guard.
+    // After it the version is any run of non-space, because pre-releases spell themselves
+    // "4.0.0.a2" or "4.0.0-a3" and a digits-and-dots pattern would reject the whole row
+    // rather than just the version, making a running server look stopped.
     const match = line.match(
-      /^\s*(\S+(?: \S+)?)\s+(\d[\d.]*)\s+\S+\s+(\d+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(Stone|Netldi)\s+(.+)$/i,
+      /^\s*(\S+(?: \S+)?)\s+(\d\S*)\s+\S+\s+(\d+)\s+(\d+)\s+(\w+\s+\d+\s+[\d:]+)\s+(Stone|Netldi)\s+(.+)$/i,
     );
     if (!match) continue;
     const typeLower = match[6].toLowerCase();

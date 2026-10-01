@@ -9,6 +9,20 @@ import * as vscode from 'vscode';
 // Colour only (no badge), so it composes with any row badge rather than competing
 // for the single badge slot. Uses the same FileDecoration mechanism the git/SCM
 // views use for row badges (each row carries a resourceUri).
+
+// A Methods-pane row carries its method's source URI with this fragment added:
+// the tint below still finds it, and the session badge (sessionEditorDecoration.ts)
+// can leave it alone, since every row in the Explorer is on the same session.
+const EXPLORER_ROW_FRAGMENT = 'explorer-row';
+
+export function explorerRowUri(sourceUri: vscode.Uri): vscode.Uri {
+  return sourceUri.with({ fragment: EXPLORER_ROW_FRAGMENT });
+}
+
+export function isExplorerRowUri(uri: vscode.Uri): boolean {
+  return uri.fragment === EXPLORER_ROW_FRAGMENT;
+}
+
 export class ActiveEditorDecorationProvider implements vscode.FileDecorationProvider {
   private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
   readonly onDidChangeFileDecorations = this._onDidChange.event;
@@ -22,15 +36,15 @@ export class ActiveEditorDecorationProvider implements vscode.FileDecorationProv
     const next = uri && uri.scheme === 'gemstone' ? uri : undefined;
     if (next?.toString() === this.active?.toString()) return;
     const changed: vscode.Uri[] = [];
-    if (this.active) changed.push(this.active);
-    if (next) changed.push(next);
+    if (this.active) changed.push(this.active, explorerRowUri(this.active));
+    if (next) changed.push(next, explorerRowUri(next));
     this.active = next;
     if (changed.length) this._onDidChange.fire(changed);
   }
 
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (uri.scheme !== 'gemstone' || this.active === undefined) return undefined;
-    if (uri.toString() !== this.active.toString()) return undefined;
+    if (uri.with({ fragment: '' }).toString() !== this.active.toString()) return undefined;
     return {
       color: new vscode.ThemeColor('list.highlightForeground'),
       tooltip: 'Shown in the active editor',

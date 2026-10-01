@@ -16,6 +16,7 @@ import {
   sanitizeFileNameStem,
   saveFileOut,
   FILE_OUT_FILTERS,
+  TONEL_FILE_OUT_FILTERS,
 } from '../fileOut';
 import { FILE_IN_FILTERS } from '../fileIn';
 import { LAST_DIRECTORY_KEY } from '../directory';
@@ -77,12 +78,55 @@ describe('composeFileOut', () => {
  */
 const at = (p: string): string => vscode.Uri.file(p).fsPath;
 
+describe('TONEL_FILE_OUT_FILTERS', () => {
+  it('offers .st, and only .st', () => {
+    // Tonel's own extension. The chunk filters deliberately exclude it, so the
+    // two formats cannot be confused in the save dialog.
+    const out = Object.values(TONEL_FILE_OUT_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    expect(out).toEqual(['st']);
+  });
+
+  it('is what File In takes back', () => {
+    // Same invariant the chunk pair has: a file saved through a filter File In does
+    // not list would be unreachable from every route back. There is ONE file-in
+    // dialog for both formats, so this is a subset check, not an equality -- it also
+    // offers `.gs`/`.tpz`, which a Tonel file out never writes.
+    const out = Object.values(TONEL_FILE_OUT_FILTERS)
+      .flat()
+      .filter((e) => e !== '*');
+    const back = Object.values(FILE_IN_FILTERS).flat();
+
+    expect(out.length).toBeGreaterThan(0);
+    for (const ext of out) expect(back).toContain(ext);
+  });
+
+  it('keeps .st out of the chunk file-OUT filters', () => {
+    // Writing is where the two must stay apart: a chunk file out produces Topaz, so
+    // offering `.st` there would name a file after a format it does not contain.
+    expect(Object.values(FILE_OUT_FILTERS).flat()).not.toContain('st');
+  });
+
+  it('but the file-IN dialog offers both, because the reader is chosen per file', () => {
+    // Reading is different: the user picks a FILE and Jasper works out which reader
+    // it needs, so making them choose the format first would be a question with an
+    // answer already sitting in the filename.
+    const back = Object.values(FILE_IN_FILTERS).flat();
+    expect(back).toContain('gs');
+    expect(back).toContain('st');
+  });
+});
+
 describe('FILE_OUT_FILTERS', () => {
   it('offers only extensions File In will take back', () => {
+    // A SUBSET, not an equality: File In also reads `.st`, which the chunk file out
+    // never writes. What must hold is that everything written can be read back.
     // A file-out saved through a filter File In does not list is unreachable from
     // every route the other half of this feature adds — the code lens, the editor
-    // title bar and context menu, VS Code's own Explorer menu, and the File In
-    // open dialog all name `.gs`/`.tpz` (via the gemstone-topaz language).
+    // title bar and context menu, VS Code's own Explorer menu, and the File In open
+    // dialog. Each of those reaches `.gs`/`.tpz` via the gemstone-topaz language (or,
+    // in the Explorer menu and this dialog, by extension); each also reaches `.st`.
     const out = Object.values(FILE_OUT_FILTERS)
       .flat()
       .filter((e) => e !== '*');
@@ -90,7 +134,7 @@ describe('FILE_OUT_FILTERS', () => {
       .flat()
       .filter((e) => e !== '*');
 
-    expect(new Set(out)).toEqual(new Set(back));
+    for (const ext of out) expect(back).toContain(ext);
   });
 });
 

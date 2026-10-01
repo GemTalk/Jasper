@@ -24,6 +24,19 @@ describe('versionsMatch', () => {
     expect(versionsMatch('3.7', '3.6')).toBe(false);
   });
 
+  it('treats a pre-release tag as one more component, dotted or dashed', () => {
+    // gslist reports what the build calls itself ("4.0.0.a2", "4.0.0-a3"); the
+    // database was registered against the install, which is just "4.0.0".
+    expect(versionsMatch('4.0.0.a2', '4.0.0')).toBe(true);
+    expect(versionsMatch('4.0.0-a3', '4.0.0')).toBe(true);
+    expect(versionsMatch('4.0.0', '4.0.0-a3')).toBe(true);
+  });
+
+  it('still tells two pre-releases of the same version apart', () => {
+    expect(versionsMatch('4.0.0-a2', '4.0.0-a3')).toBe(false);
+    expect(versionsMatch('4.0.0.a2', '4.0.0-a3')).toBe(false);
+  });
+
   it('refuses to match when either version is missing', () => {
     expect(versionsMatch('', '3.7.5')).toBe(false);
     expect(versionsMatch('3.7.5', '')).toBe(false);

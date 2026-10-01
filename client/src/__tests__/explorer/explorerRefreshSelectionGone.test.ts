@@ -194,6 +194,7 @@ describe('New Method after the selected class has been removed', () => {
       description: '',
       message: undefined as string | undefined,
       reveal: vi.fn(async () => {}),
+      visible: true,
       selection: [] as unknown[],
     });
     ctl.setViews({

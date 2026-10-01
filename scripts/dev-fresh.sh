@@ -27,6 +27,9 @@
 #   npm run dev:fresh:keep-installs            # reuse your real installs
 #   npm run dev:fresh -- --keep-installs /dir  # reuse installs + open a folder
 #
+# JASPER_DEV_EDITOR_CLI overrides which editor CLI to launch; needed when `code`
+# on your PATH is a wrapper that passes a --user-data-dir of its own.
+#
 # For live reload, run `npm run watch` in another terminal, then reload the
 # dev window (Cmd+R / "Developer: Reload Window") after edits.
 set -euo pipefail
@@ -44,14 +47,31 @@ for arg in "$@"; do
   esac
 done
 
-# Pick an editor CLI: VSCodium, then VS Code (and their Insiders builds).
-EDITOR_CLI=""
-for c in codium code codium-insiders code-insiders; do
-  if command -v "$c" >/dev/null 2>&1; then EDITOR_CLI="$c"; break; fi
-done
+# Pick an editor CLI: an explicit JASPER_DEV_EDITOR_CLI, else VSCodium, then
+# VS Code (and their Insiders builds).
+EDITOR_CLI="${JASPER_DEV_EDITOR_CLI:-}"
+if [ -z "$EDITOR_CLI" ]; then
+  for c in codium code codium-insiders code-insiders; do
+    if command -v "$c" >/dev/null 2>&1; then EDITOR_CLI="$c"; break; fi
+  done
+fi
 if [ -z "$EDITOR_CLI" ]; then
   echo "No editor CLI (codium/code) on PATH." >&2
   echo "In VS Code/VSCodium: Cmd+Shift+P -> 'Shell Command: Install ... command in PATH'." >&2
+  exit 1
+fi
+
+# We pass --user-data-dir ourselves, and the editor dies on a duplicate before it
+# draws anything, so refuse when the CLI adds one too. Ask it rather than read it:
+# VS Code's own bin/code mentions the flag in a root check but never passes one.
+if PROBE=$("$EDITOR_CLI" --user-data-dir="${TMPDIR:-/tmp}/jasper-dev-probe.$$" --version 2>&1) &&
+   printf '%s' "$PROBE" | grep -q "defined more than once"; then
+  echo "$EDITOR_CLI passes a --user-data-dir of its own, and this script passes one too." >&2
+  echo "The editor crashes on the duplicate before any window opens." >&2
+  echo "Point this script at the real launcher, which forwards arguments untouched:" >&2
+  echo >&2
+  echo "  JASPER_DEV_EDITOR_CLI=\"\$HOME/VSCode/usr/share/code/bin/code\" \\" >&2
+  echo "    npm run ${npm_lifecycle_event:-dev:fresh} -- ${WORKSPACE_ARG:-}" >&2
   exit 1
 fi
 

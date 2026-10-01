@@ -4,6 +4,7 @@
 // without modifying gciLibrary.ts. Enable/disable via gemstone.enhancedInspectorPerfTracking.
 
 import { GciLibrary } from '../gciLibrary';
+import type { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
 
 // Methods that make actual network round trips to the GemStone server.
 // Local-only methods (OopIsSpecial, I32ToOop, Encrypt, CallInProgress, etc.) are excluded.
@@ -164,15 +165,27 @@ export const enhancedInspectorPerfTracker: EnhancedInspectorPerfTracker = {
  * Wraps `gci` in a Proxy that increments {@link enhancedInspectorPerfTracker}
  * for every call to a method in {@link ROUND_TRIP_METHODS}.
  *
- * Methods returned from the `get` trap are bound to `receiver` (the proxy
- * itself), not `target`. Ergonomic GciLibrary methods (e.g. `resolveSymbol`)
- * make their own nested calls to raw `GciTsXxx` round trips via `this`;
- * binding to `receiver` means a nested `this.GciTsXxx()` call re-enters this
- * same `get` trap and gets tracked individually, instead of silently
- * bypassing it by running on the unwrapped `target`. This is safe because
- * `GciLibrary` has no real `#`-private fields (only compile-time-only TS
- * `private`) and this proxy defines no `set` trap, so property reads/writes
+ * Prototype methods returned from the `get` trap are bound to `receiver` (the
+ * proxy itself), not `target`. Ergonomic GciLibrary methods (e.g.
+ * `resolveSymbol`) make their own nested calls to raw `GciTsXxx` round trips
+ * via `this`; binding to `receiver` means a nested `this.GciTsXxx()` call
+ * re-enters this same `get` trap and gets tracked individually, instead of
+ * silently bypassing it by running on the unwrapped `target`. This is safe
+ * because `GciLibrary` has no real `#`-private fields (only compile-time-only
+ * TS `private`) and this proxy defines no `set` trap, so property reads/writes
  * still resolve to the one real `target` object either way.
+ *
+ * `GciLibrary`'s OWN function-valued properties are NOT bound, because binding
+ * one would break it. Those are the koffi bindings (`_GciTsExecute` and its 83
+ * siblings), and koffi hangs the worker-thread variant off each as a property:
+ * `_GciTsContinueWith.async`. `Function.prototype.bind` returns a fresh
+ * function carrying none of the original's own properties, so a bound koffi
+ * binding silently loses `.async` — which is what broke every live Transcript
+ * write with `this._GciTsContinueWith.async is not a function`
+ * ([#646](https://github.com/GemTalk/Jasper/issues/646)). They need no binding
+ * anyway: a koffi binding is a plain native callable that ignores `this`, and
+ * none of them is in ROUND_TRIP_METHODS, so nothing is left untracked by
+ * handing back the real one.
  */
 export function wrapWithEnhancedInspectorPerfProxy(gci: GciLibrary): GciLibrary {
   return new Proxy(gci, {
@@ -184,9 +197,34 @@ export function wrapWithEnhancedInspectorPerfProxy(gci: GciLibrary): GciLibrary 
           return (val as (...a: unknown[]) => unknown).apply(receiver, args);
         };
       }
-      return typeof val === 'function'
-        ? (val as (...args: unknown[]) => unknown).bind(receiver)
-        : val;
+      if (typeof val !== 'function' || Object.prototype.hasOwnProperty.call(target, prop)) {
+        return val;
+      }
+      return (val as (...args: unknown[]) => unknown).bind(receiver);
     },
   });
+}
+
+/**
+ * Build a `GciLibrary` the way a session gets one: constructed, then wrapped.
+ *
+ * The single place that decides what a session's GCI library is made of, so
+ * integration tests exercise the same object production does. They used to
+ * build a bare `new GciLibrary(...)`, which is why #646 — a wrapper stripping
+ * `.async` off every koffi binding — survived two months of green CI: no test
+ * ever ran through the wrapped object. Add any future wrapping HERE, never at
+ * a call site, or the tests stop covering it again.
+ *
+ * `nativeSocketLibrary` is a parameter only because the harness substitutes a
+ * fake one; production omits it and `GciLibrary` makes its own.
+ */
+export function createSessionGciLibrary(
+  libraryPath: string,
+  nativeSocketLibrary?: NativeSocketLibrary,
+): GciLibrary {
+  return wrapWithEnhancedInspectorPerfProxy(
+    nativeSocketLibrary === undefined
+      ? new GciLibrary(libraryPath)
+      : new GciLibrary(libraryPath, nativeSocketLibrary),
+  );
 }

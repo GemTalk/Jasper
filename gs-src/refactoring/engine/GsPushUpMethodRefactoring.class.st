@@ -268,10 +268,12 @@ GsPushUpMethodRefactoring >> commaList: aCollection [
 ]
 
 { #category : 'private' }
-GsPushUpMethodRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsPushUpMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }
@@ -346,14 +348,14 @@ GsPushUpMethodRefactoring >> stagePushOf: aSelector into: cs [
 	existing := self targetExistingSourceFor: aSelector.
 	existing isNil
 		ifTrue: [cs
-			addMethodAddInDictionary: (self dictNameForClass: superClass)
+			addMethodAddInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
 			category: cat
 			newSource: src]
 		ifFalse: [cs
-			addMethodOverwriteInDictionary: (self dictNameForClass: superClass)
+			addMethodOverwriteInDictionary: (self dictForClass: superClass)
 			className: superClass name asString
 			isMeta: isMeta
 			selector: aSelector
@@ -362,7 +364,7 @@ GsPushUpMethodRefactoring >> stagePushOf: aSelector into: cs [
 			newSource: src
 			warning: (self overwriteWarningFor: aSelector)].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -511,7 +513,7 @@ GsPushUpMethodRefactoring >> applyMethodAdd: aChange [
 	 fails, so the record -- and with it the paired remove's authority to strip the source -- is
 	 only reached once the method is actually installed on the superclass."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -532,7 +534,7 @@ GsPushUpMethodRefactoring >> applyMethodRemove: aChange [
 	 and strip the source. No commit."
 	| cls target |
 	(appliedAddSelectors includes: aChange selector asSymbol) ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	target removeSelector: aChange selector asSymbol.

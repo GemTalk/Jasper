@@ -1,0 +1,110 @@
+# Gitleaks configuration for the release pipeline's scan of the packaged .vsix.
+#
+# Open VSX runs its own gitleaks-based scan server-side, AFTER accepting an
+# upload, and offers no way to allow a false positive. A hit there leaves the
+# version inactive or rejected — and by then the version number is spent,
+# because both registries are immutable per (publisher, name, version). This
+# repo has been bitten twice (1.7.6 and 1.8.3, both GemStone's *public*
+# default password 'swordfish'), each time failing only the Open VSX half
+# after the Marketplace had already published. Scanning the package ourselves,
+# before anything is uploaded, turns that into a re-dispatch instead.
+#
+# The scan target is the UNZIPPED .vsix, not the working tree: the tree both
+# misses what ships (the esbuild bundles are in the package but not in git)
+# and floods on what does not (.vscodeignore excludes client/tmp/**, ~1GB of
+# fixtures including example private keys).
+#
+# Because esbuild inlines every dependency into one file, our code and vendor
+# code share `extension.js` and cannot be separated by path. The allowlists
+# below are therefore matched on the secret text itself and kept as narrow as
+# the false positive allows, so a real secret in the same file is still caught.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Class identifiers from the bundled ASN.1/PKCS crypto libraries. gitleaks'
+generic-api-key rule scores these on entropy as though the identifier were a
+key. Anchored to the exact names so an unrelated high-entropy assignment is
+still reported.
+"""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = [
+    '''^(RecipientEncryptedKeys|PKCS8ShroudedKeyBag)(_\d+)?$''',
+]
+
+[[allowlists]]
+description = """
+PEM delimiter literals inside code that parses and formats PEM, not key
+material. gitleaks' private-key rule spans from a BEGIN marker to an END
+marker, and in PEM-handling code both appear on one line with only code
+between them. The alternatives below require the delimiter to be followed
+immediately by a regex terminator or by the end of a JavaScript string —
+a real embedded key has base64 there instead, so it still trips the rule.
+"""
+targetRules = ["private-key"]
+regexTarget = "secret"
+regexes = [
+    '''^-----BEGIN [A-Z ]*PRIVATE KEY-----(/|\\n"\s*\+)''',
+]
+
+# Open VSX's scanner runs rules gitleaks' default set does not, and the one
+# that has actually rejected this repo is among them: a default `gitleaks dir`
+# over the 1.9.0 package does NOT flag either form of the password literal
+# that failed 1.7.6 and 1.8.3. Scanning with the defaults alone would sail
+# past the exact failure this job exists to prevent, so the rule is restated
+# here explicitly.
+#
+# It mirrors client/src/__tests__/publishSecretScan.test.ts, which stays: that
+# test fails in seconds on a developer's machine and in every PR, long before
+# a release is dispatched. This is the backstop that also covers the bundle,
+# server/, mcp-server/ and resources/ — everything the .vsix actually ships
+# and the unit test never sees.
+[[rules]]
+id = "gemstone-password-literal"
+description = "A `password`-suffixed key assigned a short quoted literal — the form Open VSX's hashicorp-tf-password rule rejects"
+regex = '''(?i)password\w*\s*[:=]\s*["'][A-Za-z0-9]{7,20}["']'''
+tags = ["password", "open-vsx"]
+
+# The delimiter allowlist above is scoped to `private-key`, and this rule is
+# why. RE2 has no lookahead, so "allow the header but not the contents" cannot
+# be expressed as a single negative regex: an allowlist permissive enough to
+# let the header through also lets through whatever follows it. A real key
+# split across string literals — "-----BEGIN PRIVATE KEY-----\n" + "MIIEv..."
+# — begins with exactly the prefix that allowlist matches, and was allowed by
+# an earlier version of this file.
+#
+# So the header and the key material are separated into two rules. This one
+# matches the material: a PEM header followed, within a few characters of
+# punctuation or escape, by a long unbroken base64 run. No allowlist targets
+# it, so nothing above can suppress it. The false positives cannot reach it —
+# PEM-handling code has identifiers and dots between the markers, never a
+# 40-character base64 run.
+[[rules]]
+id = "gemstone-pem-key-material"
+description = "A PEM private-key header followed by actual base64 key material"
+regex = '''-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[\s\S]{0,40}?[A-Za-z0-9+/]{40,}'''
+tags = ["private-key", "key-material"]
+
+# What this cannot do, stated plainly so the job is not mistaken for a
+# guarantee: gitleaks matches TEXT, not program semantics. Every rule and
+# every allowlist here is defeated by string concatenation —
+# "-----BEGIN PRIVATE" + " KEY-----", or "sword" + "fish" — because the
+# literal never appears contiguously in the file. Base64 key material with no
+# header attached is invisible too. Verified, not assumed.
+#
+# That is acceptable because of what this job is FOR. It exists to predict
+# Open VSX's server-side verdict before an upload burns a version number, and
+# Open VSX runs the same class of regex scanner: a secret that evades these
+# rules evades theirs too, so it does not cause the rejection this guards
+# against. The control is calibrated to the failure it is meant to catch —
+# an accidental commit, which is never obfuscated — not to a determined
+# author, which no regex can stop.
+#
+# Deliberate smuggling is a different threat with different defences: code
+# review, the merge queue, and the release-approval gate. Do not answer it by
+# loosening these rules to chase concatenation patterns. Each looser rule
+# costs false positives, and a scan that cries wolf is a scan someone
+# eventually disables — which is strictly worse than one with a known limit.

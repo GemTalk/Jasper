@@ -17,6 +17,8 @@
  */
 
 import { TopazRegion } from '../topaz/topazParser';
+import { Lexer } from '../lexer/lexer';
+import { TokenType } from '../lexer/tokens';
 
 export interface TonelHeader {
   type: 'Class' | 'Extension' | 'Package';
@@ -31,6 +33,13 @@ export interface TonelHeader {
 
 export function parseTonelDocument(text: string): TopazRegion[] {
   const lines = text.split('\n');
+  // Offset of each line within `text`, so findMethodEnd can lex a tail of the
+  // document in place instead of slicing it once per method.
+  const lineStarts: number[] = [];
+  for (let offset = 0, n = 0; n < lines.length; n++) {
+    lineStarts.push(offset);
+    offset += lines[n].length + 1; // + the \n that split() removed
+  }
   const regions: TopazRegion[] = [];
   let i = 0;
 
@@ -147,7 +156,7 @@ export function parseTonelDocument(text: string): TopazRegion[] {
     const className = sigClassName || headerClassName;
 
     // Find the matching ] via bracket counting
-    const closingLine = findMethodEnd(lines, signatureLine);
+    const closingLine = findMethodEnd(text, lineStarts, signatureLine);
 
     // Extract body text (lines between [ and ])
     const bodyLines = lines.slice(signatureLine + 1, closingLine);
@@ -204,61 +213,42 @@ function parseMethodSignature(line: string): {
 }
 
 /**
- * Find the line of the closing ] that ends a method body.
- * Uses bracket counting, respecting strings ('...') and comments ("...").
+ * Find the line holding the `]` that closes a method opened on `openLine`.
+ *
+ * The scan runs on the lexer rather than on a character loop of its own. That is
+ * not tidiness: a hand-rolled loop has to be taught every Smalltalk quoting rule
+ * separately, and when it misses one it does not fail — it miscounts brackets and
+ * runs this method's region on to the end of the file, taking every method below
+ * it along. Folding, the workspace symbol index, code lenses, the breadcrumb,
+ * Ctrl+T and the System Browser's cursor-to-method mapping all read these
+ * regions, so they go wrong together and silently. Issue 466 was exactly that,
+ * from a missing case for `$`.
+ *
+ * `#[` is a single token to the lexer, byte-array literal and all, so it has to
+ * be counted as an opener here — its `]` still arrives as a plain RightBracket.
+ *
+ * `lineStarts[n]` is the offset of line n within `text`.
  */
-function findMethodEnd(lines: string[], openLine: number): number {
+function findMethodEnd(text: string, lineStarts: number[], openLine: number): number {
+  const lexer = new Lexer(text, lineStarts[openLine], openLine);
   let depth = 0;
-  let inString = false;
-  let inComment = false;
 
-  for (let i = openLine; i < lines.length; i++) {
-    const line = lines[i];
-    for (let j = 0; j < line.length; j++) {
-      const ch = line[j];
+  for (;;) {
+    const token = lexer.nextToken();
+    if (token.type === TokenType.EOF) break;
 
-      if (inString) {
-        if (ch === "'") {
-          // Check for escaped quote ''
-          if (j + 1 < line.length && line[j + 1] === "'") {
-            j++; // skip escaped quote
-          } else {
-            inString = false;
-          }
-        }
-        continue;
-      }
-
-      if (inComment) {
-        if (ch === '"') {
-          inComment = false;
-        }
-        continue;
-      }
-
-      if (ch === "'") {
-        inString = true;
-        continue;
-      }
-
-      if (ch === '"') {
-        inComment = true;
-        continue;
-      }
-
-      if (ch === '[') {
-        depth++;
-      } else if (ch === ']') {
-        depth--;
-        if (depth === 0) {
-          return i;
-        }
+    if (token.type === TokenType.LeftBracket || token.type === TokenType.HashLeftBracket) {
+      depth++;
+    } else if (token.type === TokenType.RightBracket) {
+      depth--;
+      if (depth === 0) {
+        return token.range.start.line;
       }
     }
   }
 
   // Unclosed bracket — return last line
-  return lines.length - 1;
+  return lineStarts.length - 1;
 }
 
 /**

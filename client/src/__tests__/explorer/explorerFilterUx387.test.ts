@@ -37,6 +37,7 @@ function makeViews() {
   const pane = () => ({
     description: '',
     reveal: vi.fn(() => Promise.resolve()),
+    visible: true,
     selection: [] as unknown[],
   });
   const method = pane();

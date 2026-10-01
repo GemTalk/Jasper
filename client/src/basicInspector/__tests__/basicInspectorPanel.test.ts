@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
 /** Settings the panel reads, so a test can stand in for the user's own. */
-const settings = vi.hoisted(() => ({ loadAllPageLimit: undefined as number | undefined }));
+const settings = vi.hoisted(() => ({
+  loadAllPageLimit: undefined as number | undefined,
+  sessionMode: undefined as string | undefined,
+}));
 
 vi.mock('vscode', () => ({
   window: {
@@ -15,8 +18,11 @@ vi.mock('vscode', () => ({
       get: (key: string, fallback: unknown) =>
         key === 'inspector.loadAllPageLimit' && settings.loadAllPageLimit !== undefined
           ? settings.loadAllPageLimit
-          : fallback,
+          : key === 'sessionMode' && settings.sessionMode !== undefined
+            ? settings.sessionMode
+            : fallback,
     }),
+    onDidChangeConfiguration: () => ({ dispose() {} }),
   },
   commands: { executeCommand: vi.fn() },
   env: { clipboard: { writeText: vi.fn(() => Promise.resolve()) } },
@@ -135,6 +141,7 @@ const HEADER = {
 beforeEach(() => {
   vi.clearAllMocks();
   settings.loadAllPageLimit = undefined;
+  settings.sessionMode = undefined;
   callInProgress = 0;
   session = makeSession();
   panel = makeMockPanel();
@@ -177,14 +184,31 @@ describe('opening the panel', () => {
   it('serves a page whose scripts are locked to a single nonce', () => {
     open();
 
-    // Three script tags: the shared column model, this panel's view, and the
-    // one-line bootstrap that wires them together. Counting them (rather than
-    // scanning for `<script`) keeps the assertion off the `<script>` mentions
-    // inside the injected files' own comments.
+    // Four script tags: the shared evaluate pane, the shared column model, this
+    // panel's view, and the one-line bootstrap that wires them together.
+    // Counting them (rather than scanning for `<script`) keeps the assertion off
+    // the `<script>` mentions inside the injected files' own comments.
     const nonce = /script-src 'nonce-([0-9a-f]{32})'/.exec(panel.webview.html)?.[1];
     expect(nonce).toBeDefined();
     expect(panel.webview.html).not.toContain('<script src');
-    expect(panel.webview.html.split(`<script nonce="${nonce}">`)).toHaveLength(4);
+    expect(panel.webview.html.split(`<script nonce="${nonce}">`)).toHaveLength(5);
+  });
+
+  it('serves the shared evaluate-pane script, ahead of the view that uses it', () => {
+    open();
+
+    const html = panel.webview.html;
+
+    // The webview scripts are injected as raw text, so nothing links them: the view calls
+    // `EvaluatePane.create` while wiring the pane, and a page that never defined that global — or
+    // defined it after the view — throws there, leaving an evaluate pane that does nothing. Every
+    // jsdom test loads the three scripts by hand, so the page itself is the only thing that can be
+    // asked whether the real webview would have them, and in what order.
+    const defined = html.indexOf('root.EvaluatePane =');
+    const used = html.indexOf('EvaluatePane.create(');
+
+    expect(defined).toBeGreaterThanOrEqual(0);
+    expect(used).toBeGreaterThan(defined);
   });
 
   it('loads no script the content-security-policy would block', () => {
@@ -192,7 +216,21 @@ describe('opening the panel', () => {
 
     // A `</script>` inside an injected file would close the block early and
     // strand the rest of it as page text, whatever the nonce says.
-    expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(3);
+    expect(panel.webview.html.match(/<\/script>/g)).toHaveLength(4);
+  });
+
+  it("builds the header rows' Copy-only menu and hands it to the view", () => {
+    // The view is exercised in jsdom with a hand-built harness, so only the page
+    // can say whether the real webview has the element the view needs.
+    open();
+
+    const html = panel.webview.html;
+    const id = /headerCtxMenu:\s*document\.getElementById\('([^']+)'\)/.exec(html)?.[1];
+    expect(id).toBeDefined();
+    const menu = new RegExp(`<div id="${id}"[^>]*>([\\s\\S]*?)</div>\\s*</div>`).exec(html)?.[1];
+    expect(menu).toBeDefined();
+    const actions = Array.from(menu!.matchAll(/data-action="([^"]+)"/g), (m) => m[1]);
+    expect(actions).toEqual(['copy']);
   });
 
   it('sends the inspected object once the webview says it is ready', () => {
@@ -681,6 +719,53 @@ describe('acting on a row', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();
   });
 
+  /**
+   * The Meta tab's Browse Method is the same landing one level in: the class the
+   * row's value belongs to, refined to the selector — which is where the
+   * debugger's frame Browse goes too.
+   */
+  it('browses a Meta tab selector to that method in the Explorer', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+      dictName: 'UserGlobals',
+      className: 'Account',
+    });
+
+    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Account',
+      session.id,
+      'UserGlobals',
+      { selector: 'deposit:', isMeta: false },
+    );
+  });
+
+  /** A selector that exists on both sides must land on the side being looked at. */
+  it('carries the class side through', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue({
+      dictName: 'UserGlobals',
+      className: 'Account',
+    });
+
+    send({ command: 'browseMethod', oop: '900', selector: 'new', isMeta: true });
+
+    expect(vi.mocked(vscode.commands.executeCommand).mock.calls[0][4]).toMatchObject({
+      isMeta: true,
+    });
+  });
+
+  it('names the method it could not locate rather than navigating to nothing', () => {
+    vi.mocked(queries.fetchBrowseLocation).mockReturnValue(null);
+
+    send({ command: 'browseMethod', oop: '900', selector: 'deposit:', isMeta: false });
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('#deposit:'),
+    );
+  });
+
   it('copies text to the clipboard', () => {
     send({ command: 'copyText', text: '900', what: 'OOP' });
 
@@ -718,6 +803,16 @@ describe('the panel title and lifetime', () => {
     send({ command: 'setTitle', title: 'Account › balance' });
 
     expect(panel.title).toBe('Inspector: Account › balance');
+  });
+
+  it('keeps the session in the title, in multiple-session mode, as the column changes', () => {
+    settings.sessionMode = 'multiple';
+    open();
+    expect(panel.title).toBe(`Inspector · Session ${session.id}`);
+
+    send({ command: 'setTitle', title: 'Account › balance' });
+
+    expect(panel.title).toBe(`Inspector: Account › balance · Session ${session.id}`);
   });
 
   it('falls back to a plain name when there is nothing to name it after', () => {

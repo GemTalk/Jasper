@@ -28,6 +28,12 @@ This suite pins down:
 setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
 Target selectors that must be the LAST sender in a test use image-unique names
 (gsim...) so no unrelated sender in the image perturbs the count.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
 "
 Class {
 	#name : 'GsInlineMethodRefactoringTest',
@@ -607,4 +613,29 @@ GsInlineMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnErro
 GsInlineMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsInlineMethodRefactoring applyForToken: 'nope' deselected: #())
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsInlineMethodRefactoringTest >> testInlineRewritesTheActedOnClassNotAGlobalFirstMatch [
+	"An inline compiles the rewritten caller and removes the inlined method, both through changes
+	 that record their class by NAME and are re-resolved at apply time with
+	 `environment classNamed:` -- first-match across the symbol list. A decoy binding GsIMBase
+	 ahead of UserGlobals used to take the write (#396)."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsIMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsIMBase'
+		instVarNames: #('count')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self inlineIn: base selector: #runBump atSendOf: 'bump') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (base compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	 self assert: (decoyClass compiledMethodAt: #runBump environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

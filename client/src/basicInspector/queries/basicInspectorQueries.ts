@@ -568,11 +568,16 @@ export interface BrowseLocation {
 /**
  * Resolve a value's class and the symbol dictionary holding it, for "Browse
  * Class" on a row — which navigates the Explorer, and is handed the dictionary
- * so a class name shadowed across two of them resolves to this one. Like `fetchMethodBrowseLocation` in the Enhanced Inspector's
- * queries, minus STONJSON and minus the method category — this one browses to
- * the class, not to a selector. The dictionary itself comes from the shared
- * {@link homeDictionaryNameExpr}, which both of those and the debugger's Browse
- * also ask, so there is one rule for which dictionary owns a class.
+ * so a class name shadowed across two of them resolves to this one. The Meta
+ * tab's "Browse Method" asks the same question and adds the selector it was
+ * clicked on, so this answers where a browse lands either way.
+ *
+ * Like `fetchMethodBrowseLocation` in the Enhanced Inspector's queries, minus
+ * STONJSON and minus the method category — this one resolves only the class, so
+ * a caller browsing to a selector supplies the selector itself. The dictionary
+ * comes from the shared {@link homeDictionaryNameExpr}, which both of those and
+ * the debugger's Browse also ask, so there is one rule for which dictionary owns
+ * a class.
  */
 export function fetchBrowseLocation(execute: QueryExecutor, oop: bigint): BrowseLocation | null {
   const code = `| obj cls dictName out ${DUMP_PAYLOAD_TEMPS} |

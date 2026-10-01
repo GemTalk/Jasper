@@ -8,12 +8,14 @@ vi.mock('../../refactoring/extractSuperclassCommand', () => ({
   insertSuperclassCommand: vi.fn(),
   extractSuperclassCommand: vi.fn(),
 }));
+vi.mock('../../refactoring/splitClassCommand', () => ({ splitClassCommand: vi.fn() }));
 
 import { ExplorerController, HierarchyItem } from '../../gemstoneExplorer';
 import {
   insertSuperclassCommand,
   extractSuperclassCommand,
 } from '../../refactoring/extractSuperclassCommand';
+import { splitClassCommand } from '../../refactoring/splitClassCommand';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 /**
@@ -47,6 +49,8 @@ const hierarchyNode = () => new HierarchyItem('EsCircle', 'EsShapeDemo', 'self',
 const cases = [
   { title: 'insertSuperclass', command: vi.mocked(insertSuperclassCommand) },
   { title: 'extractSuperclass', command: vi.mocked(extractSuperclassCommand) },
+  // Split Class takes its class and dictionary the same way, so it is held to the same rules.
+  { title: 'splitClass', command: vi.mocked(splitClassCommand) },
 ] as const;
 
 beforeEach(() => vi.clearAllMocks());
@@ -75,14 +79,30 @@ describe.each(cases)('ExplorerController.$title', ({ title, command }) => {
     );
   });
 
-  it('passes no dictionary for a hierarchy-tree node', async () => {
+  it("passes a hierarchy node's OWN dictionary, not the selection", async () => {
+    // A hierarchy node names a class that usually lives outside the selected dictionary, and it
+    // carries its own. Passing nothing let the engine take whichever class of that name the
+    // symbol list reached first -- the same defect as #396, one pane over.
     const { ctl } = makeController({} as ActiveSession);
     command.mockResolvedValue({ newClass: 'EsRenderable', applied: 3 });
 
     await run(ctl, hierarchyNode() as never);
 
     expect(command).toHaveBeenCalledWith(
-      expect.objectContaining({ className: 'EsCircle', dict: undefined }),
+      expect.objectContaining({ className: 'EsCircle', dict: 'EsShapeDemo' }),
+    );
+  });
+
+  it("passes a hierarchy node's dictionary POSITION when the node carries one", async () => {
+    // Two dictionaries can share a name; the position is what says which one the node is in.
+    const { ctl } = makeController({} as ActiveSession);
+    command.mockResolvedValue({ newClass: 'EsRenderable', applied: 3 });
+    const placed = new HierarchyItem('EsCircle', 'EsShapeDemo', 'self', 0, false, undefined, 4);
+
+    await run(ctl, placed as never);
+
+    expect(command).toHaveBeenCalledWith(
+      expect.objectContaining({ className: 'EsCircle', dict: 4 }),
     );
   });
 

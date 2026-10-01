@@ -30,9 +30,11 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactoringUndoAvailability';
+import { type UndoStatus } from './undoRefactoringPreview';
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
+import { REFACTORING_APPLIED_COMMAND } from './refactoringAppliedEvent';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
  *  message (the quiet default the in-editor refactorings use) or a toast (what the
@@ -42,16 +44,52 @@ export type PlainNoticeStyle = 'statusBar' | 'toast';
 const UNDO_ACTION = 'Undo';
 
 /**
- * Announce a completed refactoring and, when the stone recorded an undo for it, put it on
- * the undo stack and offer to undo it right there. Returns immediately.
+ * Put the stone's recorded reversal on the client's undo stack, and answer what it found.
+ *
+ * Separate from the toast because a refactoring that only PARTLY applied still needs the Undo
+ * button armed. The stone has the reversal -- the recording sites now write it before they report
+ * a failure -- but nothing reaches the user until an entry is pushed here, so a partial apply
+ * offered no way back at all and the only recourse was an abort, which discards every uncommitted
+ * change in the session rather than the one refactoring (#396).
+ *
+ * Pushing is all it takes: the stack's change listener is what lights the pane's Undo button and
+ * writes its tooltip, so no recording site updates the UI itself.
+ */
+export function armRefactoringUndo(session: ActiveSession | undefined): UndoStatus {
+  const status = checkRefactoringUndoAvailable(session);
+  if (!status.available || !session) return status;
+  logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
+  pushUndoEntry({
+    kind: 'refactoring',
+    sessionId: session.id,
+    label: status.label,
+    sequence: status.sequence,
+  });
+  return status;
+}
+
+/**
+ * Announce a completed refactoring and, when the stone recorded an undo for it, put it on the
+ * undo stack and offer to undo it right there. Returns immediately.
  */
 export function notifyRefactoringApplied(
   session: ActiveSession | undefined,
   message: string,
   plainNotice: PlainNoticeStyle = 'statusBar',
 ): void {
+  // An open method-history panel refreshes itself after a Save, and must do the same after a
+  // refactoring — a method changed either way, and having to close and reopen the panel to see the
+  // new version is the kind of inconsistency that makes the history look unreliable. This is the one
+  // place every refactoring passes through, so it is the one place that has to say so. Fired before
+  // the notice because the panel should be right by the time the toast is read, and swallowed if no
+  // Explorer is registered (nothing is listening, and a refactoring must not fail over a redraw).
+  if (session) {
+    void Promise.resolve(
+      vscode.commands.executeCommand(REFACTORING_APPLIED_COMMAND, session.id),
+    ).then(undefined, () => undefined);
+  }
   void (async () => {
-    const status = checkRefactoringUndoAvailable(session);
+    const status = armRefactoringUndo(session);
     if (!status.available || !session) {
       logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);
@@ -62,16 +100,6 @@ export function notifyRefactoringApplied(
       if (session && !status.supported) warnUndoUnsupported(session);
       return;
     }
-    logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
-    // Pushing is all it takes: the stack's change listener is what lights the pane's Undo
-    // button and writes its tooltip, so no recording site updates the UI itself.
-    pushUndoEntry({
-      kind: 'refactoring',
-      sessionId: session.id,
-      label: status.label,
-      sequence: status.sequence,
-    });
-
     const choice = await vscode.window.showInformationMessage(message, UNDO_ACTION);
     if (choice !== UNDO_ACTION) return;
     await vscode.commands.executeCommand(UNDO_COMMAND);

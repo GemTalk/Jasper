@@ -173,14 +173,23 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 	 Recording is strictly best-effort and never allowed to break an apply: if the
 	 snapshot or the diff raises, the previous entry is cleared (never left stale) and
 	 the apply's own result is returned unchanged."
-	| ref slots before result after undo recorded |
+	| ref slots before result after undo recorded histSlots histBefore |
 	ref := SessionTemps current at: token asSymbol ifAbsent: [nil].
 	ref isNil ifTrue: [^'{"applied":0,"failed":[],"error":"preview session expired","undoRecorded":false}'].
 	slots := [self slotsTouchedIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
 	before := slots isNil ifTrue: [nil] ifFalse: [[self snapshot: slots] on: Error do: [:ex | nil]].
+	"Method HISTORY is not bound to undo eligibility. slotsTouchedIn: answers nil as soon as any
+	 change reshapes a class, because no Tier-1 undo can reverse that -- but the method changes in
+	 that same change set still happened, and their history is still owed. So the history pair is
+	 taken over the method slots alone, whether or not an undo entry will be recorded."
+	histSlots := [self methodSlotsIn: ref changeSet deselected: deselectedIds] on: Error do: [:ex | nil].
+	histBefore := histSlots isNil ifTrue: [nil] ifFalse: [[self snapshot: histSlots] on: Error do: [:ex | nil]].
 	"The apply itself is NEVER wrapped: it must behave exactly as it does without undo."
 	result := ref applyDeselected: deselectedIds.
 	recorded := false.
+	histBefore isNil ifFalse: [
+		[self recordMethodHistoryFrom: histBefore to: (self snapshot: histSlots)]
+			on: Error do: [:ex | nil]].
 	before isNil
 		ifTrue: [self clear]
 		ifFalse: [
@@ -193,6 +202,71 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> methodSlotsIn: aChangeSet deselected: deselectedIds [
+	"Every METHOD SLOT the applying changes touch, de-duplicated -- the same list
+	 slotsTouchedIn: builds, except that a change which is NOT a method change is skipped rather
+	 than abandoning the whole answer.
+
+	 That difference is the point. slotsTouchedIn: answers nil for a change set that reshapes a
+	 class, because undo cannot reverse one; method history has no such limit, and the methods such
+	 a refactoring recompiles are owed their versions either way."
+	| ids kinds slots seen |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	kinds := self methodKinds asIdentitySet.
+	slots := OrderedCollection new.
+	seen := Set new.
+	aChangeSet changes do: [:change |
+		((ids includes: change id asSymbol) not
+			and: [kinds includes: change kind asSymbol]) ifTrue: [
+				self add: change selector forChange: change to: slots seen: seen.
+				change newSelector isNil ifFalse: [
+					self add: change newSelector forChange: change to: slots seen: seen]]].
+	^slots asArray
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> recordMethodHistoryFrom: beforeStates to: afterStates [
+	"Add the version this refactoring just compiled to each recompiled method's history.
+
+	 Method history is otherwise bracketed around the CLIENT's compile query only, so a
+	 method changed by a refactoring gained no version and its history silently stopped at
+	 the last hand edit. This is the one place that fixes it for every refactoring at once:
+	 the before/after snapshots taken for the undo entry are exactly the pair history wants,
+	 already narrowed to the method slots the change set touched.
+
+	 Only slots that EXIST afterwards are recorded -- the old selector of a rename is gone,
+	 and a removal is not a version of anything. A slot that did not exist before (the new
+	 selector of a rename) has nothing to seed, so its history starts at the source the
+	 rename compiled.
+
+	 The recorder is JasperMethodHistory, which the Jasper client installs into SessionTemps
+	 at login; it is absent on a session that never ran that bootstrap (a plain topaz login,
+	 say), and this is then a no-op. Guarded and best-effort throughout, exactly like the
+	 undo recording it rides along with: a refactoring must never fail because history could
+	 not be written."
+	| hist env |
+	hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	hist isNil ifTrue: [^self].
+	env := GsRefactoringEnvironment new.
+	1 to: beforeStates size do: [:i |
+		[| b a slot cls target |
+		 b := beforeStates at: i.
+		 a := afterStates at: i.
+		 (a at: 2) ifTrue: [
+			slot := a at: 1.
+			cls := env classNamed: (slot at: 2) inDictionaryNamed: (slot at: 1).
+			cls isNil ifFalse: [
+				target := (slot at: 3) ifTrue: [cls class] ifFalse: [cls].
+				hist
+					recordRefactoredIn: target
+					selector: (slot at: 4) asSymbol
+					oldSource: ((b at: 2) ifTrue: [b at: 3] ifFalse: [nil])
+					newSource: (a at: 3)
+					category: (a at: 4)]]]
+			on: Error do: [:ex | nil]]
 ]
 
 { #category : 'recording' }
@@ -227,6 +301,15 @@ GsRefactoringUndo class >> deselectionFor: aKind [
 
 { #category : 'recording' }
 GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn label: aLabel engine: engineName [
+	"Unscoped; see the #classDictName: variant, which this delegates to. Kept so a caller that
+	 has no dictionary to give still records what it always did (#396)."
+	^self
+		recordReverseRename: aKind className: cn from: fromName to: toName
+		scopeKind: sk scopeDictName: sdn classDictName: nil label: aLabel engine: engineName
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn classDictName: cd label: aLabel engine: engineName [
 	"Record that a reversible operation was applied, so it can be reversed by re-applying the
 	 opposite one. Named for its first use (renames); it now also records instance-variable
 	 add/remove, whose opposite is the other operation of the same engine.
@@ -244,13 +327,27 @@ GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromNa
 	"Filled slot by slot rather than with a six-argument `Array with:...`: 3.6.2's Array class
 	 does not implement past four (MessageNotUnderstood 2010), so the longer forms are a 3.7-only
 	 convenience the matrix cannot use."
-	op := Array new: 6.
+	op := Array new: 8.
 	op at: 1 put: kind.
 	op at: 2 put: cn asString.
 	op at: 3 put: fromName asString.
 	op at: 4 put: toName asString.
 	op at: 5 put: (sk isNil ifTrue: [nil] ifFalse: [sk asSymbol]).
 	op at: 6 put: (sdn isNil ifTrue: [nil] ifFalse: [sdn asString]).
+	"Slot 7 is the HOME dictionary of `cn` -- distinct from slot 6, which is a rename's SCOPE.
+	 Without it the reversal re-resolved `cn` by first-match and re-applied the opposite
+	 operation to a same-named class in another dictionary (#396).
+
+	 It is the SymbolDictionary OBJECT, resolved here, at record time. The client sends a
+	 SymbolList index, and an index is only meaningful while the list keeps its order -- Jasper
+	 lets the user insert, remove and reorder dictionaries (and undo those edits) between a
+	 refactoring and its Undo, after which the index names a different dictionary and the
+	 reversal reshapes a class the user never touched. SessionTemps holds objects, so the
+	 reference can be pinned instead of re-derived. Slot 8 pins the class the same way: its
+	 class history, the one object every version of it shares and no other class does, so undo
+	 can tell 'the same class, re-versioned' from 'a different class of the same name'."
+	op at: 7 put: (self dictionaryObjectFor: cd).
+	op at: 8 put: (self lineageOfClassNamed: cn inDictionary: (op at: 7)).
 	SessionTemps current
 		at: self entryKey
 		put: (self new
@@ -259,6 +356,34 @@ GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromNa
 			sequence: self nextSequence
 			reverseOp: op).
 	^'ok'
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> dictionaryObjectFor: aDictRef [
+	"The SymbolDictionary aDictRef names -- a SymbolList index, a dictionary name, an actual
+	 SymbolDictionary, or nil for 'no dictionary was recorded'. Answers nil when it resolves to
+	 nothing, which scopes exactly as an unrecorded dictionary does."
+	| sl |
+	aDictRef isNil ifTrue: [^nil].
+	(aDictRef isKindOf: SymbolDictionary) ifTrue: [^aDictRef].
+	sl := System myUserProfile symbolList.
+	(aDictRef isKindOf: Integer) ifTrue: [
+		^(aDictRef < 1 or: [aDictRef > sl size]) ifTrue: [nil] ifFalse: [sl at: aDictRef]].
+	sl do: [:d |
+		(d name notNil and: [d name asSymbol == aDictRef asSymbol]) ifTrue: [^d]].
+	^nil
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> lineageOfClassNamed: aName inDictionary: aDictOrNil [
+	"The class history of the class aDictOrNil binds under aName, or nil when there is no such
+	 class (or no dictionary was recorded). Recorded so undo can require that the name still
+	 resolves to THAT class and not to a same-named replacement."
+	| bound |
+	aDictOrNil isNil ifTrue: [^nil].
+	bound := aDictOrNil at: aName asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	^[bound classHistory] on: Error do: [:e | nil]
 ]
 
 { #category : 'constants' }
@@ -273,20 +398,41 @@ GsRefactoringUndo class >> captureClassHistoryOf: aRootClassName [
 	"Snapshot, BEFORE a class-reshaping apply, the classHistory index of the named class and every
 	 descendant -- TOP-DOWN, which is the order the reversal must replay them in. Held pending
 	 until commitHistoryRevert:engine:created: promotes it. Answers 'ok', or 'not a class' when the
-	 name does not resolve (recording nothing rather than something wrong)."
+	 name does not resolve (recording nothing rather than something wrong).
+
+	 Unscoped; see #captureClassHistoryOf:inDictionary:."
+	^self captureClassHistoryOf: aRootClassName inDictionary: nil
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> captureClassHistoryOf: aRootClassName inDictionary: aDictName [
+	"As #captureClassHistoryOf:, with the root resolved inside aDictName rather than by
+	 first-match across the symbol list -- which captured, and later reverted, a same-named class
+	 from another dictionary (#396).
+
+	 Each entry records the dictionary of ITS OWN class, not the root's: a subtree can span
+	 dictionaries, and the reversal has to put every class back where it actually lives. Slot 4
+	 is its name, for display; slot 5 is the dictionary OBJECT, which is what the reversal
+	 resolves through. Two dictionaries can share a name, and an index recorded now would name a
+	 different dictionary once the user inserts, removes or reorders one (#396)."
 	| env cls ordered plan |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aRootClassName.
+	cls := env classNamed: aRootClassName inDictionaryNamed: aDictName.
 	cls isNil ifTrue: [^'not a class'].
 	ordered := OrderedCollection new.
 	ordered add: cls.
 	ordered addAll: (env descendantsOf: cls).
-	plan := ordered collect: [:c | | triple |
-		triple := Array new: 3.
-		triple at: 1 put: c name asString.
-		triple at: 2 put: (c classHistory indexOf: c).
-		triple at: 3 put: c definition.
-		triple].
+	plan := ordered collect: [:c | | entry home |
+		home := env dictionaryDefiningClass: c.
+		entry := Array new: 5.
+		entry at: 1 put: c name asString.
+		entry at: 2 put: (c classHistory indexOf: c).
+		entry at: 3 put: c definition.
+		entry at: 4 put: (home isNil
+			ifTrue: [nil]
+			ifFalse: [home name ifNil: [nil] ifNotNil: [:nm | nm asString]]).
+		entry at: 5 put: home.
+		entry].
 	SessionTemps current at: self pendingCaptureKey put: plan asArray.
 	^'ok'
 ]
@@ -364,12 +510,18 @@ GsRefactoringUndo class >> slotsTouchedIn: aChangeSet deselected: deselectedIds 
 
 { #category : 'recording' }
 GsRefactoringUndo class >> add: aSelector forChange: aChange to: slots seen: seen [
-	"Add the (class, side, selector) slot aChange addresses under aSelector, unless an
-	 identical slot is already in the list."
+	"Add the (dictionary, class, side, selector) slot aChange addresses under aSelector, unless an
+	 identical slot is already in the list.
+
+	 The dictionary is part of the key because a class name does not identify a class: a
+	 whole-system change set can touch the same selector on a same-named class in each of two
+	 dictionaries, and keyed by `Class>>selector` alone the second slot was dropped -- the undo
+	 then restored one class and reported success for both (#396)."
 	| meta key |
 	aSelector isNil ifTrue: [^self].
 	meta := aChange isMeta == true.
-	key := aChange className asString, (meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
+	key := aChange dictName printString, ' ', aChange className asString,
+		(meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
 	(seen includes: key) ifTrue: [^self].
 	seen add: key.
 	slots add: (Array
@@ -388,7 +540,7 @@ GsRefactoringUndo class >> snapshot: slots [
 	| env |
 	env := GsRefactoringEnvironment new.
 	^slots collect: [:slot | | cls target m |
-		cls := env classNamed: (slot at: 2).
+		cls := env classNamed: (slot at: 2) inDictionaryNamed: (slot at: 1).
 		target := cls isNil
 			ifTrue: [nil]
 			ifFalse: [(slot at: 3) ifTrue: [cls class] ifFalse: [cls]].
@@ -614,7 +766,7 @@ GsRefactoringUndo >> removePlan [
 ]
 
 { #category : 'history revert' }
-GsRefactoringUndo >> discardedMethodsFor: aClassName atIndex: anIndex [
+GsRefactoringUndo >> discardedMethodsFor: aClassName atIndex: anIndex inDictionary: aDictName [
 	"The methods reverting aClassName to version anIndex would DISCARD: those the class has NOW
 	 that the target version either lacks, or holds different source for. This is what makes the
 	 reversal a return to the PRE-REFACTORING STATE rather than a merge, and naming them is the
@@ -622,7 +774,7 @@ GsRefactoringUndo >> discardedMethodsFor: aClassName atIndex: anIndex [
 	 'Foo>>bar' / 'Foo class>>bar' strings, both sides."
 	| env cls hist target out |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aClassName.
+	cls := env classNamed: aClassName inDictionaryNamed: aDictName.
 	cls isNil ifTrue: [^Array new].
 	hist := cls classHistory.
 	(anIndex < 1 or: [anIndex > hist size]) ifTrue: [^Array new].
@@ -657,6 +809,39 @@ GsRefactoringUndo >> commaList: aCollection [
 ]
 
 { #category : 'history revert' }
+GsRefactoringUndo >> dictRefForEntry: anEntry [
+	"How to address a revert-plan entry's dictionary in a lookup: its CURRENT SymbolList index,
+	 found from the dictionary object the capture pinned -- 0 when that dictionary is no longer on
+	 the list, which resolves to no class and is reported rather than redirected. A plan recorded
+	 before the object was pinned has only the name (slot 4), or nothing, and scopes as it did."
+	| home sl |
+	home := anEntry size >= 5 ifTrue: [anEntry at: 5] ifFalse: [nil].
+	home isNil ifTrue: [^anEntry size >= 4 ifTrue: [anEntry at: 4] ifFalse: [nil]].
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == home ifTrue: [^i]].
+	^0
+]
+
+{ #category : 'history revert' }
+GsRefactoringUndo >> createdClassesDictionary [
+	"The dictionary the refactoring filed the classes it CREATED in -- its anchor's, the revert
+	 plan's root -- as the SymbolDictionary the capture pinned, or nil when none was recorded.
+	 Every caller today files a created class next to its anchor (none passes a dictionary of its
+	 own), so the root's dictionary is the created classes' dictionary."
+	| root |
+	(revertPlan isNil or: [revertPlan isEmpty]) ifTrue: [^nil].
+	root := revertPlan first.
+	^root size >= 5 ifTrue: [root at: 5] ifFalse: [nil]
+]
+
+{ #category : 'history revert' }
+GsRefactoringUndo >> createdClassesDictionaryName [
+	"The created classes' dictionary by name, for a plan recorded before the object was pinned."
+	(revertPlan isNil or: [revertPlan isEmpty or: [revertPlan first size < 4]]) ifTrue: [^nil].
+	^revertPlan first at: 4
+]
+
+{ #category : 'history revert' }
 GsRefactoringUndo >> revertChangeSet [
 	"A synthetic change set describing the reversal, so it previews through the same panel as
 	 everything else: one #classDefinitionEdit per class to revert -- a real definition diff, what
@@ -666,29 +851,104 @@ GsRefactoringUndo >> revertChangeSet [
 	| env cs |
 	env := GsRefactoringEnvironment new.
 	cs := GsRefactoringChangeSet new.
-	revertPlan do: [:entry | | cls hist target discarded change |
-		cls := env classNamed: (entry at: 1).
+	revertPlan do: [:entry | | cls hist target discarded change entryDict |
+		entryDict := self dictRefForEntry: entry.
+		cls := env classNamed: (entry at: 1) inDictionaryNamed: entryDict.
 		cls isNil ifFalse: [
 			hist := cls classHistory.
 			target := ((entry at: 2) between: 1 and: hist size)
 				ifTrue: [hist at: (entry at: 2)]
 				ifFalse: [nil].
 			change := cs
-				addClassDefinitionEditInDictionary: nil
+				addClassDefinitionEditInDictionary: (entry size >= 4 ifTrue: [entry at: 4] ifFalse: [nil])
 				className: (entry at: 1)
 				oldSource: cls definition
 				newSource: (target isNil ifTrue: [entry at: 3] ifFalse: [target definition]).
-			discarded := self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2).
+			discarded := self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2) inDictionary: entryDict.
 			discarded isEmpty ifFalse: [
 				change setWarning: 'Returning ', (entry at: 1),
 					' to its pre-refactoring state DISCARDS ', discarded size printString,
 					' method', (discarded size = 1 ifTrue: [''] ifFalse: ['s']),
 					' written since: ', (self commaList: discarded)]]].
-	self removePlan do: [:name | | cls |
-		cls := env classNamed: name.
-		cls isNil ifFalse: [
-			cs addClassRemoveInDictionary: nil className: name oldSource: cls definition]].
+	"A created class is unbound from the dictionary the refactoring filed it in, which is the
+	 dictionary its anchor lives in -- the revert plan's root. Scoping by that rather than by
+	 first-match keeps the unbind off a same-named class elsewhere on the symbol list (#396)."
+	self removePlan do: [:name | | cls home |
+		home := self createdClassesDictionary.
+		cls := home isNil
+			ifTrue: [env classNamed: name inDictionaryNamed: self createdClassesDictionaryName]
+			ifFalse: [home at: name asSymbol ifAbsent: [nil]].
+		(cls isKindOf: Class) ifTrue: [
+			cs
+				addClassRemoveInDictionary: self createdClassesDictionaryName
+				className: name
+				oldSource: cls definition]].
 	^cs
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> describeClass: aClass [
+	"`Shadowed in DictionaryA` -- a class named together with the dictionary it actually lives in,
+	 for the text of a decline.
+
+	 A decline that names only the class cannot be checked against what the user meant: when the
+	 name is shadowed there are two classes it could be about, and WHICH ONE the reversal resolved
+	 is the whole question (#396). Naming it turns 'Shadowed no longer declares abc' -- which reads
+	 as a bug in the undo -- into 'Shadowed in DictionaryA no longer declares abc', which says
+	 plainly that the reversal is looking at the wrong class and why."
+	| dict |
+	aClass isNil ifTrue: [^'the class'].
+	dict := GsRefactoringEnvironment new dictionaryDefiningClass: aClass.
+	^dict isNil
+		ifTrue: [aClass name asString, ' (in no dictionary)']
+		ifFalse: [aClass name asString, ' in ',
+			(dict name isNil ifTrue: ['an unnamed dictionary'] ifFalse: [dict name asString])]
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseOpClassDict [
+	"The SymbolDictionary recorded as the home of the reverse operation's class, or nil. An op
+	 recorded before #396 has six slots and no dictionary; nil scopes exactly as it did then.
+	 An op recorded by an older build of this fix may hold an index or a name instead, so those
+	 are still resolved rather than rejected."
+	| raw |
+	reverseOp isNil ifTrue: [^nil].
+	raw := reverseOp size >= 7 ifTrue: [reverseOp at: 7] ifFalse: [nil].
+	raw isNil ifTrue: [^nil].
+	(raw isKindOf: SymbolDictionary) ifTrue: [^raw].
+	^GsRefactoringUndo dictionaryObjectFor: raw
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseOpClassLineage [
+	"The class history pinned for the reverse operation's class, or nil when none was recorded."
+	reverseOp isNil ifTrue: [^nil].
+	^reverseOp size >= 8 ifTrue: [reverseOp at: 8] ifFalse: [nil]
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseOpClass [
+	"The class the reversal acts on, resolved through the dictionary pinned at record time.
+
+	 Three things have to still hold, and none of them is checked by resolving a name:
+	 1. the recorded dictionary is still on the symbol list -- the user can remove one;
+	 2. it still binds a class under the recorded name;
+	 3. that class is still the SAME class, by class history -- renaming a class away and
+	    creating a fresh one under the old name leaves the name bound and the lineage changed.
+	 A miss answers nil, and the caller declines with a reason rather than reshaping whatever
+	 the name happens to reach (#396)."
+	| dict bound recorded |
+	reverseOp isNil ifTrue: [^nil].
+	dict := self reverseOpClassDict.
+	dict isNil ifTrue: [^GsRefactoringEnvironment new classNamed: (reverseOp at: 2)].
+	(System myUserProfile symbolList includesIdentical: dict) ifFalse: [^nil].
+	bound := dict at: (reverseOp at: 2) asSymbol ifAbsent: [nil].
+	(bound isKindOf: Class) ifFalse: [^nil].
+	recorded := self reverseOpClassLineage.
+	recorded isNil ifTrue: [^bound].
+	^([bound classHistory] on: Error do: [:e | nil]) == recorded
+		ifTrue: [bound]
+		ifFalse: [nil]
 ]
 
 { #category : 'history revert' }
@@ -698,7 +958,10 @@ GsRefactoringUndo >> totalDiscardedCount [
 	revertPlan isNil ifTrue: [^0].
 	n := 0.
 	revertPlan do: [:entry |
-		n := n + (self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2)) size].
+		n := n + (self
+			discardedMethodsFor: (entry at: 1)
+			atIndex: (entry at: 2)
+			inDictionary: (self dictRefForEntry: entry)) size].
 	^n
 ]
 
@@ -714,7 +977,13 @@ GsRefactoringUndo >> applyHistoryRevert [
 	failures := OrderedCollection new.
 	revertPlan do: [:entry |
 		[| answer |
-		 answer := GsClassHistory revertClassNamed: (entry at: 1) toIndex: (entry at: 2).
+		 "Scoped to the dictionary the capture pinned for THIS class. Reverting by name alone
+		  rewrote whichever same-named class the symbol list reached first, and a dictionary
+		  NAME reaches the first of two same-named dictionaries (#396)."
+		 answer := GsClassHistory
+			revertClassNamed: (entry at: 1)
+			toIndex: (entry at: 2)
+			inDictionary: (self dictRefForEntry: entry).
 		 (answer indexOfSubCollection: '"reverted":true') > 0
 			ifTrue: [applied := applied + 1]
 			ifFalse: [
@@ -724,10 +993,22 @@ GsRefactoringUndo >> applyHistoryRevert [
 			on: Error do: [:e |
 				failures add: (Array with: (entry at: 1) with: (entry at: 1) with: e messageText)]].
 	env := GsRefactoringEnvironment new.
-	self removePlan do: [:name |
-		[| removed |
+	"Unbind the created class from the ONE dictionary the refactoring filed it in -- the
+	 dictionary its anchor lives in, which is the revert plan's root. Sweeping every dictionary
+	 that binds the name unbinds unrelated same-named classes too, and so does every dictionary
+	 that merely shares the recorded dictionary's NAME (#396)."
+	self removePlan do: [:name | | home homeName |
+		home := self createdClassesDictionary.
+		homeName := self createdClassesDictionaryName.
+		[| removed target |
 		 removed := false.
-		 (env dictionariesDefiningClassNamed: name) do: [:d |
+		 target := home notNil
+			ifTrue: [Array with: home]
+			ifFalse: [homeName isNil
+				ifTrue: [env dictionariesDefiningClassNamed: name]
+				ifFalse: [(env symbolList select: [:d |
+					d name notNil and: [d name asSymbol == homeName asSymbol]])]].
+		 target do: [:d |
 			(d removeKey: name asSymbol ifAbsent: [nil]) isNil ifFalse: [removed := true]].
 		 removed ifTrue: [applied := applied + 1]]
 			on: Error do: [:e |
@@ -795,11 +1076,10 @@ GsRefactoringUndo >> reverseRefactoring [
 	 and the apply must run against the SAME object, or the apply would re-derive a change set
 	 from a stone the preview has already described (and the change ids the client deselected
 	 would not match). Answers nil when the class can no longer be resolved."
-	| env cls kind |
+	| cls kind |
 	reverseRef isNil ifFalse: [^reverseRef].
 	reverseOp isNil ifTrue: [^nil].
-	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2).
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [^nil].
 	kind := reverseOp at: 1.
 	kind == #classRename ifTrue: [
@@ -847,30 +1127,39 @@ GsRefactoringUndo >> reverseUnavailableReason [
 	| env cls ref |
 	revertPlan isNil ifFalse: [
 		env := GsRefactoringEnvironment new.
-		(revertPlan anySatisfy: [:e | (env classNamed: (e at: 1)) notNil]) ifFalse: [
+		"Through dictRefForEntry:, which is what the REVERSAL uses. This asked by dictionary NAME
+		 while the revert asks the dictionary the capture pinned, so the gate and the work could
+		 disagree about which class they meant -- both ways round. With two dictionaries of one
+		 name and the class in the second, the name found the first, saw nothing, and refused an
+		 undo that would have worked; with the pinned dictionary gone and a twin still binding
+		 that name, the name found the twin's class, let the undo through, and every entry then
+		 failed on apply. A gate has to ask the question the work will ask."
+		(revertPlan anySatisfy: [:e |
+			(env classNamed: (e at: 1)
+				inDictionaryNamed: (self dictRefForEntry: e)) notNil]) ifFalse: [
 			^'None of the classes this refactoring reshaped still exist, so it cannot be reversed.'].
 		^nil].
 	reverseOp isNil ifTrue: [^nil].
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: (reverseOp at: 2).
+	cls := self reverseOpClass.
 	cls isNil ifTrue: [
 		^'Class ', (reverseOp at: 2), ' no longer exists, so the rename cannot be reversed.'].
 	"An instance-variable rename has no collision check of its own, so make the one that matters
 	 here explicitly: the name we would rename back TO must not already be declared."
 	(reverseOp at: 1) == #instVarRename ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 4)) ifTrue: [
-			^'Cannot rename back: ', (reverseOp at: 2), ' already declares an instance variable named ',
+			^'Cannot rename back: ', (self describeClass: cls), ' already declares an instance variable named ',
 			  (reverseOp at: 4), '.']].
 	"Reversing an ADD means removing the variable -- pointless, and misleading to offer, if it is
 	 no longer there. Reversing a REMOVE means adding it back, which duplicates it if something
 	 has re-declared the name (the class-creation primitive rejects that mid-apply, error 2271)."
 	(reverseOp at: 1) == #instVarAdd ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifFalse: [
-			^(reverseOp at: 2), ' no longer declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' no longer declares an instance variable named ', (reverseOp at: 3),
 			  ', so there is nothing to take back out.']].
 	(reverseOp at: 1) == #instVarRemove ifTrue: [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifTrue: [
-			^(reverseOp at: 2), ' already declares an instance variable named ', (reverseOp at: 3),
+			^(self describeClass: cls), ' already declares an instance variable named ', (reverseOp at: 3),
 			  ' again, so it cannot be added back.']].
 	ref := self reverseRefactoring.
 	ref isNil ifTrue: [
@@ -920,7 +1209,7 @@ GsRefactoringUndo >> refreshWarnings [
 GsRefactoringUndo >> warningFor: aChange in: env [
 	"The drift warning for one inverse change, or nil when undoing it is clean."
 	| cls target live |
-	cls := env classNamed: aChange className.
+	cls := env classForChange: aChange.
 	cls isNil ifTrue: [^'Class ', aChange className asString, ' no longer exists; this cannot be undone.'].
 	target := aChange isMeta == true ifTrue: [cls class] ifFalse: [cls].
 	live := target compiledMethodAt: aChange selector asSymbol environmentId: 0 otherwise: nil.
@@ -985,7 +1274,7 @@ GsRefactoringUndo >> applyChange: aChange [
 	 than counted as a successful undo."
 	| env cls target |
 	env := GsRefactoringEnvironment new.
-	cls := env classNamed: aChange className.
+	cls := env classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className asString].
 	target := aChange isMeta == true ifTrue: [cls class] ifFalse: [cls].
 	aChange kind == #methodRemove ifTrue: [

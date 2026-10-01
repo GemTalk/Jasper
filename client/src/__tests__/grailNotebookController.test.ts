@@ -11,9 +11,10 @@ vi.mock('../gciLog', () => ({
   logError: vi.fn(),
 }));
 
-import { notebooks, window, commands } from '../__mocks__/vscode';
+import { notebooks, window, commands, languages } from '../__mocks__/vscode';
 import {
   GrailNotebookController,
+  grailSessionKernel,
   GRAIL_CONTROLLER_ID,
   GRAIL_CONTROLLER_LABEL,
   GRAIL_RESET_SCOPE_COMMAND,
@@ -33,6 +34,11 @@ const SESSION = {
 function makeSessionManager(hasSession: boolean) {
   return {
     resolveSession: vi.fn(async () => (hasSession ? SESSION : undefined)),
+    getSelectedSession: vi.fn(() => undefined),
+    getSessions: vi.fn(() => []),
+    onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+    onDidAddSession: vi.fn(() => ({ dispose: () => {} })),
+    onDidRemoveSession: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
 
@@ -214,5 +220,62 @@ describe('GrailNotebookController', () => {
     const mock = lastController();
     ctrl.dispose();
     expect(mock.dispose).toHaveBeenCalled();
+  });
+
+  it('switches only the empty Smalltalk cells to Python when picked for a notebook', async () => {
+    const ctrl = new GrailNotebookController(makeSessionManager(true));
+    const results = notebooks.createNotebookController.mock.results;
+    const mock = results[results.length - 1].value;
+    const onSelected = vi.mocked(mock.onDidChangeSelectedNotebooks).mock.calls[0][0] as (e: {
+      notebook: unknown;
+      selected: boolean;
+    }) => void;
+    const cell = (kind: number, text: string, languageId: string) => ({
+      kind,
+      document: { getText: () => text, languageId },
+    });
+    const empty = cell(2, '  ', 'gemstone-smalltalk');
+    const written = cell(2, '6 * 7', 'gemstone-smalltalk');
+    const alreadyPython = cell(2, '', 'python');
+    const markdown = cell(1, '', 'markdown');
+    vi.mocked(languages.setTextDocumentLanguage).mockClear();
+
+    onSelected({
+      notebook: { getCells: () => [markdown, empty, written, alreadyPython] },
+      selected: true,
+    });
+    await vi.waitFor(() => expect(languages.setTextDocumentLanguage).toHaveBeenCalled());
+
+    expect(languages.setTextDocumentLanguage).toHaveBeenCalledTimes(1);
+    expect(languages.setTextDocumentLanguage).toHaveBeenCalledWith(empty.document, 'python');
+    ctrl.dispose();
+  });
+
+  it('resets the scope in the session a pinned notebook runs in, not the active one', async () => {
+    const sessionThree = { ...SESSION, id: 3 };
+    const manager = {
+      ...makeSessionManager(true),
+      getSession: (id: number) => (id === 3 ? sessionThree : undefined),
+    } as unknown as SessionManager;
+    const ctrl = new GrailNotebookController(manager);
+    const pinned = grailSessionKernel(manager, 3);
+    const results = notebooks.createNotebookController.mock.results;
+    const pinnedMock = results[results.length - 1].value;
+    const notebook = { uri: { toString: () => 'file:///pinned.ipynb' }, getCells: () => [] };
+    const onSelected = vi.mocked(pinnedMock.onDidChangeSelectedNotebooks).mock.calls[0][0] as (e: {
+      notebook: unknown;
+      selected: boolean;
+    }) => void;
+    onSelected({ notebook, selected: true });
+    (window as { activeNotebookEditor: unknown }).activeNotebookEditor = { notebook };
+    try {
+      await ctrl.resetActiveNotebookScope();
+      expect(python.resetPythonScope).toHaveBeenCalledWith(sessionThree, 'file:///pinned.ipynb');
+      expect(manager.resolveSession).not.toHaveBeenCalled();
+    } finally {
+      (window as { activeNotebookEditor: unknown }).activeNotebookEditor = undefined;
+      pinned.dispose();
+      ctrl.dispose();
+    }
   });
 });

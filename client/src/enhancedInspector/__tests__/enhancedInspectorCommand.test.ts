@@ -7,11 +7,19 @@ const mocks = vi.hoisted(() => ({
   showErrorMessage: vi.fn(() => Promise.resolve(undefined)),
   executeCommand: vi.fn(() => Promise.resolve(undefined)),
   installSupport: vi.fn(() =>
-    Promise.resolve({ success: true, committed: true, verified: true, filedIn: [], message: 'ok' }),
+    Promise.resolve({
+      success: true,
+      committed: true,
+      verified: true,
+      filedIn: [],
+      keptDifferent: [] as string[],
+      message: 'ok',
+    }),
   ),
   sessionNeedsCommit: vi.fn<() => boolean | undefined>(() => false),
   checkEnhancedInspectorAvailable: vi.fn(() => true),
   existsSync: vi.fn(() => true),
+  logWarning: vi.fn(),
 }));
 
 vi.mock('vscode', () => ({
@@ -35,6 +43,11 @@ vi.mock('../../browserQueries', () => ({
   // Read at load time by the shared feature registry (pluginFeatures) as
   // the refactoring feature's live probe; never invoked in these command tests.
   checkRefactoringSupportAvailable: vi.fn(() => false),
+}));
+
+vi.mock('../../gciLog', async (importActual) => ({
+  ...(await importActual<typeof import('../../gciLog')>()),
+  logWarning: mocks.logWarning,
 }));
 
 // Partial mock: stub the GCI-touching install pipeline, keep everything else.
@@ -87,6 +100,7 @@ beforeEach(() => {
     committed: true,
     verified: true,
     filedIn: [],
+    keptDifferent: [],
     message: 'ok',
   });
   mocks.checkEnhancedInspectorAvailable.mockReturnValue(true);
@@ -163,6 +177,7 @@ describe('installEnhancedInspectorFeature', () => {
       committed: false,
       verified: false,
       filedIn: [],
+      keptDifferent: [],
       message: 'boom',
     });
     const base = createBaseSession();
@@ -171,6 +186,30 @@ describe('installEnhancedInspectorFeature', () => {
 
     expect(mocks.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('install failed'));
     expect(ok).toBe(false);
+  });
+
+  it('logs the kept stone methods whose source differs from the payload', async () => {
+    mocks.installSupport.mockResolvedValueOnce({
+      success: true,
+      committed: true,
+      verified: true,
+      filedIn: [],
+      keptDifferent: ['Object>>stonOn:', 'Date class>>fromSton:'],
+      message: 'ok',
+    });
+
+    await install(createBaseSession(), true);
+
+    expect(mocks.logWarning).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarning).toHaveBeenCalledWith(
+      expect.stringContaining('Object>>stonOn:, Date class>>fromSton:'),
+    );
+  });
+
+  it('logs nothing when every kept stone method matches the payload', async () => {
+    await install(createBaseSession(), true);
+
+    expect(mocks.logWarning).not.toHaveBeenCalled();
   });
 
   it('refreshes the working session and relatches availability on success', async () => {

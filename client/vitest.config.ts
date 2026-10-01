@@ -85,6 +85,7 @@ export default defineConfig({
           name: 'default',
           include: ['src/**/__tests__/**/*.test.ts'],
           exclude: ['src/__tests__/gci/**'],
+          globalSetup: ['src/__tests__/gciTraceLogs.globalSetup.ts'],
           setupFiles: [
             'src/__tests__/vitest.windowSetup.cjs',
             'src/__tests__/vitest.uriSetup.ts',
@@ -106,10 +107,6 @@ export default defineConfig({
             shuffle: true,
             seed: shuffleSeed,
           },
-          // Removes gci<pid>trace.log written by the GciTsGemTrace test on a
-          // clean run; keeps them when a test failed (for debugging).
-          globalSetup: ['./src/__tests__/gci/gciTraceGlobalSetup.ts'],
-          setupFiles: ['./src/__tests__/gci/gciTraceCleanup.ts'],
         },
       },
     ],

@@ -5,8 +5,9 @@ import * as path from 'path';
 
 /**
  * The basic inspector's webview rendering, driven the way the real webview does:
- * millerColumns.js and basicInspectorView.js are evaluated in jsdom so they
- * register their globals, exactly as the two injected <script> tags do.
+ * evaluatePane.js, millerColumns.js and basicInspectorView.js are evaluated in
+ * jsdom so they register their globals, exactly as the three injected <script>
+ * tags do.
  *
  * What is pinned here is what the user sees and what the panel is asked for — a
  * tab appears only when the object has that structure, a page is appended rather
@@ -15,7 +16,11 @@ import * as path from 'path';
  * themselves belong to the queries module and its own tests.
  */
 beforeAll(() => {
-  for (const file of ['../../webview/millerColumns.js', '../basicInspectorView.js']) {
+  for (const file of [
+    '../../webview/evaluatePane.js',
+    '../../webview/millerColumns.js',
+    '../basicInspectorView.js',
+  ]) {
     new Function(fs.readFileSync(path.resolve(__dirname, file), 'utf8'))();
   }
 });
@@ -105,7 +110,16 @@ let view: View;
 
 function setup() {
   document.body.innerHTML =
-    '<div id="strip"></div><div id="ctx" class="ctx-menu"><div class="ctx-item" data-action="inspect"></div></div>';
+    '<div id="strip"></div>' +
+    '<div id="ctx" class="ctx-menu"><div class="ctx-item" data-action="inspect"></div></div>' +
+    // The Meta tab's selector rows have a menu of their own; the panel builds
+    // both, so the harness does too.
+    '<div id="methodCtx" class="ctx-menu">' +
+    '<div class="ctx-item" data-action="browseMethod"></div>' +
+    '</div>' +
+    // The column header and the Meta tab's header are read-only labels: their
+    // menu offers Copy and nothing else.
+    '<div id="headerCtx" class="ctx-menu"><div class="ctx-item" data-action="copy"></div></div>';
   posted = [];
   // jsdom implements neither layout nor scrolling; the strip asks for both, and
   // the Meta tab's scroll preservation can only be observed if scrollTop is a
@@ -123,6 +137,8 @@ function setup() {
   view = api().init({
     strip: document.getElementById('strip'),
     ctxMenu: document.getElementById('ctx'),
+    methodCtxMenu: document.getElementById('methodCtx'),
+    headerCtxMenu: document.getElementById('headerCtx'),
     vscode: { postMessage: (m: Record<string, unknown>) => posted.push(m) },
     pageSize: 100,
     defaultColumnWidth: 340,
@@ -1564,12 +1580,15 @@ describe('the Meta tab', () => {
     expect(subTabs(col)).toEqual(['instanceMethods', 'classMethods', 'definition', 'comment']);
   });
 
-  it('puts superclass, package and oop in the info bar, as the enhanced one does', () => {
+  it('puts superclass, class category and oop in the info bar, as the enhanced one does', () => {
     const col = openMeta();
 
     const bar = col.el.contentPane.querySelector('.meta-info-bar')!.textContent;
     expect(bar).toContain('Superclass: Object');
-    expect(bar).toContain('Package: Kernel');
+    // The value is `cls category`, which the Explorer calls a class category;
+    // labelling it "Package" named a Rowan concept this field has nothing to do with.
+    expect(bar).toContain('Class Category: Kernel');
+    expect(bar).not.toContain('Package');
     expect(bar).toContain('OOP: 100');
   });
 
@@ -1675,6 +1694,259 @@ describe('the Meta tab', () => {
     (col.el.contentPane.querySelector('[data-metatab="classMethods"]') as HTMLElement).click();
 
     expect(scroller(col).scrollTop).toBe(0);
+  });
+
+  // Right-clicking a selector used to fall through to VS Code's own webview menu
+  // — Cut / Copy / Paste, none of which means anything over a selector and none
+  // of which takes you to the method.
+  describe('right-clicking a selector', () => {
+    const methodMenu = () => document.getElementById('methodCtx')!;
+
+    function rightClickMethod(col: Column, index = 0) {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      items(col)[index].dispatchEvent(ev);
+      return ev;
+    }
+
+    it('takes the menu over from the host', () => {
+      const col = openMeta();
+
+      const ev = rightClickMethod(col);
+
+      // preventDefault is what stops Cut/Copy/Paste appearing.
+      expect(ev.defaultPrevented).toBe(true);
+      expect(methodMenu().style.display).toBe('block');
+    });
+
+    it('offers to browse the method, and browses the one clicked', () => {
+      const col = openMeta();
+      rightClickMethod(col, 2); // 'deposit:'
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(sent('browseMethod').at(-1)).toMatchObject({
+        oop: '100',
+        selector: 'deposit:',
+        isMeta: false,
+      });
+    });
+
+    it('browses the class side when the Class Methods sub-tab is showing', () => {
+      const col = openMeta();
+      (col.el.contentPane.querySelector('[data-metatab="classMethods"]') as HTMLElement).click();
+      rightClickMethod(col); // 'new', which exists only on the class side
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(sent('browseMethod').at(-1)).toMatchObject({ selector: 'new', isMeta: true });
+    });
+
+    it('closes the menu once it has acted', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+
+      (methodMenu().querySelector('[data-action="browseMethod"]') as HTMLElement).click();
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    // Both menus are dismissible the same way, or one can be left stranded on
+    // screen over a column the user has moved on from.
+    it('closes on Escape', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+      expect(methodMenu().style.display).toBe('block');
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    it('closes on a click elsewhere', () => {
+      const col = openMeta();
+      rightClickMethod(col);
+      expect(methodMenu().style.display).toBe('block');
+
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+      expect(methodMenu().style.display).toBe('none');
+    });
+
+    // The two menus are separate elements; opening one must not leave the other up.
+    it('replaces the row menu rather than showing both', () => {
+      const col = openRoot({ namedSize: 1 });
+      sendRows(0, 'slots', [row()]);
+      col.el.contentPane
+        .querySelector('tr[data-row="0"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      expect(document.getElementById('ctx')!.style.display).toBe('block');
+
+      openTab(col, 'meta');
+      sendMeta(0);
+      rightClickMethod(col);
+
+      expect(methodMenu().style.display).toBe('block');
+      expect(document.getElementById('ctx')!.style.display).toBe('none');
+    });
+
+    // Copy is the point of those two sub-tabs, so the host menu has to survive there.
+    it('leaves the host menu alone over the Definition text', () => {
+      const col = openMeta();
+      (col.el.contentPane.querySelector('[data-metatab="definition"]') as HTMLElement).click();
+
+      const pre = col.el.contentPane.querySelector('.meta-pre')!;
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      pre.dispatchEvent(ev);
+
+      expect(ev.defaultPrevented).toBe(false);
+      expect(methodMenu().style.display).not.toBe('block');
+    });
+  });
+
+  // The column header and the Meta tab's header are read-only text. Falling
+  // through to the host menu offered Cut and Paste over them, which do nothing;
+  // Copy is the only action that means anything there.
+  describe('right-clicking a header row', () => {
+    const headerMenu = () => document.getElementById('headerCtx')!;
+
+    function rightClick(el: Element) {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return ev;
+    }
+
+    function copy() {
+      (headerMenu().querySelector('[data-action="copy"]') as HTMLElement).click();
+      return sent('copyText').at(-1);
+    }
+
+    const inHeader = (col: Column, sel: string) => col.el.root.querySelector(`.header ${sel}`)!;
+    const inMeta = (col: Column, sel: string) => col.el.contentPane.querySelector(sel)!;
+    const fact = (col: Column, label: string) =>
+      Array.from(col.el.contentPane.querySelectorAll('.meta-info-bar span')).find((el) =>
+        el.textContent.startsWith(`${label}:`),
+      )!;
+
+    it('takes the menu over from the host on the class name', () => {
+      const col = openRoot();
+
+      const ev = rightClick(inHeader(col, '.obj-class'));
+
+      expect(ev.defaultPrevented).toBe(true);
+      expect(headerMenu().style.display).toBe('block');
+    });
+
+    it('takes the menu over on the object label and the oop', () => {
+      const col = openRoot();
+
+      expect(rightClick(inHeader(col, '.obj-label')).defaultPrevented).toBe(true);
+      expect(rightClick(inHeader(col, '.header-oop')).defaultPrevented).toBe(true);
+    });
+
+    it('takes the menu over on the blank part of the header', () => {
+      const col = openRoot();
+
+      expect(rightClick(col.el.root.querySelector('.header')!).defaultPrevented).toBe(true);
+      expect(headerMenu().style.display).toBe('block');
+    });
+
+    it('copies the class name from the column header', () => {
+      const col = openRoot();
+      rightClick(inHeader(col, '.obj-class'));
+
+      expect(copy()).toMatchObject({ command: 'copyText', text: 'Account' });
+    });
+
+    it('copies the bare oop, not the "oop " prefix', () => {
+      const col = openRoot();
+      rightClick(inHeader(col, '.header-oop'));
+
+      expect(copy()).toMatchObject({ command: 'copyText', text: '100' });
+    });
+
+    it('takes the menu over on the Meta tab header and copies the class name', () => {
+      const col = openMeta();
+
+      const ev = rightClick(inMeta(col, '.meta-class-name'));
+
+      expect(ev.defaultPrevented).toBe(true);
+      expect(headerMenu().style.display).toBe('block');
+      expect(copy()).toMatchObject({ command: 'copyText', text: 'Account' });
+    });
+
+    it('takes the menu over on the "Class" label beside it', () => {
+      const col = openMeta();
+
+      expect(rightClick(inMeta(col, '.meta-head-label')).defaultPrevented).toBe(true);
+    });
+
+    it('copies the value of the info-bar fact that was right-clicked', () => {
+      const col = openMeta();
+
+      rightClick(fact(col, 'Superclass'));
+      expect(copy()).toMatchObject({ command: 'copyText', text: 'Object' });
+
+      rightClick(fact(col, 'Class Category').querySelector('strong')!);
+      expect(copy()).toMatchObject({ command: 'copyText', text: 'Kernel' });
+
+      rightClick(fact(col, 'OOP'));
+      expect(copy()).toMatchObject({ command: 'copyText', text: '100' });
+    });
+
+    it('closes once it has copied', () => {
+      const col = openRoot();
+      rightClick(inHeader(col, '.obj-class'));
+
+      copy();
+
+      expect(headerMenu().style.display).toBe('none');
+    });
+
+    it('closes on Escape and on a click elsewhere', () => {
+      const col = openRoot();
+      rightClick(inHeader(col, '.obj-class'));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(headerMenu().style.display).toBe('none');
+
+      rightClick(inHeader(col, '.obj-class'));
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(headerMenu().style.display).toBe('none');
+    });
+
+    it('is the only menu showing', () => {
+      const col = openMeta();
+      rightClick(items(col)[0]);
+      expect(document.getElementById('methodCtx')!.style.display).toBe('block');
+
+      rightClick(inMeta(col, '.meta-class-name'));
+
+      expect(headerMenu().style.display).toBe('block');
+      expect(document.getElementById('methodCtx')!.style.display).toBe('none');
+      expect(document.getElementById('ctx')!.style.display).not.toBe('block');
+    });
+
+    it('is closed by opening a row menu', () => {
+      const col = openRoot({ namedSize: 1 });
+      sendRows(0, 'slots', [row()]);
+      rightClick(inHeader(col, '.obj-class'));
+
+      rightClick(col.el.contentPane.querySelector('tr[data-row="0"]')!);
+
+      expect(document.getElementById('ctx')!.style.display).toBe('block');
+      expect(headerMenu().style.display).toBe('none');
+    });
+
+    it('leaves the host menu alone over the Comment text', () => {
+      const col = openRoot();
+      openTab(col, 'meta');
+      sendMeta(0, { comment: 'An account.' });
+      (col.el.contentPane.querySelector('[data-metatab="comment"]') as HTMLElement).click();
+
+      const ev = rightClick(col.el.contentPane.querySelector('.meta-pre')!);
+
+      expect(ev.defaultPrevented).toBe(false);
+      expect(headerMenu().style.display).not.toBe('block');
+    });
   });
 });
 

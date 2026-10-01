@@ -7,6 +7,10 @@ import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
 import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
+import {
+  TransactionConflicts,
+  tryTransactionConflicts as sharedTryTransactionConflicts,
+} from './queries/transactionConflicts';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -27,9 +31,16 @@ import {
   classExistsInDictionary as sharedClassExistsInDictionary,
 } from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
+import { getStoredClassComment as sharedGetStoredClassComment } from './queries/getStoredClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
+import { dictionariesContainingClass as sharedDictionariesContainingClass } from './queries/dictionariesContainingClass';
+import {
+  tonelCapability as sharedTonelCapability,
+  TonelCapabilityResult,
+} from './queries/tonel/tonelCapability';
+import { fileOutClassTonel as sharedFileOutClassTonel } from './queries/tonel/fileOutClassTonel';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { fileOutHeader as sharedFileOutHeader } from './queries/fileOutHeader';
 import { fileOutMethod as sharedFileOutMethod } from './queries/fileOutMethod';
@@ -76,6 +87,11 @@ import {
   ClassReference,
 } from './refactoring/queries/resolveClassReference';
 import { classDefiningDictionaryName as sharedClassDefiningDictionaryName } from './refactoring/queries/classDefiningDictionaryName';
+import {
+  dictionariesShadowedByRename as sharedDictionariesShadowedByRename,
+  ShadowingHolder,
+} from './refactoring/queries/dictionariesShadowedByRename';
+export type { ShadowingHolder };
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -230,7 +246,10 @@ import {
   getMethodHistory as sharedGetMethodHistory,
   removeMethodHistory as sharedRemoveMethodHistory,
 } from './methodHistory/queries/methodHistory';
-import { globalNameInUse as sharedGlobalNameInUse } from './refactoring/queries/globalNameInUse';
+import {
+  globalNameInUse as sharedGlobalNameInUse,
+  globalNameInUseInDictionary as sharedGlobalNameInUseInDictionary,
+} from './refactoring/queries/globalNameInUse';
 import { isKernelClass as sharedIsKernelClass } from './refactoring/queries/isKernelClass';
 import {
   getGrailStubReflection as sharedGetGrailStubReflection,
@@ -266,6 +285,7 @@ import {
   searchMethodSource as sharedSearchMethodSource,
   sendersOf as sharedSendersOf,
   MethodSearchResult,
+  SourceScanMode,
 } from './queries/methodSearch';
 import { methodsAccessingInstVar as sharedMethodsAccessingInstVar } from './refactoring/queries/methodsAccessingInstVar';
 import { methodsAccessingClassVar as sharedMethodsAccessingClassVar } from './refactoring/queries/methodsAccessingClassVar';
@@ -417,7 +437,12 @@ export async function executeFetchStringNb(
       }
       return fetched.data;
     },
-    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification, onStart },
+    {
+      title: progressTitle ?? `GemStone: ${label}…`,
+      suppressNotification,
+      onStart,
+      disposableProcess: true,
+    },
   );
 
   return data;
@@ -530,6 +555,17 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
  */
 export function abortSessionTransaction(session: ActiveSession): string {
   return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+}
+
+/**
+ * The conflict set left by a commit this session just had refused, or undefined
+ * when it could not be read (session busy, unreachable, unrecognized reply).
+ *
+ * Call it before anything else touches the transaction — why is the
+ * queries/transactionConflicts.ts header.
+ */
+export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
+  return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
 }
 
 /**
@@ -750,6 +786,14 @@ export function getClassComment(
   return sharedGetClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
+export function getStoredClassComment(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
+}
+
 export function canClassBeWritten(
   session: ActiveSession,
   className: string,
@@ -784,6 +828,41 @@ export function getSiblingClassNames(
   dict?: number | string,
 ): string[] {
   return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** One class as Tonel source, or a sentinel (see `isTonelFileOutError`). */
+export function fileOutClassTonel(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
+}
+
+/** Which parts of the Tonel machinery this session can reach. */
+export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
+  return sharedTonelCapability(defaultQueryExecutorUsing(session));
+}
+
+/** Which symbol dictionaries hold a class of this name, in symbol-list order. */
+export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
+  return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
+}
+
+/** The dictionaries a rename to `newName` would shadow: those already holding a class of that
+ *  name, minus the one the renamed class lives in, excluded by identity in the stone. */
+export function dictionariesShadowedByRename(
+  session: ActiveSession,
+  newName: string,
+  oldName: string,
+  dict?: number | string,
+): ShadowingHolder[] {
+  return sharedDictionariesShadowedByRename(
+    defaultQueryExecutorUsing(session),
+    newName,
+    oldName,
+    dict,
+  );
 }
 
 export function fileOutClass(
@@ -836,8 +915,9 @@ export function removeAllMethods(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
+  dict?: number | string,
 ): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta);
+  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
 }
 
 export function describeClass(
@@ -1536,10 +1616,20 @@ export function analyzeMoveMethod(
   targetName: string,
   toMeta: boolean,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing move…');
-  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+  return sharedAnalyzeMoveMethod(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    dict,
+    targetDict,
+  );
 }
 
 export function startMoveMethodPreview(
@@ -1552,6 +1642,7 @@ export function startMoveMethodPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Previewing move…');
@@ -1565,6 +1656,7 @@ export function startMoveMethodPreview(
     token,
     maxBytes,
     dict,
+    targetDict,
   );
 }
 
@@ -2019,16 +2111,21 @@ export function clearSplitClassPreview(session: ActiveSession, token: string): s
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and
 // the redo (restore a historical version as a new version, no commit).
-export function getClassHistory(session: ActiveSession, className: string): string {
-  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className);
+export function getClassHistory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function revertClassToVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
@@ -2066,6 +2163,14 @@ export function removeMethodHistory(
   );
 }
 
+export function globalNameInUseInDictionary(
+  session: ActiveSession,
+  name: string,
+  dict: number | string | undefined,
+): boolean {
+  return sharedGlobalNameInUseInDictionary(defaultQueryExecutorUsing(session), name, dict);
+}
+
 export function globalNameInUse(session: ActiveSession, name: string): boolean {
   return sharedGlobalNameInUse(defaultQueryExecutorUsing(session), name);
 }
@@ -2078,8 +2183,9 @@ export function removeClassVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 export function getGrailStubReflection(
@@ -2152,8 +2258,13 @@ export function getStepPointSelectorRanges(
   );
 }
 
-export function searchMethodSource(session: ActiveSession, term: string, ignoreCase: boolean) {
-  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase);
+export function searchMethodSource(
+  session: ActiveSession,
+  term: string,
+  ignoreCase: boolean,
+  mode: SourceScanMode = 'substring',
+) {
+  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
 }
 
 export function sendersOf(session: ActiveSession, selector: string, environmentId: number = 0) {
@@ -2607,6 +2718,7 @@ export function recordReverseRename(
   label: string,
   engineClassName: string,
   scope?: { kind: string; dictName?: string },
+  classDict?: number | string,
 ): string {
   return sharedRecordReverseRename(
     defaultQueryExecutorUsing(session),
@@ -2617,6 +2729,7 @@ export function recordReverseRename(
     label,
     engineClassName,
     scope,
+    classDict,
   );
 }
 
@@ -2628,8 +2741,12 @@ export function recordReverseRename(
  * apply really landed -- these refactorings report partial application, and a capture promoted
  * after a partial reshape would describe a state the stone was never in.
  */
-export function captureClassHistory(session: ActiveSession, rootClassName: string): string {
-  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName);
+export function captureClassHistory(
+  session: ActiveSession,
+  rootClassName: string,
+  dict?: number | string,
+): string {
+  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName, dict);
 }
 
 export function discardPendingCapture(session: ActiveSession): string {

@@ -8,9 +8,14 @@
  * refactoring plugs in here as one more kind. Adding a further kind means another branch
  * here and a reverser beside it — not a change to the stack, the UI, or any recording site.
  *
- * Every undo CONFIRMS first, naming the change — see `confirmUndo` for why it is
- * unconditional. Past that, the kinds behave differently on purpose, and the difference is
- * the point of the design:
+ * Every undo SHOWS WHAT IT WILL DO first and waits to be accepted — see `confirmUndo` for why
+ * that is unconditional. Every kind opens a panel: the local ones a plan built from the recorded
+ * entry (`undoPlan.ts`), a refactoring the paged preview it already had. That is deliberate
+ * sameness — "Undo" should not be two different experiences depending on machinery the user has
+ * no reason to know about (#396 review).
+ *
+ * Past the panel the kinds still behave differently, and those differences are the point of the
+ * design:
  *
  *  - a METHOD EDIT reverses straight away, because the user just made it and it is one
  *    method;
@@ -24,15 +29,18 @@
  *  - a METHOD CATEGORY is renamed back, a CLASS CATEGORY is put back one class at a time, and a
  *    DICTIONARY is renamed back or put back at its old position on the symbol list — all exact,
  *    and all UNDOs for the same reason;
- *  - a REFACTORING opens the preview panel it already has INSTEAD of the confirmation,
- *    because it can have rewritten dozens of methods across a hierarchy and undoing it
- *    wholesale, unseen, is not a decision to take on the user's behalf.
+ *  - a REFACTORING opens its OWN preview panel rather than a plan: its reversal is paged from
+ *    the stone, can span a hierarchy, and supports per-change deselection, none of which a
+ *    client-side plan can describe.
  */
 import * as vscode from 'vscode';
-import { SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../sessionManager';
 import { logInfo } from '../gciLog';
-import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
-import { refreshUndoUi, undoVerb } from './undoUi';
+import { dropUndoEntry, peekUndoEntry } from './undoStack';
+import { refreshUndoUi } from './undoUi';
+import { planUndo } from './undoPlan';
+import { dictionaryNameLookup } from '../refactoring/dictionaryLabel';
+import { showUndoPlanPanel } from './undoPlanPanel';
 import { UndoEntry } from './undoTypes';
 import { reverseMethodEdit } from './reverseMethodEdit';
 import { reverseClassEdit } from './reverseClassEdit';
@@ -79,46 +87,61 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     // exemption: it opens a preview listing every reversal with its diff and its own
     // checkbox, which is a fuller form of this same question, and asking twice would read
     // as Jasper not trusting its own preview.
-    if (entry.kind !== 'refactoring' && !(await confirmUndo(entry))) {
+    if (entry.kind !== 'refactoring' && !(await confirmUndo(entry, session))) {
       logInfo(`[undo] #${entry.id} declined at the confirmation`);
       return;
     }
+
+    // The plan panel is a WEBVIEW, not a modal: the user can keep working while it is open, and
+    // a save pushes a NEWER entry. Reversing the entry we peeked and then popping "the top" would
+    // then spend somebody else's entry -- losing its reversal, and leaving this one on the stack
+    // to be applied a second time over whatever was written since. That is silent source loss,
+    // and it is why every branch below spends the entry BY ID rather than popping (#396 review).
+    if (peekUndoEntry(session.id)?.id !== entry.id) {
+      logInfo(`[undo] #${entry.id} is no longer on top; the stack moved while the panel was open`);
+      void vscode.window.showWarningMessage(
+        'The stack changed while the panel was open, so nothing was undone. Try Undo again to ' +
+          'reverse the most recent change.',
+      );
+      return;
+    }
+    const spend = (): void => dropUndoEntry(session.id, entry.id);
 
     // Popping is enough: the stack's change listener updates the button and the context key.
     // Leaving the entry in place when it was not spent is what keeps a cancelled or
     // unreadable undo on offer.
     if (entry.kind === 'methodEdit') {
-      if (await reverseMethodEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseMethodEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classEdit') {
-      if (await reverseClassEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classComment') {
-      if (await reverseClassComment(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassComment(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classVarEdit') {
-      if (await reverseClassVarEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassVarEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'methodCategoryEdit') {
-      if (await reverseMethodCategoryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseMethodCategoryEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'dictionaryEdit') {
-      if (await reverseDictionaryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseDictionaryEdit(session, entry)) spend();
       return;
     }
 
     if (entry.kind === 'classCategoryEdit') {
-      if (await reverseClassCategoryEdit(session, entry)) popUndoEntry(session.id);
+      if (await reverseClassCategoryEdit(session, entry)) spend();
       return;
     }
 
@@ -135,7 +158,9 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     // The panel can be cancelled, and a partial undo leaves the record in place, so ask
     // the stone what actually happened rather than assume the entry is spent.
     const after = checkRefactoringUndoAvailable(session);
-    if (!after.available || after.sequence !== entry.sequence) popUndoEntry(session.id);
+    // By id, for the same reason as above: the refactoring panel is not modal either, so the
+    // top of the stack may have moved on while it was open.
+    if (!after.available || after.sequence !== entry.sequence) dropUndoEntry(session.id, entry.id);
     return;
   }
 }
@@ -162,18 +187,21 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
  * consequence modals that some reversals raise afterwards are a different question — what
  * it costs, rather than which change it is — and are left where they are.
  */
-async function confirmUndo(entry: UndoEntry): Promise<boolean> {
-  const verb = undoVerb(entry);
-  const choice = await vscode.window.showWarningMessage(
-    `${verb} ${entry.label}?`,
-    {
-      modal: true,
-      detail:
-        'This is the most recent change Jasper recorded in this session. It is not ' +
-        'necessarily the last thing you did — an action that cannot be reversed records ' +
-        'nothing, so the change before it is what this reverses.',
-    },
-    verb,
-  );
-  return choice === verb;
+async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<boolean> {
+  // The rows name each class with its dictionary. The plan stays pure, so the lookup is passed
+  // in: a slot records a SymbolList index as often as a name, and an index means nothing to a
+  // reader -- least of all when the point is telling two same-named classes apart (#396). One
+  // lookup for the whole plan, so the symbol list is read once rather than once per row.
+  const plan = planUndo(entry, dictionaryNameLookup(session));
+  // planUndo answers undefined only for a refactoring, and the caller has already sent those
+  // down their own path -- their reversal is paged from the stone, not derived here. So this is
+  // not a "no plan, go ahead": it is a kind that should never have reached this function.
+  if (plan === undefined) {
+    logInfo(`[undo] #${entry.id} (${entry.kind}) has no plan; not reversing it unasked`);
+    return false;
+  }
+  // The plan's own note -- what THIS reversal costs -- is the panel's banner. The standing
+  // caveat about which change is on top of the stack lives in the panel as a disclosure, so it
+  // stays available without sitting above the rows on every single undo.
+  return showUndoPlanPanel(plan);
 }

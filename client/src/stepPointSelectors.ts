@@ -1,4 +1,5 @@
 import { StepPointSelectorInfo } from './browserQueries';
+import { skipLiteral } from './smalltalkScan';
 
 /**
  * Find the step point whose selector range contains the cursor offset,
@@ -51,7 +52,8 @@ function isTokenChar(ch: string): boolean {
  * The scan runs to the end of the statement, which is the next `.` or `;` *at
  * the top level*. Separators nested inside parentheses or a block belong to an
  * inner expression and are scanned past, since the keyword send continues after
- * the bracket closes.
+ * the bracket closes. String literals, comments, symbol literals and character
+ * literals are all scanned past as data.
  */
 export function expandKeywordParts(
   source: string,
@@ -67,6 +69,17 @@ export function expandKeywordParts(
 
     while (pos < source.length && depth >= 0) {
       const ch = source[pos];
+
+      // Strings, comments and character literals are data, never delimiters: `$[`
+      // opens no block, `$'` no string, `$"` no comment, `$.` ends no statement.
+      // This has to come before the bracket counting rather than merely before a
+      // string check, or `$[` and `$(` still raise the depth and every later
+      // keyword is scanned as nested.
+      const quoted = skipLiteral(source, pos);
+      if (quoted) {
+        pos = quoted.end;
+        continue;
+      }
 
       if (ch === '(' || ch === '[' || ch === '{') {
         depth++;
@@ -88,34 +101,13 @@ export function expandKeywordParts(
       // below, which has always only looked at depth 0.
       if (depth === 0 && (ch === '.' || ch === ';')) break;
 
-      // Skip string literals (handle embedded '' quotes)
-      if (ch === "'") {
-        pos++;
-        while (pos < source.length) {
-          if (source[pos] === "'") {
-            pos++;
-            if (pos >= source.length || source[pos] !== "'") break;
-          }
-          pos++;
-        }
-        continue;
-      }
-
-      // Skip comments
-      if (ch === '"') {
-        pos++;
-        while (pos < source.length && source[pos] !== '"') pos++;
-        if (pos < source.length) pos++;
-        continue;
-      }
-
-      // Skip symbol literals (#word or #'string')
+      // Skip symbol literals (#word or #'string'). `#` is not itself a quoting
+      // construct, so the quoted form is the `#` plus an ordinary string.
       if (ch === '#') {
         pos++;
-        if (pos < source.length && source[pos] === "'") {
-          pos++;
-          while (pos < source.length && source[pos] !== "'") pos++;
-          if (pos < source.length) pos++;
+        const body = skipLiteral(source, pos);
+        if (body?.kind === 'string') {
+          pos = body.end;
         } else if (pos < source.length && isIdentStart(source[pos])) {
           while (pos < source.length && isTokenChar(source[pos])) pos++;
         }

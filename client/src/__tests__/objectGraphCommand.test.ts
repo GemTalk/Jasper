@@ -106,6 +106,9 @@ describe('Show Reference Graph, from a selection to an open graph', () => {
       resolveSession: vi.fn(async () => session),
       getSessions: vi.fn(() => [session]),
       getSession: vi.fn(() => session),
+      // The executor re-reads the session's transaction state once an execution
+      // finishes, since user code is free to commit, begin, or change the mode.
+      refreshTransactionState: vi.fn(),
     } as unknown as SessionManager);
     deps = {
       commit: vi.fn(async () => undefined),

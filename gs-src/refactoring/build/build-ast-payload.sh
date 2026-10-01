@@ -13,6 +13,11 @@
 # drifts, so a re-vendor that introduces a new Rowan dependency is caught here
 # rather than silently shipped.
 #
+# Kernel extension methods (AST-Kernel-Core) are emitted with --gate-extensions:
+# each is compiled only if the target class does not already define it
+# (includesSelector:), so a rowan3 extent -- which ships this same family -- keeps
+# its own copies instead of having them overwritten.
+#
 # The one adaptation (applied verbatim -> adapted):
 #   `Rowan globalNamed: X` -> `System myUserProfile symbolList objectNamed: X`
 #   Reason: the AST loads on a bare, non-Rowan stone where `Rowan` is undefined;
@@ -36,10 +41,14 @@ CONVERTER="$BUILD/tonel-to-gs.js"
 HEADER="$BUILD/ast-provenance-header.gs"
 OUT="$REPO/resources/refactoring"
 # GsRefactoring is the dedicated, isolated symbol dictionary the loader creates
-# and positions at the end of the symbol list (so it never shadows base/kernel
-# or Rowan classes). Keeping the engine here rather than in Published/UserGlobals
-# keeps it out of other code and lets it be shared across users independently.
-# The loader (GsRefactoringLoader) creates the dict before this payload files in.
+# and parks at the end of the symbol list for normal use (so it does not shadow
+# base/kernel or Rowan classes). Keeping the engine here rather than in
+# Published/UserGlobals keeps it out of other code and lets it be shared across
+# users independently. The loader (GsRefactoringLoader) creates the dict before
+# this payload files in, and moves it to the FRONT for the duration of the
+# file-in -- the chunk directives below name their class as a bareword, which on
+# a rowan3 extent would otherwise resolve to RowanKernel's RB class instead of
+# ours. See GsRefactoringLoader>>withDictionaryFirstDo:.
 DICT="GsRefactoring"
 TESTS_OUT=""
 
@@ -90,7 +99,7 @@ apply_adaptations "$STAGE/AST-Core" 1
 apply_adaptations "$STAGE/AST-Kernel-Core" 0
 
 mkdir -p "$OUT"
-node "$CONVERTER" --dict "$DICT" --header "$HEADER" \
+node "$CONVERTER" --dict "$DICT" --header "$HEADER" --gate-extensions \
   --out "$OUT/ast-core.gs" "$STAGE/AST-Core" "$STAGE/AST-Kernel-Core"
 
 if [ -n "$TESTS_OUT" ]; then

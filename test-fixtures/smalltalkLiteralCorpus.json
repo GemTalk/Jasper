@@ -1,0 +1,171 @@
+{
+  "$comment": "Shared corpus for Smalltalk literal/comment scanning. Read by BOTH client/src/__tests__/smalltalkScan.test.ts and server/src/lexer/__tests__/lexerCorpusAgreement.test.ts so the two workspaces cannot drift apart. Add a case here and both sides must handle it.",
+  "cases": [
+    {
+      "name": "character literal quoting a string delimiter",
+      "source": "x := $'. y := 3.",
+      "literals": [
+        "$'"
+      ],
+      "why": "the issue-466 bug: `$'` read as a string opener swallowed the rest of the file"
+    },
+    {
+      "name": "character literal quoting a comment delimiter",
+      "source": "self out: $\" ; nl.",
+      "literals": [
+        "$\""
+      ],
+      "why": "`$\"` opens no comment"
+    },
+    {
+      "name": "character literal quoting a block delimiter",
+      "source": "blk := [:e | e = $[ ].",
+      "literals": [
+        "$["
+      ],
+      "why": "`$[` opens no block, so it must not raise a bracket depth counter"
+    },
+    {
+      "name": "character literal quoting a statement separator",
+      "source": "self copyReplaceAll: $. with: $_.",
+      "literals": [
+        "$.",
+        "$_"
+      ],
+      "why": "`$.` ends no statement \u2014 the step-point scan must keep going to find `with:`"
+    },
+    {
+      "name": "character literal quoting a dollar",
+      "source": "c := $$.",
+      "literals": [
+        "$$"
+      ],
+      "why": "the escape character is itself quotable; only ONE character is consumed"
+    },
+    {
+      "name": "character literal quoting a space",
+      "source": "c := $ .",
+      "literals": [
+        "$ "
+      ],
+      "why": "`$ ` is a legal space literal; the `.` after it still ends the statement"
+    },
+    {
+      "name": "character literal truncated at end of input",
+      "source": "c := $",
+      "literals": [
+        "$"
+      ],
+      "why": "a trailing `$` must not read past the end of the buffer"
+    },
+    {
+      "name": "string with a doubled-quote escape",
+      "source": "s := 'it''s here'.",
+      "literals": [
+        "'it''s here'"
+      ],
+      "why": "`''` inside a string is an escaped quote, not a close followed by an open"
+    },
+    {
+      "name": "string containing a comment delimiter",
+      "source": "s := 'say \"hi\" now'.",
+      "literals": [
+        "'say \"hi\" now'"
+      ],
+      "why": "a double quote inside a string opens no comment"
+    },
+    {
+      "name": "comment containing a string delimiter",
+      "source": "\"it's a comment\" x := 1.",
+      "literals": [
+        "\"it's a comment\""
+      ],
+      "why": "an apostrophe inside a comment opens no string \u2014 the two must be tracked in one pass"
+    },
+    {
+      "name": "comment containing a character literal",
+      "source": "\"a $' inside\" x := 1.",
+      "literals": [
+        "\"a $' inside\""
+      ],
+      "why": "inside a comment the `$` is prose, not a literal; the comment is consumed whole"
+    },
+    {
+      "name": "string containing a character literal",
+      "source": "s := 'a $\" inside'.",
+      "literals": [
+        "'a $\" inside'"
+      ],
+      "why": "inside a string the `$` is data; the string is consumed whole"
+    },
+    {
+      "name": "string spanning lines",
+      "source": "s := 'line one\nline two'.",
+      "literals": [
+        "'line one\nline two'"
+      ],
+      "why": "the scan carries string state across a newline"
+    },
+    {
+      "name": "comment spanning lines",
+      "source": "\"line one\nline two\" x := 1.",
+      "literals": [
+        "\"line one\nline two\""
+      ],
+      "why": "the scan carries comment state across a newline"
+    },
+    {
+      "name": "empty string and empty comment",
+      "source": "s := ''. \"\" x := 1.",
+      "literals": [
+        "''",
+        "\"\""
+      ],
+      "why": "a zero-length body must still consume both delimiters"
+    },
+    {
+      "name": "string immediately followed by another string",
+      "source": "a := 'one', 'two'.",
+      "literals": [
+        "'one'",
+        "'two'"
+      ],
+      "why": "the close of one literal must not be read as the open of the next"
+    },
+    {
+      "name": "symbol with a quoted body",
+      "source": "s := #'odd symbol'.",
+      "literals": [
+        "'odd symbol'"
+      ],
+      "lexerLiterals": [
+        "#'odd symbol'"
+      ],
+      "why": "the client scanners treat `#` as an ordinary token character and consume only the quoted part; the lexer emits `#'...'` as one Symbol token. Both land in the same place, which is all that matters for depth and statement-end decisions."
+    },
+    {
+      "name": "comment with a doubled-quote escape",
+      "source": "x := 1. \"a block \"\"[...]\"\" here\" y := 2.",
+      "literals": [
+        "\"a block \"\"[...]\"\" here\""
+      ],
+      "why": "a comment escapes its own delimiter by doubling it, exactly as a string does; the class comments under gs-src/refactoring/ are written this way"
+    },
+    {
+      "name": "comment ending in an escaped quote",
+      "source": "x := 1. \"ends with \"\"quoted\"\"\" y := 2.",
+      "literals": [
+        "\"ends with \"\"quoted\"\"\""
+      ],
+      "why": "the escape run sits right against the closing delimiter, where an off-by-one splits the comment into several tokens and the formatter emits only the first"
+    },
+    {
+      "name": "string with a doubled-quote escape run",
+      "source": "s := 'a ''''quoted'''' word'.",
+      "literals": [
+        "'a ''''quoted'''' word'"
+      ],
+      "why": "two escapes in a row must not be read as a close followed by an open"
+    }
+  ]
+}

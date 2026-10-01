@@ -41,6 +41,42 @@ const inSession = (landing: ExplorerLanding, sessionId: number): ExplorerLanding
   sessionId,
 });
 
+describe('two dictionaries of one name are two places', () => {
+  // Two dictionaries can share a name, so a landing's position is part of where it is (#396).
+  const at = (landing: ExplorerLanding, dictIndex: number): ExplorerLanding => ({
+    ...landing,
+    dictIndex,
+  });
+
+  it('keys the same method in two same-named dictionaries apart', () => {
+    expect(landingKey(at(method('Shadowed', 'balance'), 1))).not.toBe(
+      landingKey(at(method('Shadowed', 'balance'), 3)),
+    );
+  });
+
+  it('keys a landing the same wherever it is recorded from, given the same position', () => {
+    expect(landingKey(at(method('Shadowed', 'balance'), 3))).toBe(
+      landingKey(at(method('Shadowed', 'balance'), 3)),
+    );
+  });
+
+  it('does not fold a class in one dictionary into its namesake in the other', () => {
+    const history = new ExplorerNavigationHistory({ go: () => true } as never);
+    history.record(at(klass('Shadowed'), 1));
+    history.record(at(method('Shadowed', 'balance'), 3));
+
+    expect(history.entries()).toHaveLength(2);
+  });
+
+  it('still folds a class into one of its own methods in the same dictionary', () => {
+    const history = new ExplorerNavigationHistory({ go: () => true } as never);
+    history.record(at(klass('Shadowed'), 3));
+    history.record(at(method('Shadowed', 'balance'), 3));
+
+    expect(history.entries()).toHaveLength(1);
+  });
+});
+
 describe('ExplorerNavigationHistory', () => {
   let went: ExplorerLanding[];
   let reachable: boolean;

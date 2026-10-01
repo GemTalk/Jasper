@@ -152,7 +152,10 @@ describe('GemStoneDefinitionProvider', () => {
       expect(results[0].uri.path).toContain('/class/creation/new');
     });
 
-    it('passes maxEnvironment config to implementorsOf', async () => {
+    it('sweeps environments 0..maxEnvironment rather than asking the ceiling alone', async () => {
+      // maxEnvironment is a CEILING. Asking environment 3 alone answered nothing for every
+      // selector -- almost nothing is compiled above 0 -- so F12 did nothing at all whenever
+      // the setting was raised.
       __setConfig('gemstone', 'maxEnvironment', 3);
       const resolver: SelectorResolver = {
         getSelector: vi.fn(async () => 'size'),
@@ -161,7 +164,36 @@ describe('GemStoneDefinitionProvider', () => {
       const doc = makeDocument('self size');
       await provider.provideDefinition(doc, pos(0, 5));
 
-      expect(mockImplementorsOf).toHaveBeenCalledWith(expect.anything(), 'size', 3);
+      expect(mockImplementorsOf.mock.calls.map((c) => c[2])).toEqual([0, 1, 2, 3]);
+    });
+
+    it('opens an implementor found above environment 0 in that environment', async () => {
+      // The row carries the environment it was found in; without it the location points at
+      // the environment-0 method of the same name, or at nothing.
+      __setConfig('gemstone', 'maxEnvironment', 1);
+      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+        env === 1
+          ? [
+              {
+                dictName: 'Globals',
+                className: 'Array',
+                isMeta: false,
+                selector: 'size',
+                category: 'accessing',
+                environmentId: 1,
+              },
+            ]
+          : [],
+      );
+      const resolver: SelectorResolver = {
+        getSelector: vi.fn(async () => 'size'),
+      };
+      const provider = new GemStoneDefinitionProvider(makeSessionManager(true), resolver);
+      const doc = makeDocument('self size');
+      const results = await provider.provideDefinition(doc, pos(0, 5));
+
+      expect(results).toHaveLength(1);
+      expect(results[0].uri.query).toBe('env=1');
     });
 
     it('handles selector resolver throwing', async () => {

@@ -107,17 +107,58 @@ GsRefactoringEnvironment >> sendersOf: aSelector [
 	^(ClassOrganizer new sendersOf: aSelector asSymbol) at: 1
 ]
 
+{ #category : 'dictionaries' }
+GsRefactoringEnvironment >> dictionaryForNewVersionOf: aClass [
+	"The SymbolDictionary a new version of aClass is bound into, for inDictionary:. Resolved by
+	 IDENTITY: the dictionary that binds aClass itself, not the first one binding its name.
+	 Name-first-match rebound the reshaped class into whichever dictionary the symbol list
+	 reached first, replacing an unrelated same-named class with this one and leaving the
+	 acted-on class unchanged (#396). UserGlobals remains the fallback for a class no
+	 dictionary binds under its own name.
+
+	 Every refactoring that re-versions a class binds the new version this way, so the rule lives
+	 here rather than in a copy per refactoring."
+	^(self dictionaryDefiningClass: aClass)
+		ifNil: [self symbolList objectNamed: #UserGlobals]
+]
+
+{ #category : 'dictionaries' }
+GsRefactoringEnvironment >> dictionaryPinnedForClass: aClass [
+	"The dictionary that binds aClass ITSELF, pinned on a staged change so the apply can find
+	 its way back to the same class. Resolved by identity: taking the first dictionary that
+	 binds the NAME finds a different class's dictionary whenever the name is shadowed, and the
+	 apply then writes the change there (#396).
+
+	 The OBJECT, not its name. This used to answer `dict name`, which threw the identity away
+	 one line after establishing it -- and a name cannot stand in for a dictionary: two can
+	 share one, and `SymbolDictionary new` has none at all, so a class in a nameless dictionary
+	 recorded nil and fell straight into the first-match path this engine exists to remove.
+
+	 nil when no dictionary binds the class under its own name, which the apply falls back on
+	 as before. Every refactoring pins a change this way, so it lives here rather than in each
+	 of them: seventeen copies of one method is seventeen places for the identity rule to be
+	 lost."
+	^self dictionaryDefiningClass: aClass
+]
+
+{ #category : 'selectors' }
+GsRefactoringEnvironment >> referencesToClass: aClass [
+	"Every method whose compiled code references aClass ITSELF, as an Array of GsNMethod.
+	 These are the method bodies whose source names the class as a global -- exactly the
+	 references a rename must rewrite. Identity, not name: when several dictionaries bind
+	 the name, referencesToClassNamed: would answer some other dictionary's class's
+	 referencers and miss this class's own (#396). Uses the same ClassOrganizer reflection
+	 the client's referencesToObject query uses. Read-only."
+	aClass isNil ifTrue: [^Array new].
+	^(ClassOrganizer new referencesToObject: aClass) asArray
+]
+
 { #category : 'selectors' }
 GsRefactoringEnvironment >> referencesToClassNamed: aName [
-	"Every method whose compiled code references the class currently bound to aName
-	 (across all dictionaries), as an Array of GsNMethod. These are the method bodies
-	 whose source names the class as a global -- exactly the references a rename must
-	 rewrite. Uses the same ClassOrganizer reflection the client's referencesToObject
-	 query uses. Read-only; returns an empty Array if the name is unbound."
-	| obj |
-	obj := self classNamed: aName.
-	obj isNil ifTrue: [^Array new].
-	^(ClassOrganizer new referencesToObject: obj) asArray
+	"referencesToClass: for the class the symbol list binds to aName FIRST. Only for a
+	 caller that has a name and no class; a caller holding the class must use
+	 referencesToClass:, or a shadowed name sends it to the wrong class's referencers."
+	^self referencesToClass: (self classNamed: aName)
 ]
 
 { #category : 'enumerating' }
@@ -212,6 +253,106 @@ GsRefactoringEnvironment >> classNamed: aName [
 	self dictionariesDo: [:dict |
 		(dict at: sym ifAbsent: [nil]) ifNotNil: [:v |
 			(v isKindOf: Class) ifTrue: [^v]]].
+	^nil
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> lineageOf: aClass [
+	"aClass's class history -- the one object every version of it shares, and no other class
+	 does. nil for a class with no history; the caller then falls back to plain identity rather
+	 than letting two history-less classes match on a shared nil.
+
+	 This is how a staged change is matched to a class during copy-forward: by then the change's
+	 dictionary binds the NEW version while the class being carried forward is still the old one,
+	 so identity misses, and a name matches a same-named class in another dictionary too (#396)."
+	aClass isNil ifTrue: [^nil].
+	^[aClass classHistory] on: Error do: [:e | nil]
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> dictionaryDefiningClass: aClass [
+	"The SymbolDictionary that binds aClass ITSELF under its own name, compared by IDENTITY,
+	 or nil when no dictionary does.
+
+	 This is the one right answer to 'where does this class live', and the reason it exists is
+	 that the obvious wrong answer -- take the class's name and use the first dictionary that
+	 binds it -- silently picks a DIFFERENT class whenever the name is shadowed. Refactoring
+	 wrote that wrong answer in three places (#396): the dictionary a reshaped class was rebound
+	 into, the dictionary pinned on a staged change, and the class a change was applied
+	 to. All three now come through here.
+
+	 Identity also makes the answer honest when it cannot be given: a class that is unbound, or
+	 bound only under some other name, answers nil rather than a plausible-looking wrong
+	 dictionary. Callers decide what to do with that."
+	| sym |
+	sym := aClass name asSymbol.
+	self dictionariesDo: [:dict |
+		((dict at: sym ifAbsent: [nil]) == aClass) ifTrue: [^dict]].
+	^nil
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> classForChange: aChange [
+	"The class a staged change was computed against, or nil.
+
+	 A change records its class as a NAME plus the DICTIONARY it was found in -- the dictionary
+	 object, pinned at staging time -- so this asks that dictionary directly. Resolving the name
+	 alone is what `classNamed:` does, and it answers the first binding on the symbol list --
+	 which, for a shadowed name, is a different class from the one the refactoring analysed.
+	 Applying a change to it writes the user's refactoring onto a class they never chose (#396).
+
+	 Asking the pinned dictionary settles every shape a name cannot: two dictionaries sharing a
+	 name, a dictionary with NO name, two dictionaries with no name, and a symbol list reordered
+	 between the preview and the apply. It also answers nil, rather than somebody else's class,
+	 for a dictionary that has since left the symbol list -- which callers turn into
+	 'Class not found: ...', a decline the user can act on rather than damage they cannot see.
+
+	 A change with no dictionary at all falls back to `classNamed:`. That is the pre-#396
+	 behaviour and is kept deliberately: a change staged by a caller that has no dictionary to
+	 give still applies as well as it ever did."
+	aChange isNil ifTrue: [^nil].
+	aChange dict ifNotNil: [:d |
+		"A pinned dictionary answers for itself. A NAME (or a SymbolList index) still arrives
+		 from the undo plan's older records, which resolve as they always did."
+		(d isKindOf: SymbolDictionary)
+			ifTrue: [^d at: aChange className asSymbol otherwise: nil]
+			ifFalse: [^self classNamed: aChange className inDictionaryNamed: d]].
+	^self classNamed: aChange className inDictionaryNamed: nil
+]
+
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> classNamed: aName inDictionaryNamed: aDictName [
+	"The class bound to aName in aDictName, or nil.
+
+	 aDictName is a 1-based SymbolList INDEX (unambiguous, and what the client sends), a
+	 dictionary name, or nil.
+
+	 nil falls back to #classNamed:, which is first-match across the symbol list. That one case is
+	 the compatibility path: a record made before #396, or a caller with no dictionary to give.
+
+	 EVERY OTHER MISS ANSWERS NIL. Being told which dictionary and not finding the class there
+	 means the answer is not known -- and for a shadowed name, falling back then picks the OTHER
+	 dictionary''s class, which is the write-to-the-wrong-class defect this engine exists to
+	 remove. This branch was bitten by exactly that once already: an index stringified to ''10'',
+	 matched no dictionary name, and fell silently back to the first match. Callers turn nil into
+	 ''Class not found: ...'', which is a decline the user can act on rather than damage they
+	 cannot see."
+	| sym |
+	aDictName isNil ifTrue: [^self classNamed: aName].
+	sym := aName asSymbol.
+	"`isKindOf: Integer` rather than `isInteger`, which String does not implement on the
+	 supported releases."
+	(aDictName isKindOf: Integer) ifTrue: [
+		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^nil].
+		^((symbolList at: aDictName) at: sym ifAbsent: [nil])
+			ifNil: [nil]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [nil]]].
+	self dictionariesDo: [:dict | | bound |
+		(dict name notNil and: [dict name asSymbol == aDictName asSymbol])
+			ifTrue: [
+				bound := dict at: sym ifAbsent: [nil].
+				^(bound notNil and: [bound isKindOf: Class]) ifTrue: [bound] ifFalse: [nil]]].
+	"The named dictionary is not on the symbol list at all."
 	^nil
 ]
 
@@ -429,12 +570,74 @@ GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: sour
 	| cat text label |
 	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
-	text isNil ifTrue: [^true].
+	text isNil ifTrue: [
+		self recordHistoryFor: sel from: srcCls to: dstCls source: source category: cat asString.
+		^true].
 	label := isMeta
 		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
 		ifFalse: [dstCls name asString, '>>', sel asString].
 	failures add: (Array with: label with: label with: 'did not recompile: ', text).
 	^false
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> recordHistoryFor: sel from: srcCls to: dstCls source: newSource category: aCategory [
+	"Add the version this copy-forward just compiled to sel's method history, when it really is a
+	 new version.
+
+	 This is the history hook for every refactoring that RE-VERSIONS a class -- rename instance
+	 variable, add/remove instance variable, rename class, split class, extract superclass, the
+	 class-variable engines. Those do not route through GsRefactoringUndo (each calls its own
+	 applyForToken: directly), so the hook there reaches only the method-level refactorings; this
+	 one reaches the rest, because a new class version starts with an empty method dictionary and
+	 EVERY method it keeps comes through here.
+
+	 Which is exactly why the unchanged case has to be excluded. A re-version carries the whole
+	 method dictionary across, and for the methods the refactoring did not touch `source` is just
+	 what srcCls already had. Recording those would stamp a version onto every method of the class
+	 -- turning one instance-variable rename into a hundred spurious history entries -- so a method
+	 whose source is byte-for-byte what it was is skipped here.
+
+	 The old source is read off srcCls and the entry is keyed on dstCls, and the split matters. The
+	 history key carries the DEFINING DICTIONARY, resolved BY IDENTITY, and by the time methods are
+	 carried across the new class version is already the one bound to the name -- so keying on
+	 srcCls resolves to no dictionary at all and files the version under a key no later read will
+	 look at, leaving the method's history frozen at its last hand edit. dstCls is the version that
+	 is bound now and the version a read will resolve, so it is the one that produces the same key
+	 on both sides of the re-version.
+
+	 The recorder is JasperMethodHistory, installed into SessionTemps by the Jasper client at
+	 login; absent on a session that never ran that bootstrap, where this is a no-op. Guarded
+	 throughout: a refactoring must never fail because history could not be written."
+	[ | hist m old |
+	  hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
+	  hist isNil ifTrue: [^self].
+	  m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
+	  old := m isNil ifTrue: [nil] ifFalse: [m sourceString].
+	  (old notNil and: [self source: old matches: newSource]) ifTrue: [^self].
+	  hist
+	    recordRefactoredIn: dstCls
+	    selector: sel
+	    oldSource: old
+	    newSource: newSource
+	    category: aCategory ]
+		on: Error do: [:e | nil]
+]
+
+{ #category : 'private' }
+GsRefactoringEnvironment >> source: a matches: b [
+	"Whether two method sources are the same text, compared CHARACTER BY CHARACTER (a GemStone
+	 Character is unique per code point, so == is exact).
+
+	 Deliberately not a plain = comparison: the source read back off an installed method and the
+	 source an engine built with the AST rewriter are not guaranteed to be the same String class,
+	 and on 3.6.x comparing a byte String against a Unicode-promoted one RAISES ArgumentError 2718
+	 instead of answering false. Mirrors GsRefactoringUndo>>source:matches: and
+	 JasperMethodHistory>>source:matches:, which exist for the same reason."
+	(a isNil or: [b isNil]) ifTrue: [^a isNil and: [b isNil]].
+	a size = b size ifFalse: [^false].
+	1 to: a size do: [:i | ((a at: i) == (b at: i)) ifFalse: [^false]].
+	^true
 ]
 
 { #category : 'private' }
