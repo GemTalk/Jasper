@@ -43,7 +43,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
   }
 
   const code = wrapExecuteCode(source);
-  appendTranscriptOutput(startClientForwarderMode(session, code));
+  appendTranscriptOutput(await startClientForwarderMode(session, code));
   try {
     const resultOop = await runNbCall(
       session,
@@ -95,7 +95,8 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
         disposableProcess: true,
         // The `finally`'s end is refused while a hard-broken cell is being
         // collected; this is where it can succeed.
-        onAbandonedCollected: async () => appendTranscriptOutput(endClientForwarderMode(session)),
+        onAbandonedCollected: async () =>
+          appendTranscriptOutput(await endClientForwarderMode(session)),
       },
     );
 
@@ -110,7 +111,7 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
     }
     return data;
   } finally {
-    appendTranscriptOutput(endClientForwarderMode(session));
+    appendTranscriptOutput(await endClientForwarderMode(session));
   }
 }
 

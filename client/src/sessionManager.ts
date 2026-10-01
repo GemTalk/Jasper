@@ -199,10 +199,10 @@ export class SessionManager {
   // completes, so a slow connect freezes the extension host. Prefer loginAsync
   // for interactive connects; this stays for callers that accept the blocking
   // handshake (and is the fallback loginAsync uses on Windows / older libraries).
-  login(login: GemStoneLogin, libraryPath: string): ActiveSession {
+  async login(login: GemStoneLogin, libraryPath: string): Promise<ActiveSession> {
     const { gci, stoneNrs, gemNrs } = this.prepareLogin(login, libraryPath);
     const handle = this.blockingLoginHandle(gci, stoneNrs, gemNrs, login);
-    return this.finalizeSession(gci, login, handle);
+    return await this.finalizeSession(gci, login, handle);
   }
 
   /**
@@ -230,7 +230,7 @@ export class SessionManager {
         ? await this.nonBlockingLoginHandle(gci, stoneNrs, gemNrs, login)
         : this.blockingLoginHandle(gci, stoneNrs, gemNrs, login);
 
-      return this.finalizeSession(gci, login, handle);
+      return await this.finalizeSession(gci, login, handle);
     } finally {
       this.pendingLogins--;
     }
@@ -335,7 +335,11 @@ export class SessionManager {
   // Shared post-login setup for both the blocking and non-blocking paths:
   // records the session, installs the Transcript sink, drops the fresh session's
   // spurious uncommitted state, and auto-selects a lone session.
-  private finalizeSession(gci: GciLibrary, login: GemStoneLogin, handle: unknown): ActiveSession {
+  private async finalizeSession(
+    gci: GciLibrary,
+    login: GemStoneLogin,
+    handle: unknown,
+  ): Promise<ActiveSession> {
     const { version } = gci.GciTsVersion();
 
     const session: ActiveSession = {
@@ -356,12 +360,12 @@ export class SessionManager {
     // Jade-style server-side Transcript sink: compiled into the session at
     // login, kept alive via SessionTemps, never committed. Non-fatal on
     // failure — the session simply has no Transcript display.
-    installTranscriptSink(session);
+    await installTranscriptSink(session);
 
     // Per-method history helper, installed the same way (SessionTemps, no commit,
     // no plugin) so method history works on a bare stone. Non-fatal on failure —
     // capture is soft-guarded, so the session simply records no history.
-    installMethodHistory(session);
+    await installMethodHistory(session);
 
     // Clear the spurious "uncommitted changes" a fresh login carries. Beginning
     // the login transaction rebuilds the session-method dictionary, which bumps a

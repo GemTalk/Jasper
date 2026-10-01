@@ -8,6 +8,7 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
+import { fetchString } from './stringFetch';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
 import { clearStack, getObjectPrintString } from './debugQueries';
@@ -198,7 +199,7 @@ export class CodeExecutor {
     // clientForwarder mode: Transcript writes stream to the output channel
     // while this execute's process runs (see transcriptSink). Any residue
     // buffered since the last drain is displayed now. Ended in finally.
-    appendTranscriptOutput(startClientForwarderMode(session, code));
+    appendTranscriptOutput(await startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -251,10 +252,10 @@ export class CodeExecutor {
         // result back in the workspace, just as if it had never halted. (Execute
         // It is intentionally silent, so no callback.)
         const onComplete = displayResult
-          ? (resultOop: bigint): void => {
+          ? async (resultOop: bigint): Promise<void> => {
               // The debugger runs outside clientForwarder mode, so writes are
               // buffered; show what accumulated while stepping/resuming.
-              appendTranscriptOutput(drainTranscript(session));
+              appendTranscriptOutput(await drainTranscript(session));
               const resultString = getObjectPrintString(session, resultOop, MAX_RESULT_SIZE);
               // Capture the editor's column now, while it is still visible — by the
               // next tick (after the panel disposes) editor.viewColumn may be
@@ -282,7 +283,7 @@ export class CodeExecutor {
       // a hard-break cancel the gem may still be settling — the end then
       // fails quietly, and runs again once the call is collected; see
       // pollForCompletion.)
-      appendTranscriptOutput(endClientForwarderMode(session));
+      appendTranscriptOutput(await endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -514,7 +515,7 @@ export class CodeExecutor {
 
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
     this.setExecuting(session.id, true);
-    appendTranscriptOutput(startClientForwarderMode(session, code));
+    appendTranscriptOutput(await startClientForwarderMode(session, code));
     try {
       const { success, err: startErr } = session.gci.GciTsNbExecute(
         session.handle,
@@ -552,7 +553,7 @@ export class CodeExecutor {
       }
       throw e instanceof Error ? e : new Error(msg);
     } finally {
-      appendTranscriptOutput(endClientForwarderMode(session));
+      appendTranscriptOutput(await endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }
@@ -662,7 +663,7 @@ export class CodeExecutor {
     session: ActiveSession,
     gsProcess: bigint,
     msg: string,
-    onComplete?: (resultOop: bigint) => void,
+    onComplete?: (resultOop: bigint) => Promise<void>,
   ): Promise<void> {
     const choice = await vscode.window.showErrorMessage(
       `GemStone error: ${msg}`,
@@ -721,7 +722,8 @@ export class CodeExecutor {
       disposableProcess: true,
       // Every caller runs in clientForwarder mode, and after a hard break the
       // `finally`'s end is refused; this is where it can succeed.
-      onAbandonedCollected: async () => appendTranscriptOutput(endClientForwarderMode(session)),
+      onAbandonedCollected: async () =>
+        appendTranscriptOutput(await endClientForwarderMode(session)),
     });
   }
 
@@ -757,10 +759,7 @@ export class CodeExecutor {
   private async fetchResultString(session: ActiveSession, signal?: AbortSignal): Promise<string> {
     const resultOop = await this.fetchResultOop(session, signal);
 
-    return session.gci.executeAndFetchString(
-      session.handle,
-      `(Object objectForOop: ${resultOop}) printString`,
-    );
+    return await fetchString(session, `(Object objectForOop: ${resultOop}) printString`);
   }
 
   // ── Inspect ──────────────────────────────────────────
@@ -827,7 +826,7 @@ export class CodeExecutor {
 
     this.setExecuting(session.id, true);
     // clientForwarder mode for the duration; see execute() above.
-    appendTranscriptOutput(startClientForwarderMode(session, code));
+    appendTranscriptOutput(await startClientForwarderMode(session, code));
     try {
       // Interpreted so a halt/error is steppable in the debugger; see execute().
       const { success, err: startErr } = session.gci.GciTsNbExecute(
@@ -857,8 +856,8 @@ export class CodeExecutor {
       if (e instanceof DebuggableError) {
         // If it halts, resuming/stepping to completion should still inspect the
         // result — mirroring the success path above.
-        await this.promptDebuggableError(session, e.context, msg, (resultOop: bigint) => {
-          appendTranscriptOutput(drainTranscript(session));
+        await this.promptDebuggableError(session, e.context, msg, async (resultOop: bigint) => {
+          appendTranscriptOutput(await drainTranscript(session));
           routeInspect(session, resultOop, label);
         });
       } else {
@@ -868,7 +867,7 @@ export class CodeExecutor {
       if (editor) {
         editor.setDecorations(executingDecorationType, []);
       }
-      appendTranscriptOutput(endClientForwarderMode(session));
+      appendTranscriptOutput(await endClientForwarderMode(session));
       this.setExecuting(session.id, false);
     }
   }

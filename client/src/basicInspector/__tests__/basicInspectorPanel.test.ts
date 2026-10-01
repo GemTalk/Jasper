@@ -274,8 +274,9 @@ describe('serving a tab', () => {
     expect(queries.fetchItems).toHaveBeenCalledWith(expect.any(Function), 100n, 101, 100);
   });
 
-  it('prints an object in full, past the printString cap', () => {
+  it('prints an object in full, past the printString cap', async () => {
     send({ command: 'fetchTab', columnId: 0, oop: '100', tab: 'print', from: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(debug.fetchFullPrintString).toHaveBeenCalledWith(session, 100n);
     expect(postsOf('tabData').at(-1)).toMatchObject({ tab: 'print', text: 'an Account' });

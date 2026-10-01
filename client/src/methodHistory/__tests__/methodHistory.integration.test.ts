@@ -44,14 +44,14 @@ describe('method history (integration)', () => {
     );
   };
 
-  it('installs its helper on a bare stone', () => {
-    expect(installMethodHistory(session())).toBe(true);
+  it('installs its helper on a bare stone', async () => {
+    expect(await installMethodHistory(session())).toBe(true);
     // A second install is idempotent (already-installed short-circuit), not an error.
-    expect(installMethodHistory(session())).toBe(true);
+    expect(await installMethodHistory(session())).toBe(true);
   });
 
-  it('records a timestamped version on each Jasper compile, newest first', () => {
-    installMethodHistory(session());
+  it('records a timestamped version on each Jasper compile, newest first', async () => {
+    await installMethodHistory(session());
     defineClass();
 
     q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
@@ -65,8 +65,8 @@ describe('method history (integration)', () => {
     expect(versions[0].userId).not.toBe('');
   });
 
-  it('seeds the pre-existing source as the first version when a method is first edited', () => {
-    installMethodHistory(session());
+  it('seeds the pre-existing source as the first version when a method is first edited', async () => {
+    await installMethodHistory(session());
     defineClass();
     // Compile the original WITHOUT the capture path (direct kernel compile), so it
     // stands in for a method that predates any Jasper edit. It references the
@@ -88,8 +88,8 @@ describe('method history (integration)', () => {
     expect(versions[0].source).toContain('^ count + 1');
   });
 
-  it('does not record an identical recompile twice', () => {
-    installMethodHistory(session());
+  it('does not record an identical recompile twice', async () => {
+    await installMethodHistory(session());
     defineClass();
 
     q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
@@ -99,8 +99,8 @@ describe('method history (integration)', () => {
     expect(versions.filter((v) => !v.notInHistory)).toHaveLength(1);
   });
 
-  it('forgets a method’s history on request', () => {
-    installMethodHistory(session());
+  it('forgets a method’s history on request', async () => {
+    await installMethodHistory(session());
     defineClass();
     q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
     q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
@@ -146,8 +146,8 @@ describe('method history (integration)', () => {
       defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
     };
 
-    it('keeps each class’s versions in its own history entry', () => {
-      installMethodHistory(session());
+    it('keeps each class’s versions in its own history entry', async () => {
+      await installMethodHistory(session());
       defineShadowPair();
 
       // Two edits on the UserGlobals class, one on the shadowing class.
@@ -167,8 +167,8 @@ describe('method history (integration)', () => {
       expect(inOther.map((v) => v.source).join('\n')).not.toContain('^ 2');
     });
 
-    it('forgets only the dictionary-scoped class’s history', () => {
-      installMethodHistory(session());
+    it('forgets only the dictionary-scoped class’s history', async () => {
+      await installMethodHistory(session());
       defineShadowPair();
       q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 1', 0, 'UserGlobals');
       q.compileMethod(session(), SHADOW, false, 'accessing', 'answer\n\t^ 99', 0, 1);
@@ -189,8 +189,8 @@ describe('method history (integration)', () => {
   // developer outside the stone's timezone misreads it — invisibly, because the digits
   // are unchanged. asStringISO8601 is present on 3.6.2 and 3.7.5; this pins that the
   // engine actually emits the offset rather than a bare wall clock.
-  it('records timestamps carrying the stone’s UTC offset', () => {
-    installMethodHistory(session());
+  it('records timestamps carrying the stone’s UTC offset', async () => {
+    await installMethodHistory(session());
     defineClass();
     q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
 

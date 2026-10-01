@@ -4658,7 +4658,7 @@ export class ExplorerController {
         void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
         return;
       }
-      installMethodHistory(session);
+      await installMethodHistory(session);
       try {
         versions = readHistory();
       } catch (e2: unknown) {

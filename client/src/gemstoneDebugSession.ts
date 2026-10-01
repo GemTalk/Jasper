@@ -276,13 +276,13 @@ export class GemStoneDebugSession extends DebugSession {
       const frames: StackFrame[] = [];
       for (let level = startFrame + 1; level <= endFrame; level++) {
         try {
-          const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+          const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
           const sourceRef = this.allocSourceRef(info.methodOop);
 
           let frameName: string;
           let sourcePath: string | undefined;
           try {
-            const uriInfo = debug.getMethodUriInfo(this.session, info.methodOop);
+            const uriInfo = await debug.getMethodUriInfo(this.session, info.methodOop);
             if (uriInfo && uriInfo.dictName) {
               const baseClass = uriInfo.className;
               const side = uriInfo.isMeta ? 'class' : 'instance';
@@ -388,7 +388,7 @@ export class GemStoneDebugSession extends DebugSession {
     // Actually, let's resolve the receiver OOP now
     if (this.session) {
       try {
-        const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+        const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
         // Update the receiver ref with the actual OOP
         this.varRefMap.set(receiverRef, { kind: 'receiver', oop: info.selfOop });
       } catch {
@@ -434,7 +434,7 @@ export class GemStoneDebugSession extends DebugSession {
     try {
       switch (varRef.kind) {
         case 'frame':
-          response.body = { variables: this.getFrameVariables(varRef.level) };
+          response.body = { variables: await this.getFrameVariables(varRef.level) };
           break;
         case 'receiver':
           response.body = { variables: this.getReceiverVariables(varRef.oop) };
@@ -461,9 +461,9 @@ export class GemStoneDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
-  private getFrameVariables(level: number): Variable[] {
+  private async getFrameVariables(level: number): Promise<Variable[]> {
     if (!this.session) return [];
-    const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+    const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
     const vars: Variable[] = [];
 
     for (let i = 0; i < info.argAndTempNames.length && i < info.argAndTempOops.length; i++) {
@@ -671,7 +671,12 @@ export class GemStoneDebugSession extends DebugSession {
 
     const level = args.frameId || 1;
     try {
-      const result = debug.evaluateInFrame(this.session, this.gsProcess, args.expression, level);
+      const result = await debug.evaluateInFrame(
+        this.session,
+        this.gsProcess,
+        args.expression,
+        level,
+      );
       response.body = { result, variablesReference: 0 };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

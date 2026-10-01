@@ -276,14 +276,14 @@ export class BasicInspector {
 
   // ── Message dispatch ─────────────────────────────────
 
-  private handleMessage(msg: BasicInspectorMessage): void {
+  private async handleMessage(msg: BasicInspectorMessage): Promise<void> {
     try {
       switch (msg.command) {
         case 'ready':
           this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
           return;
         case 'fetchTab':
-          this.postTabData(
+          await this.postTabData(
             msg.columnId,
             BigInt(msg.oop),
             msg.tab,
@@ -389,14 +389,14 @@ export class BasicInspector {
    * for a post-write refetch, back to the row count the tab already had — and
    * post the result to the column that asked.
    */
-  private postTabData(
+  private async postTabData(
     columnId: number,
     oop: bigint,
     tab: TabName,
     from: number,
     all = false,
     through = 0,
-  ): void {
+  ): Promise<void> {
     const exec = this.makeExecutor();
     const payload: Record<string, unknown> = { command: 'tabData', columnId, tab, from };
     const maxPages = loadAllPageLimit();
@@ -448,7 +448,7 @@ export class BasicInspector {
         payload.meta = fetchObjectMeta(exec, oop);
         break;
       case 'print':
-        payload.text = debug.fetchFullPrintString(this.session, oop);
+        payload.text = await debug.fetchFullPrintString(this.session, oop);
         break;
     }
     this.panel.webview.postMessage(payload);
