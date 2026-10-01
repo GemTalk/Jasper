@@ -4,6 +4,8 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-01
+
 ### Added
 
 - **Notebooks are one click away.** **Open Notebook**, next to **Open Workspace** in the **Logins & Sessions** title bar, opens a blank notebook with the GemStone Smalltalk kernel already chosen. **Learn Smalltalk** in a GemStone notebook's toolbar opens the Smalltalk tutorial, in a tab named **Learn Smalltalk.ipynb**. The **Get Started with GemStone** walkthrough has a new **Try a notebook** step pointing at both. Notebooks stay Smalltalk: they no longer come back as Python, and picking the Grail kernel switches only the empty cells. Microsoft's Jupyter extension is not needed. ([#649](https://github.com/GemTalk/Jasper/issues/649))
