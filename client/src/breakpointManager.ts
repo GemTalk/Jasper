@@ -728,7 +728,7 @@ export class BreakpointManager {
    * rows that say otherwise, which is the very state the caller is trying to
    * avoid.
    */
-  private sweepEveryGem(operation: (session: ActiveSession) => void): string[] {
+  private sweepEveryGem(operation: (session: ActiveSession) => unknown): string[] {
     const failures: string[] = [];
     for (const session of this.sessionManager.getSessions()) {
       try {

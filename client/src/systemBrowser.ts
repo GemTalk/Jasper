@@ -486,7 +486,7 @@ export class SystemBrowser {
 
     // Update dictionary if changed
     if (this.state.selectedDictIndex !== dictIndex) {
-      this.handleSelectDictionary(dictIndex).catch((e) => this.postError(e));
+      this.handleSelectDictionary(dictIndex);
       this.panel.webview.postMessage({
         command: 'selectDictionaryItem',
         index: dictIndex,
@@ -586,9 +586,7 @@ export class SystemBrowser {
           this.handleReady();
           break;
         case 'selectDictionary':
-          this.handleSelectDictionary(message.index as number, false, true).catch((e) =>
-            this.postError(e),
-          );
+          this.handleSelectDictionary(message.index as number, false, true);
           break;
         case 'selectCategory':
           this.handleSelectCategory(message.name as string);
@@ -755,12 +753,27 @@ export class SystemBrowser {
    * `autoSelectAllClassesCategory` auto-selects the "all classes"
    * pseudo-category so the Classes column fills immediately instead of
    * staying blank until the user clicks a category.
+   *
+   * Resolves once the categories are loaded, since callers go on to read and
+   * post them; the panels keep opening in the background. A failure is posted
+   * to the webview rather than thrown.
    */
-  private async handleSelectDictionary(
+  private handleSelectDictionary(
     dictIndex: number,
     skipPanels = false,
     autoSelectAllClassesCategory = false,
-  ): Promise<void> {
+  ): void {
+    try {
+      this.loadDictionaryCategories(dictIndex, autoSelectAllClassesCategory);
+    } catch (e) {
+      this.postError(e);
+      return;
+    }
+    if (skipPanels) return;
+    this.openDictionaryPanels(dictIndex).catch((e) => this.postError(e));
+  }
+
+  private loadDictionaryCategories(dictIndex: number, autoSelectAllClassesCategory: boolean): void {
     this.state.selectedDictIndex = dictIndex;
     this.state.selectedCategory = null;
     this.state.selectedClass = null;
@@ -789,9 +802,9 @@ export class SystemBrowser {
     if (autoSelectAllClassesCategory) {
       this.handleSelectCategory(ALL_CLASSES_CATEGORY);
     }
+  }
 
-    if (skipPanels) return;
-
+  private async openDictionaryPanels(dictIndex: number): Promise<void> {
     const dictName = this.state.dictionaries[dictIndex - 1];
     // Set the editor layout before creating panels so they appear in the right order
     await vscode.commands.executeCommand('vscode.setEditorLayout', {
@@ -1074,7 +1087,7 @@ export class SystemBrowser {
 
     // Update dictionary if changed
     if (this.state.selectedDictIndex !== dictIndex) {
-      void this.handleSelectDictionary(dictIndex, skipClassBrowser);
+      this.handleSelectDictionary(dictIndex, skipClassBrowser);
       this.panel.webview.postMessage({ command: 'selectDictionaryItem', index: dictIndex });
     }
 
@@ -1159,7 +1172,7 @@ export class SystemBrowser {
     this.panel.reveal(undefined, true);
 
     if (this.state.selectedDictIndex !== dictIndex) {
-      this.handleSelectDictionary(dictIndex).catch((e) => this.postError(e));
+      this.handleSelectDictionary(dictIndex);
       this.panel.webview.postMessage({ command: 'selectDictionaryItem', index: dictIndex });
     }
 
@@ -1210,7 +1223,7 @@ export class SystemBrowser {
     // Restore previous selections when the items still exist after refresh
     if (!prev.selectedDictIndex || prev.selectedDictIndex > this.state.dictionaries.length) return;
 
-    this.handleSelectDictionary(prev.selectedDictIndex).catch((e) => this.postError(e));
+    this.handleSelectDictionary(prev.selectedDictIndex);
     this.panel.webview.postMessage({
       command: 'selectDictionaryItem',
       index: prev.selectedDictIndex,

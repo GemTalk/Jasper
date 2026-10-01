@@ -83,7 +83,7 @@ export function createLiteralsProvider(
         rows = run();
       } catch (e) {
         // A real failure from the server-side runner (GCI drop, aborted transaction, ...). Surface it
-        // so it's diagnosable instead of masquerading as "no results". Still return [] — the sync
+        // so it's diagnosable instead of masquerading as "no results". Still return [] — the
         // provider API has no error row, and throwing would abort sibling providers in the All scope.
         onError?.(
           `Literals search failed for ${term}: ${e instanceof Error ? e.message : String(e)}`,

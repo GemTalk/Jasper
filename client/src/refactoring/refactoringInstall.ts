@@ -130,7 +130,10 @@ export async function installRefactoringSupport(
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
-  const unreadable = REFACTORING_PAYLOAD_FILES.filter((f) => !gemCanRead(session, serverPath(f)));
+  const unreadable: string[] = [];
+  for (const f of REFACTORING_PAYLOAD_FILES) {
+    if (!gemCanRead(session, serverPath(f))) unreadable.push(f);
+  }
   if (unreadable.length > 0) {
     return {
       success: false,

@@ -8,7 +8,7 @@
  * is rejected before `validate` runs, posting `invalid` back and leaving the panel
  * open just as a bad name does.
  *
- * Then the host runs `validate(newName)` — a synchronous check that includes
+ * Then the host runs `validate(newName)` — a check that includes
  * "is this name already in use in the stone?" — and, if it returns an error,
  * posts it back to the editor (`invalid`) so the user can choose another name
  * without the editor closing. The editor resolves only once both checks pass.

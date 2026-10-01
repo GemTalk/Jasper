@@ -209,7 +209,7 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
 
 /** Source text to preview for a result in the preview pane: a method's source, a class (or global's
  *  class) definition. Reveal-only actions (dictionary / category) have no source → ''. Runs
- *  synchronously against the session; the host wraps the call so a failure just shows no preview. */
+ *  against the session; the host wraps the call so a failure just shows no preview. */
 export function buildPreviewSource(session: ActiveSession): (result: OmniResult) => string {
   return (result) => {
     const a = result.action;

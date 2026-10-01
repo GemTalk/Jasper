@@ -4787,7 +4787,7 @@ export class ExplorerController {
     for (const entry of this.methodHistoryPanels) {
       if (entry.sessionId !== sessionId || entry.className !== className) continue;
       if (selector !== undefined && entry.selector !== selector) continue;
-      entry.refresh();
+      void entry.refresh();
     }
   }
 
@@ -4810,7 +4810,7 @@ export class ExplorerController {
    */
   refreshAllMethodHistoryPanels(sessionId: number): void {
     for (const entry of this.methodHistoryPanels) {
-      if (entry.sessionId === sessionId) entry.refresh();
+      if (entry.sessionId === sessionId) void entry.refresh();
     }
   }
 
@@ -4843,14 +4843,19 @@ export class ExplorerController {
     // any selector inside it matches. Name-matching first: it is a cached-parse
     // lookup plus a string compare (parseFilter re-parses only when the raw filter
     // string changes), where the selector scan can pull in the ivar-access map.
-    const hasMatch = (category: string) =>
-      filter === undefined ||
-      this.methodCategoryMatchesFilter(category, filter) ||
-      this.selectorsFor(isMeta, category).some((info) =>
-        this.methodMatchesFilter(isMeta, info.selector, filter),
-      );
+    const hasMatch = (category: string): boolean => {
+      if (filter === undefined || this.methodCategoryMatchesFilter(category, filter)) return true;
+      for (const info of this.selectorsFor(isMeta, category)) {
+        if (this.methodMatchesFilter(isMeta, info.selector, filter)) return true;
+      }
+      return false;
+    };
     const expanded = filter !== undefined;
-    if (filter !== undefined) combined = combined.filter(hasMatch);
+    if (filter !== undefined) {
+      const matching: string[] = [];
+      for (const c of combined) if (hasMatch(c)) matching.push(c);
+      combined = matching;
+    }
     const items: MethodCategoryItem[] = [];
     // No ALL METHODS pseudo-category row (#387). It duplicated what the real
     // categories already show — for an uncategorized class it listed exactly what "as
@@ -4879,35 +4884,35 @@ export class ExplorerController {
   // All of one side's methods as flat rows (no category parent) — used when
   // category grouping is off, or when a filter is narrowing the list.
   flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
-    return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
-      .filter(
-        (info) =>
-          filter === undefined ||
-          this.methodMatchesFilter(isMeta, info.selector, filter) ||
-          // A category-name match keeps that category's methods here too (#387).
-          // Without this, filtering 'accessing' listed the category in grouped mode and
-          // then emptied the pane the moment the user turned grouping off, even though
-          // the filter had not changed. Ivar-token filters are excluded for free --
-          // methodCategoryMatchesFilter answers false for them.
-          this.methodCategoryMatchesFilter(info.category, filter),
-      )
-      .map((info) => {
-        const item = new MethodItem(
-          isMeta,
-          info,
-          undefined,
-          this.methodSourceUri(isMeta, info),
-          this.ivarAccessMark(isMeta, info.selector, filter),
-        );
-        this.decorateTestRow(
-          item,
-          this.state.dictName,
-          this.state.className ?? '',
-          info.selector,
-          isMeta,
-        );
-        return item;
-      });
+    const items: MethodItem[] = [];
+    for (const info of this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)) {
+      const kept =
+        filter === undefined ||
+        this.methodMatchesFilter(isMeta, info.selector, filter) ||
+        // A category-name match keeps that category's methods here too (#387).
+        // Without this, filtering 'accessing' listed the category in grouped mode and
+        // then emptied the pane the moment the user turned grouping off, even though
+        // the filter had not changed. Ivar-token filters are excluded for free --
+        // methodCategoryMatchesFilter answers false for them.
+        this.methodCategoryMatchesFilter(info.category, filter);
+      if (!kept) continue;
+      const item = new MethodItem(
+        isMeta,
+        info,
+        undefined,
+        this.methodSourceUri(isMeta, info),
+        this.ivarAccessMark(isMeta, info.selector, filter),
+      );
+      this.decorateTestRow(
+        item,
+        this.state.dictName,
+        this.state.className ?? '',
+        info.selector,
+        isMeta,
+      );
+      items.push(item);
+    }
+    return items;
   }
 
   // Lazily load + cache the per-method instance-variable read/write map for the
@@ -5384,20 +5389,21 @@ export class ExplorerController {
         title,
         cancellable: false,
       },
-      () => {
+      async () => {
         try {
-          const perEnv = this.environmentsToScan().map((env) => scan(env));
+          const perEnv: queries.MethodSearchResult[][] = [];
+          for (const env of this.environmentsToScan()) perEnv.push(scan(env));
           const truncated = perEnv.some((rows) => rows.length >= METHOD_SEARCH_RESULT_LIMIT);
-          return Promise.resolve({
+          return {
             references: dedupeMethodResults(perEnv.flat()),
             truncated,
-          });
+          };
         } catch (e: unknown) {
-          return Promise.resolve({
+          return {
             references: [],
             scanFailed: e instanceof Error ? e.message : String(e),
             truncated: false,
-          });
+          };
         }
       },
     );
@@ -7604,10 +7610,10 @@ export class ExplorerController {
               `${missing.join(', ')} — no longer in this dictionary. Refresh and try again.`,
           );
         }
-        return composeFileOut(
-          queries.fileOutHeader(session),
-          ordered.map((name) => this.classFileOutBody(session, name, dictIndex)),
-        );
+        const header = queries.fileOutHeader(session);
+        const bodies: string[] = [];
+        for (const name of ordered) bodies.push(this.classFileOutBody(session, name, dictIndex));
+        return composeFileOut(header, bodies);
       },
     });
   }
@@ -7731,13 +7737,16 @@ export class ExplorerController {
         single ? `${className}-${single.info.selector}` : `${className}-methods`,
       ),
       label,
-      build: () =>
-        composeFileOut(
-          queries.fileOutHeader(session),
-          nodes.map((n) =>
+      build: () => {
+        const header = queries.fileOutHeader(session);
+        const bodies: string[] = [];
+        for (const n of nodes) {
+          bodies.push(
             queries.fileOutMethod(session, className, n.isMeta, n.info.selector, dictIndex),
-          ),
-        ),
+          );
+        }
+        return composeFileOut(header, bodies);
+      },
     });
   }
 
@@ -8464,7 +8473,7 @@ abstract class RefreshableProvider<T> implements vscode.TreeDataProvider<T> {
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
   }
-  abstract getChildren(element?: T): T[];
+  abstract getChildren(element?: T): T[] | Promise<T[]>;
   getTreeItem(element: T): vscode.TreeItem {
     return element as unknown as vscode.TreeItem;
   }
@@ -8571,14 +8580,17 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
         ? this.ctl
             .definedClassVarNames(element.className)
             .map((cv) => new ClassVarItem(element.className, cv))
-        : this.ctl
-            .definedIvarNames(element.className)
-            .map(
-              (iv) =>
-                new IvarItem(element.className, iv, this.ctl.classHasSubclasses(element.className)),
-            );
+        : this.ivarItems(element.className);
     }
     return [];
+  }
+
+  private ivarItems(className: string): IvarItem[] {
+    const items: IvarItem[] = [];
+    for (const iv of this.ctl.definedIvarNames(className)) {
+      items.push(new IvarItem(className, iv, this.ctl.classHasSubclasses(className)));
+    }
+    return items;
   }
 }
 
@@ -8639,31 +8651,30 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
       // with their category's name.
       const nameMatched =
         filter !== undefined && this.ctl.methodCategoryMatchesFilter(element.category, filter);
-      return this.ctl
-        .selectorsFor(element.isMeta, element.category)
-        .filter(
-          (info) =>
-            filter === undefined ||
-            nameMatched ||
-            this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
-        )
-        .map((info) => {
-          const item = new MethodItem(
-            element.isMeta,
-            info,
-            element.category,
-            this.ctl.methodSourceUri(element.isMeta, info),
-            this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
-          );
-          this.ctl.decorateTestRow(
-            item,
-            this.ctl.state.dictName,
-            this.ctl.state.className ?? '',
-            info.selector,
-            element.isMeta,
-          );
-          return item;
-        });
+      const items: MethodNode[] = [];
+      for (const info of this.ctl.selectorsFor(element.isMeta, element.category)) {
+        const kept =
+          filter === undefined ||
+          nameMatched ||
+          this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter);
+        if (!kept) continue;
+        const item = new MethodItem(
+          element.isMeta,
+          info,
+          element.category,
+          this.ctl.methodSourceUri(element.isMeta, info),
+          this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
+        );
+        this.ctl.decorateTestRow(
+          item,
+          this.ctl.state.dictName,
+          this.ctl.state.className ?? '',
+          info.selector,
+          element.isMeta,
+        );
+        items.push(item);
+      }
+      return items;
     }
     return [];
   }

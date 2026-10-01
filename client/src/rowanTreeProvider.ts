@@ -384,12 +384,13 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
       return [item];
     }
     const loadedNames = this.loadedProjectNames();
-    return repos
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((repo) =>
+    const items: RowanTreeNode[] = [];
+    for (const repo of repos.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+      items.push(
         this.describe(repo, loadedNames, workspaceSet.has(repo.path), trackedPaths.has(repo.path)),
       );
+    }
+    return items;
   }
 
   private loadedChildren(): RowanTreeNode[] {

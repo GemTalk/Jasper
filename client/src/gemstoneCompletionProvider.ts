@@ -102,17 +102,19 @@ export class GemStoneCompletionProvider implements vscode.CompletionItemProvider
    */
   primeClass(sessionId: number, className: string): void {
     if (this.primeTimer) clearTimeout(this.primeTimer);
-    this.primeTimer = setTimeout(() => {
-      this.primeTimer = undefined;
-      // Gone in the meantime (logged out, session closed) — nothing to warm, and the
-      // caches for it were cleared by onDidRemoveSession anyway.
-      const session = this.sessionManager.getSession(sessionId);
-      if (!session) return;
-      // Straight through the same getters the provider uses, so a primed entry is
-      // byte-for-byte what a request would have cached and can never disagree with it.
-      this.getInstVarItems(session, className);
-      this.getSelectorItems(session, className);
-    }, PRIME_DEBOUNCE_MS);
+    this.primeTimer = setTimeout(() => this.primeNow(sessionId, className), PRIME_DEBOUNCE_MS);
+  }
+
+  private primeNow(sessionId: number, className: string): void {
+    this.primeTimer = undefined;
+    // Gone in the meantime (logged out, session closed) — nothing to warm, and the
+    // caches for it were cleared by onDidRemoveSession anyway.
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+    // Straight through the same getters the provider uses, so a primed entry is
+    // byte-for-byte what a request would have cached and can never disagree with it.
+    this.getInstVarItems(session, className);
+    this.getSelectorItems(session, className);
   }
 
   /** Cancels a prime still waiting out its debounce. */

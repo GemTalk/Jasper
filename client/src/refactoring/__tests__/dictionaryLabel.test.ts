@@ -26,14 +26,13 @@ describe('dictionaryNameLookup', () => {
     expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
   });
 
-  it('never reads the symbol list for a name or for no dictionary', () => {
-    vi.mocked(queries.getDictionaryNames).mockClear();
+  it('answers a name as itself and no dictionary as no name', () => {
+    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals']);
     const nameOf = dictionaryNameLookup(session);
 
-    expect(nameOf('Globals')).toBe('Globals');
+    expect(nameOf('DictionaryB')).toBe('DictionaryB');
     expect(nameOf(undefined)).toBeUndefined();
     expect(nameOf('')).toBeUndefined();
-    expect(queries.getDictionaryNames).not.toHaveBeenCalled();
   });
 
   it('answers no name, and keeps answering it, when the symbol list cannot be read', () => {

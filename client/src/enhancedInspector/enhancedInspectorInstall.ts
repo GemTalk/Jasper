@@ -358,7 +358,10 @@ export async function installEnhancedInspectorSupport(
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
-  const unreadable = ENHANCED_INSPECTOR_FILES.filter((f) => !gemCanRead(session, serverPath(f)));
+  const unreadable: string[] = [];
+  for (const f of ENHANCED_INSPECTOR_FILES) {
+    if (!gemCanRead(session, serverPath(f))) unreadable.push(f);
+  }
   if (unreadable.length > 0) {
     return {
       success: false,
