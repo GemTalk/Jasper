@@ -26,6 +26,9 @@ import { SMALLTALK_LANGUAGE } from '../languageIds';
  * user can set, clear and re-arm from outside the notebook at any point, so "has this notebook
  * been told already" is a question with no stable answer; a note tied to the run that actually
  * skipped one always describes that run.
+ *
+ * The "says nothing" cases pass today only because there is no note at all to suppress. They
+ * become coverage once the note exists; until then they protect nothing.
  */
 
 /** One row of `GsNMethod class >> _breakReport:`, in the ten columns getAllBreakpoints reads. */

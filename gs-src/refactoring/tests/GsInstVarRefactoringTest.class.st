@@ -1080,7 +1080,7 @@ GsInstVarRefactoringTest >> sameNamedDictionaries [
 
 { #category : 'tests - two dictionaries of one name' }
 GsInstVarRefactoringTest >> removeSameNamedDictionaries: dicts [
-	"By identity: two dictionaries of one name, each holding an equal-looking class, compare equal."
+	"By identity: two empty dictionaries of one name can compare equal."
 	| sl |
 	sl := System myUserProfile symbolList.
 	dicts do: [:d | | idx |
@@ -1094,13 +1094,12 @@ GsInstVarRefactoringTest >> testAddReshapesTheClassInTheSecondOfTwoSameNamedDict
 	"Two dictionaries can share a name, and each can bind its own class of one name. A change
 	 staged against the SECOND one's class has to be applied there.
 
-	 A change records the dictionary it was computed in. Recorded as a NAME, that is a dictionary
-	 the symbol list can only resolve to the FIRST of the two -- so the apply reshapes a class the
-	 user never chose and leaves theirs as it was. Neither half is visible: the refactoring
-	 reports success, their class is unchanged, and somebody else's has a new instance variable."
-	| dicts first second acted json |
+	 A change records the dictionary it was computed in. Recorded as a NAME, the symbol list could
+	 only resolve it to the FIRST of the two, and the apply would reshape a class the user never
+	 chose while reporting success. GsRefactoringChange >> dict pins the dictionary OBJECT, so this
+	 holds today; it guards that pinning, since nothing on screen would show it breaking."
+	| dicts second acted json |
 	dicts := self sameNamedDictionaries.
-	first := dicts first.
 	second := dicts last.
 	[acted := second at: #GsIVDup.
 	 json := (GsInstVarRefactoring class: acted addInstVar: 'tally')
@@ -1134,7 +1133,7 @@ GsInstVarRefactoringTest >> testAddLeavesTheFirstOfTwoSameNamedDictionariesAlone
 { #category : 'tests - two dictionaries of one name' }
 GsInstVarRefactoringTest >> testRemoveReshapesTheClassInTheSecondOfTwoSameNamedDictionaries [
 	"The remove half. Both operations reshape through the same staging, so both record the
-	 dictionary the same way and both reach the same wrong one."
+	 dictionary the same way -- and a regression in it would reach the same wrong one."
 	| dicts first second untouched |
 	dicts := self sameNamedDictionaries.
 	first := dicts first.
@@ -1151,13 +1150,12 @@ GsInstVarRefactoringTest >> testRemoveReshapesTheClassInTheSecondOfTwoSameNamedD
 
 { #category : 'tests - two dictionaries of one name' }
 GsInstVarRefactoringTest >> testTheReshapedClassStaysBoundInItsOwnDictionary [
-	"Reshaping makes a NEW class version and binds it. Bound by name, it lands in the first
-	 dictionary of that name -- which both replaces that dictionary's own class and leaves the
-	 acted-on dictionary still binding the old version, so the refactoring appears to have done
+	"Reshaping makes a NEW class version and binds it. Bound by name, it would land in the first
+	 dictionary of that name -- replacing that dictionary's own class and leaving the acted-on
+	 dictionary still binding the old version, so the refactoring would appear to have done
 	 nothing where it was asked and something unasked-for elsewhere."
-	| dicts first second before |
+	| dicts second before |
 	dicts := self sameNamedDictionaries.
-	first := dicts first.
 	second := dicts last.
 	[before := second at: #GsIVDup.
 	 (GsInstVarRefactoring class: before addInstVar: 'tally')

@@ -73,7 +73,8 @@ describe('where the held-Enter guard lives', () => {
   });
 
   it.each(PANEL_MODULES)('is loaded into the webview %s builds', (module) => {
-    expect(read(module)).toContain('enterToApply.js');
+    // The call, not the file name: a comment naming the script would satisfy a bare substring.
+    expect(read(module)).toMatch(/readWebviewScript\(\s*'enterToApply\.js'/);
   });
 });
 
@@ -136,6 +137,34 @@ describe('the shared guard', () => {
     vi.setSystemTime(new Date(Date.now() + 350));
 
     expect(enter(apply)).toBe(false);
+  });
+
+  it('applies on an Enter pressed elsewhere on the page once armed', () => {
+    // The point of the guard is to let Enter apply; one that only ever blocks passes the rest.
+    const clicked = vi.fn();
+    apply.addEventListener('click', clicked);
+    release();
+
+    enter(document.body);
+
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not apply on an Enter pressed before the page has seen it released', () => {
+    const clicked = vi.fn();
+    apply.addEventListener('click', clicked);
+
+    enter(document.body);
+
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
+  it('blocks a Space on Apply the page has not seen released', () => {
+    // Space activates a focused button natively, so the guard covers it alongside Enter.
+    const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    apply.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('blocks an auto-repeat even after a keyup has armed it', () => {

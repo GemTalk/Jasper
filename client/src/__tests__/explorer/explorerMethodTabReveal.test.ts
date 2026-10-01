@@ -24,7 +24,15 @@ import type { SessionManager, ActiveSession } from '../../sessionManager';
  * The guard is there for the click loop — clicking a row opens the editor, the editor's focus
  * event syncs back, and re-revealing made the pane jump under the click. That has to keep
  * working, so both halves are pinned here: the click still does not move the pane, and a tab
- * focus after a rebuild does.
+ * focus does.
+ *
+ * A rebuild is not the only way the row leaves the viewport — scrolling the pane by hand does
+ * it too, and `TreeView` cannot be asked whether a row is visible. So "the pane was rebuilt
+ * since the last reveal" is not enough of a test; what separates a tab focus from the click
+ * loop is whether the Explorer itself opened this editor. That is what these pin: a tab focus
+ * with NO rebuild still reveals, and a click whose editor comes back spelling the URI
+ * differently still does not. If the cheaper rebuild-only fix is chosen instead, the
+ * no-rebuild case below is the one to delete, and this paragraph with it.
  */
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -118,6 +126,14 @@ describe('focusing a method editor tab after the Methods pane was rebuilt', () =
     expect((method.reveal.mock.calls[0][0] as MethodItem).info.selector).toBe('isNotNil');
   });
 
+  it('scrolls the row into view with no rebuild at all, as after a hand-scroll', async () => {
+    const { ctl, method } = controllerShowingSelectedMethod();
+
+    await ctl.syncToEditor(Uri.parse(URI));
+
+    expect(method.reveal).toHaveBeenCalled();
+  });
+
   it('keeps following later focus events, so it works more than once', async () => {
     const { ctl, method } = controllerShowingSelectedMethod();
     ctl.reloadCurrentClassMethods();
@@ -143,6 +159,23 @@ describe('clicking a row in the Methods pane', () => {
     method.reveal.mockClear();
 
     await ctl.syncToEditor(opened);
+
+    expect(method.reveal).not.toHaveBeenCalled();
+  });
+
+  it('does not move the pane when the editor reports the URI spelled differently', async () => {
+    // The case the selection guard was added for: the editor can hand back a URI that names the
+    // same method but no longer string-matches the one the click stored. The default environment
+    // spelled out (`env=0`, which parseUri assumes when it is absent) is one such spelling;
+    // whatever replaces the guard has to see through it.
+    const { ctl, method } = controllerShowingSelectedMethod();
+    await ctl.openMethod(new MethodItem(false, info('isNotNil'), 'accessing'), 'preview');
+    const opened = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as Uri;
+    const respelled = opened.with({ query: `env=0&${opened.query}` });
+    expect(respelled.toString()).not.toBe(opened.toString());
+    method.reveal.mockClear();
+
+    await ctl.syncToEditor(respelled);
 
     expect(method.reveal).not.toHaveBeenCalled();
   });

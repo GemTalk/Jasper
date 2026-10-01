@@ -14,6 +14,7 @@ import {
   present,
 } from '../recordMethodEdit';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
+import { planUndo } from '../undoPlan';
 import { MethodEditUndoEntry, MethodSlot, MethodSlotState, UndoEntry } from '../undoTypes';
 
 /**
@@ -44,9 +45,14 @@ const recorded = (): MethodEditUndoEntry => peekUndoEntry(session.id) as MethodE
 /**
  * `commit`, given the subset of slots the run actually acted on.
  *
- * The cast is the point of the item and goes away with it: `commit` does not take the subset
+ * The cast is the point of this change and goes away with it: `commit` does not take the subset
  * yet, so the call compiles against the signature it is about to have and fails against the
- * behaviour it has now. Once the parameter exists, lint's unnecessary-assertion rule says so.
+ * behaviour it has now. Lint will NOT flag it once the parameter exists (each step of an
+ * `as unknown as` chain changes the type), so drop it by hand then and call
+ * `recording.commit(label, after, only)` directly.
+ *
+ * `after` is parallel to `only`, not to every captured slot: a removal run knows the state of
+ * what it acted on, and nothing about the slots it left alone.
  */
 const commitOnly = (
   recording: MethodEditRecording | undefined,
@@ -126,9 +132,10 @@ describe('recording only some of the captured slots', () => {
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('leaves out a named slot that held nothing to begin with', () => {
-    // Nothing was removed there, so there is nothing to put back; an entry offering to restore
-    // it would compile a method that never existed.
+  it('leaves out a named slot the edit did not change', () => {
+    // `deposit:` was absent before and is absent after: nothing was removed there, so there is
+    // nothing to put back, and an entry offering to restore it would compile a method that never
+    // existed. The rule is per-slot "unchanged", not "absent before" -- see the next case.
     vi.mocked(captureMethodSlots).mockReturnValue([present('balance ^1', 'accessing'), ABSENT]);
     const slots = [slot('balance'), slot('deposit:')];
     const recording = beginMethodEdit(session, slots);
@@ -136,6 +143,26 @@ describe('recording only some of the captured slots', () => {
     commitOnly(recording, 'Delete 2 methods from Account', [ABSENT, ABSENT], slots);
 
     expect(slotsOf(recorded())).toEqual(['balance']);
+  });
+
+  it('still records a named slot the edit created', () => {
+    // The counter-case for the one above, and why the filter belongs on "unchanged" rather than
+    // on "existed before": a Save that CREATES a method starts from nothing, and that slot is the
+    // only one its undo has to act on.
+    vi.mocked(captureMethodSlots).mockReturnValue([ABSENT, present('deposit: n ^n', 'accessing')]);
+    const slots = [slot('balance'), slot('deposit:')];
+    const recording = beginMethodEdit(session, slots);
+
+    commitOnly(
+      recording,
+      'Save Account>>#balance',
+      [present('balance ^1', 'accessing')],
+      [slots[0]],
+    );
+
+    expect(slotsOf(recorded())).toEqual(['balance']);
+    // Recorded as a creation, so undoing it removes the method rather than restoring one.
+    expect(planUndo(recorded())!.rows.map((r) => r.action)).toEqual(['remove']);
   });
 
   it('records every captured slot when no subset is named', () => {

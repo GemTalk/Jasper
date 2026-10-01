@@ -80,14 +80,13 @@ const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>
 const withProgress = window.withProgress as ReturnType<typeof vi.fn>;
 
 /**
- * How many whole-image sender scans the run issued. Counted across every senders query the
- * module exports, so hoisting the scan out of the loop and batching it into one round trip
- * both read as a lower number rather than as a vanished one.
+ * How many whole-image sender scans the run issued. The batched form these tests expect is
+ * `sendersOf(session, selectors[], env)` — the same export taking a list — because the
+ * `vi.mock` factory above replaces the whole module: a NEW export would be undefined here, and
+ * `removeMethods` would throw rather than read as a lower count. A fix that adds one has to add
+ * it to that factory and to both helpers below.
  */
-const imageScans = (): number =>
-  Object.entries(queries)
-    .filter(([name]) => /^senders/i.test(name))
-    .reduce((n, [, fn]) => n + (vi.isMockFunction(fn) ? fn.mock.calls.length : 0), 0);
+const imageScans = (): number => sendersOf.mock.calls.length;
 
 /** Every selector the run scanned for, whether asked about one at a time or as a list. */
 const scannedSelectors = (): string[] =>

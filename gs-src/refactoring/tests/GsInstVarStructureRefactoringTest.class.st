@@ -1048,7 +1048,7 @@ GsInstVarStructureRefactoringTest >> testMoveUpDeclinesATargetNameTwoAncestorsSh
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> sameNamedDestinationDictionaries [
 	"Two dictionaries sharing a NAME, each binding its own GsVSPairLeaf under the fixture's
 	 GsVSMid. Both are genuinely in GsVSMid's lineage, so the destination picker offers both and
@@ -1066,9 +1066,9 @@ GsInstVarStructureRefactoringTest >> sameNamedDestinationDictionaries [
 	^Array with: first with: second
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> removeSameNamedDictionaries: dicts [
-	"By identity: two dictionaries of one name, each holding an equal-looking class, compare equal."
+	"By identity: two empty dictionaries of one name can compare equal."
 	| sl |
 	sl := System myUserProfile symbolList.
 	dicts do: [:d | | idx |
@@ -1077,7 +1077,7 @@ GsInstVarStructureRefactoringTest >> removeSameNamedDictionaries: dicts [
 		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> indexOfDictionary: aDict [
 	| sl |
 	sl := System myUserProfile symbolList.
@@ -1085,7 +1085,7 @@ GsInstVarStructureRefactoringTest >> indexOfDictionary: aDict [
 	^0
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveDownStillDeclinesADestinationGivenOnlyByName [
 	"The decline stays the right answer for a caller with nothing but a name to give: two classes
 	 in the lineage answer to it, and moving the variable into whichever the walk reached first
@@ -1104,7 +1104,7 @@ GsInstVarStructureRefactoringTest >> testMoveDownStillDeclinesADestinationGivenO
 		ensure: [self removeSameNamedDictionaries: dicts]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveDownAcceptsADestinationNamedWithItsDictionary [
 	"A destination given as its name AND the dictionary that binds it is not ambiguous: it names
 	 one class. Only the bare-name form has to decline.
@@ -1121,11 +1121,11 @@ GsInstVarStructureRefactoringTest >> testMoveDownAcceptsADestinationNamedWithIts
 		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
 		direction: #down.
 
-	 self assert: ref decline isNil]
+	 self assert: ref decline equals: nil]
 		ensure: [self removeSameNamedDictionaries: dicts]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheDictionaryThatWasNamed [
 	"Accepting the pair is only half of it: the change set has to be computed against the class in
 	 THAT dictionary, not against whichever of the two the lineage walk reached first."
@@ -1144,7 +1144,7 @@ GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheDictionary
 		ensure: [self removeSameNamedDictionaries: dicts]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet [
 	"Exactly one of the two was picked. A change set naming both moves the variable into a class
 	 nobody chose, which is the outcome the ambiguity decline exists to prevent."
@@ -1163,14 +1163,19 @@ GsInstVarStructureRefactoringTest >> testMoveDownLeavesTheOtherSameNamedDestinat
 		ensure: [self removeSameNamedDictionaries: dicts]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveUpAcceptsAnAncestorNamedWithItsDictionary [
-	"The ▲ half. Ancestors are walked by a different path than descendants, so the pair has to be
-	 understood on both."
+	"The up half. Ancestors are walked by a different path than descendants, so the pair has to be
+	 understood on both.
+
+	 The twin GsVSBase subclasses the real one, so the source's ancestry holds BOTH and the name
+	 alone is ambiguous -- the shape #testMoveUpDeclinesATargetNameTwoAncestorsShare declines.
+	 The pair names the real, FARTHER one: the walk reaches the twin first, so a fix that unpacked
+	 the pair and resolved its name alone would land on the twin and fail here."
 	| twinDict twin leafUnderTwin ref |
 	twinDict := SymbolDictionary new name: #GsVSPairUpDict; yourself.
 	System myUserProfile symbolList add: twinDict.
-	[twin := Object
+	[twin := (self classNamed: 'GsVSBase')
 		subclass: 'GsVSBase'
 		instVarNames: #()
 		classVars: #() classInstVars: #() poolDictionaries: #()
@@ -1183,15 +1188,15 @@ GsInstVarStructureRefactoringTest >> testMoveUpAcceptsAnAncestorNamedWithItsDict
 	 ref := GsInstVarStructureRefactoring
 		class: leafUnderTwin
 		moveInstVar: 'twinOwn'
-		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: twinDict)))
+		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: UserGlobals)))
 		direction: #up.
 
-	 self assert: ref decline isNil.
-	 self assert: ref topClass == twin]
+	 self assert: ref decline equals: nil.
+	 self assert: ref topClass == (self classNamed: 'GsVSBase')]
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 ]
 
-{ #category : 'tests - V4 move, two dictionaries of one name' }
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveStillResolvesAPlainNameWhenOnlyOneClassAnswersToIt [
 	"The pair form must not cost the ordinary case its spelling: every existing caller sends bare
 	 names, and a lineage with one class of that name has nothing to disambiguate."

@@ -105,7 +105,8 @@ describe('the plan for an undo that will skip a slot', () => {
   it('leaves out the accessor the change never touched', () => {
     const targets = rowTargets(entryWithOneSkippedAccessor());
 
-    expect(targets).not.toContain('restore Account class >> #registry');
+    // By target, not by the whole row text: a row kept under another verb still lists it.
+    expect(targets.some((t) => t.endsWith('>> #registry'))).toBe(false);
   });
 
   it('lists the accessor the change did compile', () => {
@@ -166,16 +167,20 @@ describe('the plan for an undo that will skip a slot', () => {
 });
 
 describe('what the notice says after undoing an added class variable', () => {
-  /** The clause of the post-undo notice that talks about the accessors. */
+  /**
+   * The clause of the post-undo notice that talks about the accessors. A notice with no such
+   * clause fails here rather than falling back to the whole message, which already says
+   * "removed the variable" and would let a fix that drops the clause pass as one that reworded it.
+   */
   async function accessorClause(entry: ClassVarEditUndoEntry): Promise<string> {
     await reverseClassVarEdit(session, entry);
     const message = vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0];
-    return (
-      message
-        .split(/[—,.]/)
-        .map((part) => part.trim())
-        .find((part) => /accessor/.test(part)) ?? message
-    );
+    const clause = message
+      .split(/[—,.]/)
+      .map((part) => part.trim())
+      .find((part) => /accessor/.test(part));
+    expect(clause, `no accessor clause in: ${message}`).toBeDefined();
+    return clause!;
   }
 
   it('does not claim the accessors were put back when it removed them', async () => {
@@ -193,7 +198,7 @@ describe('what the notice says after undoing an added class variable', () => {
 
     const clause = await accessorClause(entryWithOneSkippedAccessor());
 
-    expect(clause).toMatch(/remov/);
+    expect(clause).toMatch(/accessors? removed|removed \d+ accessor/);
   });
 
   it('counts only the accessors it acted on, not every one recorded', async () => {
@@ -208,6 +213,8 @@ describe('what the notice says after undoing an added class variable', () => {
 
   it('still says the accessors were put back when undoing a removal', async () => {
     // The other direction keeps its wording: here the reversal really does compile them again.
+    // No recorder produces this entry today -- only adding a class variable is recorded -- so
+    // this guards the wording for when removal becomes undoable, not a path a user can reach.
     vi.mocked(captureClassVar).mockReturnValue({ defined: false });
     vi.mocked(captureMethodSlots).mockReturnValue([absent, absent]);
 

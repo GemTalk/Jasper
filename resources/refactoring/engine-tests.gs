@@ -6316,7 +6316,7 @@ sameNamedDictionaries
 category: 'tests - two dictionaries of one name'
 method: GsInstVarRefactoringTest
 removeSameNamedDictionaries: dicts
-	"By identity: two dictionaries of one name, each holding an equal-looking class, compare equal."
+	"By identity: two empty dictionaries of one name can compare equal."
 	| sl |
 	sl := System myUserProfile symbolList.
 	dicts do: [:d | | idx |
@@ -6331,13 +6331,12 @@ testAddReshapesTheClassInTheSecondOfTwoSameNamedDictionaries
 	"Two dictionaries can share a name, and each can bind its own class of one name. A change
 	 staged against the SECOND one's class has to be applied there.
 
-	 A change records the dictionary it was computed in. Recorded as a NAME, that is a dictionary
-	 the symbol list can only resolve to the FIRST of the two -- so the apply reshapes a class the
-	 user never chose and leaves theirs as it was. Neither half is visible: the refactoring
-	 reports success, their class is unchanged, and somebody else's has a new instance variable."
-	| dicts first second acted json |
+	 A change records the dictionary it was computed in. Recorded as a NAME, the symbol list could
+	 only resolve it to the FIRST of the two, and the apply would reshape a class the user never
+	 chose while reporting success. GsRefactoringChange >> dict pins the dictionary OBJECT, so this
+	 holds today; it guards that pinning, since nothing on screen would show it breaking."
+	| dicts second acted json |
 	dicts := self sameNamedDictionaries.
-	first := dicts first.
 	second := dicts last.
 	[acted := second at: #GsIVDup.
 	 json := (GsInstVarRefactoring class: acted addInstVar: 'tally')
@@ -6373,7 +6372,7 @@ category: 'tests - two dictionaries of one name'
 method: GsInstVarRefactoringTest
 testRemoveReshapesTheClassInTheSecondOfTwoSameNamedDictionaries
 	"The remove half. Both operations reshape through the same staging, so both record the
-	 dictionary the same way and both reach the same wrong one."
+	 dictionary the same way -- and a regression in it would reach the same wrong one."
 	| dicts first second untouched |
 	dicts := self sameNamedDictionaries.
 	first := dicts first.
@@ -6391,13 +6390,12 @@ testRemoveReshapesTheClassInTheSecondOfTwoSameNamedDictionaries
 category: 'tests - two dictionaries of one name'
 method: GsInstVarRefactoringTest
 testTheReshapedClassStaysBoundInItsOwnDictionary
-	"Reshaping makes a NEW class version and binds it. Bound by name, it lands in the first
-	 dictionary of that name -- which both replaces that dictionary's own class and leaves the
-	 acted-on dictionary still binding the old version, so the refactoring appears to have done
+	"Reshaping makes a NEW class version and binds it. Bound by name, it would land in the first
+	 dictionary of that name -- replacing that dictionary's own class and leaving the acted-on
+	 dictionary still binding the old version, so the refactoring would appear to have done
 	 nothing where it was asked and something unasked-for elsewhere."
-	| dicts first second before |
+	| dicts second before |
 	dicts := self sameNamedDictionaries.
-	first := dicts first.
 	second := dicts last.
 	[before := second at: #GsIVDup.
 	 (GsInstVarRefactoring class: before addInstVar: 'tally')
@@ -7490,7 +7488,7 @@ testMoveUpDeclinesATargetNameTwoAncestorsShare
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 sameNamedDestinationDictionaries
 	"Two dictionaries sharing a NAME, each binding its own GsVSPairLeaf under the fixture's
@@ -7509,10 +7507,10 @@ sameNamedDestinationDictionaries
 	^Array with: first with: second
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 removeSameNamedDictionaries: dicts
-	"By identity: two dictionaries of one name, each holding an equal-looking class, compare equal."
+	"By identity: two empty dictionaries of one name can compare equal."
 	| sl |
 	sl := System myUserProfile symbolList.
 	dicts do: [:d | | idx |
@@ -7521,7 +7519,7 @@ removeSameNamedDictionaries: dicts
 		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 indexOfDictionary: aDict
 	| sl |
@@ -7530,7 +7528,7 @@ indexOfDictionary: aDict
 	^0
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveDownStillDeclinesADestinationGivenOnlyByName
 	"The decline stays the right answer for a caller with nothing but a name to give: two classes
@@ -7550,7 +7548,7 @@ testMoveDownStillDeclinesADestinationGivenOnlyByName
 		ensure: [self removeSameNamedDictionaries: dicts]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveDownAcceptsADestinationNamedWithItsDictionary
 	"A destination given as its name AND the dictionary that binds it is not ambiguous: it names
@@ -7568,11 +7566,11 @@ testMoveDownAcceptsADestinationNamedWithItsDictionary
 		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
 		direction: #down.
 
-	 self assert: ref decline isNil]
+	 self assert: ref decline equals: nil]
 		ensure: [self removeSameNamedDictionaries: dicts]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveDownSendsTheVariableToTheDictionaryThatWasNamed
 	"Accepting the pair is only half of it: the change set has to be computed against the class in
@@ -7592,7 +7590,7 @@ testMoveDownSendsTheVariableToTheDictionaryThatWasNamed
 		ensure: [self removeSameNamedDictionaries: dicts]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet
 	"Exactly one of the two was picked. A change set naming both moves the variable into a class
@@ -7612,15 +7610,20 @@ testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet
 		ensure: [self removeSameNamedDictionaries: dicts]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveUpAcceptsAnAncestorNamedWithItsDictionary
-	"The ▲ half. Ancestors are walked by a different path than descendants, so the pair has to be
-	 understood on both."
+	"The up half. Ancestors are walked by a different path than descendants, so the pair has to be
+	 understood on both.
+
+	 The twin GsVSBase subclasses the real one, so the source's ancestry holds BOTH and the name
+	 alone is ambiguous -- the shape #testMoveUpDeclinesATargetNameTwoAncestorsShare declines.
+	 The pair names the real, FARTHER one: the walk reaches the twin first, so a fix that unpacked
+	 the pair and resolved its name alone would land on the twin and fail here."
 	| twinDict twin leafUnderTwin ref |
 	twinDict := SymbolDictionary new name: #GsVSPairUpDict; yourself.
 	System myUserProfile symbolList add: twinDict.
-	[twin := Object
+	[twin := (self classNamed: 'GsVSBase')
 		subclass: 'GsVSBase'
 		instVarNames: #()
 		classVars: #() classInstVars: #() poolDictionaries: #()
@@ -7633,15 +7636,15 @@ testMoveUpAcceptsAnAncestorNamedWithItsDictionary
 	 ref := GsInstVarStructureRefactoring
 		class: leafUnderTwin
 		moveInstVar: 'twinOwn'
-		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: twinDict)))
+		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: UserGlobals)))
 		direction: #up.
 
-	 self assert: ref decline isNil.
-	 self assert: ref topClass == twin]
+	 self assert: ref decline equals: nil.
+	 self assert: ref topClass == (self classNamed: 'GsVSBase')]
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
 %
 
-category: 'tests - V4 move, two dictionaries of one name'
+category: 'tests - move, two dictionaries of one name'
 method: GsInstVarStructureRefactoringTest
 testMoveStillResolvesAPlainNameWhenOnlyOneClassAnswersToIt
 	"The pair form must not cost the ordinary case its spelling: every existing caller sends bare
@@ -11817,10 +11820,9 @@ testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries
 	 The capture pins the dictionary itself; the reversal's preview has to be of the class that
 	 was reshaped, which is the only one that carries gsuReshaped.
 
-	 This stops at the preview. Applying the revert hands each class to the forward rename engine,
-	 which records its changes' dictionaries by name and so still reaches the first dictionary --
-	 a limit of the forward engine, not of the undo's own lookup. The reshape is a new class
-	 version defined directly rather than through a refactoring for the same reason."
+	 This stops at the preview; #testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
+	 is the apply half. The reshape is a new class version defined directly rather than through a
+	 refactoring, so the test is about the undo's lookup alone."
 	| dicts second json |
 	dicts := self twinNamedDictionaries.
 	second := dicts last.
@@ -12086,9 +12088,11 @@ testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
 
 	 The undo finds the right class: its plan pins the dictionary object. Applying hands that class
 	 to the forward rename engine, which restores it as a new version -- and the restore has to land
-	 in the dictionary the class came from. Reaching the FIRST dictionary of that name instead
-	 rewrites a class nobody touched and leaves the reshaped one still carrying gsuReshaped, so the
-	 undo reports success and nothing it was asked to undo is undone.
+	 in the dictionary the class came from. Reaching the FIRST dictionary of that name instead would
+	 rewrite a class nobody touched and leave the reshaped one still carrying gsuReshaped, so the
+	 undo would report success with nothing it was asked to undo undone. The forward engine's
+	 changes pin the dictionary OBJECT (GsRefactoringChange >> dict), so this holds today; it is a
+	 guard, since nothing on screen would show it breaking.
 
 	 Asserted from both ends, because either alone can pass while the other fails: the acted-on
 	 class loses the instance variable, and the other dictionary's class is the object it always was."
@@ -12112,8 +12116,8 @@ testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
 
 	 self undoAll.
 
-	 self deny: ((second at: #GsUndoTwinClass) instVarNames
-		collect: [:e | e asString]) includes: 'gsuReshaped'.
+	 self deny: (((second at: #GsUndoTwinClass) instVarNames
+		collect: [:e | e asString]) includes: 'gsuReshaped').
 	 self assert: (first at: #GsUndoTwinClass) == decoy]
 		ensure: [self removeDictionaries: dicts]
 %

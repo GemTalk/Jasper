@@ -20,6 +20,12 @@ import { InstVarChange, InstVarOutOfScope } from '../instVarRefactorPreview';
  * A WHOLE claims its class name twice, however the rows were paged. The assertions read the
  * rendered page rather than a return value, because the row that has to change is one that was
  * already drawn when the clash came to light.
+ *
+ * These pin the CLIENT-side way of getting there: the panel re-qualifies rows it already drew
+ * when a later page reveals the clash. The other way — the engine, which sees the whole change
+ * set, flags each change as ambiguous — cannot pass them as written, because the fixtures carry
+ * no such flag. Choosing that one means giving the fixtures the field, not loosening the
+ * assertions.
  */
 
 beforeAll(() => {
@@ -161,9 +167,9 @@ describe('a class name two dictionaries claim, split across preview pages', () =
     expect(labels()[0]).toBe('Plain>>bar');
   });
 
-  it('qualifies a row whose change could not say where it lands', () => {
-    // "Somewhere unstated" is its own claim: a row that cannot name a dictionary is exactly
-    // the one worth marking when another row can.
+  it('qualifies the other row when one of them cannot say where it lands', () => {
+    // "Somewhere unstated" counts as its own claim, so the name is ambiguous — but only the row
+    // that CAN name its dictionary has one to show; the other stays as it is.
     const panel = mountClassPanel([recompile('1', null)], 2);
 
     panel.appendChanges(renderClassCards([recompile('2', 'DictB')]), true);
