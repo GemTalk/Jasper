@@ -41,67 +41,69 @@ describe('extract temporary (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'XETItBase';
   const SOURCE = 'doStuff\n\t^ self hash + self hash';
   const SELECTION = 'self hash';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
+    await q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
   };
 
   // 1-based [selStart, selStop] of the first SELECTION in the stored source.
-  const selectionRange = (): { selStart: number; selStop: number } => {
-    const src = exec(
+  const selectionRange = async (): Promise<{ selStart: number; selStop: number }> => {
+    const src = await exec(
       `(${BASE} compiledMethodAt: #doStuff environmentId: 0 otherwise: nil) sourceString`,
     );
     const start = src.indexOf(SELECTION) + 1;
     return { selStart: start, selStop: start + SELECTION.length - 1 };
   };
 
-  it('reports extract-temporary engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports extract-temporary engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the extract-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the extract-temporary GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pre-flights a repeated expression, counting its occurrences', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
-    const { selStart, selStop } = selectionRange();
+    await defineFixture();
+    const { selStart, selStop } = await selectionRange();
 
     const analysis = parseAnalysis(
       await analyzeExtractTemporary(
@@ -111,7 +113,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
         false,
         selStart,
         selStop,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -120,10 +122,10 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
   });
 
   it('applies the extraction, introducing the temporary in the method', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
-    const { selStart, selStop } = selectionRange();
+    await defineFixture();
+    const { selStart, selStop } = await selectionRange();
     const token = `xetit-${BASE}`;
 
     const start = parseStartPreview(
@@ -138,7 +140,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
         false,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(1);
@@ -147,7 +149,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 
-    const rewritten = exec(
+    const rewritten = await exec(
       `(${BASE} compiledMethodAt: #doStuff environmentId: 0 otherwise: nil) sourceString`,
     );
     // Replace-only-selected semantics (replaceAll: false on an expression that appears

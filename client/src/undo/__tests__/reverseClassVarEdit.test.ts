@@ -78,24 +78,24 @@ function entry(overrides: Partial<ClassVarEditUndoEntry> = {}): ClassVarEditUndo
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(applyClassVarOp).mockReturnValue(null);
-  vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) =>
+  vi.mocked(applyClassVarOp).mockResolvedValue(null);
+  vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) =>
     ops.map((op) => ({ op, error: null })),
   );
-  vi.mocked(captureClassVar).mockReturnValue({ defined: true });
-  vi.mocked(captureMethodSlots).mockReturnValue(compiled);
+  vi.mocked(captureClassVar).mockResolvedValue({ defined: true });
+  vi.mocked(captureMethodSlots).mockResolvedValue(compiled);
   // Nothing references it beyond the accessors, unless a test says otherwise.
-  vi.mocked(methodsReferencingClassVar).mockReturnValue(accessors);
+  vi.mocked(methodsReferencingClassVar).mockResolvedValue(accessors);
 });
 
 describe('reverseClassVarEdit', () => {
   it('removes the accessors and then the declaration', async () => {
     const order: string[] = [];
-    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) => {
+    vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) => {
       order.push('accessors');
       return ops.map((op) => ({ op, error: null }));
     });
-    vi.mocked(applyClassVarOp).mockImplementation(() => {
+    vi.mocked(applyClassVarOp).mockImplementation(async () => {
       order.push('variable');
       return null;
     });
@@ -118,13 +118,13 @@ describe('reverseClassVarEdit', () => {
 
   it('declares the variable first when the reversal is putting one BACK', async () => {
     const order: string[] = [];
-    vi.mocked(captureClassVar).mockReturnValue({ defined: false });
-    vi.mocked(captureMethodSlots).mockReturnValue([absent, absent]);
-    vi.mocked(applyMethodSlotOps).mockImplementation((_e, ops) => {
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: false });
+    vi.mocked(captureMethodSlots).mockResolvedValue([absent, absent]);
+    vi.mocked(applyMethodSlotOps).mockImplementation(async (_e, ops) => {
       order.push('accessors');
       return ops.map((op) => ({ op, error: null }));
     });
-    vi.mocked(applyClassVarOp).mockImplementation(() => {
+    vi.mocked(applyClassVarOp).mockImplementation(async () => {
       order.push('variable');
       return null;
     });
@@ -146,7 +146,7 @@ describe('reverseClassVarEdit', () => {
     // It was not created by the add, so the undo does not remove it; it references the
     // variable, so it is exactly what the warning is for.
     const handWritten = present('registry\n\t^self hand written');
-    vi.mocked(captureMethodSlots).mockReturnValue([handWritten, compiled[1]]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([handWritten, compiled[1]]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     await reverseClassVarEdit(
@@ -164,8 +164,8 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('touches no methods when no accessors were generated', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([]);
-    vi.mocked(methodsReferencingClassVar).mockReturnValue([]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([]);
+    vi.mocked(methodsReferencingClassVar).mockResolvedValue([]);
 
     await reverseClassVarEdit(
       session,
@@ -177,8 +177,8 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('does nothing when the variable and its accessors are already gone', async () => {
-    vi.mocked(captureClassVar).mockReturnValue({ defined: false });
-    vi.mocked(captureMethodSlots).mockReturnValue([absent, absent]);
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: false });
+    vi.mocked(captureMethodSlots).mockResolvedValue([absent, absent]);
 
     expect(await reverseClassVarEdit(session, entry())).toBe(true);
     expect(applyClassVarOp).not.toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('warns before discarding an accessor edited since, and undoes anyway when told to', async () => {
-    vi.mocked(captureMethodSlots).mockReturnValue([
+    vi.mocked(captureMethodSlots).mockResolvedValue([
       present('registry\n\t^self edited'),
       compiled[1],
     ]);
@@ -203,8 +203,8 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('keeps the entry on offer when the drift warning is declined', async () => {
-    vi.mocked(captureClassVar).mockReturnValue({ defined: false });
-    vi.mocked(captureMethodSlots).mockReturnValue([
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: false });
+    vi.mocked(captureMethodSlots).mockResolvedValue([
       present('registry\n\t^self edited'),
       compiled[1],
     ]);
@@ -215,7 +215,7 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('reports a failed removal and spends the entry anyway', async () => {
-    vi.mocked(applyClassVarOp).mockReturnValue('Account could not be resolved');
+    vi.mocked(applyClassVarOp).mockResolvedValue('Account could not be resolved');
 
     expect(await reverseClassVarEdit(session, entry())).toBe(true);
 
@@ -228,7 +228,7 @@ describe('reverseClassVarEdit', () => {
     // Undoing does not remove them, and GemStone severs the reference rather than breaking it
     // loudly — a method silently reading nil is exactly what the user must be warned about.
     const strayed = accessor('report');
-    vi.mocked(methodsReferencingClassVar).mockReturnValue([...accessors, strayed]);
+    vi.mocked(methodsReferencingClassVar).mockResolvedValue([...accessors, strayed]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     expect(await reverseClassVarEdit(session, entry())).toBe(true);
@@ -246,7 +246,7 @@ describe('reverseClassVarEdit', () => {
 
   it('does not count the accessors it is removing itself', async () => {
     // They are going with the variable, so they are not left behind by it.
-    vi.mocked(methodsReferencingClassVar).mockReturnValue(accessors);
+    vi.mocked(methodsReferencingClassVar).mockResolvedValue(accessors);
 
     expect(await reverseClassVarEdit(session, entry())).toBe(true);
 
@@ -254,7 +254,7 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('counts a subclass method and an instance-side one, not just the class side', async () => {
-    vi.mocked(methodsReferencingClassVar).mockReturnValue([
+    vi.mocked(methodsReferencingClassVar).mockResolvedValue([
       ...accessors,
       { dict: 7, className: 'Savings', isMeta: false, selector: 'peek', environmentId: 0 },
       { dict: 7, className: 'Account', isMeta: false, selector: 'audit', environmentId: 0 },
@@ -271,7 +271,7 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('leaves everything alone when the stranded-reference warning is declined', async () => {
-    vi.mocked(methodsReferencingClassVar).mockReturnValue([accessor('report')]);
+    vi.mocked(methodsReferencingClassVar).mockResolvedValue([accessor('report')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     expect(await reverseClassVarEdit(session, entry())).toBe(false);
@@ -282,8 +282,8 @@ describe('reverseClassVarEdit', () => {
 
   it('does not scan when the reversal is putting a variable BACK', async () => {
     // Declaring a name cannot strand anything.
-    vi.mocked(captureClassVar).mockReturnValue({ defined: false });
-    vi.mocked(captureMethodSlots).mockReturnValue([absent, absent]);
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: false });
+    vi.mocked(captureMethodSlots).mockResolvedValue([absent, absent]);
 
     await reverseClassVarEdit(
       session,
@@ -301,7 +301,7 @@ describe('reverseClassVarEdit', () => {
   it('undoes without the warning when the scan itself fails', async () => {
     // A missed warning is the state the user was in before this check existed; a blocked undo
     // would be worse.
-    vi.mocked(methodsReferencingClassVar).mockImplementation(() => {
+    vi.mocked(methodsReferencingClassVar).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -311,7 +311,7 @@ describe('reverseClassVarEdit', () => {
   });
 
   it('keeps the entry on offer when the current state cannot be read', async () => {
-    vi.mocked(captureClassVar).mockImplementation(() => {
+    vi.mocked(captureClassVar).mockImplementation(async () => {
       throw new Error('session busy');
     });
 

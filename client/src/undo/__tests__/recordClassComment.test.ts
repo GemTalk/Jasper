@@ -26,10 +26,10 @@ beforeEach(() => {
 });
 
 describe('beginClassCommentEdit', () => {
-  it('records the earlier text and the text the save wrote', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the old comment');
+  it('records the earlier text and the text the save wrote', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('the old comment');
 
-    const entry = beginClassCommentEdit(session, slot)?.commit('the new comment');
+    const entry = (await beginClassCommentEdit(session, slot))?.commit('the new comment');
 
     expect(entry).toMatchObject({
       kind: 'classComment',
@@ -40,36 +40,36 @@ describe('beginClassCommentEdit', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('reads the comment through the dictionary the save targets', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('');
+  it('reads the comment through the dictionary the save targets', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('');
 
-    beginClassCommentEdit(session, slot);
+    await beginClassCommentEdit(session, slot);
 
     expect(getStoredClassComment).toHaveBeenCalledWith(session, 'Account', 7);
   });
 
-  it('records nothing when the save did not change the text', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('unchanged');
+  it('records nothing when the save did not change the text', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('unchanged');
 
-    expect(beginClassCommentEdit(session, slot)?.commit('unchanged')).toBeUndefined();
+    expect((await beginClassCommentEdit(session, slot))?.commit('unchanged')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing — and does not throw — when the comment cannot be read', () => {
-    vi.mocked(getStoredClassComment).mockImplementation(() => {
+  it('records nothing — and does not throw — when the comment cannot be read', async () => {
+    vi.mocked(getStoredClassComment).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginClassCommentEdit(session, slot)).toBeUndefined();
+    expect(await beginClassCommentEdit(session, slot)).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing when the read answers something that is not text', () => {
+  it('records nothing when the read answers something that is not text', async () => {
     // An entry whose `before` defaulted to the empty string would offer to WIPE the user's
     // earlier comment rather than restore it.
-    vi.mocked(getStoredClassComment).mockReturnValue(undefined as unknown as string);
+    vi.mocked(getStoredClassComment).mockResolvedValue(undefined as unknown as string);
 
-    expect(beginClassCommentEdit(session, slot)).toBeUndefined();
+    expect(await beginClassCommentEdit(session, slot)).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
@@ -88,28 +88,28 @@ describe('beginClassCommentEdit', () => {
    * save. insert-final-newline makes this the ordinary way to clear a comment,
    * not an edge case.
    */
-  it('records an emptied comment as what was stored, not what was typed', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('the old comment');
+  it('records an emptied comment as what was stored, not what was typed', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('the old comment');
 
-    const entry = beginClassCommentEdit(session, slot)?.commit('\n');
+    const entry = (await beginClassCommentEdit(session, slot))?.commit('\n');
 
     expect(entry).toMatchObject({ before: 'the old comment', after: '' });
   });
 
-  it('records nothing when whitespace is saved onto a class that had no comment', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('');
+  it('records nothing when whitespace is saved onto a class that had no comment', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('');
 
-    const entry = beginClassCommentEdit(session, slot)?.commit('  \t');
+    const entry = (await beginClassCommentEdit(session, slot))?.commit('  \t');
 
     // The save stored nothing and the class had nothing: no change to offer back.
     expect(entry).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records the first comment on a class that had none as an empty before', () => {
-    vi.mocked(getStoredClassComment).mockReturnValue('');
+  it('records the first comment on a class that had none as an empty before', async () => {
+    vi.mocked(getStoredClassComment).mockResolvedValue('');
 
-    const entry = beginClassCommentEdit(session, slot)?.commit('a first comment');
+    const entry = (await beginClassCommentEdit(session, slot))?.commit('a first comment');
 
     // Undoing this takes the comment away again: setClassComment removes the key
     // for an empty comment, so the class ends up as it was found.

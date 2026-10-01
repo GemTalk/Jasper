@@ -70,40 +70,40 @@ beforeEach(() => {
 });
 
 describe('Methods pane instance/class side toggle', () => {
-  it('shows the instance side by default', () => {
+  it('shows the instance side by default', async () => {
     const ctl = makeController();
 
     expect(ctl.showClassMethods).toBe(false);
-    const cats = ctl.methodProvider.getChildren() as MethodCategoryItem[];
+    const cats = (await ctl.methodProvider.getChildren()) as MethodCategoryItem[];
     expect(cats.every((c) => c.isMeta === false)).toBe(true);
     expect(cats.map((c) => c.category)).toContain('accessing');
   });
 
-  it('switches the whole pane to the class side when toggled', () => {
+  it('switches the whole pane to the class side when toggled', async () => {
     const ctl = makeController();
 
     ctl.setMethodSide(true);
 
     expect(ctl.showClassMethods).toBe(true);
-    const cats = ctl.methodProvider.getChildren() as MethodCategoryItem[];
+    const cats = (await ctl.methodProvider.getChildren()) as MethodCategoryItem[];
     expect(cats.every((c) => c.isMeta === true)).toBe(true);
     expect(cats.map((c) => c.category)).toContain('instance creation');
   });
 
-  it('lists only the active side when flattened', () => {
+  it('lists only the active side when flattened', async () => {
     __setConfig('gemstone', GROUP_KEY, false);
     const ctl = makeController();
 
     ctl.setMethodSide(true);
 
-    const rows = ctl.methodProvider.getChildren() as MethodItem[];
+    const rows = (await ctl.methodProvider.getChildren()) as MethodItem[];
     expect(rows.map((r) => r.info.selector)).toEqual(['new']);
   });
 
-  it('renders the instance/class level as a title toggle, so categories are roots', () => {
+  it('renders the instance/class level as a title toggle, so categories are roots', async () => {
     const ctl = makeController();
 
-    const [cat] = ctl.methodProvider.getChildren() as MethodCategoryItem[];
+    const [cat] = (await ctl.methodProvider.getChildren()) as MethodCategoryItem[];
 
     expect(ctl.methodProvider.getParent(cat)).toBeUndefined();
   });

@@ -133,7 +133,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('ends with an error output when Grail reports an inline error', async () => {
-    vi.mocked(python.evalPythonInScope).mockReturnValueOnce(
+    vi.mocked(python.evalPythonInScope).mockResolvedValueOnce(
       'Error: NameError — name x is not defined',
     );
     const ctrl = new GrailNotebookController(makeSessionManager(true));
@@ -148,7 +148,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('ends with an error output when Grail is not installed (hint result)', async () => {
-    vi.mocked(python.evalPythonInScope).mockReturnValueOnce(
+    vi.mocked(python.evalPythonInScope).mockResolvedValueOnce(
       'Grail (GemStone-Python) not detected: class ModuleAst not found in symbolList.',
     );
     const ctrl = new GrailNotebookController(makeSessionManager(true));
@@ -170,7 +170,7 @@ describe('GrailNotebookController', () => {
   });
 
   it('reports a thrown query error (e.g. session busy) as a cell error', async () => {
-    vi.mocked(python.evalPythonInScope).mockImplementationOnce(() => {
+    vi.mocked(python.evalPythonInScope).mockImplementationOnce(async () => {
       throw new Error('Session is busy with another operation.');
     });
     const ctrl = new GrailNotebookController(makeSessionManager(true));

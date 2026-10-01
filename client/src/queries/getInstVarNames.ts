@@ -7,16 +7,16 @@ import { classLookupExpr, splitLines } from './util';
 // name shadowed across dictionaries resolves the SAME object the other membership
 // probes use — and the name is quoted/escaped there. A class the dictionary does not
 // bind yields an empty list rather than a compile/runtime error.
-export function getInstVarNames(
+export async function getInstVarNames(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string[] {
+): Promise<string[]> {
   const code = `| ws cls |
 cls := ${classLookupExpr(className, dict)}.
 ws := WriteStream on: String new.
 (cls ifNil: [#()] ifNotNil: [:c | c allInstVarNames]) do: [:each |
   ws nextPutAll: each asString; lf].
 ws contents`;
-  return splitLines(execute(code));
+  return splitLines(await execute(code));
 }

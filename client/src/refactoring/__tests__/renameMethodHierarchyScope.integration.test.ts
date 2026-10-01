@@ -41,7 +41,7 @@ describe('rename method, hierarchy scope (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
   const ROOT = 'RMHSItRoot'; // superclass — implements
@@ -50,8 +50,8 @@ describe('rename method, hierarchy scope (integration)', () => {
   const SIBLING = 'RMHSItSibling'; // subclass of ROOT, NOT of MID — implements, out of scope
   const OUTSIDE = 'RMHSItOutside'; // unrelated Object subclass — implements, out of scope
 
-  const subclassOf = (parent: string, name: string): void => {
-    q.compileClassDefinition(
+  const subclassOf = async (parent: string, name: string): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `${parent} subclass: '${name}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
@@ -63,25 +63,27 @@ describe('rename method, hierarchy scope (integration)', () => {
    * ROOT (a superclass), MID itself and LEAF (a subclass) in scope, and leaves SIBLING — a subclass
    * of ROOT but not of MID — and the unrelated OUTSIDE out of it.
    */
-  const defineHierarchy = (): void => {
-    subclassOf('Object', ROOT);
-    subclassOf(ROOT, MID);
-    subclassOf(MID, LEAF);
-    subclassOf(ROOT, SIBLING);
-    subclassOf('Object', OUTSIDE);
+  const defineHierarchy = async (): Promise<void> => {
+    await subclassOf('Object', ROOT);
+    await subclassOf(ROOT, MID);
+    await subclassOf(MID, LEAF);
+    await subclassOf(ROOT, SIBLING);
+    await subclassOf('Object', OUTSIDE);
     for (const cls of [ROOT, MID, LEAF, SIBLING, OUTSIDE]) {
-      q.compileMethod(session(), cls, false, 'testing', `isGemQuality\n\t^ '${cls}'`);
+      await q.compileMethod(session(), cls, false, 'testing', `isGemQuality\n\t^ '${cls}'`);
     }
     // A sender inside the scope and one outside it, so the sender half of the scope test has
     // something to move and something to leave alone.
-    q.compileMethod(session(), LEAF, false, 'testing', 'callsIt\n\t^ self isGemQuality');
-    q.compileMethod(session(), OUTSIDE, false, 'testing', 'callsIt\n\t^ self isGemQuality');
+    await q.compileMethod(session(), LEAF, false, 'testing', 'callsIt\n\t^ self isGemQuality');
+    await q.compileMethod(session(), OUTSIDE, false, 'testing', 'callsIt\n\t^ self isGemQuality');
   };
 
   /** Whether `cls` currently implements `selector` as its OWN instance method. */
-  const implements_ = (cls: string, selector: string): boolean =>
-    exec(
-      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  const implements_ = async (cls: string, selector: string): Promise<boolean> =>
+    (
+      await exec(
+        `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+      )
     ).trim() === 'true';
 
   /** Start a hierarchy-scoped rename from MID and drain every page of its preview. */
@@ -110,8 +112,8 @@ describe('rename method, hierarchy scope (integration)', () => {
   };
 
   it('stages a rename for every implementor in the hierarchy and none outside it', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    defineHierarchy();
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await defineHierarchy();
 
     const { changes } = await previewHierarchyRename(`rmhsit-preview-${MID}`);
 
@@ -123,8 +125,8 @@ describe('rename method, hierarchy scope (integration)', () => {
   });
 
   it('counts the implementors it is leaving behind rather than dropping them silently', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    defineHierarchy();
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await defineHierarchy();
 
     const { start } = await previewHierarchyRename(`rmhsit-counts-${MID}`);
 
@@ -136,8 +138,8 @@ describe('rename method, hierarchy scope (integration)', () => {
   });
 
   it('really renames every implementor in the hierarchy when applied', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    defineHierarchy();
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await defineHierarchy();
     const token = `rmhsit-apply-${MID}`;
 
     await previewHierarchyRename(token);
@@ -145,38 +147,38 @@ describe('rename method, hierarchy scope (integration)', () => {
 
     expect(result.failed).toEqual([]);
     for (const cls of [ROOT, MID, LEAF]) {
-      expect([cls, implements_(cls, 'isHighQuality')]).toEqual([cls, true]);
-      expect([cls, implements_(cls, 'isGemQuality')]).toEqual([cls, false]);
+      expect([cls, await implements_(cls, 'isHighQuality')]).toEqual([cls, true]);
+      expect([cls, await implements_(cls, 'isGemQuality')]).toEqual([cls, false]);
     }
   });
 
   it('leaves an implementor outside the hierarchy alone', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    defineHierarchy();
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await defineHierarchy();
     const token = `rmhsit-outside-${MID}`;
 
     await previewHierarchyRename(token);
     parseApplyResult(await applyRenameMethod(asyncExec, token, [], 'test undo'));
 
     for (const cls of [SIBLING, OUTSIDE]) {
-      expect([cls, implements_(cls, 'isGemQuality')]).toEqual([cls, true]);
-      expect([cls, implements_(cls, 'isHighQuality')]).toEqual([cls, false]);
+      expect([cls, await implements_(cls, 'isGemQuality')]).toEqual([cls, true]);
+      expect([cls, await implements_(cls, 'isHighQuality')]).toEqual([cls, false]);
     }
   });
 
   it('rewrites a sender in the hierarchy and leaves one outside it untouched', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    defineHierarchy();
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await defineHierarchy();
     const token = `rmhsit-senders-${MID}`;
 
     await previewHierarchyRename(token);
     parseApplyResult(await applyRenameMethod(asyncExec, token, [], 'test undo'));
 
-    expect(exec(`(${LEAF} compiledMethodAt: #callsIt environmentId: 0) sourceString`)).toContain(
-      'self isHighQuality',
-    );
-    expect(exec(`(${OUTSIDE} compiledMethodAt: #callsIt environmentId: 0) sourceString`)).toContain(
-      'self isGemQuality',
-    );
+    expect(
+      await exec(`(${LEAF} compiledMethodAt: #callsIt environmentId: 0) sourceString`),
+    ).toContain('self isHighQuality');
+    expect(
+      await exec(`(${OUTSIDE} compiledMethodAt: #callsIt environmentId: 0) sourceString`),
+    ).toContain('self isGemQuality');
   });
 });

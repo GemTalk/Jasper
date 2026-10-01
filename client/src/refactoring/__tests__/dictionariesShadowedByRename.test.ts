@@ -10,9 +10,9 @@ import { dictionariesShadowedByRename } from '../queries/dictionariesShadowedByR
  * and the rename went ahead with no warning at all (#396).
  */
 describe('dictionariesShadowedByRename', () => {
-  it('reads each holder’s symbol-list position and name', () => {
-    const rows = dictionariesShadowedByRename(
-      () => '1\tDictionaryA\n4\tZzTwin\n',
+  it('reads each holder’s symbol-list position and name', async () => {
+    const rows = await dictionariesShadowedByRename(
+      async () => '1\tDictionaryA\n4\tZzTwin\n',
       'Account',
       'Ledger',
     );
@@ -23,26 +23,35 @@ describe('dictionariesShadowedByRename', () => {
     ]);
   });
 
-  it('keeps a twin of the destination’s own name, which the client used to drop', () => {
-    const rows = dictionariesShadowedByRename(() => '2\tZzTwin\n', 'Account', 'Ledger', 5);
+  it('keeps a twin of the destination’s own name, which the client used to drop', async () => {
+    const rows = await dictionariesShadowedByRename(
+      async () => '2\tZzTwin\n',
+      'Account',
+      'Ledger',
+      5,
+    );
 
     expect(rows).toEqual([{ position: 2, name: 'ZzTwin' }]);
   });
 
-  it('names a holder that has no name at all, rather than passing over it', () => {
-    const rows = dictionariesShadowedByRename(() => '6\t(unnamed)\n', 'Account', 'Ledger');
+  it('names a holder that has no name at all, rather than passing over it', async () => {
+    const rows = await dictionariesShadowedByRename(
+      async () => '6\t(unnamed)\n',
+      'Account',
+      'Ledger',
+    );
 
     expect(rows).toEqual([{ position: 6, name: '(unnamed)' }]);
   });
 
-  it('answers nothing when no other dictionary holds the name', () => {
-    expect(dictionariesShadowedByRename(() => '', 'Account', 'Ledger')).toEqual([]);
+  it('answers nothing when no other dictionary holds the name', async () => {
+    expect(await dictionariesShadowedByRename(async () => '', 'Account', 'Ledger')).toEqual([]);
   });
 
-  it('excludes the renamed class’s own dictionary by identity, in the stone', () => {
+  it('excludes the renamed class’s own dictionary by identity, in the stone', async () => {
     let code = '';
-    dictionariesShadowedByRename(
-      (c) => {
+    await dictionariesShadowedByRename(
+      async (c) => {
         code = c;
         return '';
       },

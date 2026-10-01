@@ -65,8 +65,8 @@ export function useRowan3Stone(executor: () => QueryExecutor): Rowan3Gate {
 
   // Registered after the harness's own beforeAll, so a session is already logged
   // in — as the configured user, deliberately not swapped (see header).
-  beforeAll(() => {
-    const result = tonelCapability(executor());
+  beforeAll(async () => {
+    const result = await tonelCapability(executor());
     state.available = result.available;
     state.missing = result.missing;
   });

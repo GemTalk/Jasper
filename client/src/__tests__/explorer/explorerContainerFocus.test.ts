@@ -100,13 +100,13 @@ function makeController(): ExplorerController {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetConfig();
-  vi.mocked(getAllClassNames).mockReturnValue([
+  vi.mocked(getAllClassNames).mockResolvedValue([
     { className: 'Account', dictName: 'UserGlobals', dictIndex: 1 },
   ]);
-  vi.mocked(getClassesWithCategory).mockReturnValue([
+  vi.mocked(getClassesWithCategory).mockResolvedValue([
     { className: 'Account', category: 'Finance', hasComment: false },
   ]);
-  vi.mocked(getClassEnvironments).mockReturnValue([
+  vi.mocked(getClassEnvironments).mockResolvedValue([
     { isMeta: false, envId: 0, category: 'accessing', selectors: ['balance'] },
   ]);
 });

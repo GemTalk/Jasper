@@ -28,7 +28,7 @@ export async function reverseClassComment(
     // The STORED comment, the same thing the recording read — `Class>>comment`
     // synthesises a placeholder for a class with none, which would never compare
     // equal to the empty `before` an undo back to "no comment" is aiming at.
-    now = getStoredClassComment(session, entry.slot.className, entry.slot.dict);
+    now = await getStoredClassComment(session, entry.slot.className, entry.slot.dict);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the current comment on ${entry.slot.className} ` +
@@ -53,7 +53,7 @@ export async function reverseClassComment(
 
   let result: string;
   try {
-    result = setClassComment(session, entry.slot.className, entry.before, entry.slot.dict);
+    result = await setClassComment(session, entry.slot.className, entry.before, entry.slot.dict);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: ${e instanceof Error ? e.message : String(e)}`,

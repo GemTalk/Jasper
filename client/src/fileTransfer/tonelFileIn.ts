@@ -143,11 +143,11 @@ function definitionSource(tonelClass: TonelClass, dictionary: string): string {
  * Never throws: every caller is a menu command, so a failure is something to
  * report against the file.
  */
-export function applyTonelClass(
+export async function applyTonelClass(
   session: ActiveSession,
   tonelClass: TonelClass,
   dictionary: string,
-): TonelApplyOutcome {
+): Promise<TonelApplyOutcome> {
   const outcome: TonelApplyOutcome = {
     className: tonelClass.name,
     dictionary,
@@ -175,7 +175,7 @@ export function applyTonelClass(
   // A root class legitimately has no superclass; anything else must resolve, or
   // the class would be silently rooted at Object.
   if (tonelClass.superclass !== 'nil') {
-    const holders = queries.dictionariesContainingClass(session, tonelClass.superclass);
+    const holders = await queries.dictionariesContainingClass(session, tonelClass.superclass);
     if (holders.length === 0) {
       return fail(
         `Superclass ${tonelClass.superclass} is not in this session's symbol list — ` +
@@ -195,10 +195,10 @@ export function applyTonelClass(
   // read-only `Foo` in another dictionary is not the class being written, and
   // refusing because of it blocks filing a new `Foo` into a dictionary the user
   // can perfectly well write.
-  const existing = queries.dictionariesContainingClass(session, tonelClass.name);
+  const existing = await queries.dictionariesContainingClass(session, tonelClass.name);
   if (
     existing.includes(dictionary) &&
-    !queries.canClassBeWritten(session, tonelClass.name, dictionary)
+    !(await queries.canClassBeWritten(session, tonelClass.name, dictionary))
   ) {
     return fail(
       `${tonelClass.name} cannot be written in ${dictionary} by ` +
@@ -207,7 +207,7 @@ export function applyTonelClass(
   }
 
   try {
-    queries.compileClassDefinition(session, definitionSource(tonelClass, dictionary));
+    await queries.compileClassDefinition(session, definitionSource(tonelClass, dictionary));
   } catch (e) {
     return fail(`Could not define ${tonelClass.name}: ${message(e)}`);
   }
@@ -224,7 +224,7 @@ export function applyTonelClass(
   // dictionary name, so filing in sets the category to that name.
   if (tonelClass.category.length > 0) {
     try {
-      queries.recategorizeClass(session, tonelClass.name, tonelClass.category, dictionary);
+      await queries.recategorizeClass(session, tonelClass.name, tonelClass.category, dictionary);
     } catch (e) {
       outcome.errors.push({
         file: tonelClass.name,
@@ -250,7 +250,7 @@ export function applyTonelClass(
   // comment means the class has none, not "leave whatever was there". Reported but
   // not fatal — a missing comment is not worth losing the methods over.
   try {
-    queries.setClassComment(session, tonelClass.name, tonelClass.comment, dictionary);
+    await queries.setClassComment(session, tonelClass.name, tonelClass.comment, dictionary);
   } catch (e) {
     outcome.errors.push({
       file: tonelClass.name,
@@ -262,7 +262,7 @@ export function applyTonelClass(
   // The replace. After defining, so it lands on the version the file describes.
   for (const isMeta of [false, true]) {
     try {
-      queries.removeAllMethods(session, tonelClass.name, isMeta, dictionary);
+      await queries.removeAllMethods(session, tonelClass.name, isMeta, dictionary);
     } catch (e) {
       outcome.errors.push({
         file: tonelClass.name,
@@ -274,7 +274,7 @@ export function applyTonelClass(
 
   for (const method of tonelClass.methods) {
     try {
-      queries.compileMethod(
+      await queries.compileMethod(
         session,
         tonelClass.name,
         method.isMeta,
@@ -316,10 +316,10 @@ export async function chooseTonelDictionary(
   session: ActiveSession,
   className: string,
 ): Promise<string | undefined> {
-  const existing = queries.dictionariesContainingClass(session, className);
+  const existing = await queries.dictionariesContainingClass(session, className);
   if (existing.length === 1) return existing[0];
 
-  const choices = existing.length > 1 ? existing : queries.getDictionaryNames(session);
+  const choices = existing.length > 1 ? existing : await queries.getDictionaryNames(session);
   return await vscode.window.showQuickPick(choices, {
     title: `File in ${className}`,
     placeHolder:
@@ -347,7 +347,7 @@ export async function fileInTonelUri(
   // Silent on purpose. This runs once per selected file, so a guard that raised its
   // own warning would stack one toast per file; the error below reaches the user
   // through the single toast and log fileIn.ts already owns.
-  if (!isTonelAvailable(session)) {
+  if (!(await isTonelAvailable(session))) {
     outcome.errors.push({
       file: filePath,
       line: 1,
@@ -364,7 +364,7 @@ export async function fileInTonelUri(
     return outcome;
   }
 
-  const read = readTonelClass((code) => queries.executeFetchString(session, code), text);
+  const read = await readTonelClass((code) => queries.executeFetchString(session, code), text);
   if (!read.ok) {
     // read.line is where the parser stopped, so the log points at the real problem.
     outcome.errors.push({ file: filePath, line: read.line, message: read.error });
@@ -386,7 +386,7 @@ export async function fileInTonelUri(
     return outcome;
   }
 
-  const applied = applyTonelClass(session, read.tonelClass, dictionary);
+  const applied = await applyTonelClass(session, read.tonelClass, dictionary);
   outcome.compiled = applied.compiled;
   outcome.errors.push(
     ...applied.errors.map((e) => ({

@@ -10,14 +10,14 @@ import { classLookupExpr, escapeString } from '../../queries/util';
  *  Jasper, or a name) via classLookupExpr; the name is escaped there. Answers 'ok'
  *  on success and throws (surfaced by the executor) if the class cannot be resolved
  *  or the engine/base rejects the name. */
-export function addClassVariable(
+export async function addClassVariable(
   execute: QueryExecutor,
   className: string,
   classVarName: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: ['no-class'] ifNotNil: [:c | c addClassVarName: '${escapeString(classVarName)}'. 'ok']`;
-  return execute(code);
+  return await execute(code);
 }

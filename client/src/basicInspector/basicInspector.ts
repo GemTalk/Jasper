@@ -280,7 +280,7 @@ export class BasicInspector {
     try {
       switch (msg.command) {
         case 'ready':
-          this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
+          await this.postColumn('addRoot', 0, this.rootOop, this.rootLabel);
           return;
         case 'fetchTab':
           await this.postTabData(
@@ -293,17 +293,17 @@ export class BasicInspector {
           );
           return;
         case 'inspectRow':
-          this.postColumn('addChild', this.nextColumnId++, BigInt(msg.oop), msg.label, {
+          await this.postColumn('addChild', this.nextColumnId++, BigInt(msg.oop), msg.label, {
             sourceColumnId: msg.sourceColumnId,
           });
           return;
         case 'diveHere':
-          this.postColumn('replaceColumn', msg.columnId, BigInt(msg.oop), msg.label, {
+          await this.postColumn('replaceColumn', msg.columnId, BigInt(msg.oop), msg.label, {
             remember: msg.remember,
           });
           return;
         case 'evaluate':
-          this.evaluate(msg.columnId, BigInt(msg.oop), msg.expression, msg.mode);
+          await this.evaluate(msg.columnId, BigInt(msg.oop), msg.expression, msg.mode);
           return;
         case 'setSlot':
           this.setSlot(msg);
@@ -318,19 +318,19 @@ export class BasicInspector {
             selector: msg.selector,
             isClassSide: msg.isClassSide,
             source:
-              fetchMethodSource(
+              (await fetchMethodSource(
                 this.makeExecutor(),
                 BigInt(msg.oop),
                 msg.selector,
                 msg.isClassSide,
-              ) ?? '"Source unavailable."',
+              )) ?? '"Source unavailable."',
           });
           return;
         case 'browseClass':
-          this.browseClass(BigInt(msg.oop));
+          await this.browseClass(BigInt(msg.oop));
           return;
         case 'browseMethod':
-          this.browseMethod(BigInt(msg.oop), msg.selector, msg.isMeta);
+          await this.browseMethod(BigInt(msg.oop), msg.selector, msg.isMeta);
           return;
         case 'copyText':
           void vscode.env.clipboard.writeText(msg.text).then(() => {
@@ -366,14 +366,14 @@ export class BasicInspector {
    * tab bar. `kind` distinguishes a fresh root, a drilled child inserted to the
    * right, and a dive that replaces an existing column's object in place.
    */
-  private postColumn(
+  private async postColumn(
     kind: 'addRoot' | 'addChild' | 'replaceColumn',
     columnId: number,
     oop: bigint,
     label: string,
     extra: Record<string, unknown> = {},
-  ): void {
-    const header = fetchObjectHeader(this.makeExecutor(), oop);
+  ): Promise<void> {
+    const header = await fetchObjectHeader(this.makeExecutor(), oop);
     this.panel.webview.postMessage({
       command: kind,
       columnId,
@@ -403,10 +403,10 @@ export class BasicInspector {
 
     switch (tab) {
       case 'slots':
-        payload.rows = this.stampRevertible(oop, fetchSlots(exec, oop), 'instvar');
+        payload.rows = this.stampRevertible(oop, await fetchSlots(exec, oop), 'instvar');
         break;
       case 'items': {
-        const read = this.readPages(
+        const read = await this.readPages(
           from,
           PAGE_SIZE,
           all,
@@ -419,7 +419,7 @@ export class BasicInspector {
         break;
       }
       case 'entries': {
-        const read = this.readPages(
+        const read = await this.readPages(
           from,
           PAGE_SIZE,
           all,
@@ -432,7 +432,7 @@ export class BasicInspector {
         break;
       }
       case 'bytes': {
-        const read = this.readPages(
+        const read = await this.readPages(
           from,
           PAGE_SIZE * 4,
           all,
@@ -445,7 +445,7 @@ export class BasicInspector {
         break;
       }
       case 'meta':
-        payload.meta = fetchObjectMeta(exec, oop);
+        payload.meta = await fetchObjectMeta(exec, oop);
         break;
       case 'print':
         payload.text = await debug.fetchFullPrintString(this.session, oop);
@@ -489,15 +489,15 @@ export class BasicInspector {
    * same ceiling applies: a tab grown past it over several clicks comes back
    * shorter, still with its Load more offered.
    */
-  private readPages<T>(
+  private async readPages<T>(
     from: number,
     pageSize: number,
     all: boolean,
-    readPage: (at: number, count: number) => T[],
+    readPage: (at: number, count: number) => Promise<T[]>,
     through = 0,
     maxPages = LOAD_ALL_MAX_PAGES,
-  ): { rows: T[]; stoppedAtLimit: boolean } {
-    const first = readPage(from, pageSize);
+  ): Promise<{ rows: T[]; stoppedAtLimit: boolean }> {
+    const first = await readPage(from, pageSize);
     // Rows still wanted after this page, counting from where the read started.
     const wanted = all ? Number.MAX_SAFE_INTEGER : through - (from - 1);
     // A short page is the end of the object; a full one that is all that was
@@ -508,7 +508,7 @@ export class BasicInspector {
     }
     const rows = first;
     for (let page = 1; page < maxPages; page++) {
-      const next = readPage(from + rows.length, pageSize);
+      const next = await readPage(from + rows.length, pageSize);
       rows.push(...next);
       if (next.length < pageSize) return { rows, stoppedAtLimit: false };
       if (rows.length >= wanted) return { rows, stoppedAtLimit: false };
@@ -684,7 +684,12 @@ export class BasicInspector {
    * prints it, Execute It is silent bar a status-bar line, Inspect It opens it
    * in a new column.
    */
-  private evaluate(columnId: number, oop: bigint, expression: string, mode: EvalMode): void {
+  private async evaluate(
+    columnId: number,
+    oop: bigint,
+    expression: string,
+    mode: EvalMode,
+  ): Promise<void> {
     const busy = this.busyError();
     if (busy) {
       this.panel.webview.postMessage({ command: 'evalResult', columnId, ok: false, text: busy });
@@ -708,7 +713,7 @@ export class BasicInspector {
       return;
     }
     if (mode === 'inspect') {
-      this.postColumn('addChild', this.nextColumnId++, resultOop, expression, {
+      await this.postColumn('addChild', this.nextColumnId++, resultOop, expression, {
         sourceColumnId: columnId,
       });
       this.panel.webview.postMessage({ command: 'evalResult', columnId, ok: true, text: '' });
@@ -734,8 +739,8 @@ export class BasicInspector {
    * {@link browseMethod} is the same gesture one level in — the Meta tab's
    * selector rows — and lands in the same place, on the selector.
    */
-  private browseClass(oop: bigint): void {
-    const location = fetchBrowseLocation(this.makeExecutor(), oop);
+  private async browseClass(oop: bigint): Promise<void> {
+    const location = await fetchBrowseLocation(this.makeExecutor(), oop);
     if (!location || !location.dictName) {
       void vscode.window.showWarningMessage(
         'Cannot browse this value: failed to locate its class in GemStone.',
@@ -759,8 +764,8 @@ export class BasicInspector {
    * `isMeta` is the Meta tab's own Instance/Class Methods sub-tab, so the class
    * side of a selector that exists on both lands on the class side.
    */
-  private browseMethod(oop: bigint, selector: string, isMeta: boolean): void {
-    const location = fetchBrowseLocation(this.makeExecutor(), oop);
+  private async browseMethod(oop: bigint, selector: string, isMeta: boolean): Promise<void> {
+    const location = await fetchBrowseLocation(this.makeExecutor(), oop);
     if (!location || !location.dictName) {
       void vscode.window.showWarningMessage(
         `Cannot browse #${selector}: failed to locate its class in GemStone.`,

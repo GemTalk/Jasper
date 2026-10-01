@@ -3500,10 +3500,10 @@ describe('DebuggerPanel', () => {
 
     it('signals cancellable while a frame eval runs, then clears it', async () => {
       let release: (v: string) => void = () => {};
-      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
         opts.onStart?.(() => {}); // the nb call begins → cancellable
-        return new Promise<string>((res) => {
+        return await new Promise<string>((res) => {
           release = res;
         });
       });
@@ -3520,10 +3520,10 @@ describe('DebuggerPanel', () => {
 
     it('Cancel hits the running eval’s cancel handle', async () => {
       const cancelSpy = vi.fn();
-      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
         opts.onStart?.(cancelSpy); // the nb runner hands the panel its cancel fn
-        return new Promise<string>(() => {}); // never settles — the op stays "running"
+        return await new Promise<string>(() => {}); // never settles — the op stays "running"
       });
       const panel = await openPanel();
       await sendMessage(panel, { command: 'evalInFrame', level: 3, expr: '[true] whileTrue' });
@@ -3536,10 +3536,10 @@ describe('DebuggerPanel', () => {
 
     it('a cancelled eval shows "Evaluation Cancelled", the break kind, and the raw error', async () => {
       let rejectEval: (e: Error) => void = () => {};
-      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
         opts.onStart?.(() => {});
-        return new Promise<string>((_res, rej) => {
+        return await new Promise<string>((_res, rej) => {
           rejectEval = rej;
         });
       });
@@ -3560,10 +3560,10 @@ describe('DebuggerPanel', () => {
 
     it('labels a two-click eval cancel "(hard break)"', async () => {
       let rejectEval: (e: Error) => void = () => {};
-      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
         opts.onStart?.(() => {});
-        return new Promise<string>((_res, rej) => {
+        return await new Promise<string>((_res, rej) => {
           rejectEval = rej;
         });
       });
@@ -3618,10 +3618,10 @@ describe('DebuggerPanel', () => {
     it('does not mislabel a later eval setup error as cancelled after a prior cancel', async () => {
       // First eval: cancelled, so cancelClicks is bumped to 1.
       let rejectFirst: (e: Error) => void = () => {};
-      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.evaluateInFrameNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[4] as { onStart?: (c: () => void) => void };
         opts.onStart?.(() => {});
-        return new Promise<string>((_res, rej) => {
+        return await new Promise<string>((_res, rej) => {
           rejectFirst = rej;
         });
       });
@@ -4170,10 +4170,10 @@ describe('DebuggerPanel', () => {
 
     it('a step marks the op cancellable, and Cancel breaks it', async () => {
       const cancelSpy = vi.fn();
-      vi.mocked(debug.stepOverNb).mockImplementationOnce((...args: unknown[]) => {
+      vi.mocked(debug.stepOverNb).mockImplementationOnce(async (...args: unknown[]) => {
         const opts = args[3] as { onStart?: (c: () => void) => void };
         opts.onStart?.(cancelSpy); // the nb step begins polling → cancellable
-        return new Promise(() => {}); // never settles — the step "runs"
+        return await new Promise(() => {}); // never settles — the step "runs"
       });
       const panel = await openPanel();
       await sendMessage(panel, { command: 'stepOver', level: 3 });

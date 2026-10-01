@@ -42,13 +42,15 @@ describe('push method up/down (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '((System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoring) notNil and: ' +
-        '[(System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoring) notNil]) printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '((System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoring) notNil and: ' +
+          '[(System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoring) notNil]) printString',
+      )
     ).trim() === 'true';
 
   const BASE = 'PumItBase';
@@ -56,77 +58,79 @@ describe('push method up/down (integration)', () => {
   const SUBB = 'PumItB';
 
   // A super/sub hierarchy with selectors unique to this fixture.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #('state') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUBA}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUBB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     // Push-DOWN candidates on the base.
-    q.compileMethod(session(), BASE, false, 'accessing', 'pumDown\n\t^100');
-    q.compileMethod(session(), BASE, false, 'accessing', 'pumSuperDown\n\t^super hash');
+    await q.compileMethod(session(), BASE, false, 'accessing', 'pumDown\n\t^100');
+    await q.compileMethod(session(), BASE, false, 'accessing', 'pumSuperDown\n\t^super hash');
     // Push-DOWN where subclass A already overrides -> an opt-in overwrite for A.
-    q.compileMethod(session(), BASE, false, 'accessing', "pumOver\n\t^'base'");
-    q.compileMethod(session(), SUBA, false, 'accessing', "pumOver\n\t^'a'");
+    await q.compileMethod(session(), BASE, false, 'accessing', "pumOver\n\t^'base'");
+    await q.compileMethod(session(), SUBA, false, 'accessing', "pumOver\n\t^'a'");
     // Push-UP candidates on subclass A.
-    q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpPure\n\t^7');
-    q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpSuper\n\t^super hash');
+    await q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpPure\n\t^7');
+    await q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpSuper\n\t^super hash');
     // Push-UP where the superclass already defines it -> an opt-in overwrite.
-    q.compileMethod(session(), BASE, false, 'accessing', "pumCollide\n\t^'base'");
-    q.compileMethod(session(), SUBA, false, 'accessing', "pumCollide\n\t^'suba'");
+    await q.compileMethod(session(), BASE, false, 'accessing', "pumCollide\n\t^'base'");
+    await q.compileMethod(session(), SUBA, false, 'accessing', "pumCollide\n\t^'suba'");
   };
 
-  const definesSelector = (cls: string, selector: string): boolean =>
-    exec(
-      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  const definesSelector = async (cls: string, selector: string): Promise<boolean> =>
+    (
+      await exec(
+        `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+      )
     ).trim() === 'true';
 
-  const sourceOf = (cls: string, selector: string): string =>
-    exec(
+  const sourceOf = async (cls: string, selector: string): Promise<string> =>
+    await exec(
       `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) ` +
         "ifNil: [''] ifNotNil: [:m | m sourceString]",
     );
 
-  it('reports push engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports push engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the push-up GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the push-up GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
-  it('runs the push-down GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the push-down GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pushes a pure method up to its superclass', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const analysis = parseAnalysis(
       await analyzePushMethod(asyncExec, 'up', SUBA, ['pumUpPure'], false),
     );
@@ -149,14 +153,14 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector(BASE, 'pumUpPure')).toBe(true);
-    expect(definesSelector(SUBA, 'pumUpPure')).toBe(false);
+    expect(await definesSelector(BASE, 'pumUpPure')).toBe(true);
+    expect(await definesSelector(SUBA, 'pumUpPure')).toBe(false);
   });
 
   it('pushes up onto a colliding superclass as an opt-in overwrite', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const analysis = parseAnalysis(
       await analyzePushMethod(asyncExec, 'up', SUBA, ['pumCollide'], false),
     );
@@ -182,14 +186,14 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
-    expect(sourceOf(BASE, 'pumCollide')).toContain('suba');
-    expect(definesSelector(SUBA, 'pumCollide')).toBe(false);
+    expect(await sourceOf(BASE, 'pumCollide')).toContain('suba');
+    expect(await definesSelector(SUBA, 'pumCollide')).toBe(false);
   });
 
   it('keeps the source and the superclass method when a push-up overwrite is deselected', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `pum-up-collide-deselect-${SUBA}`;
     const start = parseStartPreview(
       await startPushMethodPreview(
@@ -209,14 +213,14 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     );
 
     expect(result.failed).toEqual([]);
-    expect(sourceOf(BASE, 'pumCollide')).toContain('base'); // superclass unchanged
-    expect(definesSelector(SUBA, 'pumCollide')).toBe(true); // source NOT stranded
+    expect(await sourceOf(BASE, 'pumCollide')).toContain('base'); // superclass unchanged
+    expect(await definesSelector(SUBA, 'pumCollide')).toBe(true); // source NOT stranded
   });
 
   it('shows an overriding subclass as an opt-in overwrite on push-down', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `pum-down-over-${BASE}`;
     const start = parseStartPreview(
       await startPushMethodPreview(
@@ -239,15 +243,15 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     );
 
     expect(result.failed).toEqual([]);
-    expect(sourceOf(SUBA, 'pumOver')).toContain('base'); // A's override replaced
-    expect(definesSelector(SUBB, 'pumOver')).toBe(true);
-    expect(definesSelector(BASE, 'pumOver')).toBe(false);
+    expect(await sourceOf(SUBA, 'pumOver')).toContain('base'); // A's override replaced
+    expect(await definesSelector(SUBB, 'pumOver')).toBe(true);
+    expect(await definesSelector(BASE, 'pumOver')).toBe(false);
   });
 
   it('declines pushing up a method that sends super', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzePushMethod(asyncExec, 'up', SUBA, ['pumUpSuper'], false),
@@ -258,9 +262,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
   });
 
   it('pushes a method down into every subclass and removes it from the source', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `pum-down-${BASE}`;
 
     const start = parseStartPreview(
@@ -280,16 +284,16 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     );
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector(SUBA, 'pumDown')).toBe(true);
-    expect(definesSelector(SUBB, 'pumDown')).toBe(true);
-    expect(definesSelector(BASE, 'pumDown')).toBe(false);
+    expect(await definesSelector(SUBA, 'pumDown')).toBe(true);
+    expect(await definesSelector(SUBB, 'pumDown')).toBe(true);
+    expect(await definesSelector(BASE, 'pumDown')).toBe(false);
   });
 
   it('declines pushing down from a class with no subclasses', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
-    q.compileMethod(session(), SUBA, false, 'accessing', 'pumLeaf\n\t^1');
+    await defineFixture();
+    await q.compileMethod(session(), SUBA, false, 'accessing', 'pumLeaf\n\t^1');
 
     const analysis = parseAnalysis(
       await analyzePushMethod(asyncExec, 'down', SUBA, ['pumLeaf'], false),
@@ -300,9 +304,9 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
   });
 
   it('leaves the source method in place when a subclass add is deselected', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `pum-down-deselect-${BASE}`;
 
     const start = parseStartPreview(
@@ -324,8 +328,8 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     );
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector(BASE, 'pumDown')).toBe(true); // guarded remove skipped
-    expect(definesSelector(SUBA, 'pumDown')).toBe(true);
-    expect(definesSelector(SUBB, 'pumDown')).toBe(false);
+    expect(await definesSelector(BASE, 'pumDown')).toBe(true); // guarded remove skipped
+    expect(await definesSelector(SUBA, 'pumDown')).toBe(true);
+    expect(await definesSelector(SUBB, 'pumDown')).toBe(false);
   });
 });

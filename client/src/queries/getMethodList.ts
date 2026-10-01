@@ -6,7 +6,10 @@ export interface MethodEntry {
   selector: string;
 }
 
-export function getMethodList(execute: QueryExecutor, className: string): MethodEntry[] {
+export async function getMethodList(
+  execute: QueryExecutor,
+  className: string,
+): Promise<MethodEntry[]> {
   const code = `| ws class |
 ws := WriteStream on: Unicode7 new.
 class := ${className}.
@@ -20,7 +23,7 @@ class := ${className}.
         nextPutAll: cat; tab;
         nextPutAll: sel; lf]]].
 ws contents`;
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: MethodEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

@@ -12,13 +12,13 @@ import { rankAndLimit } from '../rank';
 
 export function createGlobalsProvider(
   sessionId: number,
-  loadEntries: () => GlobalNameEntry[],
+  loadEntries: () => Promise<GlobalNameEntry[]>,
 ): OmniProvider {
   let entries: readonly GlobalNameEntry[] = [];
   return {
     category: CATEGORY_BY_ID.globals,
-    prime() {
-      entries = loadEntries();
+    async prime() {
+      entries = await loadEntries();
     },
     search(query: string, cfg: OmniConfig): OmniResult[] {
       return rankAndLimit(

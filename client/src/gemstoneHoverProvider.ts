@@ -64,9 +64,9 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       // that silently shows nothing. Guarding INSIDE the callback rather than around the sweep
       // keeps what the other environments found, the way the senders/implementors CodeLens does.
       const results = dedupeMethodResults(
-        sweepEnvironments((env) => {
+        await sweepEnvironments(async (env) => {
           try {
-            return queries.implementorsOf(session, sel, env);
+            return await queries.implementorsOf(session, sel, env);
           } catch {
             return [];
           }
@@ -81,14 +81,16 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
         // in, so no row from one environment can duplicate a row from another, and this
         // has to agree with the senders/implementors CodeLens, which sums the same way.
         let anyEnvironmentFailed = false;
-        sendersCount = sweepEnvironments((env) => {
-          try {
-            return queries.sendersOf(session, sel, env);
-          } catch {
-            anyEnvironmentFailed = true;
-            return [];
-          }
-        }).length;
+        sendersCount = (
+          await sweepEnvironments(async (env) => {
+            try {
+              return await queries.sendersOf(session, sel, env);
+            } catch {
+              anyEnvironmentFailed = true;
+              return [];
+            }
+          })
+        ).length;
         // Nothing clears this map short of a new session, so caching a count an environment
         // failed to contribute to would leave the hover saying `0 senders` for the rest of it.
         if (!anyEnvironmentFailed) this.sendersCountCache.set(sKey, sendersCount);
@@ -125,7 +127,9 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       return null;
     }
 
-    const classEntries = queries.getAllClassNames(session).filter((e) => e.className === word);
+    const classEntries = (await queries.getAllClassNames(session)).filter(
+      (e) => e.className === word,
+    );
     if (classEntries.length === 0) return null;
 
     const entry = classEntries[0];
@@ -136,7 +140,7 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
       // its hierarchy, which is the useful thing to see. Only the editable
       // gemstone:// comment document opens on the stored text — see
       // getStoredClassComment.
-      const comment = queries.getClassComment(session, word);
+      const comment = await queries.getClassComment(session, word);
       if (comment) {
         const preview = comment.length > 500 ? comment.substring(0, 500) + '...' : comment;
         md.appendMarkdown(preview);

@@ -44,160 +44,161 @@ describe('tonel file in fidelity (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const rowan3 = useRowan3Stone(() => exec);
 
-  const fileOut = (className: string, dict?: string): string => {
-    const tonel = fileOutClassTonel(exec, className, dict);
+  const fileOut = async (className: string, dict?: string): Promise<string> => {
+    const tonel = await fileOutClassTonel(exec, className, dict);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
     return tonel;
   };
 
   const renamed = (tonel: string): string => tonel.split(SOURCE).join(COPY);
 
-  const fileIn = (tonel: string, dictionary = 'UserGlobals') => {
-    const read = readTonelClass(exec, tonel);
+  const fileIn = async (tonel: string, dictionary = 'UserGlobals') => {
+    const read = await readTonelClass(exec, tonel);
     expect(read.ok, `parse failed: ${read.ok ? '' : read.error}`).toBe(true);
     if (!read.ok) throw new Error(read.error);
-    return applyTonelClass(session(), read.tonelClass, dictionary);
+    return await applyTonelClass(session(), read.tonelClass, dictionary);
   };
 
   /** `expr` evaluated on the stone, trimmed. */
-  const value = (expr: string): string => exec(`(${expr}) printString`).trim();
+  const value = async (expr: string): Promise<string> =>
+    (await exec(`(${expr}) printString`)).trim();
 
   describe('the class SHAPE survives', () => {
-    it('a byte class comes back a byte class', (ctx) => {
+    it('a byte class comes back a byte class', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // The defect: Rowan writes `#type : 'byteSubclass'` and the creation map was
       // keyed on 'bytes', so this failed with "Unsupported class type". Keying it
       // right then hit the second half — `byteSubclass:` takes no instVarNames:.
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object byteSubclass: '${SOURCE}' classVars: #() classInstVars: #() ` +
           `poolDictionaries: #() inDictionary: UserGlobals`,
       );
-      q.compileMethod(session(), SOURCE, false, 'accessing', 'tag\n\t^42');
+      await q.compileMethod(session(), SOURCE, false, 'accessing', 'tag\n\t^42');
 
-      const tonel = renamed(fileOut(SOURCE));
+      const tonel = renamed(await fileOut(SOURCE));
       expect(tonel).toContain("#type : 'byteSubclass'");
 
-      const outcome = fileIn(tonel);
+      const outcome = await fileIn(tonel);
       expect(outcome.errors).toEqual([]);
-      expect(value(`${COPY} isBytes`)).toBe('true');
+      expect(await value(`${COPY} isBytes`)).toBe('true');
     });
 
-    it('an indexable class comes back indexable', (ctx) => {
+    it('an indexable class comes back indexable', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object indexableSubclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
 
-      const outcome = fileIn(renamed(fileOut(SOURCE)));
+      const outcome = await fileIn(renamed(await fileOut(SOURCE)));
       expect(outcome.errors).toEqual([]);
-      expect(value(`${COPY} isIndexable`)).toBe('true');
-      expect(value(`${COPY} isBytes`)).toBe('false');
+      expect(await value(`${COPY} isIndexable`)).toBe('true');
+      expect(await value(`${COPY} isBytes`)).toBe('false');
     });
 
-    it('a plain class does NOT come back indexable or byte', (ctx) => {
+    it('a plain class does NOT come back indexable or byte', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // The other direction, so a map that answered `byteSubclass:` for everything
       // could not pass this suite.
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
 
-      fileIn(renamed(fileOut(SOURCE)));
-      expect(value(`${COPY} isIndexable`)).toBe('false');
-      expect(value(`${COPY} isBytes`)).toBe('false');
+      await fileIn(renamed(await fileOut(SOURCE)));
+      expect(await value(`${COPY} isIndexable`)).toBe('false');
+      expect(await value(`${COPY} isBytes`)).toBe('false');
     });
   });
 
   describe('the class PROPERTIES survive', () => {
-    it('#gs_options survives the round trip', (ctx) => {
+    it('#gs_options survives the round trip', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // dbTransient changes what the class IS. Dropped silently, the copy is an
       // ordinary persistent class that looks like it filed in cleanly.
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals ` +
           `options: #(dbTransient)`,
       );
 
-      const tonel = renamed(fileOut(SOURCE));
+      const tonel = renamed(await fileOut(SOURCE));
       expect(tonel).toContain('dbTransient');
 
-      const outcome = fileIn(tonel);
+      const outcome = await fileIn(tonel);
       expect(outcome.errors).toEqual([]);
       // The live behavioural property, not the option list we wrote — so this
       // fails if the option travelled as text but did not take effect.
-      expect(value(`${COPY} instancesDbTransient`)).toBe('true');
-      expect(fileOut(COPY)).toContain('dbTransient');
+      expect(await value(`${COPY} instancesDbTransient`)).toBe('true');
+      expect(await fileOut(COPY)).toContain('dbTransient');
     });
 
-    it('the class category survives the round trip', (ctx) => {
+    it('the class category survives the round trip', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // No creation selector carries #category, so it has to be applied separately.
       // Dropped, the class lands with no category and moves in the Categories pane.
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
-      q.recategorizeClass(session(), SOURCE, 'Jasper-Fidelity-Category');
+      await q.recategorizeClass(session(), SOURCE, 'Jasper-Fidelity-Category');
 
-      const outcome = fileIn(renamed(fileOut(SOURCE)));
+      const outcome = await fileIn(renamed(await fileOut(SOURCE)));
       expect(outcome.errors).toEqual([]);
-      expect(value(`${COPY} category`)).toBe("'Jasper-Fidelity-Category'");
+      expect(await value(`${COPY} category`)).toBe("'Jasper-Fidelity-Category'");
     });
 
-    it('names a property it does not apply rather than dropping it silently', (ctx) => {
+    it('names a property it does not apply rather than dropping it silently', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
       // Rowan writes gs_reservedoop for base classes; inject it so the case does
       // not depend on finding a writable base class.
-      const withOop = renamed(fileOut(SOURCE)).replace(
+      const withOop = renamed(await fileOut(SOURCE)).replace(
         "#superclass : 'Object',",
         "#superclass : 'Object',\n\t#gs_reservedoop : '12345',",
       );
 
-      const outcome = fileIn(withOop);
+      const outcome = await fileIn(withOop);
       expect(outcome.errors.map((e) => e.message).join('\n')).toContain('gs_reservedoop');
       // Named, but the class still files in.
-      expect(q.dictionariesContainingClass(session(), COPY)).toEqual(['UserGlobals']);
+      expect(await q.dictionariesContainingClass(session(), COPY)).toEqual(['UserGlobals']);
     });
   });
 
   describe('non-ASCII content', () => {
-    it('survives file out and file in', (ctx) => {
+    it('survives file out and file in', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
       // `ws contents asString` on the file-out side was suspected of raising for a
       // codepoint above 255. It does not — GemStone promotes the String — but
       // nothing pinned it, in either direction.
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #('a') classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
-      q.setClassComment(session(), SOURCE, 'Comment with café, 中文 and 😀.');
-      q.compileMethod(session(), SOURCE, false, 'accessing', "label\n\t^'café 中文 😀'");
+      await q.setClassComment(session(), SOURCE, 'Comment with café, 中文 and 😀.');
+      await q.compileMethod(session(), SOURCE, false, 'accessing', "label\n\t^'café 中文 😀'");
 
-      const tonel = renamed(fileOut(SOURCE));
+      const tonel = renamed(await fileOut(SOURCE));
       expect(tonel).toContain('café');
       expect(tonel).toContain('中文');
       expect(tonel).toContain('😀');
 
-      const outcome = fileIn(tonel);
+      const outcome = await fileIn(tonel);
       expect(outcome.errors).toEqual([]);
-      expect(fileOut(COPY).split(COPY).join(SOURCE)).toBe(tonel.split(COPY).join(SOURCE));
+      expect((await fileOut(COPY)).split(COPY).join(SOURCE)).toBe(tonel.split(COPY).join(SOURCE));
     });
   });
 
@@ -209,13 +210,13 @@ describe('tonel file in fidelity (integration)', () => {
     const FIRST = 'JasperFidelityFirstDict';
 
     /** Put a writable dictionary AHEAD of UserGlobals, holding its own SOURCE. */
-    const twoDictionaries = (): void => {
-      exec(
+    const twoDictionaries = async (): Promise<void> => {
+      await exec(
         `| d | d := SymbolDictionary new name: #'${FIRST}'; yourself. ` +
           `UserGlobals at: #'${FIRST}' put: d. ` +
           `System myUserProfile insertDictionary: d at: 1. 'ok'`,
       );
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #() classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: ${FIRST}`,
@@ -223,13 +224,13 @@ describe('tonel file in fidelity (integration)', () => {
       // Scoped deliberately: an unscoped compile here would bind the bare name to
       // the dictionary at position 1 and put both markers on the same class,
       // making the fixture agree with the bug it is meant to catch.
-      q.compileMethod(session(), SOURCE, false, 'accessing', 'marker\n\t^#first', 0, FIRST);
-      q.compileClassDefinition(
+      await q.compileMethod(session(), SOURCE, false, 'accessing', 'marker\n\t^#first', 0, FIRST);
+      await q.compileClassDefinition(
         session(),
         `Object subclass: '${SOURCE}' instVarNames: #() classVars: #() ` +
           `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
       );
-      q.compileMethod(
+      await q.compileMethod(
         session(),
         SOURCE,
         false,
@@ -240,27 +241,30 @@ describe('tonel file in fidelity (integration)', () => {
       );
     };
 
-    it('leaves the same-named class in the earlier dictionary untouched', (ctx) => {
+    it('leaves the same-named class in the earlier dictionary untouched', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      twoDictionaries();
-      expect(q.dictionariesContainingClass(session(), SOURCE)).toEqual([FIRST, 'UserGlobals']);
+      await twoDictionaries();
+      expect(await q.dictionariesContainingClass(session(), SOURCE)).toEqual([
+        FIRST,
+        'UserGlobals',
+      ]);
 
-      const outcome = fileIn(fileOut(SOURCE, 'UserGlobals'), 'UserGlobals');
+      const outcome = await fileIn(await fileOut(SOURCE, 'UserGlobals'), 'UserGlobals');
       expect(outcome.errors).toEqual([]);
 
       // With the bug this answered an empty method list: removeAllMethods bound
       // the bare name to the FIRST dictionary and emptied the wrong class.
-      expect(value(`(${FIRST} at: #'${SOURCE}') selectors size`)).toBe('1');
-      expect(value(`(${FIRST} at: #'${SOURCE}') new marker`)).toBe("#'first'");
+      expect(await value(`(${FIRST} at: #'${SOURCE}') selectors size`)).toBe('1');
+      expect(await value(`(${FIRST} at: #'${SOURCE}') new marker`)).toBe("#'first'");
     });
 
-    it('writes the methods into the chosen dictionary’s class', (ctx) => {
+    it('writes the methods into the chosen dictionary’s class', async (ctx) => {
       rowan3.skipUnlessAvailable(ctx);
-      twoDictionaries();
+      await twoDictionaries();
 
-      const outcome = fileIn(fileOut(SOURCE, 'UserGlobals'), 'UserGlobals');
+      const outcome = await fileIn(await fileOut(SOURCE, 'UserGlobals'), 'UserGlobals');
       expect(outcome.compiled).toBe(1);
-      expect(value(`(UserGlobals at: #'${SOURCE}') new marker`)).toBe("#'second'");
+      expect(await value(`(UserGlobals at: #'${SOURCE}') new marker`)).toBe("#'second'");
     });
   });
 });

@@ -13,10 +13,12 @@ import { dictLookupExpr, escapeString } from '../../queries/util';
 // The shadow WARNING a rename raises is built from `dictionariesShadowedByRename`, which names
 // the dictionaries rather than answering yes or no -- and leaves out the renamed class's own by
 // identity, since two dictionaries can share a name.
-export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
+export async function globalNameInUse(execute: QueryExecutor, name: string): Promise<boolean> {
   return (
-    execute(
-      `(System myUserProfile symbolList objectNamed: #'${escapeString(name)}') notNil printString`,
+    (
+      await execute(
+        `(System myUserProfile symbolList objectNamed: #'${escapeString(name)}') notNil printString`,
+      )
     ).trim() === 'true'
   );
 }
@@ -33,16 +35,18 @@ export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
  * name. With no dictionary there is nothing to scope to, so this answers false and leaves the
  * decision to the caller rather than inventing one.
  */
-export function globalNameInUseInDictionary(
+export async function globalNameInUseInDictionary(
   execute: QueryExecutor,
   name: string,
   dict: number | string | undefined,
-): boolean {
+): Promise<boolean> {
   if (dict === undefined) return false;
   return (
-    execute(
-      `((${dictLookupExpr(dict)}) ifNil: [nil] ifNotNil: [:d |
+    (
+      await execute(
+        `((${dictLookupExpr(dict)}) ifNil: [nil] ifNotNil: [:d |
          d at: #'${escapeString(name)}' ifAbsent: [nil]]) notNil printString`,
+      )
     ).trim() === 'true'
   );
 }

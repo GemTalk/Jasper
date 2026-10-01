@@ -25,6 +25,6 @@ import { QueryExecutor } from './types';
  * The chunk is wrapped in a block so its temporaries — `| dict |` at the head of a
  * chunk, which both a file-out and a script emit — stay legal.
  */
-export function fileInChunk(execute: QueryExecutor, code: string): string {
-  return execute(`[${code}] ensure: [^ 'ok']`);
+export async function fileInChunk(execute: QueryExecutor, code: string): Promise<string> {
+  return await execute(`[${code}] ensure: [^ 'ok']`);
 }

@@ -1,7 +1,7 @@
 import { QueryExecutor } from './types';
 import { compiledMethodExpr } from './util';
 
-export function setBreakAtStepPoint(
+export async function setBreakAtStepPoint(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
@@ -9,8 +9,8 @@ export function setBreakAtStepPoint(
   stepPoint: number,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   const code = `${method} setBreakAtStepPoint: ${stepPoint}. 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

@@ -38,67 +38,69 @@ describe('extract method (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'XMItBase';
   const SOURCE = 'doStuff\n\tself yourself. self hash. ^1';
   const SELECTION = 'self yourself. self hash';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
+    await q.compileMethod(session(), BASE, false, 'accessing', SOURCE);
   };
 
   // 1-based [selStart, selStop] of the SELECTION in the stored source.
-  const selectionRange = (): { selStart: number; selStop: number } => {
-    const src = exec(
+  const selectionRange = async (): Promise<{ selStart: number; selStop: number }> => {
+    const src = await exec(
       `(${BASE} compiledMethodAt: #doStuff environmentId: 0 otherwise: nil) sourceString`,
     );
     const start = src.indexOf(SELECTION) + 1;
     return { selStart: start, selStop: start + SELECTION.length - 1 };
   };
 
-  it('reports extract-method engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports extract-method engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the extract-method GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+  it('runs the extract-method GS SUnit suite in-stone with zero failures', async (ctx) => {
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pre-flights a void statement selection as needing no arguments', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
-    defineFixture();
-    const { selStart, selStop } = selectionRange();
+    await defineFixture();
+    const { selStart, selStop } = await selectionRange();
 
     const analysis = parseAnalysis(
       await analyzeExtractSelection(
@@ -108,7 +110,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
         false,
         selStart,
         selStop,
-        userIndex(),
+        await userIndex(),
       ),
     );
 
@@ -118,10 +120,10 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
   });
 
   it('applies the extraction, creating the new method and rewriting the original', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    if (!(await enginePresent())) ctx.skip('refactoring engine not loaded in this stone');
 
-    defineFixture();
-    const { selStart, selStop } = selectionRange();
+    await defineFixture();
+    const { selStart, selStop } = await selectionRange();
     const token = `xmit-${BASE}`;
 
     const start = parseStartPreview(
@@ -136,7 +138,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
         false,
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(2);
@@ -145,14 +147,16 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
     expect(result.applied).toBe(2);
     expect(result.failed).toEqual([]);
 
-    expect(exec(`(${BASE} includesSelector: #sideEffects) printString`).trim()).toBe('true');
-    const newSrc = exec(
+    expect((await exec(`(${BASE} includesSelector: #sideEffects) printString`)).trim()).toBe(
+      'true',
+    );
+    const newSrc = await exec(
       `(${BASE} compiledMethodAt: #sideEffects environmentId: 0 otherwise: nil) sourceString`,
     );
     // The extracted method is reformatted (one statement per line).
     expect(newSrc).toContain('self yourself');
     expect(newSrc).toContain('self hash');
-    const original = exec(
+    const original = await exec(
       `(${BASE} compiledMethodAt: #doStuff environmentId: 0 otherwise: nil) sourceString`,
     );
     expect(original).toContain('self sideEffects');

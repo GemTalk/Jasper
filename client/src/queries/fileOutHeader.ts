@@ -18,7 +18,7 @@ import { QueryExecutor } from './types';
 // `fileOutClass` keeps answering the same bytes for the same class: the class-sync
 // engine md5s that text, and a timestamp in it would make every class look changed
 // on every sync.
-export function fileOutHeader(execute: QueryExecutor): string {
+export async function fileOutHeader(execute: QueryExecutor): Promise<string> {
   const code = `| ws lines |
 ws := WriteStream on: String new.
 ws nextPutAll: 'fileformat utf8'; lf.
@@ -35,5 +35,5 @@ ws nextPutAll: '! On ';
   lf.
 ws nextPutAll: '!'; lf.
 ws contents`;
-  return execute(code);
+  return await execute(code);
 }

@@ -21,12 +21,12 @@ function dictArg(dict?: number | string): string {
 // then, its oop, timeStamp, userId, an isCurrent flag, its definition source, and
 // the methods added/removed/modified relative to the previous version. Built on
 // GemStone's native classHistory, so it is this-stone-only and read-only.
-export function getClassHistory(
+export async function getClassHistory(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
-  return execute(
+): Promise<string> {
+  return await execute(
     `GsClassHistory forClassNamed: '${escapeString(className)}' inDictionary: ${dictArg(dict)}`,
   );
 }
@@ -34,13 +34,13 @@ export function getClassHistory(
 // Restore a historical version's shape + methods as a NEW version under the
 // class's current name (a redo). Does NOT rename the class back and does NOT
 // commit. Returns the raw JSON result ({"reverted":bool,...} or {"error":..}).
-export function revertClassToVersion(
+export async function revertClassToVersion(
   execute: QueryExecutor,
   className: string,
   index: number,
   dict?: number | string,
-): string {
-  return execute(
+): Promise<string> {
+  return await execute(
     `GsClassHistory revertClassNamed: '${escapeString(className)}' toIndex: ${index} ` +
       `inDictionary: ${dictArg(dict)}`,
   );
@@ -49,13 +49,13 @@ export function revertClassToVersion(
 // Remove the version at `index` from a class's class history (it no longer
 // appears). The current version cannot be removed. Does NOT commit (the user
 // commits). Returns the raw JSON result ({"removed":bool,...} or {"error":..}).
-export function removeClassVersion(
+export async function removeClassVersion(
   execute: QueryExecutor,
   className: string,
   index: number,
   dict?: number | string,
-): string {
-  return execute(
+): Promise<string> {
+  return await execute(
     `GsClassHistory removeVersionOf: '${escapeString(className)}' index: ${index} ` +
       `inDictionary: ${dictArg(dict)}`,
   );

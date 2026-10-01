@@ -294,8 +294,8 @@ describe('undoLastCommand', () => {
   it('hands a refactoring to the engine reverser, which keeps its preview', async () => {
     pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
     vi.mocked(checkRefactoringUndoAvailable)
-      .mockReturnValueOnce(status(true))
-      .mockReturnValueOnce(status(false));
+      .mockResolvedValueOnce(status(true))
+      .mockResolvedValueOnce(status(false));
 
     await undoLastCommand(sessions);
 
@@ -307,7 +307,7 @@ describe('undoLastCommand', () => {
   it('keeps the refactoring entry when the stone still holds its record', async () => {
     // A cancelled panel, or a partial undo: the stone's record survives, so the offer must.
     pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true));
 
     await undoLastCommand(sessions);
 
@@ -319,7 +319,7 @@ describe('undoLastCommand', () => {
     // remains. Answering "nothing to undo" over a stack that still has entries would be a lie.
     pushUndoEntry(methodEdit('Save Account>>#balance'));
     pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(false));
     vi.mocked(reverseMethodEdit).mockResolvedValue(true);
 
     await undoLastCommand(sessions);
@@ -332,7 +332,7 @@ describe('undoLastCommand', () => {
   it('drops a refactoring entry the stone has since replaced', async () => {
     // The sequence moves on when another refactoring is applied elsewhere in the session.
     pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
-    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true, 9));
+    vi.mocked(checkRefactoringUndoAvailable).mockResolvedValue(status(true, 9));
 
     await undoLastCommand(sessions);
 
@@ -408,8 +408,8 @@ describe('undoLastCommand', () => {
       // of the same question, so a modal in front of it would be Jasper asking twice.
       pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label: 'Rename', sequence: 1 });
       vi.mocked(checkRefactoringUndoAvailable)
-        .mockReturnValueOnce(status(true))
-        .mockReturnValueOnce(status(false));
+        .mockResolvedValueOnce(status(true))
+        .mockResolvedValueOnce(status(false));
 
       await undoLastCommand(sessions);
 

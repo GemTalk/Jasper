@@ -13,8 +13,8 @@ import { escapeString } from './util';
  * thing actually required, and a version floor would be a guess about every
  * release in between.
  */
-export function canForkGem(execute: QueryExecutor): boolean {
-  const answer = execute(
+export async function canForkGem(execute: QueryExecutor): Promise<boolean> {
+  const answer = await execute(
     `((GsCurrentSession currentSession respondsTo: #'createOnetimePasswordForUserId:validForSeconds:')
       and: [(System myUserProfile symbolList objectNamed: #'GsTsExternalSession') notNil]) printString`,
   );
@@ -48,8 +48,12 @@ export function canForkGem(execute: QueryExecutor): boolean {
  * GCI sessions). A forked gem holds its port and a stone session until the
  * stone goes down. The id this answers is what a stop action would need.
  */
-export function forkGemRunning(execute: QueryExecutor, expression: string, gemNrs: string): string {
-  return execute(
+export async function forkGemRunning(
+  execute: QueryExecutor,
+  expression: string,
+  gemNrs: string,
+): Promise<string> {
+  return await execute(
     `| gem id |
 gem := GsTsExternalSession newDefault.
 gem gemNRS: '${escapeString(gemNrs)}'.

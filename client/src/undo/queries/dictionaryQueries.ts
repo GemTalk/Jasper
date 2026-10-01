@@ -33,11 +33,11 @@ import { DictionaryState } from '../undoTypes';
  * Compared as SYMBOLS. `aDictionary name asString = 'Foo'` raises "Unicode argument
  * disallowed in String comparison" on a stone in legacy string mode.
  */
-export function captureDictionary(
+export async function captureDictionary(
   execute: QueryExecutor,
   name: string,
   stashKey?: string,
-): DictionaryState {
+): Promise<DictionaryState> {
   const sym = escapeString(name);
   const stash = stashKey ? `SessionTemps current at: #'${escapeString(stashKey)}' put: d.` : '';
   const code = `| sl d |
@@ -46,7 +46,7 @@ d := sl detect: [:each | each name == #'${sym}'] ifNone: [nil].
 d isNil ifTrue: [^ '0'].
 ${stash}
 '1', (Character tab asString), (sl indexOf: d) printString`;
-  return parseDictionaryCapture(execute(code), name);
+  return parseDictionaryCapture(await execute(code), name);
 }
 
 /** Decode one capture. Exported for tests. */
@@ -65,11 +65,11 @@ export function parseDictionaryCapture(raw: string, name: string): DictionarySta
  * position into range: the list is shorter now than it was, and `insertDictionary:at:` raises
  * on an index past the end rather than appending.
  */
-export function reinsertDictionary(
+export async function reinsertDictionary(
   execute: QueryExecutor,
   stashKey: string,
   index: number,
-): string | null {
+): Promise<string | null> {
   const code = `| sl d pos |
 sl := System myUserProfile symbolList.
 d := SessionTemps current at: #'${escapeString(stashKey)}' ifAbsent: [nil].
@@ -82,7 +82,7 @@ pos := ${Math.max(1, Math.trunc(index) || 1)} min: sl size + 1.
 [System myUserProfile insertDictionary: d at: pos. 'ok']
   on: Error
   do: [:ex | ex messageText ifNil: ['failed']]`;
-  const answer = execute(code).trim();
+  const answer = (await execute(code)).trim();
   return answer === 'ok' ? null : answer;
 }
 
@@ -96,7 +96,7 @@ pos := ${Math.max(1, Math.trunc(index) || 1)} min: sl size + 1.
  * Answers 0 for a dictionary that is not on the symbol list — there is nothing to warn about
  * in either case.
  */
-export function dictionaryEntryCount(execute: QueryExecutor, name: string): number {
+export async function dictionaryEntryCount(execute: QueryExecutor, name: string): Promise<number> {
   // `selfEntry`, not `self`: `self` is a reserved word and cannot be a temporary.
   const code = `| sl d selfEntry |
 sl := System myUserProfile symbolList.
@@ -104,6 +104,6 @@ d := sl detect: [:each | each name == #'${escapeString(name)}'] ifNone: [nil].
 d isNil ifTrue: [^ '0'].
 selfEntry := (d keyAtValue: d ifAbsent: [nil]) isNil ifTrue: [0] ifFalse: [1].
 (d size - selfEntry) printString`;
-  const answer = Number(execute(code).trim());
+  const answer = Number((await execute(code)).trim());
   return Number.isFinite(answer) && answer > 0 ? answer : 0;
 }

@@ -7,17 +7,17 @@ vi.mock('../browserQueries', () => {
   // trip. These three stay as the knobs the tests turn, with the bundle built
   // from them, so a test still says "this method's source is X" and the args it
   // asserts on still arrive.
-  const getMethodSource = vi.fn((..._args: unknown[]) => '');
-  const getSourceOffsets = vi.fn((..._args: unknown[]) => [] as number[]);
-  const getStepPointSelectorRanges = vi.fn((..._args: unknown[]) => [] as unknown[]);
+  const getMethodSource = vi.fn(async (..._args: unknown[]) => '');
+  const getSourceOffsets = vi.fn(async (..._args: unknown[]) => [] as number[]);
+  const getStepPointSelectorRanges = vi.fn(async (..._args: unknown[]) => [] as unknown[]);
   return {
     getMethodSource,
     getSourceOffsets,
     getStepPointSelectorRanges,
-    getStepPointBundle: vi.fn((...args: unknown[]) => ({
-      source: getMethodSource(...args),
-      offsets: getSourceOffsets(...args),
-      selectors: getStepPointSelectorRanges(...args),
+    getStepPointBundle: vi.fn(async (...args: unknown[]) => ({
+      source: await getMethodSource(...args),
+      offsets: await getSourceOffsets(...args),
+      selectors: await getStepPointSelectorRanges(...args),
     })),
     setBreakAtStepPoint: vi.fn(),
     clearBreakAtStepPoint: vi.fn(),
@@ -116,20 +116,20 @@ describe('BreakpointManager', () => {
   });
 
   describe('applyToUri', () => {
-    it('returns unverified for a non-gemstone URI', () => {
-      const results = makeManager().applyToUri(session(), Uri.parse('file:///test.tpz'), [
+    it('returns unverified for a non-gemstone URI', async () => {
+      const results = await makeManager().applyToUri(session(), Uri.parse('file:///test.tpz'), [
         { line: 1, enabled: true },
       ]);
       expect(results).toHaveLength(1);
       expect(results[0].verified).toBe(false);
     });
 
-    it('sets a breakpoint per requested line and reports where each landed', () => {
+    it('sets a breakpoint per requested line and reports where each landed', async () => {
       // GemStone _sourceOffsets are 1-based: step point 1 at source[0], 2 at source[11].
-      mockGetMethodSource.mockReturnValue('at: index\n^self basicAt: index');
-      mockGetSourceOffsets.mockReturnValue([1, 11]);
+      mockGetMethodSource.mockResolvedValue('at: index\n^self basicAt: index');
+      mockGetSourceOffsets.mockResolvedValue([1, 11]);
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: true },
         { line: 2, enabled: true },
       ]);
@@ -143,20 +143,22 @@ describe('BreakpointManager', () => {
       expect(mockDisableBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('clears the method and sets nothing when no breakpoints are wanted', () => {
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), []);
+    it('clears the method and sets nothing when no breakpoints are wanted', async () => {
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), []);
       expect(results).toHaveLength(0);
       expect(mockClearAllBreaks).toHaveBeenCalledTimes(1);
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('applies a disabled breakpoint as set-then-disable', () => {
+    it('applies a disabled breakpoint as set-then-disable', async () => {
       // disableBreakAtStepPoint: is a no-op on a step point with no breakpoint,
       // so a disabled breakpoint has to be set first or it would not exist at all.
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
-      makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 2, enabled: false }]);
+      await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 2, enabled: false },
+      ]);
 
       expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(1);
       expect(mockDisableBreakAtStepPoint).toHaveBeenCalledTimes(1);
@@ -166,35 +168,35 @@ describe('BreakpointManager', () => {
       expect(disableArgs[4]).toBe(2);
     });
 
-    it('resolves a column to the nearest step point on the line, not the leftmost', () => {
+    it('resolves a column to the nearest step point on the line, not the leftmost', async () => {
       //           0    5    10   15   20
       //           x := self foo bar
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
       // step points (1-based): 8 -> 'self' area start, 13 -> 'foo'
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
       // Line 2 starts at offset 2. Column 10 => offset 12, nearest step point is #2.
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 2, character: 10, enabled: true },
       ]);
       expect(results[0].stepPoint).toBe(2);
     });
 
-    it('a gutter click (no column) takes the leftmost step point on the line', () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+    it('a gutter click (no column) takes the leftmost step point on the line', async () => {
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 2, enabled: true },
       ]);
       expect(results[0].stepPoint).toBe(1);
     });
 
-    it('collapses two requests that land on the same step point, keeping it armed', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([5]);
+    it('collapses two requests that land on the same step point, keeping it armed', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([5]);
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 2, enabled: false },
         { line: 2, character: 1, enabled: true },
       ]);
@@ -206,56 +208,56 @@ describe('BreakpointManager', () => {
       expect(mockDisableBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('falls forward to the next step point when the line has none', () => {
-      mockGetMethodSource.mockReturnValue('foo\n"just a comment"\n^1');
+    it('falls forward to the next step point when the line has none', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n"just a comment"\n^1');
       // Only one step point: the '^' at 0-based offset 21, so 22 1-based.
-      mockGetSourceOffsets.mockReturnValue([22]);
+      mockGetSourceOffsets.mockResolvedValue([22]);
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 2, enabled: true },
       ]);
       expect(results[0]).toEqual({ stepPoint: 1, actualLine: 3, verified: true });
     });
 
-    it('returns unverified when the method has no step point at or after the line', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1\n');
-      mockGetSourceOffsets.mockReturnValue([1]);
+    it('returns unverified when the method has no step point at or after the line', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1\n');
+      mockGetSourceOffsets.mockResolvedValue([1]);
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 3, enabled: true },
       ]);
       expect(results[0].verified).toBe(false);
     });
 
-    it('returns unverified when the source cannot be fetched', () => {
+    it('returns unverified when the source cannot be fetched', async () => {
       mockGetMethodSource.mockImplementation(() => {
         throw new Error('method gone');
       });
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: true },
       ]);
       expect(results[0].verified).toBe(false);
     });
 
-    it('returns unverified when setting the breakpoint throws', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('returns unverified when setting the breakpoint throws', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
       mockSetBreakAtStepPoint.mockImplementation(() => {
         throw new Error('fail');
       });
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: true },
       ]);
       expect(results[0].verified).toBe(false);
     });
 
-    it('reads the class side and environment id out of the URI', () => {
-      mockGetMethodSource.mockReturnValue('new\n^super new');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('reads the class side and environment id out of the URI', async () => {
+      mockGetMethodSource.mockResolvedValue('new\n^super new');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
-      makeManager().applyToUri(
+      await makeManager().applyToUri(
         session(),
         Uri.parse('gemstone://1/Globals/Array/class/creation/new?env=2'),
         [{ line: 1, enabled: true }],
@@ -266,12 +268,12 @@ describe('BreakpointManager', () => {
   });
 
   describe('setBreakpointsForSource', () => {
-    it("converts the debug adapter's 1-based columns to 0-based characters", () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+    it("converts the debug adapter's 1-based columns to 0-based characters", async () => {
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
       // DAP column 11 == character 10 == offset 12 on line 2 => step point 2.
-      const results = makeManager().setBreakpointsForSource(
+      const results = await makeManager().setBreakpointsForSource(
         session(),
         Uri.parse(METHOD_URI),
         [2],
@@ -280,11 +282,11 @@ describe('BreakpointManager', () => {
       expect(results[0].stepPoint).toBe(2);
     });
 
-    it('treats a missing column as a whole-line request', () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+    it('treats a missing column as a whole-line request', async () => {
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
-      const results = makeManager().setBreakpointsForSource(
+      const results = await makeManager().setBreakpointsForSource(
         session(),
         Uri.parse(METHOD_URI),
         [2],
@@ -295,12 +297,12 @@ describe('BreakpointManager', () => {
   });
 
   describe('appliedFor', () => {
-    it('reports the step points now set on a method, with their enabled state', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('reports the step points now set on a method, with their enabled state', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const manager = makeManager();
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [
+      await manager.applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: true },
         { line: 2, enabled: false },
       ]);
@@ -312,16 +314,16 @@ describe('BreakpointManager', () => {
       ]);
     });
 
-    it('is empty again once the breakpoints are gone', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('is empty again once the breakpoints are gone', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const manager = makeManager();
       const uri = Uri.parse(METHOD_URI);
-      manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
       expect(manager.appliedFor(uri)).toHaveLength(1);
 
-      manager.applyToUri(session(), uri, []);
+      await manager.applyToUri(session(), uri, []);
       expect(manager.appliedFor(uri)).toHaveLength(0);
     });
   });
@@ -348,8 +350,8 @@ describe('BreakpointManager', () => {
     beforeEach(() => {
       vi.mocked(debug.onDidChangeBreakpoints).mockClear();
       vi.mocked(window.showWarningMessage).mockClear();
-      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
-      mockGetSourceOffsets.mockReturnValue([1, 13]);
+      mockGetMethodSource.mockResolvedValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockResolvedValue([1, 13]);
     });
 
     it('takes back a breakpoint set in a workspace, and says where it belongs', () => {
@@ -506,7 +508,7 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
-    it('leaves a real method editor alone', () => {
+    it('leaves a real method editor alone', async () => {
       const real = bpOn(METHOD_URI);
       workspace.textDocuments = [
         { uri: Uri.parse(METHOD_URI), languageId: METHOD_LANGUAGE, isDirty: false },
@@ -514,6 +516,7 @@ describe('BreakpointManager', () => {
       debug.breakpoints = [real];
 
       fireAdded([real]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
       expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
@@ -567,8 +570,8 @@ describe('BreakpointManager', () => {
       vi.mocked(debug.onDidChangeBreakpoints).mockClear();
       vi.mocked(workspace.onDidChangeTextDocument).mockClear();
       vi.mocked(window.showWarningMessage).mockClear();
-      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
-      mockGetSourceOffsets.mockReturnValue([1, 13]);
+      mockGetMethodSource.mockResolvedValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockResolvedValue([1, 13]);
     });
 
     it('refuses a breakpoint added while the editor is dirty, and says why', () => {
@@ -617,7 +620,7 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
-    it('applies normally once the editor is clean again', () => {
+    it('applies normally once the editor is clean again', async () => {
       // Reverting the editor is the ordinary way out, and this is where the gem
       // catches up with anything the list did during the hold.
       workspace.textDocuments = [DIRTY_DOC];
@@ -629,11 +632,12 @@ describe('BreakpointManager', () => {
       workspace.textDocuments = [CLEAN_DOC];
       debug.breakpoints = [existing];
       fireDocumentChanged(CLEAN_DOC);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
     });
 
-    it('stops holding a method once it is saved, so a later edit cannot re-apply it', () => {
+    it('stops holding a method once it is saved, so a later edit cannot re-apply it', async () => {
       // Saving is the ordinary way out of a dirty editor, and it never reaches
       // `thawIfClean` — VS Code fires no text-document change for a save, only
       // the recompile that arrives as `invalidateForUri`. A method left held
@@ -646,7 +650,7 @@ describe('BreakpointManager', () => {
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
 
       // The save: the recompile drops the method's breakpoints.
-      manager.invalidateForUri(Uri.parse(METHOD_URI));
+      await manager.invalidateForUri(Uri.parse(METHOD_URI));
       mockSetBreakAtStepPoint.mockClear();
       mockClearAllBreaks.mockClear();
 
@@ -689,17 +693,17 @@ describe('BreakpointManager', () => {
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('reports the gem as it stands, without arming, on the debug adapter path', () => {
+    it('reports the gem as it stands, without arming, on the debug adapter path', async () => {
       // A live debug session re-sends the whole list for a source. Anything
       // already armed stays verified; a new one is refused with the reason.
       workspace.textDocuments = [CLEAN_DOC];
       const manager = makeManager();
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
       mockClearAllBreaks.mockClear();
       mockSetBreakAtStepPoint.mockClear();
 
       workspace.textDocuments = [DIRTY_DOC];
-      const results = manager.setBreakpointsForSource(
+      const results = await manager.setBreakpointsForSource(
         session(),
         Uri.parse(METHOD_URI),
         [1, 2],
@@ -714,12 +718,13 @@ describe('BreakpointManager', () => {
       expect(results[1].message).toContain('unsaved edits');
     });
 
-    it('applies normally when the editor has no unsaved edits', () => {
+    it('applies normally when the editor has no unsaved edits', async () => {
       workspace.textDocuments = [CLEAN_DOC];
       const added = bpAt(1);
       debug.breakpoints = [added];
 
       fire({ added: [added] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
@@ -745,8 +750,8 @@ describe('BreakpointManager', () => {
       // Tests run in random order, so a warning from an earlier one would
       // otherwise be counted here.
       vi.mocked(window.showWarningMessage).mockClear();
-      mockGetMethodSource.mockReturnValue('balance\n^total');
-      mockGetSourceOffsets.mockReturnValue([9]);
+      mockGetMethodSource.mockResolvedValue('balance\n^total');
+      mockGetSourceOffsets.mockResolvedValue([9]);
     });
 
     it('hands a name arriving as a change to the resolver, not just an addition', async () => {
@@ -818,8 +823,8 @@ describe('BreakpointManager', () => {
     beforeEach(() => {
       vi.mocked(debug.onDidChangeBreakpoints).mockClear();
       vi.mocked(window.showWarningMessage).mockClear();
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
     });
 
     it('warns that a condition is ignored, rather than silently not honouring it', () => {
@@ -867,12 +872,12 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
 
-    it('still carries the fields across an enable/disable round trip', () => {
+    it('still carries the fields across an enable/disable round trip', async () => {
       // Nothing is lost if conditions are honoured later.
       const bp = withFields({ condition: 'x > 3', hitCondition: '2', logMessage: 'hi' });
       debug.breakpoints = [bp];
 
-      makeManager().setAllEnabled(false);
+      await makeManager().setAllEnabled(false);
 
       const replacement = vi.mocked(debug.addBreakpoints).mock.calls.at(-1)?.[0][0] as
         SourceBreakpoint | undefined;
@@ -934,13 +939,13 @@ describe('BreakpointManager', () => {
   });
 
   describe('invalidateForUri', () => {
-    it('drops the method’s breakpoints when it is recompiled', () => {
+    it('drops the method’s breakpoints when it is recompiled', async () => {
       // A breakpoint belongs to the code it was set in. After an edit, "step
       // point 4" may be a different expression, so moving it silently would be
       // worse than losing it — and a recompiled method's old breaks are
       // unreachable in the gem anyway.
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const mine = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
       const other = new SourceBreakpoint(
@@ -955,10 +960,10 @@ describe('BreakpointManager', () => {
       debug.breakpoints = [mine, other, fileBp];
 
       const manager = makeManager();
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
       expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(1);
 
-      manager.invalidateForUri(Uri.parse(METHOD_URI));
+      await manager.invalidateForUri(Uri.parse(METHOD_URI));
 
       // Gone from VS Code's list, and only this method's — another method's
       // breakpoint and a file breakpoint are untouched.
@@ -967,49 +972,49 @@ describe('BreakpointManager', () => {
       expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(0);
     });
 
-    it('does not re-set the breakpoints on the new method', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('does not re-set the breakpoints on the new method', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
       debug.breakpoints = [
         new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0))),
       ];
 
       const manager = makeManager();
       mockSetBreakAtStepPoint.mockClear();
-      manager.invalidateForUri(Uri.parse(METHOD_URI));
+      await manager.invalidateForUri(Uri.parse(METHOD_URI));
 
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('is harmless for a method that had no breakpoints', () => {
+    it('is harmless for a method that had no breakpoints', async () => {
       debug.breakpoints = [];
-      makeManager().invalidateForUri(Uri.parse(METHOD_URI));
+      await makeManager().invalidateForUri(Uri.parse(METHOD_URI));
       expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
     });
 
-    it('re-queries step points afterwards, since the offsets may have moved', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('re-queries step points afterwards, since the offsets may have moved', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const manager = makeManager();
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
       const before = mockGetSourceOffsets.mock.calls.length;
 
-      manager.invalidateForUri(Uri.parse(METHOD_URI));
-      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      await manager.invalidateForUri(Uri.parse(METHOD_URI));
+      await manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
 
       expect(mockGetSourceOffsets.mock.calls.length).toBeGreaterThan(before);
     });
   });
 
   describe('clearAllForSession', () => {
-    it('forgets a logged-out session, so nothing is re-pushed for it', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('forgets a logged-out session, so nothing is re-pushed for it', async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const manager = makeManager();
       const uri = Uri.parse(METHOD_URI);
-      manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
       expect(manager.appliedFor(uri)).toHaveLength(1);
 
       manager.clearAllForSession(1);
@@ -1035,13 +1040,13 @@ describe('BreakpointManager', () => {
       expect(debug.breakpoints).toEqual([other, fileBp]);
     });
 
-    it("leaves another session's breakpoints alone", () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it("leaves another session's breakpoints alone", async () => {
+      mockGetMethodSource.mockResolvedValue('foo\n^1');
+      mockGetSourceOffsets.mockResolvedValue([1, 5]);
 
       const manager = makeManager();
       const uri = Uri.parse(METHOD_URI);
-      manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
 
       manager.clearAllForSession(2);
       expect(manager.appliedFor(uri)).toHaveLength(1);
@@ -1084,47 +1089,47 @@ describe('BreakpointManager', () => {
       warn().mockClear();
     });
 
-    it('adds a VS Code breakpoint at the caret’s step point', () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+    it('adds a VS Code breakpoint at the caret’s step point', async () => {
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
-      makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
+      await makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
 
       expect(vi.mocked(debug.addBreakpoints)).toHaveBeenCalledTimes(1);
       expect(warn()).not.toHaveBeenCalled();
     });
 
-    it('says why nothing happened when the buffer is unsaved', () => {
+    it('says why nothing happened when the buffer is unsaved', async () => {
       // The failure a developer is most likely to hit and least likely to guess:
       // a silent no-op here is indistinguishable from a dead keybinding.
-      makeManager().toggleAtCursor(makeEditor('m\n^1', 2, true));
+      await makeManager().toggleAtCursor(makeEditor('m\n^1', 2, true));
 
       expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
       expect(warn()).toHaveBeenCalledWith(expect.stringContaining('unsaved edits'));
     });
 
-    it('says why nothing happened when the method has no step points', () => {
-      mockGetMethodSource.mockReturnValue('m\n^1');
-      mockGetSourceOffsets.mockReturnValue([]);
+    it('says why nothing happened when the method has no step points', async () => {
+      mockGetMethodSource.mockResolvedValue('m\n^1');
+      mockGetSourceOffsets.mockResolvedValue([]);
 
-      makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
+      await makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
 
       expect(warn()).toHaveBeenCalledWith(expect.stringContaining('no step points'));
     });
 
-    it('says why nothing happened when the method cannot be read', () => {
+    it('says why nothing happened when the method cannot be read', async () => {
       mockGetMethodSource.mockImplementation(() => {
         throw new Error('method not found');
       });
 
-      makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
+      await makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
 
       expect(warn()).toHaveBeenCalledWith(expect.stringContaining('method not found'));
     });
 
-    it('removes the breakpoint again on a second toggle at the same step point', () => {
-      mockGetMethodSource.mockReturnValue('m\nx := self foo');
-      mockGetSourceOffsets.mockReturnValue([8, 13]);
+    it('removes the breakpoint again on a second toggle at the same step point', async () => {
+      mockGetMethodSource.mockResolvedValue('m\nx := self foo');
+      mockGetSourceOffsets.mockResolvedValue([8, 13]);
 
       // Offset 12 in 'm\nx := self foo' is line 1, column 10 — the same place
       // the caret is, so the toggle must recognise it as the same breakpoint.
@@ -1133,7 +1138,7 @@ describe('BreakpointManager', () => {
       );
       debug.breakpoints = [existing];
 
-      makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
+      await makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
 
       expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([existing]);
       expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
@@ -1141,7 +1146,7 @@ describe('BreakpointManager', () => {
   });
 
   describe('removeAll', () => {
-    it('drops gemstone breakpoints from VS Code and sweeps the gem', () => {
+    it('drops gemstone breakpoints from VS Code and sweeps the gem', async () => {
       const gemstoneBp = new SourceBreakpoint(
         new Location(Uri.parse(METHOD_URI), new Position(0, 0)),
       );
@@ -1150,7 +1155,7 @@ describe('BreakpointManager', () => {
       );
       debug.breakpoints = [gemstoneBp, fileBp];
 
-      makeManager().removeAll();
+      await makeManager().removeAll();
 
       expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([gemstoneBp]);
       // The file breakpoint survives — "all GemStone breakpoints" is not "all breakpoints".
@@ -1202,19 +1207,20 @@ describe('BreakpointManager', () => {
       mockClearAllBreaks.mockClear();
       mockByOop.mockClear();
       vi.mocked(debug.addBreakpoints).mockClear();
-      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
-      mockGetSourceOffsets.mockReturnValue([1, 13]);
+      mockGetMethodSource.mockResolvedValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockResolvedValue([1, 13]);
       workspace.textDocuments = [
         { uri: Uri.parse(METHOD_URI), languageId: METHOD_LANGUAGE, isDirty: false },
       ];
     });
 
-    it('arms a breakpoint in the gem the method was opened from, not the selected one', () => {
+    it('arms a breakpoint in the gem the method was opened from, not the selected one', async () => {
       const bp = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0)));
       debug.breakpoints = [bp];
 
       managerOverTwo();
       fire({ added: [bp] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       // Armed in session one — the method on screen belongs to its gem.
       expect(handlesSetIn()).toEqual(['gem-one']);
@@ -1252,7 +1258,7 @@ describe('BreakpointManager', () => {
       expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('does not mistake another session\u2019s method for the row the gem reported', () => {
+    it('does not mistake another session\u2019s method for the row the gem reported', async () => {
       // The breakpoint view reads its rows out of the SELECTED session's gem, so
       // a row can only ever be about that session's method. Two sessions holding
       // the same class, selector and step point must not collide.
@@ -1260,10 +1266,12 @@ describe('BreakpointManager', () => {
       // Session one's own VS Code breakpoint, the one that must NOT be flipped.
       const theirs = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
       debug.breakpoints = [theirs];
-      manager.applyToUri(SESSION_ONE as never, Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      await manager.applyToUri(SESSION_ONE as never, Uri.parse(METHOD_URI), [
+        { line: 1, enabled: true },
+      ]);
       vi.mocked(debug.addBreakpoints).mockClear();
 
-      manager.setEnabledForStoneBreakpoint(
+      await manager.setEnabledForStoneBreakpoint(
         {
           breakNumber: 1,
           className: 'Array',
@@ -1285,42 +1293,42 @@ describe('BreakpointManager', () => {
       expect(mockByOop).toHaveBeenCalled();
     });
 
-    it('sweeps every live gem when all breakpoints are disabled', () => {
+    it('sweeps every live gem when all breakpoints are disabled', async () => {
       mockDisableAll.mockClear();
       debug.breakpoints = [
         new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
       ];
 
-      managerOverTwo().setAllEnabled(false);
+      await managerOverTwo().setAllEnabled(false);
 
       // "All" spans one breakpoint list across every session, so a gem left
       // un-swept keeps stopping execution behind a row that reads "disabled".
       expect(mockDisableAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
     });
 
-    it('sweeps every live gem when all breakpoints are enabled again', () => {
+    it('sweeps every live gem when all breakpoints are enabled again', async () => {
       mockEnableAll.mockClear();
       debug.breakpoints = [
         new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0)), false),
       ];
 
-      managerOverTwo().setAllEnabled(true);
+      await managerOverTwo().setAllEnabled(true);
 
       expect(mockEnableAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
     });
 
-    it('sweeps every live gem when all breakpoints are removed', () => {
+    it('sweeps every live gem when all breakpoints are removed', async () => {
       mockRemoveAll.mockClear();
       debug.breakpoints = [
         new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
       ];
 
-      managerOverTwo().removeAll();
+      await managerOverTwo().removeAll();
 
       expect(mockRemoveAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
     });
 
-    it('keeps sweeping the other gems when one fails, and says which failed', () => {
+    it('keeps sweeping the other gems when one fails, and says which failed', async () => {
       mockRemoveAll.mockClear();
       mockRemoveAll.mockImplementationOnce(() => {
         throw new Error('gem is busy');
@@ -1329,7 +1337,7 @@ describe('BreakpointManager', () => {
         new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
       ];
 
-      managerOverTwo().removeAll();
+      await managerOverTwo().removeAll();
 
       expect(mockRemoveAll).toHaveBeenCalledTimes(2);
       expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
@@ -1345,18 +1353,18 @@ describe('BreakpointManager', () => {
       mockClearBreakAtStepPoint.mockReset();
       vi.mocked(window.showErrorMessage).mockClear();
       vi.mocked(window.showWarningMessage).mockClear();
-      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
-      mockGetSourceOffsets.mockReturnValue([1, 13]);
+      mockGetMethodSource.mockResolvedValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockResolvedValue([1, 13]);
     });
 
-    it('says so out loud, and carries the reason back for the debug adapter', () => {
+    it('says so out loud, and carries the reason back for the debug adapter', async () => {
       // An unverified marker on its own is unreadable: it looks exactly like a
       // breakpoint on a line with no step point.
       mockSetBreakAtStepPoint.mockImplementation(() => {
         throw new Error('GCI error 2010');
       });
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: true },
       ]);
 
@@ -1367,7 +1375,7 @@ describe('BreakpointManager', () => {
       );
     });
 
-    it('takes the break back out when it armed but could not be disabled', () => {
+    it('takes the break back out when it armed but could not be disabled', async () => {
       // A disabled breakpoint is applied as set-then-disable. If the disable
       // fails, the step point is armed while the marker says it is off — the
       // worst state available, so the break is removed instead.
@@ -1375,7 +1383,7 @@ describe('BreakpointManager', () => {
         throw new Error('GCI error 2010');
       });
 
-      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+      const results = await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
         { line: 1, enabled: false },
       ]);
 
@@ -1386,7 +1394,7 @@ describe('BreakpointManager', () => {
       );
     });
 
-    it('says the step point is still armed when it cannot be taken back out either', () => {
+    it('says the step point is still armed when it cannot be taken back out either', async () => {
       mockDisableBreakAtStepPoint.mockImplementation(() => {
         throw new Error('disable failed');
       });
@@ -1394,14 +1402,16 @@ describe('BreakpointManager', () => {
         throw new Error('clear failed too');
       });
 
-      makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: false }]);
+      await makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 1, enabled: false },
+      ]);
 
       expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
         expect.stringContaining('still armed'),
       );
     });
 
-    it('forgets the method when its step points cannot be read, since they were just cleared', () => {
+    it('forgets the method when its step points cannot be read, since they were just cleared', async () => {
       // `applyToUri` clears the method first. If the step points then cannot be
       // read, the record left behind would draw markers, hover text and view
       // rows for breakpoints that exist in no gem.
@@ -1409,7 +1419,7 @@ describe('BreakpointManager', () => {
       const model = new StepPointModel(sessionManager);
       const manager = new BreakpointManager(sessionManager, model);
       const uri = Uri.parse(METHOD_URI);
-      manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      await manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
       expect(manager.appliedFor(uri)).toHaveLength(1);
 
       let fired = 0;
@@ -1418,11 +1428,11 @@ describe('BreakpointManager', () => {
       // selected session changes, so the next apply goes back to the stone —
       // which is where a method that has since been removed fails.
       model.clear();
-      vi.mocked(getStepPointBundle).mockImplementationOnce(() => {
+      vi.mocked(getStepPointBundle).mockImplementationOnce(async () => {
         throw new Error('method not found');
       });
 
-      const results = manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      const results = await manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
 
       expect(manager.appliedFor(uri)).toHaveLength(0);
       expect(fired).toBeGreaterThan(0);

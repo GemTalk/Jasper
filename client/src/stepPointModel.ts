@@ -64,8 +64,8 @@ export class StepPointModel {
    * command the developer invoked deliberately should use `explain` instead, so
    * "nothing happened" can be told apart from "nothing was supposed to happen".
    */
-  get(document: vscode.TextDocument): StepPointInfo | null {
-    const result = this.explain(document);
+  async get(document: vscode.TextDocument): Promise<StepPointInfo | null> {
+    const result = await this.explain(document);
     return 'info' in result ? result.info : null;
   }
 
@@ -73,7 +73,7 @@ export class StepPointModel {
    * Step points for `document`, or the reason there are none — phrased for the
    * developer, because every one of these is something they can act on.
    */
-  explain(document: vscode.TextDocument): StepPointResult {
+  async explain(document: vscode.TextDocument): Promise<StepPointResult> {
     if (document.uri.scheme !== 'gemstone') {
       return { problem: 'Breakpoints can only be set in GemStone method source.' };
     }
@@ -101,7 +101,7 @@ export class StepPointModel {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return { problem: 'No active GemStone session.' };
 
-    const info = this.fetch(session, document.uri, method);
+    const info = await this.fetch(session, document.uri, method);
     if (!info) {
       return {
         problem: `Could not read step points for ${method.className}>>${method.selector}${
@@ -119,7 +119,11 @@ export class StepPointModel {
    * Step points for a method identified by coordinates rather than an open
    * document — the path the debug adapter and the breakpoint applier take.
    */
-  fetch(session: ActiveSession, uri: vscode.Uri, method: MethodUriRef): StepPointInfo | null {
+  async fetch(
+    session: ActiveSession,
+    uri: vscode.Uri,
+    method: MethodUriRef,
+  ): Promise<StepPointInfo | null> {
     const key = uri.toString();
     const cached = this.cache.get(key);
     if (cached) return cached;
@@ -130,7 +134,7 @@ export class StepPointModel {
     // and the offsets anyway in order to answer the selector ranges.
     let bundle: queries.StepPointBundle;
     try {
-      bundle = queries.getStepPointBundle(
+      bundle = await queries.getStepPointBundle(
         session,
         method.className,
         method.isMeta,

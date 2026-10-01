@@ -87,9 +87,9 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   }
 
   const token = `ivs_${op}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearInstVarStructurePreview(session, token);
+      await queries.clearInstVarStructurePreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -115,18 +115,18 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     void vscode.window.showErrorMessage(
       `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return false;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return false;
   }
   if (start.total === 0) {
     refuse('Nothing to change.');
-    safeClear();
+    await safeClear();
     return false;
   }
 
@@ -134,9 +134,9 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   // is held PENDING and only becomes an undo entry once the apply is known to have landed — so
   // every path that does not get there drops it, and a partial reshape (which leaves the stone in
   // a state the capture does not describe) never gets an undo offered against it.
-  const discardCapture = (): void => {
+  const discardCapture = async (): Promise<void> => {
     try {
-      queries.discardPendingCapture(session);
+      await queries.discardPendingCapture(session);
     } catch {
       /* best-effort */
     }
@@ -144,7 +144,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   try {
     // Scoped to the class's own dictionary: an unscoped capture snapshots, and later reverts,
     // whichever same-named class the symbol list reaches first (#396).
-    queries.captureClassHistory(session, className, dict);
+    await queries.captureClassHistory(session, className, dict);
   } catch {
     /* best-effort: a reshape must not fail because its undo bookkeeping did */
   }
@@ -160,10 +160,10 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
           options.removeOldFromHistory,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
-    discardCapture();
+    await discardCapture();
     return false;
   }
 
@@ -172,7 +172,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   // deliberately no abort advice below. A failure *during* apply is caught per-change and
   // collected into `failed` (see the next branch), which is where the abort warning lives.
   if (result.error) {
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return false;
   }
@@ -184,7 +184,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     const first = result.failed[0];
     // A partial reshape leaves the stone in a state the capture does not describe, so the undo
     // is dropped rather than offered against it.
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -199,10 +199,10 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
   // irreversible, so an undo offer would be a promise this cannot keep.
   if (result.committed) {
-    discardCapture();
+    await discardCapture();
   } else {
     try {
-      queries.commitHistoryRevert(session, heading, 'GsInstVarStructureRefactoring');
+      await queries.commitHistoryRevert(session, heading, 'GsInstVarStructureRefactoring');
     } catch {
       /* best-effort: the reshape landed either way */
     }
@@ -241,7 +241,7 @@ export async function moveInstVar(
       : targets.length >= 1 && targets.length <= namedLimit
         ? `down to ${targets.join(', ')}`
         : `down to ${targets.length} subclasses`;
-  const heading = `Move instance variable '${ivarName}' from ${qualifiedClassName(className, dictionaryNameFor(session, dict))} ${where}`;
+  const heading = `Move instance variable '${ivarName}' from ${qualifiedClassName(className, await dictionaryNameFor(session, dict))} ${where}`;
 
   return await runInstVarStructure({
     session,

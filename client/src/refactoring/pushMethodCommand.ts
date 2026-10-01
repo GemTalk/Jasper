@@ -94,9 +94,9 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
   }
 
   const token = `push_${direction}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearPushMethodPreview(session, direction, token);
+      await queries.clearPushMethodPreview(session, direction, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -120,18 +120,18 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
     void vscode.window.showErrorMessage(
       `Push preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return undefined;
   }
   if (start.total === 0) {
     refuse('Nothing to push.');
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
@@ -154,7 +154,7 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
           `Push ${direction} from ${sourceClass}`,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) return undefined;
 

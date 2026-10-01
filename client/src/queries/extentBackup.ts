@@ -18,10 +18,10 @@ import path from 'path';
 // require it: checkpoints cannot be suspended in partial-logging mode
 // (STN_TRAN_FULL_LOGGING = FALSE). Returns undefined when the setting can't be
 // read, so the caller proceeds and lets `suspendCheckpoints` be the real gate.
-export function fullLoggingEnabled(execute: QueryExecutor): boolean | undefined {
+export async function fullLoggingEnabled(execute: QueryExecutor): Promise<boolean | undefined> {
   const code = `[(System stoneConfigurationAt: #STN_TRAN_FULL_LOGGING) printString]
   on: Error do: [:e | 'unknown']`;
-  const result = execute(code).trim();
+  const result = (await execute(code)).trim();
   if (result === 'true') return true;
   if (result === 'false') return false;
   return undefined;
@@ -30,12 +30,12 @@ export function fullLoggingEnabled(execute: QueryExecutor): boolean | undefined 
 // The stone's extent file paths (absolute, as the stone sees them). Excludes
 // transaction logs. Returns [] when the query fails, so the caller can fall
 // back to scanning the managed database's data directory.
-export function extentFileNames(execute: QueryExecutor): string[] {
+export async function extentFileNames(execute: QueryExecutor): Promise<string[]> {
   const code = `[| ws |
 ws := WriteStream on: String new.
 SystemRepository fileNames do: [:nm | ws nextPutAll: nm asString; lf].
 ws contents] on: Error do: [:e | '']`;
-  return splitLines(execute(code));
+  return splitLines(await execute(code));
 }
 
 // Suspend checkpoints for `minutes`. true => suspended, safe to copy the
@@ -43,18 +43,21 @@ ws contents] on: Error do: [:e | '']`;
 // partial-logging mode; in either case no backup should be taken. The timeout
 // is a safety net: checkpoints auto-resume after it, so pick a value well above
 // the expected copy time.
-export function suspendCheckpoints(execute: QueryExecutor, minutes: number): boolean {
+export async function suspendCheckpoints(
+  execute: QueryExecutor,
+  minutes: number,
+): Promise<boolean> {
   const code = `(System suspendCheckpointsForMinutes: ${Math.trunc(minutes)})
   ifTrue: ['OK'] ifFalse: ['FAILED']`;
-  return execute(code).trim() === 'OK';
+  return (await execute(code)).trim() === 'OK';
 }
 
 // Resume checkpoints. The result MUST be checked: false means checkpoints had
 // already resumed (the suspend timeout elapsed) before the copy finished, so
 // the copied extents are not a usable backup.
-export function resumeCheckpoints(execute: QueryExecutor): boolean {
+export async function resumeCheckpoints(execute: QueryExecutor): Promise<boolean> {
   const code = "(System resumeCheckpoints) ifTrue: ['OK'] ifFalse: ['FAILED']";
-  return execute(code).trim() === 'OK';
+  return (await execute(code)).trim() === 'OK';
 }
 
 /**
@@ -79,8 +82,8 @@ export function resumeCheckpoints(execute: QueryExecutor): boolean {
  * @throws if extentFileNames has no extent to report, or if the stone's
  *   answer resolves to a relative directory rather than an absolute one.
  */
-export function extentFolderInServer(execute: QueryExecutor): string {
-  const [extentPath] = extentFileNames(execute);
+export async function extentFolderInServer(execute: QueryExecutor): Promise<string> {
+  const [extentPath] = await extentFileNames(execute);
   if (extentPath === undefined) {
     throw new Error('Expected the stone to report at least one extent, got none');
   }
@@ -112,6 +115,6 @@ export function extentFolderInServer(execute: QueryExecutor): string {
  * @param execute - runs the query synchronously against the session.
  * @throws whatever {@link extentFolderInServer} throws.
  */
-export function backupFolderInServer(execute: QueryExecutor): string {
-  return path.posix.join(path.posix.dirname(extentFolderInServer(execute)), 'backups');
+export async function backupFolderInServer(execute: QueryExecutor): Promise<string> {
+  return path.posix.join(path.posix.dirname(await extentFolderInServer(execute)), 'backups');
 }

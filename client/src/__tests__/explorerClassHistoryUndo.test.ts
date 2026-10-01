@@ -74,12 +74,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
   restoredName = 'Account';
-  vi.mocked(queries.getClassHistory).mockReturnValue(HISTORY);
+  vi.mocked(queries.getClassHistory).mockResolvedValue(HISTORY);
   vi.mocked(captureClassSlots).mockReset();
   // A restore binds a NEW version, so the read-back sees a different oop than the capture on
   // the way in — which is what tells the recorder the edit changed something.
   captureCalls = 0;
-  vi.mocked(captureClassSlots).mockImplementation((_e, slots) => {
+  vi.mocked(captureClassSlots).mockImplementation(async (_e, slots) => {
     captureCalls += 1;
     return slots.map((s) =>
       captureCalls === 1
@@ -96,7 +96,7 @@ beforeEach(() => {
 describe('ExplorerController.classHistory — restore', () => {
   it('records the class binding, so the restore can be reverted', async () => {
     const ctl = makeController();
-    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+    vi.mocked(queries.revertClassToVersion).mockResolvedValue(
       JSON.stringify({ reverted: true, index: 2, newIndex: 3, name: 'Account' }),
     );
 
@@ -114,7 +114,7 @@ describe('ExplorerController.classHistory — restore', () => {
     // Account and binds Ledger; reverting has to undo both halves.
     const ctl = makeController();
     restoredName = 'Ledger';
-    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+    vi.mocked(queries.revertClassToVersion).mockResolvedValue(
       JSON.stringify({ reverted: true, index: 1, newIndex: 3, name: 'Ledger' }),
     );
 
@@ -129,7 +129,7 @@ describe('ExplorerController.classHistory — restore', () => {
 
   it('records nothing when the restore did not happen', async () => {
     const ctl = makeController();
-    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+    vi.mocked(queries.revertClassToVersion).mockResolvedValue(
       JSON.stringify({ reverted: false, error: 'no such version' }),
     );
 
@@ -219,7 +219,7 @@ describe('ExplorerController.classHistory — which dictionary the history belon
     // against whatever the user clicked since — while the revert itself landed on the class the
     // panel was showing.
     const ctl = makeController();
-    vi.mocked(queries.revertClassToVersion).mockReturnValue(
+    vi.mocked(queries.revertClassToVersion).mockResolvedValue(
       JSON.stringify({ reverted: true, index: 2, newIndex: 3, name: 'Object' }),
     );
     const node = new HierarchyItem('Object', 'Globals', 'ancestor', 0, false);

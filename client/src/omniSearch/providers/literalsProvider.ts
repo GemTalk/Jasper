@@ -20,9 +20,12 @@ import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTyp
 import { methodRowsToResults } from '../references';
 
 /** Reference-search for a compilable `#symbol` expression. Injected so the provider stays stone-free. */
-export type LiteralSymbolRunner = (symbolExpr: string) => MethodSearchResult[];
+export type LiteralSymbolRunner = (symbolExpr: string) => Promise<MethodSearchResult[]>;
 /** Source substring search for a string literal's content. Injected so the provider stays stone-free. */
-export type LiteralStringRunner = (text: string, ignoreCase: boolean) => MethodSearchResult[];
+export type LiteralStringRunner = (
+  text: string,
+  ignoreCase: boolean,
+) => Promise<MethodSearchResult[]>;
 /** Reports a REAL runner failure (GCI drop, aborted transaction, ...) so it can be logged rather than
  *  masquerading as "no results". Injected so the provider stays stone-free (and UI-/logger-free). */
 export type LiteralSearchErrorSink = (message: string) => void;
@@ -58,7 +61,7 @@ export function createLiteralsProvider(
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.literals,
-    search(query: string, cfg: OmniConfig): OmniResult[] {
+    async search(query: string, cfg: OmniConfig): Promise<OmniResult[]> {
       const term = query.trim();
 
       // Resolve the term to a runner call, or bail out for the "not a literal / still typing" cases.
@@ -66,7 +69,7 @@ export function createLiteralsProvider(
       // COMPLETE, well-formed literal — which means a throw from the runner is a real backend failure,
       // never "not yet compilable". Keep the `isSymbolLiteral` gate before `runSymbol`: the symbol
       // branch evaluates on the server, so only a whole `#symbol` may reach the stone.
-      let run: () => MethodSearchResult[];
+      let run: () => Promise<MethodSearchResult[]>;
       if (term.startsWith('#')) {
         if (!isSymbolLiteral(term)) return []; // partial or malformed — don't eval raw input
         run = () => runSymbol(term);
@@ -80,7 +83,7 @@ export function createLiteralsProvider(
 
       let rows: MethodSearchResult[];
       try {
-        rows = run();
+        rows = await run();
       } catch (e) {
         // A real failure from the server-side runner (GCI drop, aborted transaction, ...). Surface it
         // so it's diagnosable instead of masquerading as "no results". Still return [] — the

@@ -23,10 +23,10 @@ describe('safe-delete reference scans (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  const userIndex = (): number => {
-    const index = q.getDictionaryNames(session()).indexOf('UserGlobals') + 1;
+  const userIndex = async (): Promise<number> => {
+    const index = (await q.getDictionaryNames(session())).indexOf('UserGlobals') + 1;
     expect(index).toBeGreaterThan(0);
     return index;
   };
@@ -35,137 +35,163 @@ describe('safe-delete reference scans (integration)', () => {
   const SUB = 'SdItSub';
   const CALLER = 'SdItCaller';
 
-  const defineClass = (definition: string): void => {
-    q.compileClassDefinition(session(), definition);
+  const defineClass = async (definition: string): Promise<void> => {
+    await q.compileClassDefinition(session(), definition);
   };
 
-  const compile = (className: string, isMeta: boolean, source: string): void => {
-    q.compileMethod(session(), className, isMeta, 'safe-delete-fixture', source);
+  const compile = async (className: string, isMeta: boolean, source: string): Promise<void> => {
+    await q.compileMethod(session(), className, isMeta, 'safe-delete-fixture', source);
   };
 
   /** A base class with an accessed and an unaccessed instance variable, a class variable
    *  used from both sides, a subclass that inherits both, and an unrelated caller. */
-  const defineFixture = (): void => {
+  const defineFixture = async (): Promise<void> => {
     // A GLOBAL of the same name as the class variable, so the identity check has
     // something to be wrong about.
-    exec(`UserGlobals at: #SdItRegistry put: 42. true printString`);
+    await exec(`UserGlobals at: #SdItRegistry put: 42. true printString`);
 
-    defineClass(
+    await defineClass(
       `Object subclass: '${BASE}' instVarNames: #(balance untouched) ` +
         'classVars: #(SdItRegistry) classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
     );
-    defineClass(
+    await defineClass(
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
     );
-    defineClass(
+    await defineClass(
       `Object subclass: '${CALLER}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
     );
 
-    compile(BASE, false, 'readsBalance\n  ^balance');
-    compile(BASE, false, 'mentionsBalance\n  "balance is only named in this comment"\n  ^0');
-    compile(BASE, false, 'record\n  SdItRegistry := 1');
-    compile(BASE, false, 'mentionsRegistry\n  "SdItRegistry is only named in this comment"\n  ^0');
-    compile(BASE, true, 'resetRegistry\n  SdItRegistry := nil');
-    compile(BASE, false, `makeAnother\n  ^${BASE} new`);
-    compile(SUB, false, 'accrue\n  balance := balance + 1');
-    compile(CALLER, false, `callsIt\n  ^${BASE} new readsBalance`);
-    compile(CALLER, false, 'usesTheGlobal\n  ^SdItRegistry');
+    await compile(BASE, false, 'readsBalance\n  ^balance');
+    await compile(BASE, false, 'mentionsBalance\n  "balance is only named in this comment"\n  ^0');
+    await compile(BASE, false, 'record\n  SdItRegistry := 1');
+    await compile(
+      BASE,
+      false,
+      'mentionsRegistry\n  "SdItRegistry is only named in this comment"\n  ^0',
+    );
+    await compile(BASE, true, 'resetRegistry\n  SdItRegistry := nil');
+    await compile(BASE, false, `makeAnother\n  ^${BASE} new`);
+    await compile(SUB, false, 'accrue\n  balance := balance + 1');
+    await compile(CALLER, false, `callsIt\n  ^${BASE} new readsBalance`);
+    await compile(CALLER, false, 'usesTheGlobal\n  ^SdItRegistry');
   };
 
   const selectorsIn = (results: { className: string; selector: string }[]): string[] =>
     results.map((r) => `${r.className}>>${r.selector}`).sort();
 
   describe('methods that send a selector', () => {
-    it('finds the sender of a method', () => {
-      defineFixture();
+    it('finds the sender of a method', async () => {
+      await defineFixture();
 
-      const senders = q.sendersOf(session(), 'readsBalance');
+      const senders = await q.sendersOf(session(), 'readsBalance');
 
       expect(selectorsIn(senders)).toContain(`${CALLER}>>callsIt`);
     });
 
-    it('finds nothing for a selector nobody sends', () => {
-      defineFixture();
+    it('finds nothing for a selector nobody sends', async () => {
+      await defineFixture();
 
-      const senders = q.sendersOf(session(), 'mentionsBalance');
+      const senders = await q.sendersOf(session(), 'mentionsBalance');
 
       expect(selectorsIn(senders)).not.toContain(`${CALLER}>>callsIt`);
     });
   });
 
   describe('methods that access an instance variable', () => {
-    it('finds the accessors in the declaring class and in a subclass', () => {
-      defineFixture();
+    it('finds the accessors in the declaring class and in a subclass', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingInstVar(session(), BASE, 'balance', userIndex());
+      const found = await q.methodsAccessingInstVar(session(), BASE, 'balance', await userIndex());
 
       expect(selectorsIn(found)).toEqual([`${BASE}>>readsBalance`, `${SUB}>>accrue`].sort());
     });
 
-    it('does not count a method that only names the variable in a comment', () => {
-      defineFixture();
+    it('does not count a method that only names the variable in a comment', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingInstVar(session(), BASE, 'balance', userIndex());
+      const found = await q.methodsAccessingInstVar(session(), BASE, 'balance', await userIndex());
 
       expect(selectorsIn(found)).not.toContain(`${BASE}>>mentionsBalance`);
     });
 
-    it('finds nothing for a variable no method touches', () => {
-      defineFixture();
+    it('finds nothing for a variable no method touches', async () => {
+      await defineFixture();
 
-      expect(q.methodsAccessingInstVar(session(), BASE, 'untouched', userIndex())).toEqual([]);
+      expect(
+        await q.methodsAccessingInstVar(session(), BASE, 'untouched', await userIndex()),
+      ).toEqual([]);
     });
   });
 
   describe('methods that access a class variable', () => {
-    it('finds the accessors on both sides of the hierarchy', () => {
-      defineFixture();
+    it('finds the accessors on both sides of the hierarchy', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingClassVar(session(), BASE, 'SdItRegistry', userIndex());
+      const found = await q.methodsAccessingClassVar(
+        session(),
+        BASE,
+        'SdItRegistry',
+        await userIndex(),
+      );
 
       expect(selectorsIn(found)).toEqual([`${BASE}>>record`, `${BASE}>>resetRegistry`].sort());
     });
 
-    it('does not count a method that reads a same-named global instead', () => {
-      defineFixture();
+    it('does not count a method that reads a same-named global instead', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingClassVar(session(), BASE, 'SdItRegistry', userIndex());
+      const found = await q.methodsAccessingClassVar(
+        session(),
+        BASE,
+        'SdItRegistry',
+        await userIndex(),
+      );
 
       expect(selectorsIn(found)).not.toContain(`${CALLER}>>usesTheGlobal`);
     });
 
-    it('does not count a method that only names the variable in a comment', () => {
-      defineFixture();
+    it('does not count a method that only names the variable in a comment', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingClassVar(session(), BASE, 'SdItRegistry', userIndex());
+      const found = await q.methodsAccessingClassVar(
+        session(),
+        BASE,
+        'SdItRegistry',
+        await userIndex(),
+      );
 
       expect(selectorsIn(found)).not.toContain(`${BASE}>>mentionsRegistry`);
     });
 
-    it('finds the accessors from a subclass row, resolving to the declaring class', () => {
-      defineFixture();
+    it('finds the accessors from a subclass row, resolving to the declaring class', async () => {
+      await defineFixture();
 
-      const found = q.methodsAccessingClassVar(session(), SUB, 'SdItRegistry', userIndex());
+      const found = await q.methodsAccessingClassVar(
+        session(),
+        SUB,
+        'SdItRegistry',
+        await userIndex(),
+      );
 
       expect(selectorsIn(found)).toContain(`${BASE}>>record`);
     });
   });
 
   describe('methods that reference a class', () => {
-    it('finds the method that names the class', () => {
-      defineFixture();
+    it('finds the method that names the class', async () => {
+      await defineFixture();
 
-      const found = q.referencesToClassInDict(session(), BASE, userIndex());
+      const found = await q.referencesToClassInDict(session(), BASE, await userIndex());
 
       expect(selectorsIn(found)).toContain(`${CALLER}>>callsIt`);
     });
 
-    it("reports the class's own referencing method, for the caller to discount", () => {
-      defineFixture();
+    it("reports the class's own referencing method, for the caller to discount", async () => {
+      await defineFixture();
 
-      const found = q.referencesToClassInDict(session(), BASE, userIndex());
+      const found = await q.referencesToClassInDict(session(), BASE, await userIndex());
 
       expect(selectorsIn(found)).toContain(`${BASE}>>makeAnother`);
     });
@@ -183,8 +209,8 @@ describe('safe-delete reference scans (integration)', () => {
     const USER_CALLER = 'SdItUserCaller';
     const OTHER_CALLER = 'SdItOtherCaller';
 
-    const defineClassIn = (dictExpr: string, className: string): void => {
-      exec(
+    const defineClassIn = async (dictExpr: string, className: string): Promise<void> => {
+      await exec(
         `| d | d := ${dictExpr}. (Object subclass: '${className}' instVarNames: #() ` +
           'classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: d ' +
           'options: #()) name printString',
@@ -194,23 +220,23 @@ describe('safe-delete reference scans (integration)', () => {
     /** The shadow pair. Order matters: the first caller is compiled while only the
      *  UserGlobals class exists, so it binds that one; the second dictionary is then
      *  inserted AHEAD of UserGlobals, so the second caller binds ITS class instead. */
-    const defineShadowFixture = (): { userIndex: number; otherIndex: number } => {
-      defineClassIn('UserGlobals', SHADOW);
-      defineClassIn('UserGlobals', USER_CALLER);
-      compile(USER_CALLER, false, `usesIt\n  ^${SHADOW} new`);
+    const defineShadowFixture = async (): Promise<{ userIndex: number; otherIndex: number }> => {
+      await defineClassIn('UserGlobals', SHADOW);
+      await defineClassIn('UserGlobals', USER_CALLER);
+      await compile(USER_CALLER, false, `usesIt\n  ^${SHADOW} new`);
 
-      exec(
+      await exec(
         `| d | d := SymbolDictionary new. d name: #'${OTHER_DICT}'. ` +
           'System myUserProfile insertDictionary: d at: 1. true printString',
       );
-      defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
-      defineClassIn('UserGlobals', OTHER_CALLER);
-      compile(OTHER_CALLER, false, `usesIt\n  ^${SHADOW} new`);
+      await defineClassIn('System myUserProfile symbolList at: 1', SHADOW);
+      await defineClassIn('UserGlobals', OTHER_CALLER);
+      await compile(OTHER_CALLER, false, `usesIt\n  ^${SHADOW} new`);
 
       // The premise of every assertion below: the two methods really do reference two
       // different classes. Without this the tests could pass on a fixture that never
       // shadowed anything.
-      const distinct = exec(
+      const distinct = await exec(
         `| a b |
 a := (${USER_CALLER} compiledMethodAt: #usesIt) literals
   detect: [:e | e isKindOf: SymbolAssociation] ifNone: [nil].
@@ -221,37 +247,37 @@ b := (${OTHER_CALLER} compiledMethodAt: #usesIt) literals
       expect(distinct.trim()).toBe('true');
 
       const user = parseInt(
-        exec('(System myUserProfile symbolList indexOf: UserGlobals) printString').trim(),
+        (await exec('(System myUserProfile symbolList indexOf: UserGlobals) printString')).trim(),
         10,
       );
       return { userIndex: user, otherIndex: 1 };
     };
 
-    it('reports only the method that references the class in the dictionary asked about', () => {
-      const { userIndex: user } = defineShadowFixture();
+    it('reports only the method that references the class in the dictionary asked about', async () => {
+      const { userIndex: user } = await defineShadowFixture();
 
-      const found = q.referencesToClassInDict(session(), SHADOW, user);
+      const found = await q.referencesToClassInDict(session(), SHADOW, user);
 
       expect(selectorsIn(found)).toEqual([`${USER_CALLER}>>usesIt`]);
     });
 
-    it('reports the other dictionary’s referencing method when asked about that one', () => {
-      const { otherIndex } = defineShadowFixture();
+    it('reports the other dictionary’s referencing method when asked about that one', async () => {
+      const { otherIndex } = await defineShadowFixture();
 
-      const found = q.referencesToClassInDict(session(), SHADOW, otherIndex);
+      const found = await q.referencesToClassInDict(session(), SHADOW, otherIndex);
 
       expect(selectorsIn(found)).toEqual([`${OTHER_CALLER}>>usesIt`]);
     });
 
-    it('reports nothing for a dictionary that does not bind the name at all', () => {
-      defineShadowFixture();
+    it('reports nothing for a dictionary that does not bind the name at all', async () => {
+      await defineShadowFixture();
 
       const globalsIndex = parseInt(
-        exec('(System myUserProfile symbolList indexOf: Globals) printString').trim(),
+        (await exec('(System myUserProfile symbolList indexOf: Globals) printString')).trim(),
         10,
       );
 
-      expect(q.referencesToClassInDict(session(), SHADOW, globalsIndex)).toEqual([]);
+      expect(await q.referencesToClassInDict(session(), SHADOW, globalsIndex)).toEqual([]);
     });
   });
 
@@ -264,17 +290,17 @@ b := (${OTHER_CALLER} compiledMethodAt: #usesIt) literals
   describe('scanning an environment other than zero', () => {
     const ENV = 1;
 
-    const defineEnvFixture = (): void => {
-      defineClass(
+    const defineEnvFixture = async (): Promise<void> => {
+      await defineClass(
         `Object subclass: '${BASE}' instVarNames: #(balance) classVars: #(SdItRegistry) ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
       );
-      defineClass(
+      await defineClass(
         `Object subclass: '${CALLER}' instVarNames: #() classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
       );
       // Compiled into environment 1 only — invisible to an environment-0 scan.
-      q.compileMethod(
+      await q.compileMethod(
         session(),
         CALLER,
         false,
@@ -282,7 +308,7 @@ b := (${OTHER_CALLER} compiledMethodAt: #usesIt) literals
         `usesInEnvOne\n  ^${BASE} new`,
         ENV,
       );
-      q.compileMethod(
+      await q.compileMethod(
         session(),
         BASE,
         false,
@@ -291,106 +317,127 @@ b := (${OTHER_CALLER} compiledMethodAt: #usesIt) literals
         ENV,
       );
       // The premise: these really are environment-1 methods and environment 0 cannot see them.
-      expect(exec(`(${CALLER} includesSelector: #usesInEnvOne) printString`).trim()).toBe('false');
-      expect(exec(`(${CALLER} selectorsForEnvironment: ${ENV}) asArray printString`)).toContain(
-        'usesInEnvOne',
+      expect((await exec(`(${CALLER} includesSelector: #usesInEnvOne) printString`)).trim()).toBe(
+        'false',
       );
+      expect(
+        await exec(`(${CALLER} selectorsForEnvironment: ${ENV}) asArray printString`),
+      ).toContain('usesInEnvOne');
     };
 
-    it('finds a class reference that exists only in a higher environment', () => {
-      defineEnvFixture();
+    it('finds a class reference that exists only in a higher environment', async () => {
+      await defineEnvFixture();
 
-      const found = q.referencesToClassInDict(session(), BASE, userIndex(), ENV);
+      const found = await q.referencesToClassInDict(session(), BASE, await userIndex(), ENV);
 
       expect(selectorsIn(found)).toContain(`${CALLER}>>usesInEnvOne`);
     });
 
-    it('does not report that environment-1 reference when asked about environment 0', () => {
-      defineEnvFixture();
+    it('does not report that environment-1 reference when asked about environment 0', async () => {
+      await defineEnvFixture();
 
-      const found = q.referencesToClassInDict(session(), BASE, userIndex(), 0);
+      const found = await q.referencesToClassInDict(session(), BASE, await userIndex(), 0);
 
       expect(selectorsIn(found)).not.toContain(`${CALLER}>>usesInEnvOne`);
     });
 
-    it('finds an instance-variable accessor that exists only in a higher environment', () => {
-      defineEnvFixture();
+    it('finds an instance-variable accessor that exists only in a higher environment', async () => {
+      await defineEnvFixture();
 
-      const found = q.methodsAccessingInstVar(session(), BASE, 'balance', userIndex(), ENV);
-
-      expect(selectorsIn(found)).toContain(`${BASE}>>touchesInEnvOne`);
-    });
-
-    it('finds a class-variable accessor that exists only in a higher environment', () => {
-      defineEnvFixture();
-
-      const found = q.methodsAccessingClassVar(session(), BASE, 'SdItRegistry', userIndex(), ENV);
+      const found = await q.methodsAccessingInstVar(
+        session(),
+        BASE,
+        'balance',
+        await userIndex(),
+        ENV,
+      );
 
       expect(selectorsIn(found)).toContain(`${BASE}>>touchesInEnvOne`);
     });
 
-    it('reports the environment each row was found in, so rows stay distinguishable', () => {
-      defineEnvFixture();
+    it('finds a class-variable accessor that exists only in a higher environment', async () => {
+      await defineEnvFixture();
 
-      const found = q.referencesToClassInDict(session(), BASE, userIndex(), ENV);
+      const found = await q.methodsAccessingClassVar(
+        session(),
+        BASE,
+        'SdItRegistry',
+        await userIndex(),
+        ENV,
+      );
+
+      expect(selectorsIn(found)).toContain(`${BASE}>>touchesInEnvOne`);
+    });
+
+    it('reports the environment each row was found in, so rows stay distinguishable', async () => {
+      await defineEnvFixture();
+
+      const found = await q.referencesToClassInDict(session(), BASE, await userIndex(), ENV);
 
       expect(found.every((r) => r.environmentId === ENV)).toBe(true);
     });
   });
 
   describe('removing a class variable', () => {
-    it('removes the named variable', () => {
-      defineFixture();
+    it('removes the named variable', async () => {
+      await defineFixture();
 
-      const result = q.deleteClassVariable(session(), BASE, 'SdItRegistry', userIndex());
+      const result = await q.deleteClassVariable(
+        session(),
+        BASE,
+        'SdItRegistry',
+        await userIndex(),
+      );
 
       expect(result.trim()).toBe('ok');
-      expect(exec(`(${BASE} classVarNames includes: #SdItRegistry) printString`).trim()).toBe(
-        'false',
-      );
+      expect(
+        (await exec(`(${BASE} classVarNames includes: #SdItRegistry) printString`)).trim(),
+      ).toBe('false');
     });
 
-    it("leaves the class's other class variables in place", () => {
-      defineFixture();
-      exec(`${BASE} addClassVarName: 'SdItKeeper'. true printString`);
+    it("leaves the class's other class variables in place", async () => {
+      await defineFixture();
+      await exec(`${BASE} addClassVarName: 'SdItKeeper'. true printString`);
 
-      q.deleteClassVariable(session(), BASE, 'SdItRegistry', userIndex());
+      await q.deleteClassVariable(session(), BASE, 'SdItRegistry', await userIndex());
 
-      expect(exec(`(${BASE} classVarNames includes: #SdItKeeper) printString`).trim()).toBe('true');
-    });
-
-    it('does not reshape the class', () => {
-      defineFixture();
-      const historyBefore = exec(`${BASE} classHistory size printString`).trim();
-
-      q.deleteClassVariable(session(), BASE, 'SdItRegistry', userIndex());
-
-      expect(exec(`${BASE} classHistory size printString`).trim()).toBe(historyBefore);
-    });
-
-    it('refuses a variable the class inherits rather than declares', () => {
-      defineFixture();
-
-      const result = q.deleteClassVariable(session(), SUB, 'SdItRegistry', userIndex());
-
-      expect(result.trim()).toBe('not-declared');
-      expect(exec(`(${BASE} classVarNames includes: #SdItRegistry) printString`).trim()).toBe(
+      expect((await exec(`(${BASE} classVarNames includes: #SdItKeeper) printString`)).trim()).toBe(
         'true',
       );
     });
 
-    it('answers the not-found sentinel for a class the dictionary does not bind', () => {
-      expect(q.deleteClassVariable(session(), 'SdItNoSuchClass', 'X', userIndex()).trim()).toBe(
-        'no-class',
-      );
+    it('does not reshape the class', async () => {
+      await defineFixture();
+      const historyBefore = (await exec(`${BASE} classHistory size printString`)).trim();
+
+      await q.deleteClassVariable(session(), BASE, 'SdItRegistry', await userIndex());
+
+      expect((await exec(`${BASE} classHistory size printString`)).trim()).toBe(historyBefore);
     });
 
-    it('leaves the removal uncommitted', () => {
-      defineFixture();
+    it('refuses a variable the class inherits rather than declares', async () => {
+      await defineFixture();
 
-      q.deleteClassVariable(session(), BASE, 'SdItRegistry', userIndex());
+      const result = await q.deleteClassVariable(session(), SUB, 'SdItRegistry', await userIndex());
 
-      expect(q.sessionNeedsCommit(session())).toBe(true);
+      expect(result.trim()).toBe('not-declared');
+      expect(
+        (await exec(`(${BASE} classVarNames includes: #SdItRegistry) printString`)).trim(),
+      ).toBe('true');
+    });
+
+    it('answers the not-found sentinel for a class the dictionary does not bind', async () => {
+      expect(
+        (await q.deleteClassVariable(session(), 'SdItNoSuchClass', 'X', await userIndex())).trim(),
+      ).toBe('no-class');
+    });
+
+    it('leaves the removal uncommitted', async () => {
+      await defineFixture();
+
+      await q.deleteClassVariable(session(), BASE, 'SdItRegistry', await userIndex());
+
+      expect(await q.sessionNeedsCommit(session())).toBe(true);
     });
   });
 });

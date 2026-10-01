@@ -44,48 +44,48 @@ describe('methods fetch ceiling (integration)', () => {
 
   // A transient fixture (rolled back by the harness's abort): FIXTURE_METHODS methods whose selectors
   // all contain TERM, so a bounded scan for it has a known, small population to cut off.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     for (let i = 1; i <= FIXTURE_METHODS; i++) {
-      q.compileMethod(session(), CLS, false, 'accessing', `${TERM}0${i}\n\t^${i}`);
+      await q.compileMethod(session(), CLS, false, 'accessing', `${TERM}0${i}\n\t^${i}`);
     }
   };
 
   const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS, ...over });
 
-  it('stops the scan at `limit` matches, so a full slice means more exist', () => {
-    defineFixture();
+  it('stops the scan at `limit` matches, so a full slice means more exist', async () => {
+    await defineFixture();
     const exec = defaultQueryExecutorUsing(session());
 
     // Asking for fewer than the fixture holds must come back exactly full — the cut-off.
-    const bounded = searchSelectors(exec, TERM, { limit: 4, ignoreCase: true });
+    const bounded = await searchSelectors(exec, TERM, { limit: 4, ignoreCase: true });
     expect(bounded).toHaveLength(4);
 
     // Room to spare: the scan runs out of matches before the limit, so the slice is under-full — this
     // is what distinguishes "complete" from "cut off", and it's the whole basis of the signal.
-    const complete = searchSelectors(exec, TERM, { limit: 50, ignoreCase: true });
+    const complete = await searchSelectors(exec, TERM, { limit: 50, ignoreCase: true });
     expect(complete).toHaveLength(FIXTURE_METHODS);
     expect(complete.every((r) => r.className === CLS && r.selector.includes(TERM))).toBe(true);
   });
 
-  it('reports truncation through the provider when the real scan is cut off', () => {
-    defineFixture();
+  it('reports truncation through the provider when the real scan is cut off', async () => {
+    await defineFixture();
     const runner = (term: string, limit: number, ignoreCase: boolean) =>
       searchSelectors(defaultQueryExecutorUsing(session()), term, { limit, ignoreCase });
     const provider = createMethodsProvider(1, runner);
 
     // Cap 1 => server slice of 1 × SERVER_OVERFETCH = 4, under the fixture's 6 rows: truncated.
     const cutOff = vi.fn();
-    const shown = provider.search(
+    const shown = (await provider.search(
       TERM,
       cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 1 }),
       NEVER_CANCELLED,
       cutOff,
-    ) as unknown[];
+    )) as unknown[];
     expect(SERVER_OVERFETCH).toBeLessThan(FIXTURE_METHODS); // the slice really is the binding limit
     // The over-fetch (1 × SERVER_OVERFETCH) bound this scan, not the configured ceiling — so the run
     // is incomplete but Load-more would still widen it, and the ceiling reported is the SETTING.
@@ -99,12 +99,12 @@ describe('methods fetch ceiling (integration)', () => {
 
     // Cap high enough that the clamped slice (the maxServerScan ceiling) exceeds the population.
     const complete = vi.fn();
-    const all = provider.search(
+    const all = (await provider.search(
       TERM,
       cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 100_000 }),
       NEVER_CANCELLED,
       complete,
-    ) as unknown[];
+    )) as unknown[];
     expect(FIXTURE_METHODS).toBeLessThan(OMNI_DEFAULTS.maxServerScan);
     expect(complete).not.toHaveBeenCalled(); // no report at all = nothing was cut off
     expect(all).toHaveLength(FIXTURE_METHODS);

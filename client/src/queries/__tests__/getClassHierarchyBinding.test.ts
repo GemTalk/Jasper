@@ -15,18 +15,18 @@ const line = (dictName: string, className: string, kind: string, idx: number, bi
   [dictName, className, kind, String(idx), binding].join('\t');
 
 describe('getClassHierarchy — what binds each row', () => {
-  it('reads a placed class as bound', () => {
-    const rows = getClassHierarchy(
-      () => line('UserGlobals', 'Parent', 'superclass', 1, 'bound'),
+  it('reads a placed class as bound', async () => {
+    const rows = await getClassHierarchy(
+      async () => line('UserGlobals', 'Parent', 'superclass', 1, 'bound'),
       'Child',
     );
 
     expect(rows[0]).toMatchObject({ className: 'Parent', dictIndex: 1, binding: 'bound' });
   });
 
-  it('reads an older version as superseded, with no dictionary', () => {
-    const rows = getClassHierarchy(
-      () => line('', 'Parent', 'superclass', 0, 'superseded'),
+  it('reads an older version as superseded, with no dictionary', async () => {
+    const rows = await getClassHierarchy(
+      async () => line('', 'Parent', 'superclass', 0, 'superseded'),
       'Child',
     );
 
@@ -34,15 +34,18 @@ describe('getClassHierarchy — what binds each row', () => {
     expect(rows[0].dictIndex).toBeUndefined();
   });
 
-  it('reads a removed class as unbound', () => {
-    const rows = getClassHierarchy(() => line('', 'Parent', 'superclass', 0, 'unbound'), 'Child');
+  it('reads a removed class as unbound', async () => {
+    const rows = await getClassHierarchy(
+      async () => line('', 'Parent', 'superclass', 0, 'unbound'),
+      'Child',
+    );
 
     expect(rows[0].binding).toBe('unbound');
   });
 
-  it('asks the stone to compare the bound class by identity', () => {
+  it('asks the stone to compare the bound class by identity', async () => {
     let code = '';
-    getClassHierarchy((c) => {
+    await getClassHierarchy(async (c) => {
       code = c;
       return '';
     }, 'Child');
@@ -53,12 +56,12 @@ describe('getClassHierarchy — what binds each row', () => {
     expect(code).toContain("'superseded'");
   });
 
-  it('falls back sanely on a stone whose payload predates the column', () => {
+  it('falls back sanely on a stone whose payload predates the column', async () => {
     // Four fields, no binding. A placed class is bound; an unplaced one is reported as unbound
     // rather than diagnosed as superseded, which would be a claim the payload never made.
     const older = (idx: number) => ['UserGlobals', 'Parent', 'superclass', String(idx)].join('\t');
 
-    expect(getClassHierarchy(() => older(1), 'Child')[0].binding).toBe('bound');
-    expect(getClassHierarchy(() => older(0), 'Child')[0].binding).toBe('unbound');
+    expect((await getClassHierarchy(async () => older(1), 'Child'))[0].binding).toBe('bound');
+    expect((await getClassHierarchy(async () => older(0), 'Child'))[0].binding).toBe('unbound');
   });
 });

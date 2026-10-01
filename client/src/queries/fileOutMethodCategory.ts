@@ -18,13 +18,13 @@ import { classLookupExpr, escapeString } from './util';
  * Raises when the class doesn't resolve, or when no symbol exists for the category —
  * a name no symbol exists for cannot be any class's category, so the row is stale.
  */
-export function fileOutMethodCategory(
+export async function fileOutMethodCategory(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   category: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const esc = escapeString(category);
   const code = `| cls cat |
 cls := ${classLookupExpr(className, dict)}.
@@ -32,5 +32,5 @@ cls ifNil: [^ Error signal: 'Class not found: ${escapeString(className)}'].
 cat := Symbol _existingWithAll: '${esc}'.
 cat ifNil: [^ Error signal: 'Method category not found: ${esc}'].
 ${isMeta ? 'cls class' : 'cls'} fileOutCategory: cat`;
-  return execute(code);
+  return await execute(code);
 }

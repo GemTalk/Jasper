@@ -664,7 +664,7 @@ describe('GemStoneDebugSession', () => {
       vi.mocked(browserQueries.getSourceOffsets).mockReset();
       vi.mocked(browserQueries.setBreakAtStepPoint).mockReset();
       vi.mocked(browserQueries.clearAllBreaks).mockReset();
-      vi.mocked(browserQueries.getSourceOffsets).mockReturnValue([0, 12]);
+      vi.mocked(browserQueries.getSourceOffsets).mockResolvedValue([0, 12]);
     });
 
     it('returns empty breakpoints when no session is attached', async () => {

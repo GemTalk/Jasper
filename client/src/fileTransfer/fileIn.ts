@@ -131,7 +131,7 @@ export function isTonelFile(fsPath: string): boolean {
 async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
   return isTonelFile(uri.fsPath)
     ? await fileInTonelUri(session, uri.fsPath)
-    : fileInFile(session, uri.fsPath);
+    : await fileInFile(session, uri.fsPath);
 }
 
 /**
@@ -143,11 +143,11 @@ async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<Fi
  * Topaz resolves them. `seen` breaks a cycle — two files that `input` each other
  * would otherwise recurse until the stack gave out.
  */
-export function fileInFile(
+export async function fileInFile(
   session: ActiveSession,
   filePath: string,
   seen: Set<string> = new Set(),
-): FileInOutcome {
+): Promise<FileInOutcome> {
   const outcome = emptyOutcome();
   const absolute = path.resolve(filePath);
   if (seen.has(absolute)) return outcome;
@@ -178,11 +178,11 @@ export function fileInFile(
     try {
       switch (step.kind) {
         case 'execute':
-          queries.fileInChunk(session, step.code);
+          await queries.fileInChunk(session, step.code);
           outcome.executed++;
           break;
         case 'method':
-          queries.compileMethod(
+          await queries.compileMethod(
             session,
             step.className,
             step.isMeta,
@@ -193,13 +193,13 @@ export function fileInFile(
           outcome.compiled++;
           break;
         case 'removeAllMethods':
-          queries.removeAllMethods(session, step.className, step.isMeta);
+          await queries.removeAllMethods(session, step.className, step.isMeta);
           outcome.removed++;
           break;
         case 'input': {
           absorb(
             outcome,
-            fileInFile(session, path.resolve(path.dirname(absolute), step.file), seen),
+            await fileInFile(session, path.resolve(path.dirname(absolute), step.file), seen),
           );
           break;
         }

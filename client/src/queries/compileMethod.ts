@@ -20,7 +20,7 @@ import { classLookupExpr, escapeString } from './util';
 // This brackets an EDIT only. A refactoring never reaches this query — the engine
 // applies its whole change set server-side — and records its own versions from the engine
 // instead (see methodHistoryServer.ts's `recordRefactoredIn:…` for the two hooks).
-export function compileMethod(
+export async function compileMethod(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
@@ -28,7 +28,7 @@ export function compileMethod(
   source: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const esc = escapeString(className);
   const src = escapeString(source);
   const cat = escapeString(category);
@@ -46,5 +46,5 @@ result := target
   environmentId: ${environmentId}.
 hist ifNotNil: [:h | h afterCompileIn: target method: result source: '${src}' category: '${cat}'].
 'Compiled: ' , target name , ' >> ' , result selector asString`;
-  return execute(code);
+  return await execute(code);
 }

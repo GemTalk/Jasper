@@ -91,7 +91,10 @@ export const MAX_TONEL_CHARACTERS = 2 * 1024 * 1024;
  * Never throws: every caller is a menu command, and a parse failure is a thing
  * to report against the file, not an exception to surface as a broken command.
  */
-export function readTonelClass(execute: QueryExecutor, tonelText: string): TonelReadResult {
+export async function readTonelClass(
+  execute: QueryExecutor,
+  tonelText: string,
+): Promise<TonelReadResult> {
   // Checked before the doit is built, not after: the point is to never send it.
   if (tonelText.length > MAX_TONEL_CHARACTERS) {
     return {
@@ -207,7 +210,7 @@ visitorCls := ${rowanLookupExpr('RwRepositoryResolvedProjectTonelReaderVisitorV2
       , (String with: Character tab)
       , e messageText]`;
 
-  const answer = execute(code);
+  const answer = await execute(code);
   if (answer === TONEL_NO_ROWAN) {
     return { ok: false, error: 'Rowan is not reachable from this session', line: 1 };
   }

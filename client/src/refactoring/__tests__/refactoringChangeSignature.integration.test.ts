@@ -46,71 +46,77 @@ describe('change method signature (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
   const BASE = 'CSigItBase';
   const WHOLE = { kind: 'wholeSystem' } as const;
 
   // A fixture with unique keyword selectors + senders, one per M5 scenario.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    const m = (src: string): void => {
-      q.compileMethod(session(), BASE, false, 'accessing', src);
+    const m = async (src: string): Promise<void> => {
+      await q.compileMethod(session(), BASE, false, 'accessing', src);
     };
     // ADD: body uses only k, so a second (unused) parameter is behaviour-preserving.
-    m('csigStore: k\n\t^Array with: k');
-    m('csigCallStore\n\t^self csigStore: 1');
+    await m('csigStore: k\n\t^Array with: k');
+    await m('csigCallStore\n\t^self csigStore: 1');
     // REORDER: both arguments used.
-    m('csigMoveX: xVal y: yVal\n\t^Array with: xVal with: yVal');
-    m('csigCallMove\n\t^self csigMoveX: 1 y: 2');
+    await m('csigMoveX: xVal y: yVal\n\t^Array with: xVal with: yVal');
+    await m('csigCallMove\n\t^self csigMoveX: 1 y: 2');
     // REMOVE (safe): drop: (b) is unused in the body.
-    m('csigKeep: a drop: b\n\t^a * 2');
-    m('csigCallKeep\n\t^self csigKeep: 5 drop: 9');
+    await m('csigKeep: a drop: b\n\t^a * 2');
+    await m('csigCallKeep\n\t^self csigKeep: 5 drop: 9');
     // REMOVE (declines): a and b are both used.
-    m('csigSumA: a b: b\n\t^a + b');
+    await m('csigSumA: a b: b\n\t^a + b');
     // COLLISION target: an existing selector to clash with.
-    m('csigExisting: p q: r\n\t^p');
+    await m('csigExisting: p q: r\n\t^p');
   };
 
-  const storedSource = (selector: string): string =>
-    exec(`(${BASE} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) sourceString`);
+  const storedSource = async (selector: string): Promise<string> =>
+    await exec(
+      `(${BASE} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) sourceString`,
+    );
 
-  const definesSelector = (selector: string): boolean =>
-    exec(
-      `(${BASE} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  const definesSelector = async (selector: string): Promise<boolean> =>
+    (
+      await exec(
+        `(${BASE} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+      )
     ).trim() === 'true';
 
-  it('reports change-signature engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports change-signature engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
   // One blocking exec runs an entire in-stone SUnit suite; under a busy shared
   // stone that can exceed vitest's default 5s and flake a push. Give it room.
-  it('runs the change-signature GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the change-signature GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 30_000);
 
   it('pre-flight analyses the method arity and argument names', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeChangeSignature(asyncExec, BASE, 'csigMoveX:y:', false),
@@ -123,9 +129,9 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
   });
 
   it('adds a parameter, splicing the caller default at the send site', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-add-${BASE}`;
 
     const start = parseStartPreview(
@@ -156,15 +162,15 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector('csigStore:put:')).toBe(true);
-    expect(definesSelector('csigStore:')).toBe(false);
-    expect(storedSource('csigCallStore')).toContain('csigStore: 1 put: nil');
+    expect(await definesSelector('csigStore:put:')).toBe(true);
+    expect(await definesSelector('csigStore:')).toBe(false);
+    expect(await storedSource('csigCallStore')).toContain('csigStore: 1 put: nil');
   });
 
   it('reorders parameters in the signature and at the call site', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-reorder-${BASE}`;
 
     const start = parseStartPreview(
@@ -190,15 +196,15 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector('csigMoveY:x:')).toBe(true);
-    expect(definesSelector('csigMoveX:y:')).toBe(false);
-    expect(storedSource('csigCallMove')).toContain('csigMoveY: 2 x: 1');
+    expect(await definesSelector('csigMoveY:x:')).toBe(true);
+    expect(await definesSelector('csigMoveX:y:')).toBe(false);
+    expect(await storedSource('csigCallMove')).toContain('csigMoveY: 2 x: 1');
   });
 
   it('removes an unused parameter, dropping its argument at the call site', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-remove-${BASE}`;
 
     const start = parseStartPreview(
@@ -224,17 +230,17 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     const result = parseApplyResult(await applyChangeSignature(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector('csigKeep:')).toBe(true);
-    expect(definesSelector('csigKeep:drop:')).toBe(false);
-    const callKeep = storedSource('csigCallKeep');
+    expect(await definesSelector('csigKeep:')).toBe(true);
+    expect(await definesSelector('csigKeep:drop:')).toBe(false);
+    const callKeep = await storedSource('csigCallKeep');
     expect(callKeep).toContain('csigKeep: 5');
     expect(callKeep).not.toContain('drop:');
   });
 
   it('declines removing a parameter that is used in the body', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-decline-${BASE}`;
 
     const start = parseStartPreview(
@@ -259,9 +265,9 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
   });
 
   it('surfaces a collision when the new selector already exists on the class', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-collide-${BASE}`;
 
     const start = parseStartPreview(
@@ -285,9 +291,9 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
   });
 
   it('leaves a deselected sender untouched while renaming the implementor', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `csig-deselect-${BASE}`;
 
     const start = parseStartPreview(
@@ -315,8 +321,8 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
     );
 
     expect(result.failed).toEqual([]);
-    expect(definesSelector('csigStore:put:')).toBe(true);
-    const callStore = storedSource('csigCallStore');
+    expect(await definesSelector('csigStore:put:')).toBe(true);
+    const callStore = await storedSource('csigCallStore');
     expect(callStore).toContain('csigStore: 1');
     expect(callStore).not.toContain('put:');
   });

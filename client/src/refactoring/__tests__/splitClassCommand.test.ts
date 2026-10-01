@@ -190,7 +190,7 @@ describe('split class command', () => {
     vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
     vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
     vi.mocked(showSplitClassPanel).mockResolvedValue({ applied: 2, failed: [] });
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue(
       JSON.stringify({
         available: true,
         label: 'Split Person into Address',
@@ -201,6 +201,7 @@ describe('split class command', () => {
     );
 
     await splitClassCommand(ctx());
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('applied 2 change(s)'),

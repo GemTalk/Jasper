@@ -40,8 +40,8 @@ function makeDeps(overrides?: Partial<LogicalRestoreDeps>) {
   const session = makeSession();
   const deps: LogicalRestoreDeps = {
     stoneName: 'gs64stone',
-    hasFileControl: vi.fn(() => true),
-    listBackupFiles: vi.fn(() => ['/root/db-1/backups/backup.dbf']),
+    hasFileControl: vi.fn(async () => true),
+    listBackupFiles: vi.fn(async () => ['/root/db-1/backups/backup.dbf']),
     closeCurrentSession: vi.fn(async () => {}),
     stopStone: vi.fn(async () => {}),
     startStone: vi.fn(async () => {}),
@@ -152,7 +152,7 @@ describe('runLogicalRestore', () => {
   });
 
   it('stops with an explanatory error and no teardown when the user lacks FileControl', async () => {
-    const { deps } = makeDeps({ hasFileControl: vi.fn(() => false) });
+    const { deps } = makeDeps({ hasFileControl: vi.fn(async () => false) });
 
     const ok = await runLogicalRestore(deps);
 
@@ -181,7 +181,7 @@ describe('runLogicalRestore', () => {
 
   it('prompts for a backup file to restore from', async () => {
     const { deps } = makeDeps({
-      listBackupFiles: vi.fn(() => ['/data/backups/b.dbf']),
+      listBackupFiles: vi.fn(async () => ['/data/backups/b.dbf']),
     });
 
     const ok = await runLogicalRestore(deps);
@@ -205,7 +205,7 @@ describe('runLogicalRestore', () => {
   });
 
   it('stops with an explanatory error when the stone reports no backups', async () => {
-    const { deps } = makeDeps({ listBackupFiles: vi.fn(() => []) });
+    const { deps } = makeDeps({ listBackupFiles: vi.fn(async () => []) });
 
     const ok = await runLogicalRestore(deps);
 

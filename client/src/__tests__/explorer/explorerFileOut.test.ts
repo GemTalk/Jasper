@@ -100,20 +100,20 @@ describe('Explorer file out', () => {
     // clearAllMocks clears calls, not implementations, and tests below override some
     // of these — restore each so a shuffled run order can't leak one into the next.
     vi.mocked(fs.writeFileSync).mockImplementation(() => {});
-    vi.mocked(queries.fileOutHeader).mockReturnValue('fileformat utf8\n!');
-    vi.mocked(queries.fileOutDictionary).mockReturnValue('DICT BODY');
-    vi.mocked(queries.fileOutClass).mockImplementation((_s, name) => `CLASS ${name}`);
+    vi.mocked(queries.fileOutHeader).mockResolvedValue('fileformat utf8\n!');
+    vi.mocked(queries.fileOutDictionary).mockResolvedValue('DICT BODY');
+    vi.mocked(queries.fileOutClass).mockImplementation(async (_s, name) => `CLASS ${name}`);
     vi.mocked(queries.fileOutMethod).mockImplementation(
-      (_s, cls, isMeta, sel) => `METHOD ${cls}${isMeta ? ' class' : ''}>>${sel}`,
+      async (_s, cls, isMeta, sel) => `METHOD ${cls}${isMeta ? ' class' : ''}>>${sel}`,
     );
     vi.mocked(queries.fileOutMethodCategory).mockImplementation(
-      (_s, cls, isMeta, cat) => `CATEGORY ${cls}${isMeta ? ' class' : ''} ${cat}`,
+      async (_s, cls, isMeta, cat) => `CATEGORY ${cls}${isMeta ? ' class' : ''} ${cat}`,
     );
-    vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue(['Animal', 'Dog', 'Rock']);
+    vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue(['Animal', 'Dog', 'Rock']);
     vi.mocked(queries.fileOutClassTonel).mockImplementation(
-      (_s, name) => `Class {\n\t#name : '${name}'\n}\n`,
+      async (_s, name) => `Class {\n\t#name : '${name}'\n}\n`,
     );
-    vi.mocked(queries.tonelCapability).mockReturnValue({ available: true, missing: [] });
+    vi.mocked(queries.tonelCapability).mockResolvedValue({ available: true, missing: [] });
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
     vi.mocked(vscode.window.showSaveDialog).mockResolvedValue(vscode.Uri.file('/out/File.gs'));
@@ -190,7 +190,7 @@ describe('Explorer file out', () => {
       // `.gs` reported as "Filed out Fauna".
       const ctl = makeController();
       setEntries(ctl, [{ category: 'Fauna', className: 'Dog', hasComment: false }]);
-      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue([]);
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue([]);
 
       await ctl.fileOutClassCategory(CATEGORY_NODE);
 
@@ -207,7 +207,7 @@ describe('Explorer file out', () => {
         { category: 'Fauna', className: 'Dog', hasComment: false },
         { category: 'Fauna', className: 'Cat', hasComment: false },
       ]);
-      vi.mocked(queries.getDictionaryClassFileOutOrder).mockReturnValue(['Dog']);
+      vi.mocked(queries.getDictionaryClassFileOutOrder).mockResolvedValue(['Dog']);
 
       await ctl.fileOutClassCategory(CATEGORY_NODE);
 
@@ -287,7 +287,7 @@ describe('Explorer file out', () => {
       // The palette route ignores the menu's `when` clause, so the runtime guard is
       // the only thing standing between a base-extent session and a broken file.
       const ctl = makeController();
-      vi.mocked(queries.tonelCapability).mockReturnValue({ available: false, missing: ['x'] });
+      vi.mocked(queries.tonelCapability).mockResolvedValue({ available: false, missing: ['x'] });
 
       await ctl.fileOutClassAsTonel(new ClassItem('Dog'));
 
@@ -297,7 +297,7 @@ describe('Explorer file out', () => {
 
     it('reports a Tonel sentinel rather than writing it as source', async () => {
       const ctl = makeController();
-      vi.mocked(queries.fileOutClassTonel).mockReturnValue('!ERR Class not found: Dog');
+      vi.mocked(queries.fileOutClassTonel).mockResolvedValue('!ERR Class not found: Dog');
 
       await ctl.fileOutClassAsTonel(new ClassItem('Dog'));
 
@@ -307,7 +307,7 @@ describe('Explorer file out', () => {
 
     it('reports a class that no longer resolves rather than writing the error as source', async () => {
       const ctl = makeController();
-      vi.mocked(queries.fileOutClass).mockReturnValue('Class not found: Dog');
+      vi.mocked(queries.fileOutClass).mockResolvedValue('Class not found: Dog');
 
       await ctl.fileOutClass(new ClassItem('Dog'));
 

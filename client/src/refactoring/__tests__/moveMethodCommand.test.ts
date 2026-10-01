@@ -268,7 +268,9 @@ describe('move method command', () => {
     const outcome = await moveMethod(req({ toMeta: true }));
 
     expect(outcome).toEqual({ applied: 2, moved: ['bar'], targetClass: 'Baz', toMeta: true });
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Moved #bar to Baz.');
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Moved #bar to Baz.'),
+    );
   });
 
   it('reports a count when several selectors moved, listing only the movable subset', async () => {
@@ -288,7 +290,9 @@ describe('move method command', () => {
     const outcome = await moveMethod(req({ selectors: ['bar', 'baz', 'nope'] }));
 
     expect(outcome?.moved).toEqual(['bar', 'baz']);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Moved 2 methods to Baz.');
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Moved 2 methods to Baz.'),
+    );
   });
 
   it('prefers the preview target label, then the analysis, then the requested name', async () => {

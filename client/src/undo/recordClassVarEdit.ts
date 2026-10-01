@@ -26,7 +26,7 @@ export interface ClassVarRecording {
   /** Whether the class already declared the name. The caller refuses the add in that case,
    *  so this is here for tests and for a caller that wants to check rather than assume. */
   readonly before: ClassVarState;
-  commit(label: string): UndoEntry | undefined;
+  commit(label: string): Promise<UndoEntry | undefined>;
 }
 
 /**
@@ -37,11 +37,11 @@ export interface ClassVarRecording {
  * declined them. They are captured too, because an accessor that was already implemented is
  * skipped by the add and must be left alone by the undo.
  */
-export function beginClassVarAdd(
+export async function beginClassVarAdd(
   session: ActiveSession,
   slot: ClassVarSlot,
   accessorSlots: MethodSlot[],
-): ClassVarRecording | undefined {
+): Promise<ClassVarRecording | undefined> {
   // The executor lookup is inside the guard too: recording must never be the reason an
   // add fails.
   let execute;
@@ -49,8 +49,8 @@ export function beginClassVarAdd(
   let accessorBefore: MethodSlotState[];
   try {
     execute = defaultQueryExecutorUsing(session);
-    before = captureClassVar(execute, slot);
-    accessorBefore = captureMethodSlots(execute, accessorSlots);
+    before = await captureClassVar(execute, slot);
+    accessorBefore = await captureMethodSlots(execute, accessorSlots);
   } catch (e: unknown) {
     logInfo(
       `[undo] class-variable capture failed, add will not be undoable: ` +
@@ -65,12 +65,12 @@ export function beginClassVarAdd(
 
   return {
     before,
-    commit(label: string): UndoEntry | undefined {
+    async commit(label: string): Promise<UndoEntry | undefined> {
       let after: ClassVarState;
       let accessorAfter: MethodSlotState[];
       try {
-        after = captureClassVar(execute, slot);
-        accessorAfter = captureMethodSlots(execute, accessorSlots);
+        after = await captureClassVar(execute, slot);
+        accessorAfter = await captureMethodSlots(execute, accessorSlots);
       } catch (e: unknown) {
         logInfo(
           `[undo] not recording "${label}": could not read the result ` +

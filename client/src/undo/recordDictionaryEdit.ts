@@ -36,13 +36,13 @@ function describe(e: unknown): string {
 /** Read where the dictionary stands now, optionally pinning it in SessionTemps. Answers
  *  undefined when it cannot be read, or when there is no such dictionary — a command that
  *  is about to act on one that is not there records nothing. */
-function capture(
+async function capture(
   session: ActiveSession,
   name: string,
   stashKey?: string,
-): DictionaryState | undefined {
+): Promise<DictionaryState | undefined> {
   try {
-    const state = captureDictionary(defaultQueryExecutorUsing(session), name, stashKey);
+    const state = await captureDictionary(defaultQueryExecutorUsing(session), name, stashKey);
     if (!state.present) {
       logInfo(`[undo] not recording: no dictionary called ${name} on the symbol list`);
       return undefined;
@@ -61,12 +61,12 @@ function capture(
  * dictionary without destroying it, so the same object goes back with every class it holds —
  * but only while something still references it.
  */
-export function beginDictionaryRemoval(
+export async function beginDictionaryRemoval(
   session: ActiveSession,
   name: string,
-): { commit(): UndoEntry | undefined } | undefined {
+): Promise<{ commit(): UndoEntry | undefined } | undefined> {
   const stashKey = newStashKey(session.id);
-  const before = capture(session, name, stashKey);
+  const before = await capture(session, name, stashKey);
   if (!before) return undefined;
 
   return {
@@ -89,11 +89,11 @@ export function beginDictionaryRemoval(
  * Capture a dictionary about to be RENAMED. No stash: it never leaves the symbol list, so the
  * reversal finds it under its new name and renames it back.
  */
-export function beginDictionaryRename(
+export async function beginDictionaryRename(
   session: ActiveSession,
   name: string,
-): { commit(after: string): UndoEntry | undefined } | undefined {
-  const before = capture(session, name);
+): Promise<{ commit(after: string): UndoEntry | undefined } | undefined> {
+  const before = await capture(session, name);
   if (!before) return undefined;
 
   return {
@@ -127,8 +127,11 @@ export function beginDictionaryRename(
  * No stash. Nothing is being held for a later reversal; the reversal simply takes the
  * dictionary off the list again, and warns first if it has been filled since.
  */
-export function recordDictionaryAdd(session: ActiveSession, name: string): UndoEntry | undefined {
-  const after = capture(session, name);
+export async function recordDictionaryAdd(
+  session: ActiveSession,
+  name: string,
+): Promise<UndoEntry | undefined> {
+  const after = await capture(session, name);
   if (!after) return undefined;
 
   const entry = pushUndoEntry({

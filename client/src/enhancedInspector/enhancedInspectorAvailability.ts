@@ -19,8 +19,9 @@ import { supportsEnhancedInspector } from './enhancedInspectorInstall';
  *  stone, or one installed by an older build) — because the inspector returns no
  *  views there. Short-circuit to false without probing so routing
  *  (see inspectRouter.ts) falls back to the basic tabbed Inspector. */
-export function refreshEnhancedInspectorAvailable(session: ActiveSession): boolean {
+export async function refreshEnhancedInspectorAvailable(session: ActiveSession): Promise<boolean> {
   session.enhancedInspectorAvailable =
-    supportsEnhancedInspector(session.stoneVersion) && checkEnhancedInspectorAvailable(session);
+    supportsEnhancedInspector(session.stoneVersion) &&
+    (await checkEnhancedInspectorAvailable(session));
   return session.enhancedInspectorAvailable;
 }

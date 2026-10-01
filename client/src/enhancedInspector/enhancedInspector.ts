@@ -176,20 +176,20 @@ export class EnhancedInspector {
   }
 
   /** Fetch everything a column needs to render an object: title, class, view specs, meta. */
-  private buildColumnPayload(oop: bigint): ColumnPayload {
+  private async buildColumnPayload(oop: bigint): Promise<ColumnPayload> {
     const exec = this.makeExecutor();
     const ps = debug.fetchPrintString(this.session, oop, 40);
     const title = ps.value + (ps.truncated ? '…' : '');
     const className = debug.getObjectClassName(this.session, oop);
-    const specs = getEnhancedInspectorViewSpecs(exec, oop);
-    const meta = fetchObjectMeta(exec, oop);
+    const specs = await getEnhancedInspectorViewSpecs(exec, oop);
+    const meta = await fetchObjectMeta(exec, oop);
     return { title, className, specs, meta };
   }
 
   private async handleMessage(msg: InspectorMessage): Promise<void> {
     switch (msg.command) {
       case 'ready': {
-        const payload = this.buildColumnPayload(this.currentOop);
+        const payload = await this.buildColumnPayload(this.currentOop);
         this.title.setTitle(payload.title);
         this.panel.webview.postMessage({
           command: 'enhancedInspectorViewSpecs',
@@ -210,7 +210,7 @@ export class EnhancedInspector {
           msg.viewName === 'GtPhlowTextEditorViewSpecification' &&
           msg.methodSelector === 'gtPrintFor:'
         ) {
-          const result = fetchEnhancedInspectorPrintTabData(
+          const result = await fetchEnhancedInspectorPrintTabData(
             this.makeExecutor(),
             oop,
             msg.methodSelector,
@@ -223,7 +223,11 @@ export class EnhancedInspector {
             truncated: result.truncated,
           });
         } else {
-          const data = this.fetchEnhancedInspectorViewData(oop, msg.methodSelector, msg.viewName);
+          const data = await this.fetchEnhancedInspectorViewData(
+            oop,
+            msg.methodSelector,
+            msg.viewName,
+          );
           this.panel.webview.postMessage({
             command: 'enhancedInspectorViewData',
             columnId: msg.columnId,
@@ -235,7 +239,7 @@ export class EnhancedInspector {
       }
 
       case 'fetchMoreRows': {
-        const more = this.fetchEnhancedInspectorViewData(
+        const more = await this.fetchEnhancedInspectorViewData(
           BigInt(msg.oop),
           msg.methodSelector,
           msg.viewName,
@@ -253,12 +257,12 @@ export class EnhancedInspector {
       case 'fetchEnhancedInspectorViewTotal': {
         const isForward = msg.viewName === 'GtPhlowForwardViewSpecification';
         const total = isForward
-          ? fetchEnhancedInspectorForwardListTotal(
+          ? await fetchEnhancedInspectorForwardListTotal(
               this.makeExecutor(),
               BigInt(msg.oop),
               msg.methodSelector,
             )
-          : fetchEnhancedInspectorListTotal(
+          : await fetchEnhancedInspectorListTotal(
               this.makeExecutor(),
               BigInt(msg.oop),
               msg.methodSelector,
@@ -275,14 +279,14 @@ export class EnhancedInspector {
       case 'fetchEnhancedInspectorRangeData': {
         const rangeData =
           msg.viewName === 'GtPhlowForwardViewSpecification'
-            ? fetchEnhancedInspectorForwardListData(
+            ? await fetchEnhancedInspectorForwardListData(
                 this.makeExecutor(),
                 BigInt(msg.oop),
                 msg.methodSelector,
                 msg.fromIndex,
                 PAGE_SIZE,
               )
-            : fetchEnhancedInspectorListData(
+            : await fetchEnhancedInspectorListData(
                 this.makeExecutor(),
                 BigInt(msg.oop),
                 msg.methodSelector,
@@ -300,7 +304,7 @@ export class EnhancedInspector {
       }
 
       case 'fetchEnhancedInspectorTreeChildren': {
-        const children = fetchEnhancedInspectorTreeChildren(
+        const children = await fetchEnhancedInspectorTreeChildren(
           this.makeExecutor(),
           BigInt(msg.itemOop),
           msg.methodSelector,
@@ -329,7 +333,7 @@ export class EnhancedInspector {
       }
 
       case 'browseMethod': {
-        const loc = fetchMethodBrowseLocation(
+        const loc = await fetchMethodBrowseLocation(
           this.makeExecutor(),
           BigInt(msg.oop),
           msg.methodSelector,
@@ -341,7 +345,7 @@ export class EnhancedInspector {
           );
           break;
         }
-        SystemBrowser.navigateBeside(this.session, {
+        await SystemBrowser.navigateBeside(this.session, {
           dictName: loc.dictName,
           className: loc.className,
           isMeta: msg.isClassSide,
@@ -353,7 +357,7 @@ export class EnhancedInspector {
       }
 
       case 'fetchMethodSource': {
-        const source = fetchMethodSource(
+        const source = await fetchMethodSource(
           this.makeExecutor(),
           BigInt(msg.oop),
           msg.methodSelector,
@@ -372,13 +376,13 @@ export class EnhancedInspector {
       case 'enhancedInspectRow': {
         const rowOop =
           msg.viewName === 'GtPhlowForwardViewSpecification'
-            ? fetchEnhancedInspectorForwardRowOop(
+            ? await fetchEnhancedInspectorForwardRowOop(
                 this.makeExecutor(),
                 BigInt(msg.itemOop),
                 msg.methodSelector,
                 msg.nodeId,
               )
-            : fetchEnhancedInspectorRowOop(
+            : await fetchEnhancedInspectorRowOop(
                 this.makeExecutor(),
                 BigInt(msg.itemOop),
                 msg.methodSelector,
@@ -387,7 +391,7 @@ export class EnhancedInspector {
         if (rowOop !== null) {
           const columnId = this.nextColumnId++;
           const label = msg.methodSelector + '[' + msg.nodeId + ']';
-          const payload = this.buildColumnPayload(rowOop);
+          const payload = await this.buildColumnPayload(rowOop);
           this.panel.webview.postMessage({
             command: 'addColumn',
             columnId,
@@ -419,21 +423,21 @@ export class EnhancedInspector {
     return (code) => executeFetchString(this.session, code);
   }
 
-  private fetchEnhancedInspectorViewData(
+  private async fetchEnhancedInspectorViewData(
     oop: bigint,
     methodSelector: string,
     viewName: string,
     fromIndex = 1,
-  ): string | null {
+  ): Promise<string | null> {
     const execute = this.makeExecutor();
     if (
       viewName === 'GtPhlowTextViewSpecification' ||
       viewName === 'GtPhlowTextEditorViewSpecification'
     ) {
-      return fetchEnhancedInspectorTextData(execute, oop, methodSelector);
+      return await fetchEnhancedInspectorTextData(execute, oop, methodSelector);
     }
     if (viewName === 'GtPhlowForwardViewSpecification') {
-      return fetchEnhancedInspectorForwardListData(
+      return await fetchEnhancedInspectorForwardListData(
         execute,
         oop,
         methodSelector,
@@ -441,7 +445,7 @@ export class EnhancedInspector {
         PAGE_SIZE,
       );
     }
-    return fetchEnhancedInspectorListData(execute, oop, methodSelector, fromIndex, PAGE_SIZE);
+    return await fetchEnhancedInspectorListData(execute, oop, methodSelector, fromIndex, PAGE_SIZE);
   }
 
   private dispose(): void {

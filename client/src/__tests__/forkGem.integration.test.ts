@@ -32,7 +32,8 @@ describe('forking a gem (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const execute = (code: string): string => browserQueries.executeFetchString(session(), code);
+  const execute = async (code: string): Promise<string> =>
+    await browserQueries.executeFetchString(session(), code);
 
   // The NetLDI this stone actually uses, as the harness itself connects through.
   const gemNrs = (): string => process.env.VITE_GEMSTONE_GEM_NRS!;
@@ -40,18 +41,18 @@ describe('forking a gem (integration)', () => {
   // 3.6.2 has neither the one-time password selector nor a working
   // `newDefault`, so there is nothing to test there — the capability check
   // itself is what protects users on those stones.
-  const supported = (): boolean => canForkGem(execute);
+  const supported = async (): Promise<boolean> => await canForkGem(execute);
 
-  it('runs an expression in a gem of its own and answers its session id', (ctx) => {
-    if (!supported()) return ctx.skip();
+  it('runs an expression in a gem of its own and answers its session id', async (ctx) => {
+    if (!(await supported())) return ctx.skip();
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = await forkGemRunning(execute, 'System sleep: 1', gemNrs());
 
     expect(id.trim()).toMatch(/^\d+$/);
   });
 
-  it('gives the new gem a session distinct from this one', (ctx) => {
-    if (!supported()) return ctx.skip();
+  it('gives the new gem a session distinct from this one', async (ctx) => {
+    if (!(await supported())) return ctx.skip();
 
     // Compare stone session ids, not serial numbers. forkGemRunning answers the
     // fork's `stoneSessionId` — its slot in the session table — so this session
@@ -61,22 +62,22 @@ describe('forking a gem (integration)', () => {
     // that lands in slot 5), which is exactly what made this test flaky. Both
     // sessions are live at the moment the fork's id is read, and two live
     // sessions can never occupy the same slot, so this comparison is now exact.
-    const mySession = execute('System session printString');
+    const mySession = await execute('System session printString');
 
-    const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
+    const id = await forkGemRunning(execute, 'System sleep: 1', gemNrs());
 
     expect(id.trim()).not.toBe(mySession.trim());
   });
 
-  it('runs the gem as the user who asked, never SystemUser', (ctx) => {
-    if (!supported()) return ctx.skip();
+  it('runs the gem as the user who asked, never SystemUser', async (ctx) => {
+    if (!(await supported())) return ctx.skip();
 
-    const me = execute('System myUserProfile userId').trim();
+    const me = (await execute('System myUserProfile userId')).trim();
 
     // The gem logs in with a one-time password minted for this same user, so a
     // successful fork is itself the evidence — minting for anyone else would
     // need privileges this session does not have.
     expect(me).not.toBe('SystemUser');
-    expect(forkGemRunning(execute, 'System sleep: 1', gemNrs()).trim()).toMatch(/^\d+$/);
+    expect((await forkGemRunning(execute, 'System sleep: 1', gemNrs())).trim()).toMatch(/^\d+$/);
   });
 });

@@ -63,7 +63,7 @@ export interface RenameClassEditorOptions {
  *  acceptable. Resolves with the edit, or undefined if cancelled/closed. */
 export function showRenameClassEditor(
   opts: RenameClassEditorOptions,
-  validate: (newName: string) => string | undefined,
+  validate: (newName: string) => Promise<string | undefined>,
 ): Promise<ClassEditResult | undefined> {
   const panel = vscode.window.createWebviewPanel(
     'gemstoneRenameClassEditor',
@@ -85,7 +85,7 @@ export function showRenameClassEditor(
       resolve(result);
       panel.dispose();
     };
-    panel.webview.onDidReceiveMessage((message) => {
+    panel.webview.onDidReceiveMessage(async (message) => {
       if (message?.command === 'ok') {
         const newName = typeof message.newName === 'string' ? message.newName.trim() : '';
         if (!isRenameClassScope(message.scope)) {
@@ -97,7 +97,7 @@ export function showRenameClassEditor(
           return; // keep the editor open
         }
         const scope: RenameClassScope = message.scope;
-        const err = validate(newName);
+        const err = await validate(newName);
         if (err) {
           void panel.webview.postMessage({ command: 'invalid', message: err });
           return; // keep the editor open so the user can choose another name

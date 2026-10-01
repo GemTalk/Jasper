@@ -8,14 +8,14 @@ export interface StepPointSelectorInfo {
   selectorText: string;
 }
 
-export function getStepPointSelectorRanges(
+export async function getStepPointSelectorRanges(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): StepPointSelectorInfo[] {
+): Promise<StepPointSelectorInfo[]> {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   // _sourceOffsets returns 1-based; we emit 0-based selectorOffset for JS callers.
   const code = `| method source offsets ws |
@@ -41,7 +41,7 @@ ws := WriteStream on: String new.
          nextPutAll: (source copyFrom: offset1 to: end - 1); lf]]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: StepPointSelectorInfo[] = [];
   for (const line of raw.split('\n')) {

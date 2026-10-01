@@ -50,7 +50,7 @@ export async function renameClassAtCursorCommand(
 
   let resolved;
   try {
-    resolved = queries.resolveClassReference(session, name);
+    resolved = await queries.resolveClassReference(session, name);
   } catch (e: unknown) {
     refuse(
       `Couldn't determine whether '${name}' is a class — a stone query failed. Try again in a moment.`,

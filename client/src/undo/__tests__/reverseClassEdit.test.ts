@@ -53,7 +53,7 @@ function entry(before: ClassSlotState[], after: ClassSlotState[]): ClassEditUndo
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(applyClassSlotOps).mockImplementation((_e, ops) =>
+  vi.mocked(applyClassSlotOps).mockImplementation(async (_e, ops) =>
     ops.map((op) => ({ op, error: null })),
   );
 });
@@ -62,7 +62,7 @@ describe('reverseClassEdit', () => {
   it('binds the earlier version back and says the history is kept', () => {
     // GemStone has no savepoints -- a revert adds a version rather than removing one, and
     // the notice must not read as a rollback.
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2')]);
 
     return reverseClassEdit(session, entry([bound('1')], [bound('2')])).then((spent) => {
       expect(spent).toBe(true);
@@ -78,8 +78,8 @@ describe('reverseClassEdit', () => {
   it('keeps the entry when the reversal could not even run', async () => {
     // Distinct from a reversal the stone REFUSED (which is reported per class and uses the
     // entry up): a throw here means nothing was attempted, so the entry must stay on offer.
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
-    vi.mocked(applyClassSlotOps).mockImplementation(() => {
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2')]);
+    vi.mocked(applyClassSlotOps).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -94,7 +94,7 @@ describe('reverseClassEdit', () => {
     // Unbinding a class the user just created leaves the search panel offering it as a hit;
     // opening that hit lands on "Class not found". Search has to be told, same as the
     // Explorer.
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2')]);
 
     await reverseClassEdit(session, entry([unbound], [bound('2')]));
 
@@ -102,7 +102,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('leaves GemStone Search alone when the user backs out', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2', ['writtenLater'])]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2', ['writtenLater'])]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
@@ -111,7 +111,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('names what would be left behind, and backs out if refused', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2', ['writtenLater'])]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2', ['writtenLater'])]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     const spent = await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
@@ -126,7 +126,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('names every class when a whole subtree drifted, not just a count', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('9'), bound('9')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('9'), bound('9')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
     const subtree: ClassEditUndoEntry = {
       ...entry([bound('1'), bound('1')], [bound('2'), bound('2')]),
@@ -147,7 +147,7 @@ describe('reverseClassEdit', () => {
     // The detail is a modal body, not a log: twenty selectors is a wall the user cannot read,
     // and a bare count is not enough to judge the cost. Ten plus a remainder is the compromise.
     const many = Array.from({ length: 12 }, (_, i) => `writtenLater${i}`);
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2', many)]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2', many)]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
@@ -161,7 +161,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('goes ahead when the cost is accepted', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2', ['writtenLater'])]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2', ['writtenLater'])]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Revert Anyway' as never);
 
     expect(await reverseClassEdit(session, entry([bound('1')], [bound('2')]))).toBe(true);
@@ -169,7 +169,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('does not ask when nothing would be left behind', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2')]);
 
     await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
 
@@ -177,7 +177,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('asks separately when the class has been rebound since', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('9')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('9')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     const spent = await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
@@ -188,7 +188,7 @@ describe('reverseClassEdit', () => {
 
   it('puts a removed class back without asking anything', async () => {
     // Nothing newer exists to leave behind: this one really is an exact restore.
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
 
     const spent = await reverseClassEdit(session, entry([bound('1', ['plain'])], [unbound]));
 
@@ -198,7 +198,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('takes away a class that was created', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('2')]);
 
     await reverseClassEdit(session, entry([unbound], [bound('2')]));
 
@@ -206,7 +206,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('says so quietly when it is already as it was, and uses the entry up', async () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('1')]);
 
     const spent = await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
 
@@ -218,8 +218,8 @@ describe('reverseClassEdit', () => {
   it('reports a version the session no longer holds, and keeps the entry on offer', async () => {
     // Nothing was bound, so the stone still holds what the entry describes — spending it there
     // moved the button on to the previous change the moment the failure was reported.
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
-    vi.mocked(applyClassSlotOps).mockImplementation((_e, ops) =>
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
+    vi.mocked(applyClassSlotOps).mockImplementation(async (_e, ops) =>
       ops.map((op) => ({ op, error: 'this session no longer holds the earlier version' })),
     );
 
@@ -230,7 +230,7 @@ describe('reverseClassEdit', () => {
   });
 
   it('keeps the entry when the current state could not be read', async () => {
-    vi.mocked(captureClassSlots).mockImplementation(() => {
+    vi.mocked(captureClassSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -243,7 +243,7 @@ describe('reverseClassEdit', () => {
   // slot always carries a dictionary, so the reveal is scoped to it.
   it('reveals the rebound class in its own dictionary, not the first of that name', async () => {
     // A removed class put back: an exact restore, so a rebind op runs and the reveal follows it.
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
     const e = entry([bound('1', ['plain'])], [unbound]);
     e.slots = [{ dict: 'DictionaryB', className: 'Shadowed' }];
 

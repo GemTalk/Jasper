@@ -26,14 +26,14 @@ describe('python queries (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   describe('eval_python', () => {
     // Simplest possible success case — any encoding bug in the success
     // path would surface as the wrong digits or visible NUL bytes.
-    it('evaluates a basic Python expression', (ctx) => {
-      requireGrail(ctx, exec);
-      const result = evalPython(exec, '2 + 3');
+    it('evaluates a basic Python expression', async (ctx) => {
+      await requireGrail(ctx, exec);
+      const result = await evalPython(exec, '2 + 3');
       expect(result.trim()).toBe('5');
     });
 
@@ -43,9 +43,9 @@ describe('python queries (integration)', () => {
     // ways this used to break: UTF-16LE bytes leaking through (every char
     // followed by NUL) and Utf8-stream `at:put:` raising before any text
     // was produced.
-    it('reports Grail-side errors as a clean ASCII string (no UTF-16 leak, no Utf8 wrapper error)', (ctx) => {
-      requireGrail(ctx, exec);
-      const result = evalPython(exec, 'undefined_variable');
+    it('reports Grail-side errors as a clean ASCII string (no UTF-16 leak, no Utf8 wrapper error)', async (ctx) => {
+      await requireGrail(ctx, exec);
+      const result = await evalPython(exec, 'undefined_variable');
 
       // Every byte readable; no NUL or every-other-NUL pattern.
       expect(result).not.toContain(' ');
@@ -64,16 +64,16 @@ describe('python queries (integration)', () => {
     // Source is supplied verbatim, including single quotes. The escape
     // path is shared with every other query in the file — if it's broken,
     // every test on this branch breaks.
-    it('escapes single quotes in Python source', (ctx) => {
-      requireGrail(ctx, exec);
-      const result = evalPython(exec, "'hello'.upper()");
+    it('escapes single quotes in Python source', async (ctx) => {
+      await requireGrail(ctx, exec);
+      const result = await evalPython(exec, "'hello'.upper()");
       expect(result).toContain('HELLO');
     });
 
-    it('reports a clear hint when Grail is not installed', (ctx) => {
-      requireGrailAbsent(ctx, exec);
+    it('reports a clear hint when Grail is not installed', async (ctx) => {
+      await requireGrailAbsent(ctx, exec);
 
-      const result = evalPython(exec, '2 + 3');
+      const result = await evalPython(exec, '2 + 3');
 
       expect(result).toContain('Grail');
     });
@@ -83,10 +83,10 @@ describe('python queries (integration)', () => {
     // Transpile path uses `parseSource: ... smalltalkSource`. Selector
     // typos there would surface as a wrapper error (caught by the same
     // regression guards as eval_python).
-    it('returns the generated Smalltalk source for a Python expression', (ctx) => {
-      requireGrail(ctx, exec);
+    it('returns the generated Smalltalk source for a Python expression', async (ctx) => {
+      await requireGrail(ctx, exec);
 
-      const result = compilePython(exec, '1 + 1');
+      const result = await compilePython(exec, '1 + 1');
 
       // Whatever Grail emits, it must be ASCII-clean and non-empty.
       expect(result.length).toBeGreaterThan(0);

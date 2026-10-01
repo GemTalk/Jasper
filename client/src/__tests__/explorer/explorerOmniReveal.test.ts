@@ -136,7 +136,7 @@ describe('revealCategoryByPath checks existence before mutating the panes', () =
     const ctl = makeController();
     const { category } = withViews(ctl);
     classesInDict.mockReturnValue([{ className: 'Foo', category: 'Kernel' }]);
-    const selectCat = vi.spyOn(ctl, 'selectClassCategory').mockImplementation(() => {});
+    const selectCat = vi.spyOn(ctl, 'selectClassCategory').mockImplementation(async () => {});
 
     await ctl.revealCategoryByPath('UserGlobals', 'Kernel');
 
@@ -150,7 +150,7 @@ describe('revealCategoryByPath checks existence before mutating the panes', () =
     withViews(ctl);
     // A class filed under 'Kernel-Collections' means the parent 'Kernel' node exists.
     classesInDict.mockReturnValue([{ className: 'Foo', category: 'Kernel-Collections' }]);
-    const selectCat = vi.spyOn(ctl, 'selectClassCategory').mockImplementation(() => {});
+    const selectCat = vi.spyOn(ctl, 'selectClassCategory').mockImplementation(async () => {});
 
     await ctl.revealCategoryByPath('UserGlobals', 'Kernel');
 
@@ -229,7 +229,7 @@ describe('reveal targets the result’s own session, not whatever is selected no
     const { ctl, selectSession } = makeTwoSessionController(2);
     const { category } = withViews(ctl);
     classesInDict.mockReturnValue([{ className: 'Foo', category: 'Kernel' }]);
-    vi.spyOn(ctl, 'selectClassCategory').mockImplementation(() => {});
+    vi.spyOn(ctl, 'selectClassCategory').mockImplementation(async () => {});
 
     await ctl.revealCategoryByPath('UserGlobals', 'Kernel', 1);
 

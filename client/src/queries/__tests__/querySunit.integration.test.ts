@@ -41,10 +41,10 @@ describe('SUnit queries (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  beforeEach(() => {
-    installSunitProbeFixture(exec);
+  beforeEach(async () => {
+    await installSunitProbeFixture(exec);
   });
 
   describe('runTestMethod', () => {
@@ -52,8 +52,12 @@ describe('SUnit queries (integration)', () => {
     // test should carry the live exception text, not the SUnit debug
     // recipe. The probe's `testFails` does `self assert: 1 = 2`, so we
     // expect a TestFailure with an "Assertion failed"-style messageText.
-    it('reports the live exception class and messageText for a failing test', () => {
-      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_FAILING_SELECTOR);
+    it('reports the live exception class and messageText for a failing test', async () => {
+      const result = await runTestMethod(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_FAILING_SELECTOR,
+      );
       expect(result.status).toBe('failed');
       expect(result.message).toContain('TestFailure');
       // The classic round-3 regression: every failing test came back as
@@ -62,24 +66,32 @@ describe('SUnit queries (integration)', () => {
       expect(result.message).not.toContain('\0');
     });
 
-    it('reports MessageNotUnderstood with the bad selector for an erroring test', () => {
-      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_ERRORING_SELECTOR);
+    it('reports MessageNotUnderstood with the bad selector for an erroring test', async () => {
+      const result = await runTestMethod(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_ERRORING_SELECTOR,
+      );
       expect(result.status).toBe('error');
       expect(result.message).toContain('MessageNotUnderstood');
       expect(result.message).toContain('doesNotUnderstandWHATEVER');
       expect(result.message).not.toContain('\0');
     });
 
-    it('reports a passing test with no message', () => {
-      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR);
+    it('reports a passing test with no message', async () => {
+      const result = await runTestMethod(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_PASSING_SELECTOR,
+      );
       expect(result.status).toBe('passed');
       expect(result.message).toBe('');
     });
   });
 
   describe('runTestClass', () => {
-    it('reports per-method results for the probe class', () => {
-      const results = runTestClass(exec, SUNIT_PROBE_TEST_CLASS);
+    it('reports per-method results for the probe class', async () => {
+      const results = await runTestClass(exec, SUNIT_PROBE_TEST_CLASS);
       const bySel = new Map(results.map((r) => [r.selector, r]));
 
       expect(bySel.get(SUNIT_PROBE_PASSING_SELECTOR)?.status).toBe('passed');
@@ -99,8 +111,8 @@ describe('SUnit queries (integration)', () => {
     // The classNames path bypasses the discover-all branch; the no-args
     // path tests it. Round-2 had a CompileError on the no-args path
     // because the discover-all fragment had un-wrapped temps.
-    it('with explicit classNames returns only failed/errored entries', () => {
-      const results = runFailingTests(exec, [SUNIT_PROBE_TEST_CLASS]);
+    it('with explicit classNames returns only failed/errored entries', async () => {
+      const results = await runFailingTests(exec, [SUNIT_PROBE_TEST_CLASS]);
       const sels = new Set(results.map((r) => r.selector));
       expect(sels.has(SUNIT_PROBE_FAILING_SELECTOR)).toBe(true);
       expect(sels.has(SUNIT_PROBE_ERRORING_SELECTOR)).toBe(true);
@@ -114,8 +126,8 @@ describe('SUnit queries (integration)', () => {
       }
     });
 
-    it('with classNamePattern filters the discovered TestCase set', () => {
-      const results = runFailingTests(exec, undefined, 'JasperProbe*');
+    it('with classNamePattern filters the discovered TestCase set', async () => {
+      const results = await runFailingTests(exec, undefined, 'JasperProbe*');
       // Pattern matches our probe class. We expect both failures from it.
       const probeFailures = results.filter((r) => r.className === SUNIT_PROBE_TEST_CLASS);
       expect(probeFailures.length).toBeGreaterThanOrEqual(2);
@@ -135,10 +147,10 @@ describe('SUnit queries (integration)', () => {
       expect(() => discoverAllTestClasses(exec)).not.toThrow();
     });
 
-    it('discovers our probe class among the TestCase subclasses', () => {
+    it('discovers our probe class among the TestCase subclasses', async () => {
       // Confirms discovery returns a real, non-empty set (and sees our
       // installed fixture), so the dedup/abstract assertions below have teeth.
-      const names = discoverAllTestClasses(exec).map((c) => c.name);
+      const names = (await discoverAllTestClasses(exec)).map((c) => c.name);
       expect(names).toContain(SUNIT_PROBE_TEST_CLASS);
     });
 
@@ -149,8 +161,8 @@ describe('SUnit queries (integration)', () => {
     // (IdentitySet) and skip abstract classes. Both invariants live at the
     // discovery level — the duplicate *pairs* were just the downstream
     // symptom — so we assert them on the discovered set directly.
-    it('discovers a deduped, abstract-free class set (the round-5 regression)', () => {
-      const classes = discoverAllTestClasses(exec);
+    it('discovers a deduped, abstract-free class set (the round-5 regression)', async () => {
+      const classes = await discoverAllTestClasses(exec);
 
       const counts = new Map<string, number>();
       for (const c of classes) {
@@ -170,22 +182,22 @@ describe('SUnit queries (integration)', () => {
     // on the within-cap branch, running real kernel suites that blow vitest's 5s
     // default timeout on 3.7.5. Trivial probes remove both problems — at their
     // measured slope the cap would have to reach ~60,000 to approach that timeout.
-    it('refuses a discover-all selection over the cap, without running any suite', () => {
-      installRunLimitProbeClasses(exec, MAX_RUN_CLASSES + 1);
+    it('refuses a discover-all selection over the cap, without running any suite', async () => {
+      await installRunLimitProbeClasses(exec, MAX_RUN_CLASSES + 1);
 
       // Whatever the stone already held, the selection is now over the cap.
-      expect(discoverAllTestClasses(exec).length).toBeGreaterThan(MAX_RUN_CLASSES);
-      expect(() => runFailingTests(exec)).toThrow(/too many to run[\s\S]*Narrow the run/);
+      expect((await discoverAllTestClasses(exec)).length).toBeGreaterThan(MAX_RUN_CLASSES);
+      await expect(runFailingTests(exec)).rejects.toThrow(/too many to run[\s\S]*Narrow the run/);
 
       // The title's real claim: the refusal happened before the run loop, so
       // the marker global a probe's `testPasses` would have written is absent.
       expect(anyRunLimitProbeSuiteRan(gci, handle)).toBe(false);
     });
 
-    it('runs an at-cap selection and reports its failures', () => {
-      const names = installRunLimitProbeClasses(exec, MAX_RUN_CLASSES);
+    it('runs an at-cap selection and reports its failures', async () => {
+      const names = await installRunLimitProbeClasses(exec, MAX_RUN_CLASSES);
 
-      const results = runFailingTests(exec, names);
+      const results = await runFailingTests(exec, names);
 
       // One `testFails` row per probe class; `testPasses` is filtered out.
       expect(results).toHaveLength(MAX_RUN_CLASSES);
@@ -195,16 +207,16 @@ describe('SUnit queries (integration)', () => {
     // The explicit-classNames path counts what it was handed, before any class is
     // looked at — deliberately relying on it NOT deduping, which is what makes an
     // oversized explicit list refuse rather than quietly shrink.
-    it('counts the explicit-classNames selection before running anything', () => {
+    it('counts the explicit-classNames selection before running anything', async () => {
       const names = Array.from({ length: MAX_RUN_CLASSES + 1 }, () => SUNIT_PROBE_TEST_CLASS);
 
-      expect(() => runFailingTests(exec, names)).toThrow(/too many to run/);
+      await expect(runFailingTests(exec, names)).rejects.toThrow(/too many to run/);
     });
   });
 
   describe('describeTestFailure', () => {
-    it('returns structured fields for a TestFailure', () => {
-      const details = describeTestFailure(
+    it('returns structured fields for a TestFailure', async () => {
+      const details = await describeTestFailure(
         exec,
         SUNIT_PROBE_TEST_CLASS,
         SUNIT_PROBE_FAILING_SELECTOR,
@@ -221,8 +233,8 @@ describe('SUnit queries (integration)', () => {
       expect(details.stackReport).not.toContain('\0');
     });
 
-    it('returns mnuReceiver and mnuSelector for a MessageNotUnderstood', () => {
-      const details = describeTestFailure(
+    it('returns mnuReceiver and mnuSelector for a MessageNotUnderstood', async () => {
+      const details = await describeTestFailure(
         exec,
         SUNIT_PROBE_TEST_CLASS,
         SUNIT_PROBE_ERRORING_SELECTOR,

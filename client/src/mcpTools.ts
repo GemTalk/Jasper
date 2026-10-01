@@ -27,9 +27,9 @@ async function showBufferedTranscript(session: ActiveSession): Promise<void> {
 
 // Refresh the session's view of committed state if it's safe to do so — when,
 // and why, is VIEW_REFRESH_CODE's doc-comment.
-function refreshIfClean(session: ActiveSession): void {
+async function refreshIfClean(session: ActiveSession): Promise<void> {
   try {
-    queries.executeFetchString(session, VIEW_REFRESH_CODE);
+    await queries.executeFetchString(session, VIEW_REFRESH_CODE);
   } catch {
     // Best effort. If refresh fails (e.g. session disconnected) the primary
     // tool call below will report the real error.
@@ -49,14 +49,13 @@ type TestDictResolution =
 // it. Otherwise discover which dictionaries define a TestCase subclass of that
 // name: exactly one -> use it; zero -> notFound; many -> ambiguous (the caller
 // must disambiguate rather than guess).
-function resolveTestDictionary(
+async function resolveTestDictionary(
   session: ActiveSession,
   className: string,
   dictionary?: string,
-): TestDictResolution {
+): Promise<TestDictResolution> {
   if (dictionary) return { kind: 'resolved', dictName: dictionary };
-  const dictNames = sunit
-    .discoverTestClasses(session)
+  const dictNames = (await sunit.discoverTestClasses(session))
     .filter((c) => c.className === className)
     .map((c) => c.dictName);
   if (dictNames.length === 0) return { kind: 'notFound' };
@@ -76,16 +75,16 @@ function ambiguousDictMessage(className: string, dictNames: string[]): string {
 // return the user-facing error text when the class is missing/ambiguous. Folds
 // the notFound/ambiguous handling shared by the test-running tools into one
 // place so they can't drift.
-function withResolvedDict(
+async function withResolvedDict(
   session: ActiveSession,
   className: string,
   dictionary: string | undefined,
-  run: (dictName: string) => string,
-): string {
-  const res = resolveTestDictionary(session, className, dictionary);
+  run: (dictName: string) => Promise<string>,
+): Promise<string> {
+  const res = await resolveTestDictionary(session, className, dictionary);
   if (res.kind === 'notFound') return `No TestCase subclass named '${className}' found.`;
   if (res.kind === 'ambiguous') return ambiguousDictMessage(className, res.dictNames);
-  return run(res.dictName);
+  return await run(res.dictName);
 }
 
 // Build the empty-result message for a find_* tool. With env explicitly set,
@@ -100,14 +99,14 @@ function noResultsMessage(label: string, environmentId: number | undefined): str
 
 // Run a find_* search with auto env-1 fallback. Mirrors the helper in the
 // stdio surface — see mcp-server/src/tools.ts for the rationale.
-function searchWithEnvFallback<T>(
+async function searchWithEnvFallback<T>(
   environmentId: number | undefined,
-  search: (envId: number) => T[],
-): T[] {
-  if (environmentId !== undefined) return search(environmentId);
-  const env0 = search(0);
+  search: (envId: number) => Promise<T[]>,
+): Promise<T[]> {
+  if (environmentId !== undefined) return await search(environmentId);
+  const env0 = await search(0);
   if (env0.length > 0) return env0;
-  return search(1);
+  return await search(1);
 }
 
 /**
@@ -203,7 +202,7 @@ export function registerMcpTools(
     {},
     async () =>
       await wrapMoving<Record<string, unknown>>(async (session) => {
-        return executeString(session, `System abortTransaction. 'Transaction aborted'`);
+        return await executeString(session, `System abortTransaction. 'Transaction aborted'`);
       })({}),
   );
 
@@ -214,7 +213,7 @@ export function registerMcpTools(
     { dictionaryName: z.string().describe('Name of the new dictionary') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.addDictionary(session, a.dictionaryName);
+        return await queries.addDictionary(session, a.dictionaryName);
       })(args),
   );
 
@@ -226,7 +225,7 @@ export function registerMcpTools(
       await wrapMoving<Record<string, unknown>>(async (session) => {
         // Through the shared query rather than inline, so a refusal here names the
         // conflicting objects exactly as the session-row Commit does.
-        return commitTransaction((code) => executeString(session, code));
+        return await commitTransaction((code) => executeString(session, code));
       })({}),
   );
 
@@ -244,7 +243,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return `Class: ${queries.compileClassDefinition(session, a.source)}`;
+        return `Class: ${await queries.compileClassDefinition(session, a.source)}`;
       })(args),
   );
 
@@ -267,7 +266,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.compileMethod(
+        return await queries.compileMethod(
           session,
           a.className,
           a.isMeta,
@@ -291,7 +290,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return python.compilePython(session, a.source);
+        return await python.compilePython(session, a.source);
       })(args),
   );
 
@@ -306,7 +305,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.deleteClass(session, a.dictionaryName, a.className);
+        return await queries.deleteClass(session, a.dictionaryName, a.className);
       })(args),
   );
 
@@ -325,7 +324,13 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.deleteMethod(session, a.className, a.isMeta, a.selector, a.dictionaryName);
+        return await queries.deleteMethod(
+          session,
+          a.className,
+          a.isMeta,
+          a.selector,
+          a.dictionaryName,
+        );
       })(args),
   );
 
@@ -347,7 +352,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.describeClass(session, a.className, a.dictionaryName);
+        return await queries.describeClass(session, a.className, a.dictionaryName);
       })(args),
   );
 
@@ -364,7 +369,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const details = sunit.describeTestFailure(session, a.className, a.selector);
+        const details = await sunit.describeTestFailure(session, a.className, a.selector);
         return formatTestFailureDetails(details);
       })(args),
   );
@@ -383,7 +388,7 @@ export function registerMcpTools(
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
         try {
-          return python.evalPython(session, a.source);
+          return await python.evalPython(session, a.source);
         } finally {
           await showBufferedTranscript(session);
         }
@@ -404,7 +409,7 @@ export function registerMcpTools(
         // guards against AlmostOutOfStack / AbstractException so a runaway
         // block returns a clean error string instead of taking the gem down.
         try {
-          return executeString(session, wrapExecuteCode(a.code));
+          return await executeString(session, wrapExecuteCode(a.code));
         } finally {
           await showBufferedTranscript(session);
         }
@@ -426,7 +431,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.fileOutClass(session, a.className, a.dictionaryName);
+        return await queries.fileOutClass(session, a.className, a.dictionaryName);
       })(args),
   );
 
@@ -446,7 +451,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const results = searchWithEnvFallback(a.environmentId, (envId) =>
+        const results = await searchWithEnvFallback(a.environmentId, (envId) =>
           queries.implementorsOf(session, a.selector, envId),
         );
         return formatMethodResults(results, noResultsMessage('implementors', a.environmentId));
@@ -468,7 +473,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const results = searchWithEnvFallback(a.environmentId, (envId) =>
+        const results = await searchWithEnvFallback(a.environmentId, (envId) =>
           queries.referencesToObject(session, a.objectName, envId),
         );
         return formatMethodResults(results, noResultsMessage('references', a.environmentId));
@@ -489,7 +494,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const results = searchWithEnvFallback(a.environmentId, (envId) =>
+        const results = await searchWithEnvFallback(a.environmentId, (envId) =>
           queries.sendersOf(session, a.selector, envId),
         );
         return formatMethodResults(results, noResultsMessage('senders', a.environmentId));
@@ -502,7 +507,7 @@ export function registerMcpTools(
     { className: z.string().describe('Class name, e.g. "Array"') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.getClassDefinition(session, a.className);
+        return await queries.getClassDefinition(session, a.className);
       })(args),
   );
 
@@ -512,7 +517,7 @@ export function registerMcpTools(
     { className: z.string().describe('Class name') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const entries = queries.getClassHierarchy(session, a.className);
+        const entries = await queries.getClassHierarchy(session, a.className);
         return entries.map((e) => `${e.dictName}\t${e.className}\t${e.kind}`).join('\n');
       })(args),
   );
@@ -528,7 +533,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const source = queries.getMethodSource(
+        const source = await queries.getMethodSource(
           session,
           a.className,
           a.isMeta,
@@ -562,7 +567,7 @@ export function registerMcpTools(
     {},
     async () =>
       await wrap<Record<string, unknown>>(async (session) => {
-        const entries = queries.getAllClassNames(session);
+        const entries = await queries.getAllClassNames(session);
         return entries.map((e) => `${e.dictIndex}\t${e.dictName}\t${e.className}`).join('\n');
       })({}),
   );
@@ -573,7 +578,7 @@ export function registerMcpTools(
     { dictionaryName: z.string().describe('Dictionary name, e.g. "Globals"') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const names = queries.getClassNames(session, a.dictionaryName);
+        const names = await queries.getClassNames(session, a.dictionaryName);
         if (names.length === 0) return `Dictionary not found or empty: ${a.dictionaryName}`;
         return names.join('\n');
       })(args),
@@ -585,7 +590,7 @@ export function registerMcpTools(
     {},
     async () =>
       await wrap<Record<string, unknown>>(async (session) => {
-        return queries.getDictionaryNames(session).join('\n');
+        return (await queries.getDictionaryNames(session)).join('\n');
       })({}),
   );
 
@@ -597,7 +602,7 @@ export function registerMcpTools(
     { dictionaryName: z.string().describe('Dictionary name, e.g. "Globals"') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const entries = queries.getDictionaryEntries(session, a.dictionaryName);
+        const entries = await queries.getDictionaryEntries(session, a.dictionaryName);
         if (entries.length === 0) return `Dictionary not found or empty: ${a.dictionaryName}`;
         return entries
           .map((e) => `${e.isClass ? 'class' : 'global'}\t${e.category}\t${e.name}`)
@@ -639,8 +644,8 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        refreshIfClean(session);
-        const results = sunit.runFailingTests(session, a.classNames, a.classNamePattern);
+        await refreshIfClean(session);
+        const results = await sunit.runFailingTests(session, a.classNames, a.classNamePattern);
         if (results.length === 0) return 'All tests passed.';
         return results
           .map((r) => {
@@ -657,7 +662,7 @@ export function registerMcpTools(
     { className: z.string().describe('Class name') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const methods = queries.getMethodList(session, a.className);
+        const methods = await queries.getMethodList(session, a.className);
         if (methods.length === 0) return 'No methods found.';
         return methods
           .map((m) => `${m.isMeta ? 'class' : 'instance'}\t${m.category}\t${m.selector}`)
@@ -673,7 +678,7 @@ export function registerMcpTools(
     {},
     async () =>
       await wrap<Record<string, unknown>>(async (session) => {
-        const classes = sunit.discoverTestClasses(session);
+        const classes = await sunit.discoverTestClasses(session);
         if (classes.length === 0) return 'No TestCase subclasses found.';
         return classes.map((c) => `${c.dictName}\t${c.className}`).join('\n');
       })({}),
@@ -685,7 +690,7 @@ export function registerMcpTools(
     {},
     async () =>
       await wrap<Record<string, unknown>>(async (session) => {
-        return executeString(session, VIEW_REFRESH_CODE);
+        return await executeString(session, VIEW_REFRESH_CODE);
       })({}),
   );
 
@@ -696,7 +701,7 @@ export function registerMcpTools(
     { dictionaryName: z.string().describe('Name of the dictionary to remove') },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.removeDictionary(session, a.dictionaryName);
+        return await queries.removeDictionary(session, a.dictionaryName);
       })(args),
   );
 
@@ -719,10 +724,10 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        refreshIfClean(session);
+        await refreshIfClean(session);
         try {
-          return withResolvedDict(session, a.className, a.dictionary, (dictName) =>
-            formatTestResults(sunit.runTestClass(session, a.className, dictName)),
+          return await withResolvedDict(session, a.className, a.dictionary, async (dictName) =>
+            formatTestResults(await sunit.runTestClass(session, a.className, dictName)),
           );
         } finally {
           await showBufferedTranscript(session);
@@ -750,10 +755,10 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        refreshIfClean(session);
+        await refreshIfClean(session);
         try {
-          return withResolvedDict(session, a.className, a.dictionary, (dictName) =>
-            formatTestResult(sunit.runTestMethod(session, a.className, a.selector, dictName)),
+          return await withResolvedDict(session, a.className, a.dictionary, async (dictName) =>
+            formatTestResult(await sunit.runTestMethod(session, a.className, a.selector, dictName)),
           );
         } finally {
           await showBufferedTranscript(session);
@@ -770,7 +775,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        const results = queries.searchMethodSource(session, a.term, a.ignoreCase ?? true);
+        const results = await queries.searchMethodSource(session, a.term, a.ignoreCase ?? true);
         return formatMethodResults(results, 'No matches found.');
       })(args),
   );
@@ -789,7 +794,7 @@ export function registerMcpTools(
     },
     async (args) =>
       await wrap<typeof args>(async (session, a) => {
-        return queries.setClassComment(session, a.className, a.comment, a.dictionaryName);
+        return await queries.setClassComment(session, a.className, a.comment, a.dictionaryName);
       })(args),
   );
 
@@ -812,7 +817,7 @@ export function registerMcpTools(
         // rest of the report (and any follow-up read tool calls) sees committed
         // state landed by other processes. See VIEW_REFRESH_CODE.
         const code = SESSION_STATUS_CODE;
-        return executeString(session, code);
+        return await executeString(session, code);
       })({}),
   );
 }
@@ -867,6 +872,6 @@ function formatTestResults(results: TestRunResult[]): string {
     .join('\n');
 }
 
-function executeString(session: ActiveSession, code: string): string {
-  return queries.executeFetchString(session, code);
+async function executeString(session: ActiveSession, code: string): Promise<string> {
+  return await queries.executeFetchString(session, code);
 }

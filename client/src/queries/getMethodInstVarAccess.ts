@@ -14,12 +14,12 @@ export interface MethodInstVarAccess {
   writes: string[];
 }
 
-export function getMethodInstVarAccess(
+export async function getMethodInstVarAccess(
   execute: QueryExecutor,
   dictIndex: number,
   className: string,
   maxEnv: number,
-): MethodInstVarAccess[] {
+): Promise<MethodInstVarAccess[]> {
   // One line per accessing method: <isMeta 0|1> TAB <selector> TAB
   // <reads, comma-joined> TAB <writes, comma-joined>. Names come straight from
   // the compiled method, so they include in-scope inherited ivars by name.
@@ -48,7 +48,7 @@ stream := WriteStream on: Unicode7 new.
               stream lf ] ] ] ] ] ] ].
 stream contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: MethodInstVarAccess[] = [];
   for (const line of raw.split('\n')) {

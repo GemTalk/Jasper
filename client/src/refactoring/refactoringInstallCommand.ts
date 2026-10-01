@@ -77,7 +77,7 @@ async function performInstall(
     return false;
   }
 
-  const reinstall = isRefactoringSupportInstalled(base);
+  const reinstall = await isRefactoringSupportInstalled(base);
 
   const sys = await obtainSystemUserSession(base, interactive, 'the refactoring engine');
   if (!sys) {
@@ -135,7 +135,7 @@ async function performInstall(
     'Refactoring engine installed.',
   );
   if (refreshed) {
-    refreshRefactoringSupportAvailable(base);
+    await refreshRefactoringSupportAvailable(base);
     void vscode.commands.executeCommand(
       'setContext',
       'gemstone.rbSupportAvailable',

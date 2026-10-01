@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
   keySerial = 0;
-  vi.mocked(defaultQueryExecutorUsing).mockReturnValue(() => '');
+  vi.mocked(defaultQueryExecutorUsing).mockReturnValue(async () => '');
   vi.mocked(newStashKey).mockImplementation(() => {
     keySerial += 1;
     return `k${keySerial}`;
@@ -50,12 +50,12 @@ beforeEach(() => {
 });
 
 describe('beginClassEdit', () => {
-  it('stashes the bound version and records the new one on commit', () => {
+  it('stashes the bound version and records the new one on commit', async () => {
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([bound('1')])
-      .mockReturnValueOnce([bound('2')]);
+      .mockResolvedValueOnce([bound('1')])
+      .mockResolvedValueOnce([bound('2')]);
 
-    const entry = beginClassEdit(session, [slot()])?.commit('Redefine class Account');
+    const entry = await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account');
 
     expect(entry).toMatchObject({
       kind: 'classEdit',
@@ -65,128 +65,138 @@ describe('beginClassEdit', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('asks for the stash on the way in and not on the way out', () => {
+  it('asks for the stash on the way in and not on the way out', async () => {
     // The read-back must not pin the version the edit just produced.
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([bound('1')])
-      .mockReturnValueOnce([bound('2')]);
+      .mockResolvedValueOnce([bound('1')])
+      .mockResolvedValueOnce([bound('2')]);
 
-    beginClassEdit(session, [slot()])?.commit('Redefine class Account');
+    await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account');
 
     expect(vi.mocked(captureClassSlots).mock.calls[0][2]).toEqual(['k1']);
     expect(vi.mocked(captureClassSlots).mock.calls[1][2]).toBeUndefined();
   });
 
-  it('keeps no stash key for a name that had nothing bound', () => {
+  it('keeps no stash key for a name that had nothing bound', async () => {
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([unbound])
-      .mockReturnValueOnce([bound('2')]);
+      .mockResolvedValueOnce([unbound])
+      .mockResolvedValueOnce([bound('2')]);
 
-    const entry = beginClassEdit(session, [slot()])?.commit('Add class Account');
+    const entry = await (await beginClassEdit(session, [slot()]))?.commit('Add class Account');
 
     expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
   });
 
-  it('records nothing when the same version is still bound', () => {
+  it('records nothing when the same version is still bound', async () => {
     // An identical redefinition answers the SAME class object, so no version was created.
-    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('1')]);
 
-    expect(beginClassEdit(session, [slot()])?.commit('Redefine class Account')).toBeUndefined();
+    expect(
+      await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account'),
+    ).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing when the name was unbound before and still is', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+  it('records nothing when the name was unbound before and still is', async () => {
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
 
-    expect(beginClassEdit(session, [slot()])?.commit('Add class Account')).toBeUndefined();
+    expect(
+      await (await beginClassEdit(session, [slot()]))?.commit('Add class Account'),
+    ).toBeUndefined();
   });
 
-  it('refuses an empty slot list', () => {
-    expect(beginClassEdit(session, [])).toBeUndefined();
+  it('refuses an empty slot list', async () => {
+    expect(await beginClassEdit(session, [])).toBeUndefined();
     expect(captureClassSlots).not.toHaveBeenCalled();
   });
 
-  it('answers undefined rather than throwing when the capture fails', () => {
-    vi.mocked(captureClassSlots).mockImplementation(() => {
+  it('answers undefined rather than throwing when the capture fails', async () => {
+    vi.mocked(captureClassSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(() => beginClassEdit(session, [slot()])).not.toThrow();
-    expect(beginClassEdit(session, [slot()])).toBeUndefined();
+    await expect(beginClassEdit(session, [slot()])).resolves.not.toThrow();
+    expect(await beginClassEdit(session, [slot()])).toBeUndefined();
   });
 
-  it('answers undefined rather than throwing when the executor cannot be built', () => {
+  it('answers undefined rather than throwing when the executor cannot be built', async () => {
     vi.mocked(defaultQueryExecutorUsing).mockImplementation(() => {
       throw new Error('no session');
     });
 
-    expect(beginClassEdit(session, [slot()])).toBeUndefined();
+    expect(await beginClassEdit(session, [slot()])).toBeUndefined();
   });
 
-  it('refuses a capture that did not answer one state per slot', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+  it('refuses a capture that did not answer one state per slot', async () => {
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('1')]);
 
-    expect(beginClassEdit(session, [slot('A'), slot('B')])).toBeUndefined();
+    expect(await beginClassEdit(session, [slot('A'), slot('B')])).toBeUndefined();
   });
 
-  it('records nothing when the result could not be read back', () => {
+  it('records nothing when the result could not be read back', async () => {
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([bound('1')])
+      .mockResolvedValueOnce([bound('1')])
       .mockImplementationOnce(() => {
         throw new Error('session busy');
       });
 
-    expect(beginClassEdit(session, [slot()])?.commit('Redefine class Account')).toBeUndefined();
+    expect(
+      await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account'),
+    ).toBeUndefined();
   });
 
-  it('lets go of what it pinned when it decides not to record', () => {
+  it('lets go of what it pinned when it decides not to record', async () => {
     // The capture has already held a version in the stone. Nothing on the stack will ever
     // name that key once the recording is declined, so the decline has to free it itself.
-    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('1')]);
 
-    beginClassEdit(session, [slot()])?.commit('Redefine class Account');
+    await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account');
 
     expect(vi.mocked(releaseStashKeys).mock.calls[0][1]).toEqual(['k1']);
     expect(forgetStashKeys).toHaveBeenCalledWith(session.id, ['k1']);
   });
 
-  it('frees nothing for a name that had no version bound to pin', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+  it('frees nothing for a name that had no version bound to pin', async () => {
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
 
-    beginClassEdit(session, [slot()])?.commit('Add class Account');
+    await (await beginClassEdit(session, [slot()]))?.commit('Add class Account');
 
     expect(releaseStashKeys).not.toHaveBeenCalled();
     expect(forgetStashKeys).toHaveBeenCalledWith(session.id, ['k1']);
   });
 
-  it('still declines when the release itself fails', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([bound('1')]);
-    vi.mocked(releaseStashKeys).mockImplementation(() => {
+  it('still declines when the release itself fails', async () => {
+    vi.mocked(captureClassSlots).mockResolvedValue([bound('1')]);
+    vi.mocked(releaseStashKeys).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginClassEdit(session, [slot()])?.commit('Redefine class Account')).toBeUndefined();
+    expect(
+      await (await beginClassEdit(session, [slot()]))?.commit('Redefine class Account'),
+    ).toBeUndefined();
   });
 });
 
 describe('beginClassDeletion', () => {
-  it('names a single removed class', () => {
+  it('names a single removed class', async () => {
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([bound('1')])
-      .mockReturnValueOnce([unbound]);
+      .mockResolvedValueOnce([bound('1')])
+      .mockResolvedValueOnce([unbound]);
 
-    expect(beginClassDeletion(session, [slot()])?.commit()).toMatchObject({
+    expect(await (await beginClassDeletion(session, [slot()]))?.commit()).toMatchObject({
       label: 'Remove class Account',
     });
   });
 
-  it('records a removed subtree as ONE entry, named for its root', () => {
+  it('records a removed subtree as ONE entry, named for its root', async () => {
     // Putting half a subtree back is not a reversal of what the user asked for.
     vi.mocked(captureClassSlots)
-      .mockReturnValueOnce([bound('1'), bound('2')])
-      .mockReturnValueOnce([unbound, unbound]);
+      .mockResolvedValueOnce([bound('1'), bound('2')])
+      .mockResolvedValueOnce([unbound, unbound]);
 
-    const entry = beginClassDeletion(session, [slot('Account'), slot('Savings')])?.commit();
+    const entry = await (
+      await beginClassDeletion(session, [slot('Account'), slot('Savings')])
+    )?.commit();
 
     expect(entry).toMatchObject({
       label: 'Remove 2 classes (Account and its subclasses)',
@@ -194,17 +204,17 @@ describe('beginClassDeletion', () => {
     expect(entry?.kind === 'classEdit' && entry.slots).toHaveLength(2);
   });
 
-  it('records nothing when none of the names were bound', () => {
-    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+  it('records nothing when none of the names were bound', async () => {
+    vi.mocked(captureClassSlots).mockResolvedValue([unbound]);
 
-    expect(beginClassDeletion(session, [slot()])).toBeUndefined();
+    expect(await beginClassDeletion(session, [slot()])).toBeUndefined();
   });
 
-  it('answers undefined when the capture failed, so the delete still runs', () => {
-    vi.mocked(captureClassSlots).mockImplementation(() => {
+  it('answers undefined when the capture failed, so the delete still runs', async () => {
+    vi.mocked(captureClassSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginClassDeletion(session, [slot()])).toBeUndefined();
+    expect(await beginClassDeletion(session, [slot()])).toBeUndefined();
   });
 });

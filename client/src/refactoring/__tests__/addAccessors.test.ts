@@ -30,10 +30,10 @@ describe('accessor spec computation', () => {
 });
 
 describe('add-accessors query', () => {
-  it('compiles each accessor only when its selector is absent, on the class side for isMeta', () => {
+  it('compiles each accessor only when its selector is absent, on the class side for isMeta', async () => {
     const exec = vi.fn().mockReturnValue('created:2 skipped:0');
 
-    const result = addAccessors(
+    const result = await addAccessors(
       exec,
       'Foo',
       true,
@@ -52,10 +52,10 @@ describe('add-accessors query', () => {
     expect(result).toEqual({ created: 2, skipped: 0, noClass: false });
   });
 
-  it('targets the instance side when not isMeta', () => {
+  it('targets the instance side when not isMeta', async () => {
     const exec = vi.fn().mockReturnValue('created:0 skipped:2');
 
-    const result = addAccessors(exec, 'Foo', false, [
+    const result = await addAccessors(exec, 'Foo', false, [
       { selector: 'count', source: 'count\n\t^count' },
     ]);
 
@@ -64,20 +64,22 @@ describe('add-accessors query', () => {
     expect(result).toEqual({ created: 0, skipped: 2, noClass: false });
   });
 
-  it('reports noClass when the class cannot be resolved', () => {
+  it('reports noClass when the class cannot be resolved', async () => {
     const exec = vi.fn().mockReturnValue('no-class');
 
-    expect(addAccessors(exec, 'Missing', false, [{ selector: 'x', source: 'x\n\t^x' }])).toEqual({
+    expect(
+      await addAccessors(exec, 'Missing', false, [{ selector: 'x', source: 'x\n\t^x' }]),
+    ).toEqual({
       created: 0,
       skipped: 0,
       noClass: true,
     });
   });
 
-  it('escapes quotes in the selector and source', () => {
+  it('escapes quotes in the selector and source', async () => {
     const exec = vi.fn().mockReturnValue('created:1 skipped:0');
 
-    addAccessors(exec, 'Foo', false, [{ selector: "x'", source: "x'\n\t^y" }]);
+    await addAccessors(exec, 'Foo', false, [{ selector: "x'", source: "x'\n\t^y" }]);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("add value: #'x''' value: 'x''");

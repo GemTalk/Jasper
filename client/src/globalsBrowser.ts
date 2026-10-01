@@ -16,7 +16,7 @@ export class GlobalsBrowser {
     dictName: string,
     dictIndex: number,
   ): Promise<void> {
-    const globals = queries.getGlobalsForDictionary(session, dictIndex);
+    const globals = await queries.getGlobalsForDictionary(session, dictIndex);
 
     const existing = GlobalsBrowser.panels.get(session.id);
     if (existing) {

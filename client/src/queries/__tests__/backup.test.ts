@@ -9,44 +9,44 @@ import {
 
 describe('full logical backup queries', () => {
   describe('FileControl privilege check', () => {
-    it('reports the privilege is held when the stone answers true', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'true\n');
+    it('reports the privilege is held when the stone answers true', async () => {
+      const execute = vi.fn<QueryExecutor>(async () => 'true\n');
 
-      const held = hasFileControlPrivilege(execute);
+      const held = await hasFileControlPrivilege(execute);
 
       expect(held).toBe(true);
       expect(execute.mock.calls[0][0]).toContain('privileges includes: #FileControl');
     });
 
-    it('reports the privilege is missing for any non-true answer', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'false');
+    it('reports the privilege is missing for any non-true answer', async () => {
+      const execute = vi.fn<QueryExecutor>(async () => 'false');
 
-      expect(hasFileControlPrivilege(execute)).toBe(false);
+      expect(await hasFileControlPrivilege(execute)).toBe(false);
     });
   });
 
   describe('uncommitted-changes check', () => {
-    it('detects uncommitted changes when the session needs a commit', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'true');
+    it('detects uncommitted changes when the session needs a commit', async () => {
+      const execute = vi.fn<QueryExecutor>(async () => 'true');
 
-      const dirty = sessionNeedsCommit(execute);
+      const dirty = await sessionNeedsCommit(execute);
 
       expect(dirty).toBe(true);
       expect(execute.mock.calls[0][0]).toContain('System needsCommit');
     });
 
-    it('reports a clean session as having nothing to lose', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'false');
+    it('reports a clean session as having nothing to lose', async () => {
+      const execute = vi.fn<QueryExecutor>(async () => 'false');
 
-      expect(sessionNeedsCommit(execute)).toBe(false);
+      expect(await sessionNeedsCommit(execute)).toBe(false);
     });
   });
 
   describe('discarding changes before a backup', () => {
-    it('aborts the session to drop uncommitted changes', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'aborted');
+    it('aborts the session to drop uncommitted changes', async () => {
+      const execute = vi.fn<QueryExecutor>(async () => 'aborted');
 
-      abortTransaction(execute);
+      await abortTransaction(execute);
 
       expect(execute.mock.calls[0][0]).toContain('System abortTransaction');
     });

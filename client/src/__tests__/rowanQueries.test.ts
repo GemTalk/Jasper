@@ -9,11 +9,13 @@ import { diffRowanProject, formatRowanDiff } from '../queries/rowan/diffRowanPro
 import { unloadRowanProject } from '../queries/rowan/unloadRowanProject';
 import type { QueryExecutor } from '../queries/types';
 
-const executor = (result: string) => vi.fn<QueryExecutor>(() => result);
+const executor = (result: string) => vi.fn<QueryExecutor>(async () => result);
 
 describe('listRowanProjects', () => {
-  it('parses project names with their dirty and built-in flags', () => {
-    const result = listRowanProjects(executor('Cypress\tfalse\ttrue\nSeaside\ttrue\tfalse\n'));
+  it('parses project names with their dirty and built-in flags', async () => {
+    const result = await listRowanProjects(
+      executor('Cypress\tfalse\ttrue\nSeaside\ttrue\tfalse\n'),
+    );
 
     expect(result.available).toBe(true);
     expect(result.projects).toEqual([
@@ -22,14 +24,14 @@ describe('listRowanProjects', () => {
     ]);
   });
 
-  it('reports Rowan unavailable on the sentinel', () => {
-    expect(listRowanProjects(executor('!NO_ROWAN')).available).toBe(false);
+  it('reports Rowan unavailable on the sentinel', async () => {
+    expect((await listRowanProjects(executor('!NO_ROWAN'))).available).toBe(false);
   });
 });
 
 describe('listAllRowanClasses', () => {
-  it('parses each class with its project, package, and symbol dictionary', () => {
-    const result = listAllRowanClasses(
+  it('parses each class with its project, package, and symbol dictionary', async () => {
+    const result = await listAllRowanClasses(
       executor(
         'STONReader\tSTON\tSTON-Core\tUserGlobals\nAnnouncementSet\tAnnouncements\tAnnouncements-Core-GemStone\tGlobals\n',
       ),
@@ -46,14 +48,14 @@ describe('listAllRowanClasses', () => {
     ]);
   });
 
-  it('returns nothing when Rowan is absent', () => {
-    expect(listAllRowanClasses(executor(''))).toEqual([]);
+  it('returns nothing when Rowan is absent', async () => {
+    expect(await listAllRowanClasses(executor(''))).toEqual([]);
   });
 });
 
 describe('findRowanClassOwners', () => {
-  it('splits owners into defining and extending packages', () => {
-    const result = findRowanClassOwners(
+  it('splits owners into defining and extending packages', async () => {
+    const result = await findRowanClassOwners(
       executor('D\tSTON\tSTON-Core\nX\tCypress\tCypress-Comparison\n'),
       'STONReader',
     );
@@ -62,13 +64,13 @@ describe('findRowanClassOwners', () => {
     expect(result.extended).toEqual([{ project: 'Cypress', package: 'Cypress-Comparison' }]);
   });
 
-  it('returns empty groups when the class belongs to no package', () => {
-    expect(findRowanClassOwners(executor(''), 'Nope')).toEqual({ defined: [], extended: [] });
+  it('returns empty groups when the class belongs to no package', async () => {
+    expect(await findRowanClassOwners(executor(''), 'Nope')).toEqual({ defined: [], extended: [] });
   });
 
-  it('scans by includesKey so classes outside the symbolList are still found', () => {
+  it('scans by includesKey so classes outside the symbolList are still found', async () => {
     const execute = executor('');
-    findRowanClassOwners(execute, 'STONReader');
+    await findRowanClassOwners(execute, 'STONReader');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("loadedClasses includesKey: 'STONReader'");
     expect(code).toContain("loadedClassExtensions includesKey: 'STONReader'");
@@ -96,15 +98,15 @@ describe('buildLoadRowanProjectCode', () => {
 });
 
 describe('unloadRowanProject', () => {
-  it('reports the unloaded project name on OK', () => {
-    expect(unloadRowanProject(executor('OK\tSTON'), 'STON')).toEqual({
+  it('reports the unloaded project name on OK', async () => {
+    expect(await unloadRowanProject(executor('OK\tSTON'), 'STON')).toEqual({
       success: true,
       detail: 'STON',
     });
   });
 
-  it('surfaces the dependency error and aborts on ERR', () => {
-    const result = unloadRowanProject(
+  it('surfaces the dependency error and aborts on ERR', async () => {
+    const result = await unloadRowanProject(
       executor('ERR\tCannot unload projects that are required by other projects'),
       'Cypress',
     );
@@ -113,10 +115,10 @@ describe('unloadRowanProject', () => {
     expect(result.detail).toContain('required by other projects');
   });
 
-  it('unloads via gemstoneTools topaz and commits', () => {
+  it('unloads via gemstoneTools topaz and commits', async () => {
     const execute = executor('');
 
-    unloadRowanProject(execute, 'STON');
+    await unloadRowanProject(execute, 'STON');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain("gemstoneTools topaz unloadProjectNamed: 'STON'");
@@ -126,13 +128,13 @@ describe('unloadRowanProject', () => {
 });
 
 describe('diffRowanProject', () => {
-  it('maps I/D/M to image/disk/changed and cleans the target', () => {
+  it('maps I/D/M to image/disk/changed and cleans the target', async () => {
     const raw =
       'I\tSTON-Core\ta RwCypressMethodDefinition(STONReader>>next)\n' +
       'D\tSTON-Core\ta RwCypressMethodDefinition(STONWriter>>old)\n' +
       'M\tSTON-Core\ta RwCypressClassDefinition(STONReader)\n';
 
-    const diff = diffRowanProject(executor(raw), 'STON');
+    const diff = await diffRowanProject(executor(raw), 'STON');
 
     expect(diff.ok).toBe(true);
     expect(diff.operations).toEqual([
@@ -142,9 +144,9 @@ describe('diffRowanProject', () => {
     ]);
   });
 
-  it('reports Rowan-absent and error sentinels as not ok', () => {
-    expect(diffRowanProject(executor('!NO_ROWAN'), 'X').ok).toBe(false);
-    expect(diffRowanProject(executor('!ERR could not read disk'), 'X')).toMatchObject({
+  it('reports Rowan-absent and error sentinels as not ok', async () => {
+    expect((await diffRowanProject(executor('!NO_ROWAN'), 'X')).ok).toBe(false);
+    expect(await diffRowanProject(executor('!ERR could not read disk'), 'X')).toMatchObject({
       ok: false,
       error: 'could not read disk',
     });
@@ -154,9 +156,9 @@ describe('diffRowanProject', () => {
   // Unicode7, and `Symbol = Unicode7` answers false silently — so both add/remove
   // branches fell through to 'M'. The classifier must compare interned Symbols.
   // Regression guard for issue #400 (diff mislabelled every row 'M' on 3.6.x).
-  it('classifies operations by interned Symbol, not string (3.6.x Unicode7 safety)', () => {
+  it('classifies operations by interned Symbol, not string (3.6.x Unicode7 safety)', async () => {
     const exec = executor('');
-    diffRowanProject(exec, 'STON');
+    await diffRowanProject(exec, 'STON');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('op class name asSymbol == #CypressAddition');
     expect(code).toContain('op class name asSymbol == #CypressRemoval');
@@ -196,14 +198,18 @@ describe('formatRowanDiff', () => {
 });
 
 describe('exportRowanProject', () => {
-  it('reports success and the target directory on OK', () => {
-    const result = exportRowanProject(executor('OK\t/out/Cypress'), 'Cypress', '/out/Cypress');
+  it('reports success and the target directory on OK', async () => {
+    const result = await exportRowanProject(
+      executor('OK\t/out/Cypress'),
+      'Cypress',
+      '/out/Cypress',
+    );
 
     expect(result).toEqual({ success: true, detail: '/out/Cypress' });
   });
 
-  it('reports failure with the error message on ERR', () => {
-    const result = exportRowanProject(
+  it('reports failure with the error message on ERR', async () => {
+    const result = await exportRowanProject(
       executor('ERR\tProject Cypress is not loaded'),
       'Cypress',
       '/out',
@@ -212,10 +218,10 @@ describe('exportRowanProject', () => {
     expect(result).toEqual({ success: false, detail: 'Project Cypress is not loaded' });
   });
 
-  it('writes the load spec too (the copy is otherwise not reloadable)', () => {
+  it('writes the load spec too (the copy is otherwise not reloadable)', async () => {
     const execute = executor('OK\t/out/Cypress');
 
-    exportRowanProject(execute, 'Cypress', '/out/Cypress');
+    await exportRowanProject(execute, 'Cypress', '/out/Cypress');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('writeResolvedProject:');
@@ -225,19 +231,19 @@ describe('exportRowanProject', () => {
 });
 
 describe('getGemCacheKB', () => {
-  it('parses the gem temp-object cache size into KB', () => {
-    expect(getGemCacheKB(executor('512000'))).toBe(512000);
+  it('parses the gem temp-object cache size into KB', async () => {
+    expect(await getGemCacheKB(executor('512000'))).toBe(512000);
   });
 
-  it('queries GemTempObjCacheSize in KB units', () => {
+  it('queries GemTempObjCacheSize in KB units', async () => {
     const execute = executor('0');
-    getGemCacheKB(execute);
+    await getGemCacheKB(execute);
     expect(execute.mock.calls[0][0]).toContain('GemTempObjCacheSize');
     expect(execute.mock.calls[0][0]).toContain('// 1024');
   });
 
-  it('returns undefined when the value is not a positive number', () => {
-    expect(getGemCacheKB(executor('nil'))).toBeUndefined();
-    expect(getGemCacheKB(executor('0'))).toBeUndefined();
+  it('returns undefined when the value is not a positive number', async () => {
+    expect(await getGemCacheKB(executor('nil'))).toBeUndefined();
+    expect(await getGemCacheKB(executor('0'))).toBeUndefined();
   });
 });

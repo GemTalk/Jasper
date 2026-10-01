@@ -3,13 +3,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { getAllGlobalNames } from '../getAllGlobalNames';
 
 describe('getAllGlobalNames', () => {
-  it('parses dictIndex / dictName / name / value-class from the tab-separated rows', () => {
+  it('parses dictIndex / dictName / name / value-class from the tab-separated rows', async () => {
     const exec = vi.fn(
-      () =>
+      async () =>
         '1\tGlobals\tTranscript\tGsTerminalStream\n1\tGlobals\tAllUsers\tUserProfileSet\n5\tUserGlobals\tMyGlobal\tArray\n',
     );
 
-    const globals = getAllGlobalNames(exec);
+    const globals = await getAllGlobalNames(exec);
 
     expect(globals).toEqual([
       { dictIndex: 1, dictName: 'Globals', name: 'Transcript', className: 'GsTerminalStream' },
@@ -18,17 +18,17 @@ describe('getAllGlobalNames', () => {
     ]);
   });
 
-  it('scans the whole symbol list for non-class values', () => {
-    const exec = vi.fn((_code: string) => '');
+  it('scans the whole symbol list for non-class values', async () => {
+    const exec = vi.fn(async (_code: string) => '');
 
-    getAllGlobalNames(exec);
+    await getAllGlobalNames(exec);
 
     const code = exec.mock.calls[0][0];
     expect(code).toContain('symbolList');
     expect(code).toContain('isBehavior ifFalse:');
   });
 
-  it('returns nothing for an empty image slice', () => {
-    expect(getAllGlobalNames(vi.fn(() => ''))).toEqual([]);
+  it('returns nothing for an empty image slice', async () => {
+    expect(await getAllGlobalNames(vi.fn(async () => ''))).toEqual([]);
   });
 });

@@ -12,8 +12,8 @@ import { extentFolderInServer } from '../../queries/extentBackup';
  * @param gciLibrary - GCI bridge used to run the query on the server.
  * @returns A POSIX path suitable for a one-off temporary file or folder.
  */
-export function temporaryServerPath(session: unknown, gciLibrary: GciLibrary) {
-  const extentFolderPath = extentFolderInServer((code) =>
+export async function temporaryServerPath(session: unknown, gciLibrary: GciLibrary) {
+  const extentFolderPath = await extentFolderInServer(async (code) =>
     gciLibrary.executeAndFetchString(session, code),
   );
 
@@ -88,16 +88,16 @@ function safelyRemoveServerDirectory(
  * @param gciLibrary - GCI bridge used to run the operations on the server.
  * @param consumer - Callback invoked with the temporary folder's POSIX path.
  */
-export function withTemporaryServerFolderDo(
+export async function withTemporaryServerFolderDo(
   session: unknown,
   gciLibrary: GciLibrary,
-  consumer: (temporaryFolderPath: string) => void,
+  consumer: (temporaryFolderPath: string) => unknown,
 ) {
-  const temporaryFolderPath = temporaryServerPath(session, gciLibrary);
+  const temporaryFolderPath = await temporaryServerPath(session, gciLibrary);
   createServerDirectory(temporaryFolderPath, session, gciLibrary);
 
   try {
-    consumer(temporaryFolderPath);
+    await consumer(temporaryFolderPath);
   } finally {
     safelyRemoveServerDirectory(temporaryFolderPath, session, gciLibrary);
   }
@@ -148,16 +148,16 @@ export function waitForSeconds(secondsToWait: number, session: unknown, gciLibra
  * @param gciLibrary - GCI bridge used to run the operations on the server.
  * @param consumer - Callback invoked with the temporary file's POSIX path.
  */
-export function withTemporaryServerFileDo(
+export async function withTemporaryServerFileDo(
   extension: string,
   session: unknown,
   gciLibrary: GciLibrary,
-  consumer: (temporaryFilePath: string) => void,
+  consumer: (temporaryFilePath: string) => unknown,
 ) {
-  withTemporaryServerFolderDo(session, gciLibrary, (temporaryFolderPath) => {
+  await withTemporaryServerFolderDo(session, gciLibrary, async (temporaryFolderPath) => {
     const temporaryFilePath = createServerFile(temporaryFolderPath, extension, session, gciLibrary);
 
-    consumer(temporaryFilePath);
+    await consumer(temporaryFilePath);
   });
 }
 
@@ -169,9 +169,12 @@ export function withTemporaryServerFileDo(
  * @returns The file's size in bytes.
  * @throws If the file doesn't exist on the server.
  */
-export function sizeInBytesOfServerFile(execute: QueryExecutor, filePath: string): number {
+export async function sizeInBytesOfServerFile(
+  execute: QueryExecutor,
+  filePath: string,
+): Promise<number> {
   return Number(
-    execute(
+    await execute(
       `(GsFile sizeOfOnServer: '${escapeString(filePath)}')
          ifNil: [ self error: 'Failed to check the size of a file on the server' ]
          ifNotNil: [ :exists | exists printString ]`,

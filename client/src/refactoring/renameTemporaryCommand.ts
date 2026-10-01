@@ -115,9 +115,9 @@ export async function renameTemporaryCommand(
   }
 
   const token = `rtmp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearRenameTemporaryPreview(session, token);
+      await queries.clearRenameTemporaryPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -141,7 +141,7 @@ export async function renameTemporaryCommand(
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     void vscode.window.showErrorMessage(`Rename preview failed: ${msg}`);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -151,19 +151,19 @@ export async function renameTemporaryCommand(
   // shadowing rename cannot slip through.
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.outOfScope.collision) {
     refuse(`Cannot rename to '${newName}': ${start.outOfScope.collision}.`);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.total === 0) {
     refuse(`No occurrences of '${oldName}' to rename.`);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -179,7 +179,7 @@ export async function renameTemporaryCommand(
           `Rename temporary '${oldName}' to '${newName}'`,
         ),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
     focusEditor();

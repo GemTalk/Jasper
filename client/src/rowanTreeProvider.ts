@@ -258,7 +258,7 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     return element;
   }
 
-  getChildren(element?: RowanTreeNode): RowanTreeNode[] {
+  async getChildren(element?: RowanTreeNode): Promise<RowanTreeNode[]> {
     if (!element) {
       // A bare start (nothing tracked, no workspace project, no session) renders
       // as viewsWelcome content instead of three empty sections — that's where
@@ -279,18 +279,18 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     if (element instanceof RowanSectionItem) {
       switch (element.section) {
         case 'repositories':
-          return this.repositoryChildren();
+          return await this.repositoryChildren();
         case 'loaded':
-          return this.loadedChildren();
+          return await this.loadedChildren();
         case 'changes':
-          return this.changesChildren();
+          return await this.changesChildren();
       }
     }
     if (element instanceof RowanChangesProjectItem) {
-      return this.changesFor(element.projectName);
+      return await this.changesFor(element.projectName);
     }
     if (element instanceof RowanBuiltinGroupItem) {
-      const q = this.queryLoaded();
+      const q = await this.queryLoaded();
       if (q.state !== 'ok' || !q.available) return [];
       return q.projects
         .filter((p) => p.isBuiltin)
@@ -300,8 +300,8 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     return [];
   }
 
-  private changesChildren(): RowanTreeNode[] {
-    const q = this.queryLoaded();
+  private async changesChildren(): Promise<RowanTreeNode[]> {
+    const q = await this.queryLoaded();
     if (q.state === 'nosession') {
       return [
         new RowanMessageItem('rowanNoSession', 'Not connected — log in to see changes', 'plug'),
@@ -323,13 +323,13 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
   }
 
   /** The diff rows for one project; runs the diff on first expansion. */
-  private changesFor(projectName: string): RowanTreeNode[] {
+  private async changesFor(projectName: string): Promise<RowanTreeNode[]> {
     const session = this.sessions.getSession();
     if (!session) return [];
     let diff = this.diffCache.get(projectName);
     if (!diff) {
       try {
-        diff = diffRowanProject(session, projectName);
+        diff = await diffRowanProject(session, projectName);
       } catch (e: unknown) {
         diff = { ok: false, error: e instanceof Error ? e.message : String(e), operations: [] };
       }
@@ -363,7 +363,7 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     return (vscode.workspace.workspaceFolders ?? []).some((f) => isRowanProjectRoot(f.uri.fsPath));
   }
 
-  private repositoryChildren(): RowanTreeNode[] {
+  private async repositoryChildren(): Promise<RowanTreeNode[]> {
     const tracked = this.workspaceRepos();
     const trackedPaths = new Set(tracked.map((r) => r.path));
     // The open workspace-root project always appears here, even when it hasn't
@@ -383,18 +383,23 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
       });
       return [item];
     }
-    const loadedNames = this.loadedProjectNames();
+    const loadedNames = await this.loadedProjectNames();
     const items: RowanTreeNode[] = [];
     for (const repo of repos.slice().sort((a, b) => a.name.localeCompare(b.name))) {
       items.push(
-        this.describe(repo, loadedNames, workspaceSet.has(repo.path), trackedPaths.has(repo.path)),
+        await this.describe(
+          repo,
+          loadedNames,
+          workspaceSet.has(repo.path),
+          trackedPaths.has(repo.path),
+        ),
       );
     }
     return items;
   }
 
-  private loadedChildren(): RowanTreeNode[] {
-    const q = this.queryLoaded();
+  private async loadedChildren(): Promise<RowanTreeNode[]> {
+    const q = await this.queryLoaded();
     if (q.state === 'nosession') {
       return [
         new RowanMessageItem(
@@ -424,14 +429,14 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     return builtins.length > 0 ? [...user, new RowanBuiltinGroupItem(builtins.length)] : user;
   }
 
-  private queryLoaded(): NonNullable<RowanTreeProvider['loadedQuery']> {
+  private async queryLoaded(): Promise<NonNullable<RowanTreeProvider['loadedQuery']>> {
     if (this.loadedQuery) return this.loadedQuery;
     const session = this.sessions.getSession();
     if (!session) {
       this.loadedQuery = { state: 'nosession' };
     } else {
       try {
-        const { available, projects } = listRowanProjects(session);
+        const { available, projects } = await listRowanProjects(session);
         this.loadedQuery = { state: 'ok', available, projects };
       } catch (e: unknown) {
         this.loadedQuery = { state: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -445,17 +450,17 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
    * Rowan unavailable, or the query failed. Undefined is not "nothing loaded":
    * callers that show the distinction to a user must not conflate the two.
    */
-  loadedProjectNames(): Set<string> | undefined {
-    const q = this.queryLoaded();
+  async loadedProjectNames(): Promise<Set<string> | undefined> {
+    const q = await this.queryLoaded();
     return q.state === 'ok' && q.available ? new Set(q.projects.map((p) => p.name)) : undefined;
   }
 
-  private describe(
+  private async describe(
     repo: TrackedRepo,
     loadedNames: Set<string> | undefined,
     isWorkspace = false,
     isTracked = true,
-  ): RowanRepoItem {
+  ): Promise<RowanRepoItem> {
     if (!fs.existsSync(repo.path)) {
       return new RowanRepoItem(repo, [], true, false, undefined, isWorkspace, isTracked);
     }
@@ -464,7 +469,7 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
     const loaded = specNames.some((name) => loadedNames?.has(name) ?? false);
     // Warn when a spec declares a bigger gem cache than the connected gem has —
     // only meaningful while connected and after the gem-cache probe succeeds.
-    const gemKB = this.queryGemCacheKB();
+    const gemKB = await this.queryGemCacheKB();
     const declaredMin = Math.max(0, ...specs.map((s) => s.minTempObjCacheKB ?? 0));
     const underProvisioned = gemKB !== undefined && declaredMin > gemKB ? declaredMin : undefined;
     return new RowanRepoItem(
@@ -482,7 +487,7 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
   // once probed-and-failed/absent so we don't re-probe; undefined result means
   // "unknown", which suppresses the warning rather than crying wolf.
   private gemCacheKB: number | null | undefined = undefined;
-  private queryGemCacheKB(): number | undefined {
+  private async queryGemCacheKB(): Promise<number | undefined> {
     if (this.gemCacheKB !== undefined) return this.gemCacheKB ?? undefined;
     const session = this.sessions.getSession();
     if (!session) {
@@ -490,7 +495,7 @@ export class RowanTreeProvider implements vscode.TreeDataProvider<RowanTreeNode>
       return undefined;
     }
     try {
-      this.gemCacheKB = getGemCacheKB(session) ?? null;
+      this.gemCacheKB = (await getGemCacheKB(session)) ?? null;
     } catch {
       this.gemCacheKB = null;
     }

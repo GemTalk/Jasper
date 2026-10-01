@@ -8,10 +8,10 @@ import { splitLines, dictLookupExpr } from './util';
 //
 // Accepts a dictionary by 1-based index (canonical for Jasper's IDE) or by name.
 // Returns [] when the dictionary does not exist.
-export function getDictionaryClassFileOutOrder(
+export async function getDictionaryClassFileOutOrder(
   execute: QueryExecutor,
   dict: number | string,
-): string[] {
+): Promise<string[]> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -24,7 +24,7 @@ dict keysAndValuesDo: [:k :v |
     [sc notNil] whileTrue: [depth := depth + 1. sc := sc superclass].
     ws nextPutAll: depth printString; tab; nextPutAll: k; lf]].
 ws contents`;
-  return splitLines(execute(code))
+  return splitLines(await execute(code))
     .map((line) => {
       const tab = line.indexOf('\t');
       return { depth: parseInt(line.slice(0, tab), 10), name: line.slice(tab + 1) };

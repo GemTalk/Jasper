@@ -19,14 +19,14 @@ import * as queries from '../browserQueries';
  * Answers undefined rather than guessing: a label with no dictionary is merely less specific,
  * while a label naming the wrong one is worse than saying nothing.
  */
-export function dictionaryNameFor(
+export async function dictionaryNameFor(
   session: ActiveSession,
   dict: number | string | undefined,
-): string | undefined {
+): Promise<string | undefined> {
   if (typeof dict === 'string') return dict.length > 0 ? dict : undefined;
   if (dict === undefined) return undefined;
   try {
-    return queries.getDictionaryNames(session)[dict - 1];
+    return (await queries.getDictionaryNames(session))[dict - 1];
   } catch {
     return undefined;
   }
@@ -41,12 +41,12 @@ export function dictionaryNameFor(
  * synchronous row builder, which cannot wait on a read, so the read has to be over before the
  * first row is built. That spends the read even on a list that names every dictionary by name.
  */
-export function dictionaryNameLookup(
+export async function dictionaryNameLookup(
   session: ActiveSession,
-): (dict: number | string | undefined) => string | undefined {
+): Promise<(dict: number | string | undefined) => string | undefined> {
   let names: string[];
   try {
-    names = queries.getDictionaryNames(session);
+    names = await queries.getDictionaryNames(session);
   } catch {
     names = [];
   }

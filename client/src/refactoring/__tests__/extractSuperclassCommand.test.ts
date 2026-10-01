@@ -146,7 +146,7 @@ describe('insert superclass command', () => {
 
 describe('extract superclass command', () => {
   it('threads the chosen siblings and hoisted members into the preview', async () => {
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue(['Cat', 'Fish']);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue(['Cat', 'Fish']);
     vi.mocked(vscode.window.showQuickPick)
       .mockResolvedValueOnce(['Cat'] as never)
       .mockResolvedValueOnce([
@@ -176,7 +176,7 @@ describe('extract superclass command', () => {
       { isDirty: false, uri: { scheme: 'gemstone' }, save: cleanMethod },
       { isDirty: true, uri: { scheme: 'file' }, save: dirtyFile },
     ]);
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
     vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
@@ -194,7 +194,7 @@ describe('extract superclass command', () => {
 
   it('aborts before classifying when a dirty method buffer will not save', async () => {
     setOpenDocs([{ isDirty: true, uri: { scheme: 'gemstone' }, save: vi.fn(async () => false) }]);
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
 
     const outcome = await extractSuperclassCommand(ctx());
@@ -204,7 +204,7 @@ describe('extract superclass command', () => {
   });
 
   it('skips the sibling picker when the class is an only child', async () => {
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
     vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
@@ -219,7 +219,7 @@ describe('extract superclass command', () => {
   });
 
   it('does nothing when the sibling picker is cancelled', async () => {
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue(['Cat']);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue(['Cat']);
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
     const outcome = await extractSuperclassCommand(ctx());
@@ -229,7 +229,7 @@ describe('extract superclass command', () => {
   });
 
   it('refuses a candidates decline', async () => {
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
     vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(
       candidatesJson({ decline: 'no can do' }),
@@ -247,14 +247,14 @@ describe('extract superclass command', () => {
     // The extraction records its reversal in the stone; a bare toast left that record with no
     // way to reach it — no button, and nothing on the status bar or Ctrl+K U.
     resetUndoStacks();
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
     vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
     vi.mocked(queries.analyzeExtractSuperclass).mockResolvedValue(analysisJson());
     vi.mocked(queries.startExtractSuperclassPreview).mockResolvedValue(startJson());
     vi.mocked(showExtractSuperclassPanel).mockResolvedValue({ applied: 3, failed: [] });
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue(
       JSON.stringify({
         available: true,
         label: "Extract superclass 'Pet'",
@@ -266,15 +266,17 @@ describe('extract superclass command', () => {
 
     await extractSuperclassCommand(ctx());
 
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('applied 3 change(s)'),
-      'Undo',
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('applied 3 change(s)'),
+        'Undo',
+      ),
     );
     expect(peekUndoEntry(1)).toMatchObject({ kind: 'refactoring', sequence: 2 });
   });
 
   it('reports a failed apply and does not reveal', async () => {
-    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(queries.getSiblingClassNames).mockResolvedValue([]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
     vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
@@ -297,30 +299,30 @@ describe('extract superclass command', () => {
   // apply then rebinds that key to the new class, destroying the global. Mirrors the rename
   // guard (ExplorerController.validateRenameTarget).
   describe('new-superclass name validation', () => {
-    const validatorFrom = (): ((v: string) => string | undefined) => {
+    const validatorFrom = (): ((v: string) => Promise<string | undefined>) => {
       const opts = vi.mocked(vscode.window.showInputBox).mock.calls[0][0] as {
-        validateInput: (v: string) => string | undefined;
+        validateInput: (v: string) => Promise<string | undefined>;
       };
       return opts.validateInput;
     };
 
     it('rejects a name already bound to a global, while the user is still typing', async () => {
       vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
-      vi.mocked(queries.globalNameInUse).mockReturnValue(true);
+      vi.mocked(queries.globalNameInUse).mockResolvedValue(true);
 
       await insertSuperclassCommand(ctx());
 
-      expect(validatorFrom()('Pet')).toMatch(/already in use/);
+      expect(await validatorFrom()('Pet')).toMatch(/already in use/);
       expect(queries.globalNameInUse).toHaveBeenCalledWith(expect.anything(), 'Pet');
     });
 
     it('accepts a well-formed name that is not in use', async () => {
       vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
-      vi.mocked(queries.globalNameInUse).mockReturnValue(false);
+      vi.mocked(queries.globalNameInUse).mockResolvedValue(false);
 
       await insertSuperclassCommand(ctx());
 
-      expect(validatorFrom()('Pet')).toBeUndefined();
+      expect(await validatorFrom()('Pet')).toBeUndefined();
     });
 
     it('reports a format problem without a round trip to the stone', async () => {
@@ -329,7 +331,7 @@ describe('extract superclass command', () => {
 
       await insertSuperclassCommand(ctx());
 
-      expect(validatorFrom()('lowercase')).toMatch(/uppercase letter/);
+      expect(await validatorFrom()('lowercase')).toMatch(/uppercase letter/);
       expect(queries.globalNameInUse).not.toHaveBeenCalled();
     });
   });

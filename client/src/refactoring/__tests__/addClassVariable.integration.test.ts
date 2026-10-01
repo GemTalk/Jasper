@@ -25,63 +25,69 @@ describe('add class variable (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'AcvItBase';
   const SUB = 'AcvItSub';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #(x) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
   };
 
-  it('adds the class variable without reshaping the class (no new version, instance intact)', () => {
-    defineFixture();
+  it('adds the class variable without reshaping the class (no new version, instance intact)', async () => {
+    await defineFixture();
     // A live instance whose identity must survive: a reshape would re-version the
     // class and it would no longer be an instance of the current class.
-    exec(`UserGlobals at: #AcvItInst put: ${BASE} new. true printString`);
-    const historyBefore = exec(`${BASE} classHistory size printString`).trim();
+    await exec(`UserGlobals at: #AcvItInst put: ${BASE} new. true printString`);
+    const historyBefore = (await exec(`${BASE} classHistory size printString`)).trim();
 
-    const result = q.addClassVariable(session(), BASE, 'Registry', userIndex());
+    const result = await q.addClassVariable(session(), BASE, 'Registry', await userIndex());
 
     expect(result.trim()).toBe('ok');
-    expect(exec(`(${BASE} classVarNames includes: #Registry) printString`).trim()).toBe('true');
-    expect(exec(`${BASE} classHistory size printString`).trim()).toBe(historyBefore);
-    expect(exec(`((UserGlobals at: #AcvItInst) class == ${BASE}) printString`).trim()).toBe('true');
-  });
-
-  it('makes the class variable visible to a subclass', () => {
-    defineFixture();
-
-    q.addClassVariable(session(), BASE, 'Registry', userIndex());
-
-    expect(q.getVisibleClassVarNames(session(), SUB, userIndex())).toContain('Registry');
-    // A class variable is not an instance variable — it must not appear as one.
-    expect(q.getInstVarNames(session(), SUB)).not.toContain('Registry');
-  });
-
-  it('answers no-class for a name that is not a bound class', () => {
-    expect(q.addClassVariable(session(), 'NoSuchClassAcv', 'Registry', userIndex()).trim()).toBe(
-      'no-class',
+    expect((await exec(`(${BASE} classVarNames includes: #Registry) printString`)).trim()).toBe(
+      'true',
     );
+    expect((await exec(`${BASE} classHistory size printString`)).trim()).toBe(historyBefore);
+    expect((await exec(`((UserGlobals at: #AcvItInst) class == ${BASE}) printString`)).trim()).toBe(
+      'true',
+    );
+  });
+
+  it('makes the class variable visible to a subclass', async () => {
+    await defineFixture();
+
+    await q.addClassVariable(session(), BASE, 'Registry', await userIndex());
+
+    expect(await q.getVisibleClassVarNames(session(), SUB, await userIndex())).toContain(
+      'Registry',
+    );
+    // A class variable is not an instance variable — it must not appear as one.
+    expect(await q.getInstVarNames(session(), SUB)).not.toContain('Registry');
+  });
+
+  it('answers no-class for a name that is not a bound class', async () => {
+    expect(
+      (await q.addClassVariable(session(), 'NoSuchClassAcv', 'Registry', await userIndex())).trim(),
+    ).toBe('no-class');
   });
 });

@@ -133,7 +133,7 @@ describe('SunitTestController', () => {
       // The original crash: two distinct AnnouncerTest classes collapse to one
       // name-only id `sunit/1/AnnouncerTest` and items.replace() throws. With
       // dict-qualified ids they coexist as two items.
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'AnnouncerTest', testCount: 7 },
         { dictName: 'Globals', className: 'AnnouncerTest', testCount: 19 },
       ]);
@@ -177,7 +177,7 @@ describe('SunitTestController', () => {
     it('shows (?) in the description when the test count is unknown', async () => {
       // A null testCount means the stone returned an unparseable value; the
       // description must say it's unknown rather than fake a "(0)".
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'WeirdTest', testCount: null },
       ]);
       const sm = makeSessionManager(true);
@@ -329,7 +329,7 @@ describe('SunitTestController', () => {
     it('runs all provided classes in one dictionary in a single test run', async () => {
       // Both classes live in the same dictionary (a category/dictionary run is
       // always scoped to one dictionary).
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2 },
         { dictName: 'UserGlobals', className: 'OtherTest', testCount: 3 },
       ]);
@@ -439,7 +439,7 @@ describe('SunitTestController', () => {
       vi.mocked(sunit.runTestMethodNb).mockClear();
 
       // The user writes another test and presses Run Test on it without refreshing.
-      vi.mocked(sunit.discoverTestMethods).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestMethods).mockResolvedValueOnce([
         { selector: 'testAdd', category: 'unit tests' },
         { selector: 'testRemove', category: 'unit tests' },
         { selector: 'testBrandNew', category: 'unit tests' },
@@ -535,7 +535,7 @@ describe('SunitTestController', () => {
   describe('running an ambiguous class from the Test Explorer', () => {
     it('routes each same-named class to its own dictionary', async () => {
       // Two distinct AnnouncerTest classes, one per dictionary.
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'AnnouncerTest', testCount: 7 },
         { dictName: 'Globals', className: 'AnnouncerTest', testCount: 19 },
       ]);
@@ -803,7 +803,7 @@ describe('SunitTestController', () => {
     // Only this group cares about the dictionary index, and a persistent
     // mockReturnValue would leak into the other groups (tests are shuffled).
     function discoverWithDictIndex() {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2, dictIndex: 3 },
       ]);
     }
@@ -1244,7 +1244,7 @@ describe('SunitTestController', () => {
 
   describe('a test class with no tests', () => {
     it('is not offered as runnable — a run would do nothing', async () => {
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'AbstractBase', testCount: 0 },
         { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2 },
       ]);
@@ -1259,7 +1259,7 @@ describe('SunitTestController', () => {
 
     it('stays runnable when the stone gave no usable count', async () => {
       // Better a button that reports "no tests found" than one silently missing.
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'MyTestCase', testCount: null },
       ]);
       const ctrl = new SunitTestController(makeSessionManager(true));
@@ -1309,7 +1309,7 @@ describe('SunitTestController', () => {
       const gone = buildClassDefinitionUri(1, 'UserGlobals', 'MyTestCase');
       expect(ctrl.isTestItemUri(gone)).toBe(true);
 
-      vi.mocked(sunit.discoverTestClasses).mockReturnValueOnce([
+      vi.mocked(sunit.discoverTestClasses).mockResolvedValueOnce([
         { dictName: 'UserGlobals', className: 'SomethingElseTest', testCount: 1 },
       ]);
       await mockController.refreshHandler();

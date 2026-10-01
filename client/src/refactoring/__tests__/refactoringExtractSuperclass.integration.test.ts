@@ -48,12 +48,14 @@ describe('extract superclass (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
   const ANIMAL = 'EsItAnimal';
@@ -63,55 +65,58 @@ describe('extract superclass (integration)', () => {
 
   // Animal -> {Dog, Cat}, Dog -> Puppy. Dog and Cat share an identical `eat` and `name` ivar; their
   // `describe` differs.
-  const defineFixture = (): void => {
-    const def = (name: string, sup: string, ivars: string): void => {
-      q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    const def = async (name: string, sup: string, ivars: string): Promise<void> => {
+      await q.compileClassDefinition(
         session(),
         `${sup} subclass: '${name}' instVarNames: #(${ivars}) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
     };
-    def(ANIMAL, 'Object', '');
-    def(DOG, ANIMAL, "'name' 'bark'");
-    def(CAT, ANIMAL, "'name' 'meow'");
-    def(PUPPY, DOG, "'cuteness'");
-    q.compileMethod(session(), DOG, false, 'accessing', 'eat\n\t^42');
-    q.compileMethod(session(), DOG, false, 'accessing', "describe\n\t^'a dog'");
-    q.compileMethod(session(), CAT, false, 'accessing', 'eat\n\t^42');
-    q.compileMethod(session(), CAT, false, 'accessing', "describe\n\t^'a cat'");
-    q.compileMethod(session(), PUPPY, false, 'accessing', 'puppyM\n\t^1');
+    await def(ANIMAL, 'Object', '');
+    await def(DOG, ANIMAL, "'name' 'bark'");
+    await def(CAT, ANIMAL, "'name' 'meow'");
+    await def(PUPPY, DOG, "'cuteness'");
+    await q.compileMethod(session(), DOG, false, 'accessing', 'eat\n\t^42');
+    await q.compileMethod(session(), DOG, false, 'accessing', "describe\n\t^'a dog'");
+    await q.compileMethod(session(), CAT, false, 'accessing', 'eat\n\t^42');
+    await q.compileMethod(session(), CAT, false, 'accessing', "describe\n\t^'a cat'");
+    await q.compileMethod(session(), PUPPY, false, 'accessing', 'puppyM\n\t^1');
   };
 
-  const superclassOf = (cls: string): string => exec(`${cls} superclass name asString`).trim();
-  const definesSelector = (cls: string, selector: string): boolean =>
-    exec(
-      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  const superclassOf = async (cls: string): Promise<string> =>
+    (await exec(`${cls} superclass name asString`)).trim();
+  const definesSelector = async (cls: string, selector: string): Promise<boolean> =>
+    (
+      await exec(
+        `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+      )
     ).trim() === 'true';
-  const understands = (cls: string, selector: string): boolean =>
-    exec(`(${cls} canUnderstand: #'${selector}') printString`).trim() === 'true';
+  const understands = async (cls: string, selector: string): Promise<boolean> =>
+    (await exec(`(${cls} canUnderstand: #'${selector}') printString`)).trim() === 'true';
 
-  it('reports extract-superclass engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports extract-superclass engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
   // Generous timeout: this files in the whole (growing) engine-tests.gs payload and runs a full
   // SUnit suite in-stone over the GCI transport, which takes several seconds and scales with the
   // number of refactorings — well past vitest's 5s default on a cold stone.
-  it('runs the extract-superclass GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the extract-superclass GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('inserts an empty superclass above a class, keeping the subtree parented', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const analysis = parseAnalysis(
       await analyzeExtractSuperclass(asyncExec, DOG, 'EsItPet', [], { methods: [], instVars: [] }),
     );
@@ -134,16 +139,16 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactori
     const result = parseApplyResult(await applyExtractSuperclass(asyncExec, token));
 
     expect(result.failed).toEqual([]);
-    expect(superclassOf('EsItPet')).toBe(ANIMAL);
-    expect(superclassOf(DOG)).toBe('EsItPet');
-    expect(superclassOf(PUPPY)).toBe(DOG);
-    expect(understands(PUPPY, 'eat')).toBe(true);
+    expect(await superclassOf('EsItPet')).toBe(ANIMAL);
+    expect(await superclassOf(DOG)).toBe('EsItPet');
+    expect(await superclassOf(PUPPY)).toBe(DOG);
+    expect(await understands(PUPPY, 'eat')).toBe(true);
   });
 
   it('extracts a common superclass, hoisting an identical method both classes then inherit', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `esup-extract-${DOG}`;
     const start = parseStartPreview(
       await startExtractSuperclassPreview(
@@ -161,22 +166,22 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactori
 
     expect(result.failed).toEqual([]);
     // The hoisted method lives on the new superclass...
-    expect(definesSelector('EsItPet', 'eat')).toBe(true);
+    expect(await definesSelector('EsItPet', 'eat')).toBe(true);
     // ...is gone from both extracted classes' own dictionaries...
-    expect(definesSelector(DOG, 'eat')).toBe(false);
-    expect(definesSelector(CAT, 'eat')).toBe(false);
+    expect(await definesSelector(DOG, 'eat')).toBe(false);
+    expect(await definesSelector(CAT, 'eat')).toBe(false);
     // ...but both still understand it by inheritance (the both-sides survival assertion)...
-    expect(understands(DOG, 'eat')).toBe(true);
-    expect(understands(CAT, 'eat')).toBe(true);
+    expect(await understands(DOG, 'eat')).toBe(true);
+    expect(await understands(CAT, 'eat')).toBe(true);
     // ...and their non-hoisted methods stay put.
-    expect(definesSelector(DOG, 'describe')).toBe(true);
-    expect(definesSelector(CAT, 'describe')).toBe(true);
+    expect(await definesSelector(DOG, 'describe')).toBe(true);
+    expect(await definesSelector(CAT, 'describe')).toBe(true);
   });
 
   it('classifies a shared method as identical and a differing one as divergent', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const candidates = parseCandidates(await candidatesForExtractSuperclass(asyncExec, DOG, [CAT]));
 
     const eat = candidates.methods.find((m) => m.selector === 'eat');
@@ -187,9 +192,9 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactori
   });
 
   it('declines extracting into an existing class name', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const analysis = parseAnalysis(
       await analyzeExtractSuperclass(asyncExec, DOG, CAT, [], { methods: [], instVars: [] }),
     );

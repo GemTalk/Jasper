@@ -103,17 +103,17 @@ describe('parseSelectorSearchResults', () => {
 });
 
 describe('searchSelectors', () => {
-  it('hands back at most `limit` rows, keeping the best tiers', () => {
+  it('hands back at most `limit` rows, keeping the best tiers', async () => {
     // The server caps each TIER at `limit`, so it can answer up to 3 × limit rows; the rows arrive
     // best-tier-first, so the caller's `limit` is applied by keeping the FIRST of them.
     const raw = Array.from({ length: 7 }, (_, i) => `Globals\tC${i}\t0\tat:\taccessing\n`).join('');
-    const rows = searchSelectors(() => raw, 'at:', { limit: 3, ignoreCase: true });
+    const rows = await searchSelectors(async () => raw, 'at:', { limit: 3, ignoreCase: true });
     expect(rows.map((r) => r.className)).toEqual(['C0', 'C1', 'C2']);
   });
 
-  it('runs the built code through the executor and parses the result', () => {
-    const execute = vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\n');
-    const rows = searchSelectors(execute, 'siz', { limit: 5, ignoreCase: true });
+  it('runs the built code through the executor and parses the result', async () => {
+    const execute = vi.fn<QueryExecutor>(async () => 'Globals\tArray\t0\tsize\taccessing\n');
+    const rows = await searchSelectors(execute, 'siz', { limit: 5, ignoreCase: true });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0]).toContain("'siz' asLowercase");
     expect(rows).toEqual([

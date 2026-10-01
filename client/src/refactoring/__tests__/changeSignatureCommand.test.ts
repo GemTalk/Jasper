@@ -214,8 +214,10 @@ describe('beginChangeSignature (shared flow)', () => {
 
     expect(applied).toBe(true);
     expect(onApplied).toHaveBeenCalledWith('at:', 'at:put:');
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('NOT committed'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('NOT committed'),
+      ),
     );
   });
 

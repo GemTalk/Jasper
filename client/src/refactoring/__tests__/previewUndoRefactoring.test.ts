@@ -84,9 +84,9 @@ describe('the recorded reversal carries the class’s own dictionary', () => {
    *
    * Only the integration suite covered this, and it runs locally against one stone version.
    */
-  const record = (classDict?: number | string): string => {
-    const exec = vi.fn().mockReturnValue('ok');
-    recordReverseRename(
+  const record = async (classDict?: number | string): Promise<string> => {
+    const exec = vi.fn().mockResolvedValue('ok');
+    await recordReverseRename(
       exec,
       'instVarAdd',
       'Shadowed',
@@ -100,24 +100,24 @@ describe('the recorded reversal carries the class’s own dictionary', () => {
     return exec.mock.calls[0][0] as string;
   };
 
-  it('sends a SymbolList index as an Integer', () => {
+  it('sends a SymbolList index as an Integer', async () => {
     // Coerced to a String it became '10', matched no dictionary NAME, and fell back to the
     // first match — silently, because that fallback is legitimate for a record made without a
     // dictionary at all.
-    expect(record(10)).toContain('classDictName: 10');
+    expect(await record(10)).toContain('classDictName: 10');
   });
 
-  it('quotes and escapes a dictionary given by name', () => {
-    expect(record("Di'ct")).toContain("classDictName: 'Di''ct'");
+  it('quotes and escapes a dictionary given by name', async () => {
+    expect(await record("Di'ct")).toContain("classDictName: 'Di''ct'");
   });
 
-  it('sends nil when the caller has no dictionary', () => {
-    expect(record()).toContain('classDictName: nil');
+  it('sends nil when the caller has no dictionary', async () => {
+    expect(await record()).toContain('classDictName: nil');
   });
 
-  it('scopes the pre-apply history capture the same way', () => {
-    const exec = vi.fn().mockReturnValue('ok');
-    captureClassHistory(exec, 'Shadowed', 3);
+  it('scopes the pre-apply history capture the same way', async () => {
+    const exec = vi.fn().mockResolvedValue('ok');
+    await captureClassHistory(exec, 'Shadowed', 3);
     expect(exec.mock.calls[0][0]).toContain("captureClassHistoryOf: 'Shadowed' inDictionary: 3");
   });
 });

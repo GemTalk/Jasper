@@ -75,8 +75,8 @@ describe('GCI async execution, break, and debugging (integration)', () => {
   });
 
   describe('GciTsGemTrace', () => {
-    it('returns previous trace level and sets new level', () => {
-      withTransientSession((transientSession) => {
+    it('returns previous trace level and sets new level', async () => {
+      await withTransientSession((transientSession) => {
         const { err: err0 } = gci.GciTsGemTrace(transientSession, 0);
         expect(err0.number).toBe(0);
 

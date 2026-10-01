@@ -124,9 +124,9 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
   }
 
   const token = `xtt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearExtractTemporaryPreview(session, token);
+      await queries.clearExtractTemporaryPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -153,7 +153,7 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
     void vscode.window.showErrorMessage(
       `Extract preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -163,19 +163,19 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
   // extraction cannot slip through.
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.outOfScope.collision) {
     refuse(`Cannot extract to '${newName}': ${start.outOfScope.collision}.`);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.total === 0) {
     refuse('Nothing to extract from the selection.');
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -187,7 +187,7 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
       parseApplyResult(
         await queries.applyExtractTemporary(session, token, `Extract temporary '${newName}'`),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
     focusEditor();

@@ -69,12 +69,14 @@ function unavailableMessage(missing: readonly string[]): string {
 const probed = new WeakMap<ActiveSession, { available: boolean; missing: string[] }>();
 
 /** Ask the session, tolerating a probe that fails. */
-function probe(session: ActiveSession | undefined): { available: boolean; missing: string[] } {
+async function probe(
+  session: ActiveSession | undefined,
+): Promise<{ available: boolean; missing: string[] }> {
   if (!session) return { available: false, missing: [] };
   const cached = probed.get(session);
   if (cached) return cached;
   try {
-    const result = queries.tonelCapability(session);
+    const result = await queries.tonelCapability(session);
     const answer = { available: result.available, missing: result.missing };
     probed.set(session, answer);
     return answer;
@@ -96,11 +98,13 @@ function probe(session: ActiveSession | undefined): { available: boolean; missin
  * both ways: until it is set the key is undefined, which a `when` clause reads as
  * false — correct by luck rather than by design.
  */
-export function refreshTonelAvailability(session: ActiveSession | undefined): boolean {
+export async function refreshTonelAvailability(
+  session: ActiveSession | undefined,
+): Promise<boolean> {
   // The one invalidation point: this is called on connect and whenever the active
   // session changes, which is exactly when a cached answer could be wrong.
   if (session) probed.delete(session);
-  const isAvailable = probe(session).available;
+  const isAvailable = (await probe(session)).available;
   void vscode.commands.executeCommand('setContext', TONEL_AVAILABLE_CONTEXT, isAvailable);
   return isAvailable;
 }
@@ -112,8 +116,8 @@ export function refreshTonelAvailability(session: ActiveSession | undefined): bo
  * per file and lets `fileIn.ts` raise a single toast at the end, so a guard that
  * warned per file would stack one toast per selected file.
  */
-export function isTonelAvailable(session: ActiveSession | undefined): boolean {
-  return probe(session).available;
+export async function isTonelAvailable(session: ActiveSession | undefined): Promise<boolean> {
+  return (await probe(session)).available;
 }
 
 /**
@@ -123,8 +127,8 @@ export function isTonelAvailable(session: ActiveSession | undefined): boolean {
  * palette gives the user no other clue why nothing happened. Only for a command
  * the user invoked ONCE -- inside a loop use {@link isTonelAvailable}.
  */
-export function requireTonelAvailable(session: ActiveSession | undefined): boolean {
-  const { available, missing } = probe(session);
+export async function requireTonelAvailable(session: ActiveSession | undefined): Promise<boolean> {
+  const { available, missing } = await probe(session);
   if (available) return true;
   void vscode.window.showWarningMessage(unavailableMessage(missing));
   return false;

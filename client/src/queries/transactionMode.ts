@@ -53,12 +53,12 @@ export function isTransactionMode(value: string): value is TransactionMode {
  * Answers the mode the stone reports afterwards rather than the one asked for,
  * so a caller can tell a switch that did not land from one that did.
  */
-export function setTransactionMode(
+export async function setTransactionMode(
   execute: QueryExecutor,
   mode: TransactionMode,
-): TransactionMode | undefined {
-  const answer = execute(
-    `System transactionMode: #${mode}. System transactionMode asString`,
+): Promise<TransactionMode | undefined> {
+  const answer = (
+    await execute(`System transactionMode: #${mode}. System transactionMode asString`)
   ).trim();
   return isTransactionMode(answer) ? answer : undefined;
 }
@@ -71,12 +71,12 @@ export function setTransactionMode(
  * {@link canCommit}). `asString` rather than `printString` for the mode: the
  * latter answers `#'autoBegin'`, quotes and all.
  */
-export function getTransactionState(execute: QueryExecutor): {
+export async function getTransactionState(execute: QueryExecutor): Promise<{
   mode: TransactionMode | undefined;
   inTransaction: boolean | undefined;
-} {
-  const answer = execute(
-    "System transactionMode asString, ' ', System inTransaction printString",
+}> {
+  const answer = (
+    await execute("System transactionMode asString, ' ', System inTransaction printString")
   ).trim();
   const [modeText = '', inTransactionText = ''] = answer.split(/\s+/);
   return {
@@ -102,16 +102,21 @@ export function getTransactionState(execute: QueryExecutor): {
  * through a netldi `gemnetobject` task, which qualifies (verified on 3.6.2 and
  * 3.7.5), so this is Jasper's whole SigAbort story — no polling thread needed.
  */
-export function setGemAutoServiceSigAbort(execute: QueryExecutor, enabled: boolean): void {
-  execute(
+export async function setGemAutoServiceSigAbort(
+  execute: QueryExecutor,
+  enabled: boolean,
+): Promise<void> {
+  await execute(
     `System gemConfigurationAt: #GemAutoServiceSigAbort put: ${enabled}. 'GemAutoServiceSigAbort set'`,
   );
 }
 
 /** Whether the gem is currently servicing SigAborts on the session's behalf. */
-export function getGemAutoServiceSigAbort(execute: QueryExecutor): boolean | undefined {
+export async function getGemAutoServiceSigAbort(
+  execute: QueryExecutor,
+): Promise<boolean | undefined> {
   return parseBoolean(
-    execute('(System gemConfigurationAt: #GemAutoServiceSigAbort) printString').trim(),
+    (await execute('(System gemConfigurationAt: #GemAutoServiceSigAbort) printString')).trim(),
   );
 }
 

@@ -114,6 +114,6 @@ export function applyInstVar(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearInstVarPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsInstVarRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearInstVarPreview(execute: QueryExecutor, token: string): Promise<string> {
+  return await execute(`GsInstVarRefactoring clearToken: '${escapeString(token)}'`);
 }

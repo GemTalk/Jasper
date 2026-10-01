@@ -26,7 +26,7 @@ function makeController(session: ActiveSession | undefined) {
   const ctl = new ExplorerController(sessionManager);
   // reset() rebuilds the tree from a live session; stub it so we can assert it ran
   // without exercising the whole refresh/auto-select path.
-  const reset = vi.spyOn(ctl, 'reset').mockImplementation(() => {});
+  const reset = vi.spyOn(ctl, 'reset').mockImplementation(async () => {});
   return { ctl, reset };
 }
 
@@ -34,7 +34,7 @@ describe('ExplorerController.removeDictionary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUndoStacks();
-    vi.mocked(captureDictionary).mockReturnValue({
+    vi.mocked(captureDictionary).mockResolvedValue({
       present: true,
       name: 'UserGlobals',
       index: 3,
@@ -65,7 +65,7 @@ describe('ExplorerController.removeDictionary', () => {
   it('surfaces an error and does not reset when the query throws', async () => {
     const { ctl, reset } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove' as never);
-    vi.mocked(queries.removeDictionary).mockImplementation(() => {
+    vi.mocked(queries.removeDictionary).mockImplementation(async () => {
       throw new Error('boom');
     });
 
@@ -79,7 +79,7 @@ describe('ExplorerController.removeDictionary', () => {
   it('removes by index, then resets and reports on success', async () => {
     const { ctl, reset } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove' as never);
-    vi.mocked(queries.removeDictionary).mockReturnValue('Removed dictionary: UserGlobals');
+    vi.mocked(queries.removeDictionary).mockResolvedValue('Removed dictionary: UserGlobals');
 
     await ctl.removeDictionary(NODE);
 
@@ -98,7 +98,7 @@ describe('ExplorerController.removeDictionary', () => {
     // dictionary back on the end would silently change what a bare name resolves to.
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove' as never);
-    vi.mocked(queries.removeDictionary).mockReturnValue('Removed dictionary: UserGlobals');
+    vi.mocked(queries.removeDictionary).mockResolvedValue('Removed dictionary: UserGlobals');
 
     await ctl.removeDictionary(NODE);
 
@@ -120,7 +120,7 @@ describe('ExplorerController.removeDictionary', () => {
   it('records nothing when the removal itself failed', async () => {
     const { ctl } = makeController({ id: 1 } as ActiveSession);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove' as never);
-    vi.mocked(queries.removeDictionary).mockImplementation(() => {
+    vi.mocked(queries.removeDictionary).mockImplementation(async () => {
       throw new Error('boom');
     });
 

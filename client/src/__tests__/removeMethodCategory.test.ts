@@ -10,10 +10,10 @@ import { removeMethodCategory } from '../queries/removeMethodCategory';
  */
 
 describe('remove-method-category query', () => {
-  it('refuses a category that holds methods rather than removing them with it', () => {
+  it('refuses a category that holds methods rather than removing them with it', async () => {
     const exec = vi.fn().mockReturnValue('holds:3');
 
-    const result = removeMethodCategory(exec, 'Foo', false, 'tests', 3);
+    const result = await removeMethodCategory(exec, 'Foo', false, 'tests', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("selectorsIn: 'tests'");
@@ -24,42 +24,40 @@ describe('remove-method-category query', () => {
     expect(result).toBe('holds:3');
   });
 
-  it('answers not-found rather than raising on a category the class does not have', () => {
-    const exec = vi.fn().mockReturnValue('not-found');
+  it('answers not-found rather than raising on a category the class does not have', async () => {
+    const exec = vi.fn().mockResolvedValue('not-found');
 
-    const code = (() => {
-      removeMethodCategory(exec, 'Foo', false, 'nope', 3);
-      return exec.mock.calls[0][0] as string;
-    })();
+    await removeMethodCategory(exec, 'Foo', false, 'nope', 3);
+    const code = exec.mock.calls[0][0] as string;
 
     expect(code).toContain("categoryNames includes: #'nope'");
     expect(code).toContain("'not-found'");
   });
 
-  it('compares category names as SYMBOLS', () => {
+  it('compares category names as SYMBOLS', async () => {
     // `each asString = '…'` raises "Unicode argument disallowed in String comparison" on a
     // stone in legacy string mode.
     const exec = vi.fn().mockReturnValue('ok');
 
-    removeMethodCategory(exec, 'Foo', false, 'tests', 3);
+    await removeMethodCategory(exec, 'Foo', false, 'tests', 3);
 
     expect(exec.mock.calls[0][0] as string).not.toContain('asString =');
   });
 
-  it('targets the class side when isMeta is set', () => {
+  it('targets the class side when isMeta is set', async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    removeMethodCategory(exec, 'Foo', true, 'creating', 3);
+    await removeMethodCategory(exec, 'Foo', true, 'creating', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('class');
     expect(code).toContain('symbolList at: 3');
   });
 
-  it("escapes a quote in the category name so the statement can't be broken out of", () => {
+  it("escapes a quote in the category name so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('ok');
 
-    removeMethodCategory(exec, 'Foo', false, "te'sts", 3);
+    await removeMethodCategory(exec, 'Foo', false, "te'sts", 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("removeCategory: 'te''sts'");

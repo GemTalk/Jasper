@@ -8,13 +8,13 @@ import { rankAndLimit } from '../rank';
 
 export function createDictionariesProvider(
   sessionId: number,
-  loadNames: () => string[],
+  loadNames: () => Promise<string[]>,
 ): OmniProvider {
   let names: readonly string[] = [];
   return {
     category: CATEGORY_BY_ID.dictionaries,
-    prime() {
-      names = loadNames();
+    async prime() {
+      names = await loadNames();
     },
     search(query: string, cfg: OmniConfig): OmniResult[] {
       return rankAndLimit(

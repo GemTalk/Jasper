@@ -20,16 +20,16 @@ import { classLookupExpr } from './util';
  * `dict` (a 1-based SymbolList index, or a name) scopes the lookup, so the same
  * class name registered in two dictionaries resolves to the intended one.
  */
-export function getStoredClassComment(
+export async function getStoredClassComment(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls c |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ ''].
 c := [cls _extraDictAt: #comment] on: Error do: [:e | nil].
 c ifNil: [^ ''].
 c`;
-  return execute(code);
+  return await execute(code);
 }

@@ -20,7 +20,7 @@ describe('backup queries', () => {
   useIntegrationTest((testContext) => {
     gciLibrary = testContext.gciLibrary;
     session = testContext.session;
-    execute = (code: string) => gciLibrary.executeAndFetchString(session, code);
+    execute = async (code: string) => gciLibrary.executeAndFetchString(session, code);
   });
 
   function createServerFileIn(folder: string, extension: string) {
@@ -32,8 +32,8 @@ describe('backup queries', () => {
   }
 
   describe('listing backup files', () => {
-    it('returns the .dbf paths the stone reports, newest name first', () => {
-      withTemporaryServerFolderDo(session, gciLibrary, (folder) => {
+    it('returns the .dbf paths the stone reports, newest name first', async () => {
+      await withTemporaryServerFolderDo(session, gciLibrary, async (folder) => {
         const oldestBackupPath = createBackupFileIn(folder);
         // Files are told apart by `lastModified`, which only has one-second
         // resolution, so asserting an ordering needs a real gap between the
@@ -41,35 +41,35 @@ describe('backup queries', () => {
         waitForSeconds(1, session, gciLibrary);
         const newestBackupPath = createBackupFileIn(folder);
 
-        const backups = serverBackupFilePaths(execute, folder);
+        const backups = await serverBackupFilePaths(execute, folder);
 
         expect(backups).toStrictEqual([newestBackupPath, oldestBackupPath]);
       });
     });
 
-    it('excludes non-.dbf entries from the directory listing', () => {
-      withTemporaryServerFolderDo(session, gciLibrary, (folder) => {
+    it('excludes non-.dbf entries from the directory listing', async () => {
+      await withTemporaryServerFolderDo(session, gciLibrary, async (folder) => {
         createServerFileIn(folder, '.txt');
 
-        const backups = serverBackupFilePaths(execute, folder);
+        const backups = await serverBackupFilePaths(execute, folder);
 
         expect(backups).toStrictEqual([]);
       });
     });
 
-    it('reports no backups when the directory does not exist yet', () => {
-      const nonExistentFolderPath = temporaryServerPath(session, gciLibrary);
+    it('reports no backups when the directory does not exist yet', async () => {
+      const nonExistentFolderPath = await temporaryServerPath(session, gciLibrary);
 
-      const backups = serverBackupFilePaths(execute, nonExistentFolderPath);
+      const backups = await serverBackupFilePaths(execute, nonExistentFolderPath);
 
       expect(backups).toStrictEqual([]);
     });
 
-    it('escapes single quotes in the directory it lists', () => {
-      withTemporaryServerFolderDo(session, gciLibrary, (folder) => {
+    it('escapes single quotes in the directory it lists', async () => {
+      await withTemporaryServerFolderDo(session, gciLibrary, async (folder) => {
         const folderPathWithQuotes = path.posix.join(folder, "foo'bar");
 
-        const backups = serverBackupFilePaths(execute, folderPathWithQuotes);
+        const backups = await serverBackupFilePaths(execute, folderPathWithQuotes);
 
         expect(backups).toStrictEqual([]);
       });
@@ -77,25 +77,25 @@ describe('backup queries', () => {
   });
 
   describe('checking whether a file exists on the server', () => {
-    it('reports false when the path does not exist', () => {
-      const nonExistentFolderPath = temporaryServerPath(session, gciLibrary);
+    it('reports false when the path does not exist', async () => {
+      const nonExistentFolderPath = await temporaryServerPath(session, gciLibrary);
 
-      const result = serverFileExists(execute, nonExistentFolderPath);
+      const result = await serverFileExists(execute, nonExistentFolderPath);
 
       expect(result).toBe(false);
     });
 
-    it('reports true when the file exists', () => {
-      withTemporaryServerFileDo('.tmp', session, gciLibrary, (file) => {
-        const result = serverFileExists(execute, file);
+    it('reports true when the file exists', async () => {
+      await withTemporaryServerFileDo('.tmp', session, gciLibrary, async (file) => {
+        const result = await serverFileExists(execute, file);
 
         expect(result).toBe(true);
       });
     });
 
-    it('reports true when the file path contains a single quote', () => {
-      withTemporaryServerFileDo(".foo'bar", session, gciLibrary, (file) => {
-        const result = serverFileExists(execute, file);
+    it('reports true when the file path contains a single quote', async () => {
+      await withTemporaryServerFileDo(".foo'bar", session, gciLibrary, async (file) => {
+        const result = await serverFileExists(execute, file);
 
         expect(result).toBe(true);
       });

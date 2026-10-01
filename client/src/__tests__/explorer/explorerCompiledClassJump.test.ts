@@ -37,17 +37,17 @@ beforeEach(() => {
 // class was actually created in (e.g. a new class whose inDictionary: named a
 // different dictionary than the selected one).
 describe('onExternalClassCompiled reveals the compiled class in the right dictionary', () => {
-  it('reveals in the current dictionary when the class lives there', () => {
+  it('reveals in the current dictionary when the class lives there', async () => {
     const ctl = makeController();
     classesInDict.mockReturnValue([{ className: 'Foo', category: '' }]);
     const reveal = vi.spyOn(ctl as unknown as { revealClass: () => void }, 'revealClass');
 
-    ctl.onExternalClassCompiled(1, 'Foo');
+    await ctl.onExternalClassCompiled(1, 'Foo');
 
     expect(reveal).toHaveBeenCalledWith('Globals', 1, 'Foo');
   });
 
-  it('jumps to the dictionary the class was created in when it is not in the current one', () => {
+  it('jumps to the dictionary the class was created in when it is not in the current one', async () => {
     const ctl = makeController();
     classesInDict.mockReturnValue([]); // not in the selected dictionary
     dictNames.mockReturnValue(['Globals', 'OtherDict']); // OtherDict → 1-based index 2
@@ -55,19 +55,19 @@ describe('onExternalClassCompiled reveals the compiled class in the right dictio
       .spyOn(ctl as unknown as { revealClass: () => void }, 'revealClass')
       .mockImplementation(() => {});
 
-    ctl.onExternalClassCompiled(1, 'Foo', 'OtherDict');
+    await ctl.onExternalClassCompiled(1, 'Foo', 'OtherDict');
 
     expect(reveal).toHaveBeenCalledWith('OtherDict', 2, 'Foo');
   });
 
-  it('does not reveal when the class cannot be resolved in any dictionary', () => {
+  it('does not reveal when the class cannot be resolved in any dictionary', async () => {
     const ctl = makeController();
     classesInDict.mockReturnValue([]);
     dictNames.mockReturnValue(['Globals']); // 'Nope' unresolved
     allClasses.mockReturnValue([]); // and no global match either
     const reveal = vi.spyOn(ctl as unknown as { revealClass: () => void }, 'revealClass');
 
-    ctl.onExternalClassCompiled(1, 'Foo', 'Nope');
+    await ctl.onExternalClassCompiled(1, 'Foo', 'Nope');
 
     expect(reveal).not.toHaveBeenCalled();
   });

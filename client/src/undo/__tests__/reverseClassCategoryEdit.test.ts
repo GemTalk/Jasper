@@ -46,12 +46,12 @@ function entry(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(recategorizeClass).mockReturnValue('Recategorized: A');
+  vi.mocked(recategorizeClass).mockResolvedValue('Recategorized: A');
 });
 
 describe('reverseClassCategoryEdit', () => {
   it('files each class back under its own former label', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New', B: 'New' }));
 
     expect(
       await reverseClassCategoryEdit(
@@ -69,7 +69,7 @@ describe('reverseClassCategoryEdit', () => {
 
   it('leaves alone a class that was already in the target category', async () => {
     // The merge case: B was in New before the rename, so it is not in the entry at all.
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New', B: 'New' }));
 
     await reverseClassCategoryEdit(session, entry());
 
@@ -78,21 +78,21 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('does nothing when the classes are already filed as they were', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'Old' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'Old' }));
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(true);
     expect(recategorizeClass).not.toHaveBeenCalled();
   });
 
   it('skips a class that has gone away since', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ B: 'Elsewhere' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ B: 'Elsewhere' }));
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(true);
     expect(recategorizeClass).not.toHaveBeenCalled();
   });
 
   it('warns before discarding a refiling done since, and undoes anyway when told to', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'SomewhereElse' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'SomewhereElse' }));
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(true);
@@ -106,7 +106,7 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('keeps the entry on offer when the drift warning is declined', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'SomewhereElse' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'SomewhereElse' }));
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(false);
@@ -115,8 +115,8 @@ describe('reverseClassCategoryEdit', () => {
 
   it('reports a refiling the stone answered with a status string rather than raising', async () => {
     // No class moved, so the entry still describes the dictionary and stays on offer.
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New' }));
-    vi.mocked(recategorizeClass).mockReturnValue('Class not found: A');
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New' }));
+    vi.mocked(recategorizeClass).mockResolvedValue('Class not found: A');
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
@@ -126,10 +126,10 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('reports a partial refiling without claiming the whole thing worked', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New', B: 'New' }));
     vi.mocked(recategorizeClass)
-      .mockReturnValueOnce('Recategorized: A')
-      .mockReturnValueOnce('Class not found: B');
+      .mockResolvedValueOnce('Recategorized: A')
+      .mockResolvedValueOnce('Class not found: B');
 
     await reverseClassCategoryEdit(
       session,
@@ -145,7 +145,7 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('keeps the entry on offer when the dictionary cannot be read', async () => {
-    vi.mocked(getClassesWithCategory).mockImplementation(() => {
+    vi.mocked(getClassesWithCategory).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -156,7 +156,7 @@ describe('reverseClassCategoryEdit', () => {
   it('follows the single class back, since the forward move SELECTED where it went', async () => {
     // Without this the pane is still filtered to the category the class just left, and the class
     // comes back invisible.
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New' }));
 
     await reverseClassCategoryEdit(session, entry());
 
@@ -164,7 +164,7 @@ describe('reverseClassCategoryEdit', () => {
   });
 
   it('follows nothing when many classes moved — there is no one class to follow', async () => {
-    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+    vi.mocked(getClassesWithCategory).mockResolvedValue(entries({ A: 'New', B: 'New' }));
 
     await reverseClassCategoryEdit(
       session,

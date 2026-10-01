@@ -27,7 +27,10 @@ const ERR_PREFIX = '!ERR ';
 // repository (read-only — no SystemUser needed). Each operation is emitted as
 // `<code>\t<package>\t<targetPrintString>`, code I(mage-only) / D(isk-only) /
 // M(odified).
-export function diffRowanProject(execute: QueryExecutor, projectName: string): RowanDiff {
+export async function diffRowanProject(
+  execute: QueryExecutor,
+  projectName: string,
+): Promise<RowanDiff> {
   const code = `| r ws patches |
 r := System myUserProfile symbolList objectNamed: #'Rowan'.
 r isNil ifTrue: [^'${NO_ROWAN}'].
@@ -47,7 +50,7 @@ patches do: [:assoc | | pkg |
        nextPutAll: ([op definition printString] on: Error do: [:e | '?']); lf]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const trimmed = raw.trimStart();
   if (trimmed.startsWith(NO_ROWAN))
     return { ok: false, error: 'Rowan is not installed in this image.', operations: [] };

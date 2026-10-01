@@ -171,7 +171,7 @@ describe('a command invoked on a row nothing binds', () => {
     // The guard's whole observable is the refusal, so its absence is what "through" means here;
     // what classHistory does afterwards belongs to explorerClassHistoryUndo.test.ts.
     const ctl = makeController(supersededChain);
-    vi.mocked(queries.getClassHistory).mockReturnValue('[]');
+    vi.mocked(queries.getClassHistory).mockResolvedValue('[]');
 
     await ctl.classHistory(new HierarchyItem('Parent', 'UserGlobals', 'ancestor', 0, false));
 

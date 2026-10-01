@@ -11,23 +11,23 @@ import { QueryExecutor } from './types';
  */
 
 /** Re-enable every breakpoint in the gem, disabled ones included. */
-export function enableAllBreakpoints(execute: QueryExecutor): string {
-  return execute(`GsNMethod _enableAllBreaks. 'ok'`);
+export async function enableAllBreakpoints(execute: QueryExecutor): Promise<string> {
+  return await execute(`GsNMethod _enableAllBreaks. 'ok'`);
 }
 
 /** Disable every breakpoint in the gem, but keep them so they can be re-enabled. */
-export function disableAllBreakpoints(execute: QueryExecutor): string {
-  return execute(`GsNMethod _disableAllBreaks. 'ok'`);
+export async function disableAllBreakpoints(execute: QueryExecutor): Promise<string> {
+  return await execute(`GsNMethod _disableAllBreaks. 'ok'`);
 }
 
 /** Remove every breakpoint in the gem outright. */
-export function removeAllBreakpoints(execute: QueryExecutor): string {
-  return execute(`GsNMethod _deleteAllBreaks. 'ok'`);
+export async function removeAllBreakpoints(execute: QueryExecutor): Promise<string> {
+  return await execute(`GsNMethod _deleteAllBreaks. 'ok'`);
 }
 
 /** Whether the gem currently holds any method breakpoint at all. */
-export function hasBreakpoints(execute: QueryExecutor): boolean {
-  return execute(`GsNMethod _hasBreakpoints printString`).trim() === 'true';
+export async function hasBreakpoints(execute: QueryExecutor): Promise<boolean> {
+  return (await execute(`GsNMethod _hasBreakpoints printString`)).trim() === 'true';
 }
 
 /**
@@ -35,11 +35,11 @@ export function hasBreakpoints(execute: QueryExecutor): boolean {
  * "executed code", or a method whose class has since been renamed out from
  * under the breakpoint. `op` is the `GsNMethod` selector to send.
  */
-export function breakpointByOop(
+export async function breakpointByOop(
   execute: QueryExecutor,
   methodOop: string,
   op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
   stepPoint: number,
-): string {
-  return execute(`(Object _objectForOop: ${methodOop}) ${op} ${stepPoint}. 'ok'`);
+): Promise<string> {
+  return await execute(`(Object _objectForOop: ${methodOop}) ${op} ${stepPoint}. 'ok'`);
 }

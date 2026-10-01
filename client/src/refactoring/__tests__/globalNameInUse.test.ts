@@ -2,22 +2,22 @@ import { describe, it, expect, vi } from 'vitest';
 import { globalNameInUse, globalNameInUseInDictionary } from '../queries/globalNameInUse';
 
 describe('globalNameInUse query', () => {
-  it('reports true when the stone says the name is bound', () => {
+  it('reports true when the stone says the name is bound', async () => {
     const execute = vi.fn().mockReturnValue('true\n');
 
-    expect(globalNameInUse(execute, 'Account')).toBe(true);
+    expect(await globalNameInUse(execute, 'Account')).toBe(true);
   });
 
-  it('reports false when the name is free', () => {
+  it('reports false when the name is free', async () => {
     const execute = vi.fn().mockReturnValue('false');
 
-    expect(globalNameInUse(execute, 'Nope')).toBe(false);
+    expect(await globalNameInUse(execute, 'Nope')).toBe(false);
   });
 
-  it('checks the whole symbol list for the name', () => {
+  it('checks the whole symbol list for the name', async () => {
     const execute = vi.fn().mockReturnValue('false');
 
-    globalNameInUse(execute, 'Account');
+    await globalNameInUse(execute, 'Account');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList objectNamed:');
@@ -34,27 +34,27 @@ describe('globalNameInUse query', () => {
  * warned about instead.
  */
 describe('globalNameInUseInDictionary query', () => {
-  it('scopes the question to one dictionary by its SymbolList index', () => {
+  it('scopes the question to one dictionary by its SymbolList index', async () => {
     const execute = vi.fn().mockReturnValue('false');
 
-    expect(globalNameInUseInDictionary(execute, 'Shadowed', 7)).toBe(false);
+    expect(await globalNameInUseInDictionary(execute, 'Shadowed', 7)).toBe(false);
     expect(execute.mock.calls[0][0]).toContain('symbolList at: 7');
     expect(execute.mock.calls[0][0]).toContain("at: #'Shadowed'");
   });
 
-  it('scopes by dictionary name when that is what the caller has', () => {
+  it('scopes by dictionary name when that is what the caller has', async () => {
     const execute = vi.fn().mockReturnValue('true');
 
-    expect(globalNameInUseInDictionary(execute, 'Shadowed', 'DictionaryA')).toBe(true);
+    expect(await globalNameInUseInDictionary(execute, 'Shadowed', 'DictionaryA')).toBe(true);
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'DictionaryA'");
   });
 
-  it('answers false without asking when there is no dictionary to scope to', () => {
+  it('answers false without asking when there is no dictionary to scope to', async () => {
     // Nothing to measure a collision against, so the caller decides rather than this inventing an
     // answer -- and crucially it does not fall back to "anywhere", which is the old behaviour.
     const execute = vi.fn().mockReturnValue('true');
 
-    expect(globalNameInUseInDictionary(execute, 'Shadowed', undefined)).toBe(false);
+    expect(await globalNameInUseInDictionary(execute, 'Shadowed', undefined)).toBe(false);
     expect(execute).not.toHaveBeenCalled();
   });
 });

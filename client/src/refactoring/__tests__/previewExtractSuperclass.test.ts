@@ -78,7 +78,7 @@ describe('extract-superclass query builders', () => {
     await pageExtractSuperclassPreview(exec, 'tok', 5, 1000);
     await applyExtractSuperclass(exec, 'tok');
     const clearExec = vi.fn().mockReturnValue('ok');
-    clearExtractSuperclassPreview(clearExec, 'tok');
+    await clearExtractSuperclassPreview(clearExec, 'tok');
 
     expect(exec.mock.calls[0][1]).toContain("pageForToken: 'tok' from: 5 maxBytes: 1000");
     expect(exec.mock.calls[1][1]).toContain("applyForToken: 'tok' deselected: #()");

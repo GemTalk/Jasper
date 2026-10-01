@@ -34,12 +34,12 @@ export interface LogicalRestoreDeps {
 
   // Pre-flight against the CURRENT live session, before it is torn down. A
   // restore requires the FileControl privilege.
-  hasFileControl: () => boolean;
+  hasFileControl: () => Promise<boolean>;
 
   // Full server-side paths of the stone's existing backup files, queried
   // against the CURRENT live session (same timing as hasFileControl above).
   // Populates the quick pick used when `backupFile` isn't pre-selected.
-  listBackupFiles: () => string[];
+  listBackupFiles: () => Promise<string[]>;
 
   // Tear down the user's live session so the stone can be stopped cleanly.
   closeCurrentSession: () => Promise<void>;
@@ -138,7 +138,7 @@ async function runRestoreCall(session: RestoreSession, backupFile: string): Prom
 export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boolean> {
   let hasPrivilege: boolean;
   try {
-    hasPrivilege = deps.hasFileControl();
+    hasPrivilege = await deps.hasFileControl();
   } catch (e) {
     vscode.window.showErrorMessage(`Could not check restore privileges: ${errorMessage(e)}`);
     return false;
@@ -153,7 +153,7 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
 
   let files: string[];
   try {
-    files = deps.listBackupFiles();
+    files = await deps.listBackupFiles();
   } catch (e) {
     vscode.window.showErrorMessage(
       `Could not list backup files for "${deps.stoneName}": ${errorMessage(e)}`,

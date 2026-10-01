@@ -122,29 +122,29 @@ describe('BreakpointTreeProvider', () => {
   } as unknown as BreakpointManager;
 
   beforeEach(() => {
-    mockGetAll.mockReset().mockReturnValue([]);
+    mockGetAll.mockReset().mockResolvedValue([]);
   });
 
-  it('asks the developer to log in when there is no session', () => {
+  it('asks the developer to log in when there is no session', async () => {
     const provider = new BreakpointTreeProvider(makeSessionManager(false), manager);
-    const roots = provider.getChildren();
+    const roots = await provider.getChildren();
     expect(roots).toHaveLength(1);
     expect(roots[0].kind).toBe('notice');
     expect(mockGetAll).not.toHaveBeenCalled();
   });
 
-  it('says so plainly when the session has no breakpoints', () => {
+  it('says so plainly when the session has no breakpoints', async () => {
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
-    const roots = provider.getChildren();
+    const roots = await provider.getChildren();
     expect(roots[0]).toMatchObject({ kind: 'notice' });
   });
 
-  it('shows the failure rather than an empty tree when the query throws', () => {
+  it('shows the failure rather than an empty tree when the query throws', async () => {
     mockGetAll.mockImplementation(() => {
       throw new Error('session busy');
     });
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
-    const roots = provider.getChildren();
+    const roots = await provider.getChildren();
     expect(roots).toHaveLength(1);
     // Show the developer why the view is empty; a bare empty tree reads as
     // "no breakpoints", which is a different and wrong answer.
@@ -154,10 +154,10 @@ describe('BreakpointTreeProvider', () => {
     });
   });
 
-  it('groups the gem breakpoints into class nodes', () => {
-    mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
+  it('groups the gem breakpoints into class nodes', async () => {
+    mockGetAll.mockResolvedValue([bp(), bp({ selector: 'deposit:' })]);
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
-    const roots = provider.getChildren();
+    const roots = await provider.getChildren();
     expect(roots).toHaveLength(1);
     expect(roots[0].kind).toBe('class');
   });
@@ -191,11 +191,11 @@ describe('BreakpointTreeProvider', () => {
     expect(fired).toHaveBeenCalledTimes(1);
   });
 
-  it('lists a class node’s breakpoints as its children', () => {
-    mockGetAll.mockReturnValue([bp(), bp({ selector: 'deposit:' })]);
+  it('lists a class node’s breakpoints as its children', async () => {
+    mockGetAll.mockResolvedValue([bp(), bp({ selector: 'deposit:' })]);
     const provider = new BreakpointTreeProvider(makeSessionManager(), manager);
-    const [classNode] = provider.getChildren();
-    const children = provider.getChildren(classNode);
+    const [classNode] = await provider.getChildren();
+    const children = await provider.getChildren(classNode);
     expect(children).toHaveLength(2);
     expect(children.every((c) => c.kind === 'breakpoint')).toBe(true);
   });

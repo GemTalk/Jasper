@@ -26,63 +26,63 @@ const exec = vi.fn();
 const slot = { dict: 7, className: 'Account', varName: 'Registry' };
 
 describe('captureClassVar', () => {
-  it('reads a DECLARED name as defined', () => {
-    vi.mocked(getDefinedClassVarNames).mockReturnValue(['Registry', 'Other']);
+  it('reads a DECLARED name as defined', async () => {
+    vi.mocked(getDefinedClassVarNames).mockResolvedValue(['Registry', 'Other']);
 
-    expect(captureClassVar(exec, slot)).toEqual({ defined: true });
+    expect(await captureClassVar(exec, slot)).toEqual({ defined: true });
   });
 
-  it('reads a name the class only inherits as not defined here', () => {
+  it('reads a name the class only inherits as not defined here', async () => {
     // The reversal touches the class that DECLARES the variable; removing an inherited name
     // would take it away from every other subclass too.
-    vi.mocked(getDefinedClassVarNames).mockReturnValue(['Other']);
+    vi.mocked(getDefinedClassVarNames).mockResolvedValue(['Other']);
 
-    expect(captureClassVar(exec, slot)).toEqual({ defined: false });
+    expect(await captureClassVar(exec, slot)).toEqual({ defined: false });
   });
 });
 
 describe('applyClassVarOp', () => {
-  it('declares through addClassVariable and undeclares through deleteClassVariable', () => {
-    vi.mocked(addClassVariable).mockReturnValue('ok');
-    vi.mocked(deleteClassVariable).mockReturnValue('ok');
+  it('declares through addClassVariable and undeclares through deleteClassVariable', async () => {
+    vi.mocked(addClassVariable).mockResolvedValue('ok');
+    vi.mocked(deleteClassVariable).mockResolvedValue('ok');
 
-    expect(applyClassVarOp(exec, slot, 'declare')).toBeNull();
+    expect(await applyClassVarOp(exec, slot, 'declare')).toBeNull();
     expect(addClassVariable).toHaveBeenCalledWith(exec, 'Account', 'Registry', 7);
 
-    expect(applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
+    expect(await applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
     expect(deleteClassVariable).toHaveBeenCalledWith(exec, 'Account', 'Registry', 7);
   });
 
-  it("treats 'not-declared' on a removal as done, not as a failure", () => {
+  it("treats 'not-declared' on a removal as done, not as a failure", async () => {
     // That IS the state the reversal was aiming at.
-    vi.mocked(deleteClassVariable).mockReturnValue('not-declared');
+    vi.mocked(deleteClassVariable).mockResolvedValue('not-declared');
 
-    expect(applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
+    expect(await applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
   });
 
-  it("does NOT treat 'not-declared' as done when declaring", () => {
-    vi.mocked(addClassVariable).mockReturnValue('not-declared');
+  it("does NOT treat 'not-declared' as done when declaring", async () => {
+    vi.mocked(addClassVariable).mockResolvedValue('not-declared');
 
-    expect(applyClassVarOp(exec, slot, 'declare')).toBe('not-declared');
+    expect(await applyClassVarOp(exec, slot, 'declare')).toBe('not-declared');
   });
 
-  it('turns no-class into a sentence naming the class', () => {
-    vi.mocked(deleteClassVariable).mockReturnValue('no-class');
+  it('turns no-class into a sentence naming the class', async () => {
+    vi.mocked(deleteClassVariable).mockResolvedValue('no-class');
 
-    expect(applyClassVarOp(exec, slot, 'undeclare')).toBe('Account could not be resolved');
+    expect(await applyClassVarOp(exec, slot, 'undeclare')).toBe('Account could not be resolved');
   });
 
-  it('reports an unexpected answer verbatim rather than reading it as success', () => {
-    vi.mocked(deleteClassVariable).mockReturnValue('something else entirely');
+  it('reports an unexpected answer verbatim rather than reading it as success', async () => {
+    vi.mocked(deleteClassVariable).mockResolvedValue('something else entirely');
 
-    expect(applyClassVarOp(exec, slot, 'undeclare')).toBe('something else entirely');
+    expect(await applyClassVarOp(exec, slot, 'undeclare')).toBe('something else entirely');
   });
 
-  it('answers the reason instead of throwing past the caller', () => {
-    vi.mocked(deleteClassVariable).mockImplementation(() => {
+  it('answers the reason instead of throwing past the caller', async () => {
+    vi.mocked(deleteClassVariable).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(applyClassVarOp(exec, slot, 'undeclare')).toBe('session busy');
+    expect(await applyClassVarOp(exec, slot, 'undeclare')).toBe('session busy');
   });
 });

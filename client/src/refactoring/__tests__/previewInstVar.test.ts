@@ -70,9 +70,9 @@ describe('instance-variable refactor query builders', () => {
     expect(r.last()).toContain('options: #()');
   });
 
-  it('clears a preview token', () => {
-    const exec = vi.fn((code: string) => code);
-    clearInstVarPreview(exec, 'tok');
+  it('clears a preview token', async () => {
+    const exec = vi.fn(async (code: string) => code);
+    await clearInstVarPreview(exec, 'tok');
     expect(exec).toHaveBeenCalledWith(expect.stringContaining("clearToken: 'tok'"));
   });
 

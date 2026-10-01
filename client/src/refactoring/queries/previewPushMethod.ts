@@ -111,10 +111,10 @@ export function applyPushMethod(
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearPushMethodPreview(
+export async function clearPushMethodPreview(
   execute: QueryExecutor,
   direction: PushDirection,
   token: string,
-): string {
-  return execute(`${pushEngineClass(direction)} clearToken: '${escapeString(token)}'`);
+): Promise<string> {
+  return await execute(`${pushEngineClass(direction)} clearToken: '${escapeString(token)}'`);
 }

@@ -39,13 +39,13 @@ export interface AddAccessorsResult {
  *  targets the class side (class-variable accessors) vs the instance side
  *  (instance-variable accessors). Methods land in the `accessing` category. The
  *  change is not committed. */
-export function addAccessors(
+export async function addAccessors(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   accessors: Accessor[],
   dict?: number | string,
-): AddAccessorsResult {
+): Promise<AddAccessorsResult> {
   const target = isMeta ? 'c class' : 'c';
   const addLines = accessors
     .map((a) => `add value: #'${escapeString(a.selector)}' value: '${escapeString(a.source)}'.`)
@@ -60,7 +60,7 @@ cls ifNil: ['no-class'] ifNotNil: [:c | | tgt add created skipped |
     ifFalse: [tgt compileMethod: src dictionaries: System myUserProfile symbolList category: 'accessing'. created := created + 1]].
 ${addLines}
   'created:', created printString, ' skipped:', skipped printString]`;
-  const raw = execute(code).trim();
+  const raw = (await execute(code)).trim();
   if (raw === 'no-class') return { created: 0, skipped: 0, noClass: true };
   const created = Number(/created:(\d+)/.exec(raw)?.[1] ?? 0);
   const skipped = Number(/skipped:(\d+)/.exec(raw)?.[1] ?? 0);

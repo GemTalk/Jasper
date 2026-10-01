@@ -5,38 +5,38 @@ import { fetchObjectMeta } from '../queries/getEnhancedInspectorViewSpecs';
 // function with no selector validation to interfere with error path coverage).
 
 describe('enhancedInspectorExecute error isolation', () => {
-  it('wraps user code in AbstractException handler before sending to GemStone', () => {
+  it('wraps user code in AbstractException handler before sending to GemStone', async () => {
     expect.assertions(2);
-    const execute = vi.fn(() => '{}');
-    fetchObjectMeta(execute, 1000n);
+    const execute = vi.fn(async () => '{}');
+    await fetchObjectMeta(execute, 1000n);
     const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('on: AbstractException do:');
     expect(code).toContain("'EIError:'");
   });
 
-  it('returns null for "EIError:" with no message', () => {
+  it('returns null for "EIError:" with no message', async () => {
     expect.assertions(1);
-    const execute = vi.fn(() => 'EIError:');
-    expect(fetchObjectMeta(execute, 1000n)).toBeNull();
+    const execute = vi.fn(async () => 'EIError:');
+    expect(await fetchObjectMeta(execute, 1000n)).toBeNull();
   });
 
-  it('returns null for "EIError:" with a message', () => {
+  it('returns null for "EIError:" with a message', async () => {
     expect.assertions(1);
-    const execute = vi.fn(() => 'EIError:something went wrong');
-    expect(fetchObjectMeta(execute, 1000n)).toBeNull();
+    const execute = vi.fn(async () => 'EIError:something went wrong');
+    expect(await fetchObjectMeta(execute, 1000n)).toBeNull();
   });
 
-  it('passes through an empty string result — not treated as null', () => {
+  it('passes through an empty string result — not treated as null', async () => {
     expect.assertions(1);
-    const execute = vi.fn(() => '');
-    expect(fetchObjectMeta(execute, 1000n)).toBe('');
+    const execute = vi.fn(async () => '');
+    expect(await fetchObjectMeta(execute, 1000n)).toBe('');
   });
 
-  it('returns null when execute throws a JavaScript error', () => {
+  it('returns null when execute throws a JavaScript error', async () => {
     expect.assertions(1);
     const execute = vi.fn(() => {
       throw new Error('GCI connection lost');
     });
-    expect(fetchObjectMeta(execute, 1000n)).toBeNull();
+    expect(await fetchObjectMeta(execute, 1000n)).toBeNull();
   });
 });

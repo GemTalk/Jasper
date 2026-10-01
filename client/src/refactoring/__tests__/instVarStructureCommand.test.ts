@@ -78,7 +78,7 @@ beforeEach(() => {
   resetUndoStacks();
   vi.mocked(ensureRbSupport).mockResolvedValue(true);
   vi.mocked(saveIfDirty).mockResolvedValue(true);
-  vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
+  vi.mocked(queries.refactoringUndoStatus).mockResolvedValue('{"available":false}');
 });
 
 describe('instance-variable structure command — apply/decline flow', () => {
@@ -177,7 +177,7 @@ describe('instance-variable structure command — apply/decline flow', () => {
     vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
+    vi.mocked(queries.refactoringUndoStatus).mockResolvedValue(
       JSON.stringify({
         available: true,
         label: "Move instance variable 'tailLength'",
@@ -189,9 +189,11 @@ describe('instance-variable structure command — apply/decline flow', () => {
 
     expect(await runFlow()).toBe(true);
 
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('applied 2 change(s)'),
-      'Undo',
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('applied 2 change(s)'),
+        'Undo',
+      ),
     );
     expect(peekUndoEntry(session.id)).toMatchObject({
       kind: 'refactoring',
@@ -210,8 +212,10 @@ describe('instance-variable structure command — apply/decline flow', () => {
     expect(await runFlow()).toBe(true);
 
     expect(queries.discardPendingCapture).toHaveBeenCalled();
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('applied 2 change(s)'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('applied 2 change(s)'),
+      ),
     );
     expect(peekUndoEntry(session.id)).toBeUndefined();
   });
@@ -224,6 +228,7 @@ describe('instance-variable structure command — apply/decline flow', () => {
     );
 
     expect(await runFlow()).toBe(true);
+    await vi.waitFor(() => expect(vscode.window.showInformationMessage).toHaveBeenCalled());
     const msg = vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0];
     expect(msg).toContain('committed');
     expect(msg).toContain('2 instance');

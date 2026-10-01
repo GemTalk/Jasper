@@ -121,6 +121,9 @@ export function applyRenameClass(
 }
 
 // Drop a finished preview from SessionTemps.
-export function clearRenameClassPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsRenameClassRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearRenameClassPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsRenameClassRefactoring clearToken: '${escapeString(token)}'`);
 }

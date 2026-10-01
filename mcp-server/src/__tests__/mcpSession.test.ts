@@ -116,21 +116,21 @@ describe('McpSession', () => {
   });
 
   describe('executeFetchString', () => {
-    it('executes code and returns the fetched string', () => {
+    it('executes code and returns the fetched string', async () => {
       const session = new McpSession(makeConfig());
-      const result = session.executeFetchString('3 + 4');
+      const result = await session.executeFetchString('3 + 4');
 
       expect(mockGci.executeAndFetchString).toHaveBeenCalledWith(expect.anything(), '3 + 4');
       expect(result).toBe('result');
     });
 
-    it('propagates errors from the underlying GCI call', () => {
+    it('propagates errors from the underlying GCI call', async () => {
       mockGci.executeAndFetchString.mockImplementation(() => {
         throw GciLibraryError.withMessage('MessageNotUnderstood');
       });
 
       const session = new McpSession(makeConfig());
-      expect(() => session.executeFetchString('bad code')).toThrow('MessageNotUnderstood');
+      await expect(session.executeFetchString('bad code')).rejects.toThrow('MessageNotUnderstood');
     });
   });
 

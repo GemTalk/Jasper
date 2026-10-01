@@ -44,7 +44,7 @@ function makeController(): ExplorerController {
   } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   // Post-apply refreshes want a live tree/stone; neither is under test here.
-  vi.spyOn(ctl, 'reloadCurrentClassMethods').mockImplementation(() => {});
+  vi.spyOn(ctl, 'reloadCurrentClassMethods').mockImplementation(async () => {});
   vi.spyOn(
     ctl as unknown as {
       refreshRenamedSelectorEditors: (o: string, n: string) => Promise<void>;

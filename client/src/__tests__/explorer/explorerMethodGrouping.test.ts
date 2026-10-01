@@ -52,10 +52,10 @@ beforeEach(() => {
 });
 
 describe('Methods pane category grouping', () => {
-  it('groups methods under their categories by default', () => {
+  it('groups methods under their categories by default', async () => {
     const ctl = makeController();
 
-    const children = ctl.methodProvider.getChildren();
+    const children = await ctl.methodProvider.getChildren();
 
     expect(children.every((c) => c instanceof MethodCategoryItem)).toBe(true);
     expect((children as MethodCategoryItem[]).map((c) => c.category)).toEqual(
@@ -63,10 +63,10 @@ describe('Methods pane category grouping', () => {
     );
   });
 
-  it('leads with a REAL category — no ALL METHODS pseudo-category (#387 item 10)', () => {
+  it('leads with a REAL category — no ALL METHODS pseudo-category (#387 item 10)', async () => {
     const ctl = makeController();
 
-    const categories = (ctl.methodProvider.getChildren() as MethodCategoryItem[]).map(
+    const categories = ((await ctl.methodProvider.getChildren()) as MethodCategoryItem[]).map(
       (c) => c.category,
     );
 
@@ -75,19 +75,19 @@ describe('Methods pane category grouping', () => {
     expect(categories[0]).toBe('accessing');
   });
 
-  it('starts every category collapsed now that nothing forces itself open', () => {
+  it('starts every category collapsed now that nothing forces itself open', async () => {
     const ctl = makeController();
 
-    for (const c of ctl.methodProvider.getChildren() as MethodCategoryItem[]) {
+    for (const c of (await ctl.methodProvider.getChildren()) as MethodCategoryItem[]) {
       expect(c.collapsibleState).toBe(TreeItemCollapsibleState.Collapsed);
     }
   });
 
-  it('lists methods flat, with no category rows, when grouping is off', () => {
+  it('lists methods flat, with no category rows, when grouping is off', async () => {
     __setConfig('gemstone', GROUP_KEY, false);
     const ctl = makeController();
 
-    const children = ctl.methodProvider.getChildren();
+    const children = await ctl.methodProvider.getChildren();
 
     expect(children.every((c) => c instanceof MethodItem)).toBe(true);
     expect((children as MethodItem[]).map((c) => c.info.selector)).toEqual(
@@ -95,12 +95,12 @@ describe('Methods pane category grouping', () => {
     );
   });
 
-  it('parents a grouped method row under its category so reveal can locate it', () => {
+  it('parents a grouped method row under its category so reveal can locate it', async () => {
     const ctl = makeController();
-    const [accessing] = (ctl.methodProvider.getChildren() as MethodCategoryItem[]).filter(
+    const [accessing] = ((await ctl.methodProvider.getChildren()) as MethodCategoryItem[]).filter(
       (c) => c.category === 'accessing',
     );
-    const [method] = ctl.methodProvider.getChildren(accessing) as MethodItem[];
+    const [method] = (await ctl.methodProvider.getChildren(accessing)) as MethodItem[];
 
     const parent = ctl.methodProvider.getParent(method);
 
@@ -108,11 +108,11 @@ describe('Methods pane category grouping', () => {
     expect((parent as MethodCategoryItem).category).toBe('accessing');
   });
 
-  it('gives a flat method row no parent, so it hangs off the root', () => {
+  it('gives a flat method row no parent, so it hangs off the root', async () => {
     __setConfig('gemstone', GROUP_KEY, false);
     const ctl = makeController();
 
-    const [flat] = ctl.methodProvider.getChildren() as MethodItem[];
+    const [flat] = (await ctl.methodProvider.getChildren()) as MethodItem[];
 
     expect(flat.displayCategory).toBeUndefined();
     expect(ctl.methodProvider.getParent(flat)).toBeUndefined();
@@ -135,12 +135,12 @@ describe('Methods pane category grouping', () => {
     expect(ctl.groupMethodsByCategory()).toBe(false);
   });
 
-  it('keeps the category structure when filtering with categories visible', () => {
+  it('keeps the category structure when filtering with categories visible', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
     // The filter chip leads the list; the rest are the pruned category rows.
-    const [chip, ...rest] = ctl.methodProvider.getChildren();
+    const [chip, ...rest] = await ctl.methodProvider.getChildren();
 
     expect(chip).toBeInstanceOf(FilterChipItem);
     expect(rest.every((c) => c instanceof MethodCategoryItem)).toBe(true);
@@ -149,35 +149,35 @@ describe('Methods pane category grouping', () => {
     expect(cats).not.toContain('printing');
   });
 
-  it('shows only matching selectors under a filtered category', () => {
+  it('shows only matching selectors under a filtered category', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
-    const rows = ctl.methodProvider.getChildren(
+    const rows = (await ctl.methodProvider.getChildren(
       new MethodCategoryItem(false, 'accessing', false),
-    ) as MethodItem[];
+    )) as MethodItem[];
 
     expect(rows.map((r) => r.info.selector)).toEqual(['at:']);
   });
 
-  it('expands matching categories while filtering so the matches show', () => {
+  it('expands matching categories while filtering so the matches show', async () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
-    const accessing = (ctl.methodProvider.getChildren() as MethodCategoryItem[]).find(
+    const accessing = ((await ctl.methodProvider.getChildren()) as MethodCategoryItem[]).find(
       (c) => c.category === 'accessing',
     );
 
     expect(accessing?.collapsibleState).toBe(TreeItemCollapsibleState.Expanded);
   });
 
-  it('still flattens to matching methods when filtering with categories off', () => {
+  it('still flattens to matching methods when filtering with categories off', async () => {
     __setConfig('gemstone', GROUP_KEY, false);
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
     // Chip leads; the rest are the flat matching method rows.
-    const [chip, ...rest] = ctl.methodProvider.getChildren();
+    const [chip, ...rest] = await ctl.methodProvider.getChildren();
 
     expect(chip).toBeInstanceOf(FilterChipItem);
     expect(rest.every((c) => c instanceof MethodItem)).toBe(true);

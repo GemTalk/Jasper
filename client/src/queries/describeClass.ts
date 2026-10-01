@@ -13,11 +13,11 @@ import { classLookupExpr, escapeString } from './util';
 // `dict` is optional; when given (1-based index or name), disambiguates
 // shadowed class names. Without it, falls back to `objectNamed:` — the
 // first match in the user's symbolList.
-export function describeClass(
+export async function describeClass(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const esc = escapeString(className);
   const code = `| cls ws |
 cls := ${classLookupExpr(className, dict)}.
@@ -40,5 +40,5 @@ cls class categoryNames asSortedCollection do: [:cat |
   (cls class sortedSelectorsIn: cat) do: [:sel |
     ws nextPutAll: '  '; nextPutAll: sel; lf]].
 ws contents`;
-  return execute(code);
+  return await execute(code);
 }

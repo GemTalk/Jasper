@@ -56,8 +56,8 @@ describe('GemStoneDefinitionProvider', () => {
     __resetConfig();
     mockImplementorsOf.mockReset();
     mockGetAllClassNames.mockReset();
-    mockImplementorsOf.mockReturnValue([]);
-    mockGetAllClassNames.mockReturnValue([]);
+    mockImplementorsOf.mockResolvedValue([]);
+    mockGetAllClassNames.mockResolvedValue([]);
   });
 
   describe('with no session', () => {
@@ -71,7 +71,7 @@ describe('GemStoneDefinitionProvider', () => {
 
   describe('selector resolution', () => {
     it('queries implementors when selector resolver returns a selector', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -101,7 +101,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('returns multiple locations for multiple implementors', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -132,7 +132,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('builds class-side URI for isMeta results', async () => {
-      mockImplementorsOf.mockReturnValue([
+      mockImplementorsOf.mockResolvedValue([
         {
           dictName: 'Globals',
           className: 'Array',
@@ -171,7 +171,7 @@ describe('GemStoneDefinitionProvider', () => {
       // The row carries the environment it was found in; without it the location points at
       // the environment-0 method of the same name, or at nothing.
       __setConfig('gemstone', 'maxEnvironment', 1);
-      mockImplementorsOf.mockImplementation((_session, _selector, env) =>
+      mockImplementorsOf.mockImplementation(async (_session, _selector, env) =>
         env === 1
           ? [
               {
@@ -202,7 +202,7 @@ describe('GemStoneDefinitionProvider', () => {
           throw new Error('LSP not ready');
         }),
       };
-      mockGetAllClassNames.mockReturnValue([]);
+      mockGetAllClassNames.mockResolvedValue([]);
       const provider = new GemStoneDefinitionProvider(makeSessionManager(true), resolver);
       const doc = makeDocument('foo');
       const results = await provider.provideDefinition(doc, pos(0, 0));
@@ -212,7 +212,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('returns empty when selector has no implementors', async () => {
-      mockImplementorsOf.mockReturnValue([]);
+      mockImplementorsOf.mockResolvedValue([]);
       const resolver: SelectorResolver = {
         getSelector: vi.fn(async () => 'nonExistentSelector'),
       };
@@ -226,7 +226,7 @@ describe('GemStoneDefinitionProvider', () => {
 
   describe('class name fallback', () => {
     it('returns definition URI for uppercase word when no selector found', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const resolver: SelectorResolver = {
@@ -241,7 +241,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('returns multiple locations when class exists in multiple dictionaries', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
         { dictIndex: 2, dictName: 'UserGlobals', className: 'Array' },
       ]);
@@ -263,7 +263,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('returns empty when class name not found', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneDefinitionProvider(makeSessionManager(true));
@@ -274,7 +274,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('works without a selector resolver', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'Globals', className: 'Array' },
       ]);
       const provider = new GemStoneDefinitionProvider(makeSessionManager(true));
@@ -286,7 +286,7 @@ describe('GemStoneDefinitionProvider', () => {
     });
 
     it('encodes special characters in URI', async () => {
-      mockGetAllClassNames.mockReturnValue([
+      mockGetAllClassNames.mockResolvedValue([
         { dictIndex: 1, dictName: 'My Dict', className: 'MyClass' },
       ]);
       const provider = new GemStoneDefinitionProvider(makeSessionManager(true));

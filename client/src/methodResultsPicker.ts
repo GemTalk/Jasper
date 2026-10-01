@@ -44,8 +44,8 @@ export function describeMethodResult(result: {
  *  spreads the row into the URI. Hard-coding environment 0 opened the wrong method — or
  *  none — for a row found anywhere else, which the safe-delete confirmation reaches by
  *  scanning every environment the user has configured. */
-function openMethodResult(sessionId: number, r: MethodSearchResult): void {
-  if (!SystemBrowser.navigateTo(sessionId, r)) {
+async function openMethodResult(sessionId: number, r: MethodSearchResult): Promise<void> {
+  if (!(await SystemBrowser.navigateTo(sessionId, r))) {
     const uri = buildMethodUri({ kind: 'method', sessionId, ...r });
     vscode.commands.executeCommand('gemstone.openDocument', uri);
   }
@@ -74,7 +74,7 @@ export async function showMethodResults(
     vscode.window.showInformationMessage(
       `${title}: only ${describeMethodResult(only)} — opened it.`,
     );
-    openMethodResult(sessionId, only);
+    await openMethodResult(sessionId, only);
     return true;
   }
 
@@ -93,6 +93,6 @@ export async function showMethodResults(
   });
   if (!picked) return false;
 
-  openMethodResult(sessionId, picked.result);
+  await openMethodResult(sessionId, picked.result);
   return true;
 }

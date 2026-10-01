@@ -40,20 +40,22 @@ describe('rename class + class history (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const rbEnginePresent = (): boolean =>
-    exec(
-      "(System myUserProfile symbolList objectNamed: 'GsRenameClassRefactoring') notNil printString",
+  const rbEnginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        "(System myUserProfile symbolList objectNamed: 'GsRenameClassRefactoring') notNil printString",
+      )
     ).trim() === 'true';
 
-  it('reports rename-class engine availability matching the shared refactoring probe', () => {
-    expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports rename-class engine availability matching the shared refactoring probe', async () => {
+    expect(await rbEnginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the rename-class and class-history GS SUnit suites in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the rename-class and class-history GS SUnit suites in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| failuresAndErrors |
 ${fileInEngineTestsExpr()}
@@ -64,32 +66,32 @@ failuresAndErrors := 0.
     failuresAndErrors := failuresAndErrors + r failures size + r errors size].
 failuresAndErrors printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   const BASE = 'RCItBase';
   const SUB = 'RCItSub';
   const OTHER = 'RCItOther';
   const RENAMED = 'RCItRenamed';
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #(x) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', 'foo\n\t^x');
-    q.compileClassDefinition(
+    await q.compileMethod(session(), BASE, false, 'accessing', 'foo\n\t^x');
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), SUB, false, 'making', `bar\n\t^${BASE} new`);
-    q.compileClassDefinition(
+    await q.compileMethod(session(), SUB, false, 'making', `bar\n\t^${BASE} new`);
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${OTHER}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(
+    await q.compileMethod(
       session(),
       OTHER,
       false,
@@ -99,9 +101,9 @@ failuresAndErrors printString`;
   };
 
   it('previews a whole-system class rename, then applies it server-side', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `rcit-${BASE}`;
 
     const start = parseStartPreview(
@@ -139,37 +141,41 @@ failuresAndErrors printString`;
     const result = parseApplyResult(await applyRenameClass(asyncExec, token, []));
 
     expect(result.failed).toEqual([]);
-    expect(exec(`(UserGlobals includesKey: #${RENAMED}) printString`).trim()).toBe('true');
-    expect(exec(`(UserGlobals includesKey: #${BASE}) printString`).trim()).toBe('false');
-    expect(exec(`(${RENAMED} includesSelector: #foo) printString`).trim()).toBe('true');
-    expect(exec(`(${SUB} superclass == ${RENAMED}) printString`).trim()).toBe('true');
+    expect((await exec(`(UserGlobals includesKey: #${RENAMED}) printString`)).trim()).toBe('true');
+    expect((await exec(`(UserGlobals includesKey: #${BASE}) printString`)).trim()).toBe('false');
+    expect((await exec(`(${RENAMED} includesSelector: #foo) printString`)).trim()).toBe('true');
+    expect((await exec(`(${SUB} superclass == ${RENAMED}) printString`)).trim()).toBe('true');
     expect(
-      exec(`(${OTHER} compiledMethodAt: #usesBase environmentId: 0 otherwise: nil) sourceString`),
+      await exec(
+        `(${OTHER} compiledMethodAt: #usesBase environmentId: 0 otherwise: nil) sourceString`,
+      ),
     ).toContain(`${RENAMED} new`);
   });
 
   it('reads a class definition history and restores a prior version as a new one', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     // Two-version fixture: shape a, then shape a+y (new version).
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       "Object subclass: 'RCItHist' instVarNames: #(a) classVars: #() " +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), 'RCItHist', false, 'accessing', 'm1\n\t^a');
-    q.compileClassDefinition(
+    await q.compileMethod(session(), 'RCItHist', false, 'accessing', 'm1\n\t^a');
+    await q.compileClassDefinition(
       session(),
       "Object subclass: 'RCItHist' instVarNames: #(a y) classVars: #() " +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
 
-    const versions = parseClassHistory(q.getClassHistory(session(), 'RCItHist'));
+    const versions = parseClassHistory(await q.getClassHistory(session(), 'RCItHist'));
     expect(versions.length).toBeGreaterThanOrEqual(2);
     expect(versions[0].isCurrent).toBe(true);
 
     const baseline = versions[versions.length - 1]; // newest-first array; baseline is last (index 1)
-    const result = parseRevertResult(q.revertClassToVersion(session(), 'RCItHist', baseline.index));
+    const result = parseRevertResult(
+      await q.revertClassToVersion(session(), 'RCItHist', baseline.index),
+    );
     expect(result.reverted).toBe(true);
     // Restored to the baseline shape (only a). Compare the printed instVar list
     // with whitespace stripped: the Array printString spells the class name with a
@@ -177,8 +183,8 @@ failuresAndErrors printString`;
     // and an in-stone String comparison is rejected as Unicode on 3.6.2 — so
     // normalize on the client instead of asserting either exact form or comparing
     // in the stone.
-    const printedInstVars = exec(
-      '(RCItHist instVarNames collect: [:e | e asString]) asArray printString',
+    const printedInstVars = (
+      await exec('(RCItHist instVarNames collect: [:e | e asString]) asArray printString')
     ).replace(/\s/g, '');
 
     expect(printedInstVars).toBe("anArray('a')");
@@ -203,15 +209,15 @@ failuresAndErrors printString`;
   // Front-inserted, it is the first dictionary every scope check examines, so the
   // pre-fix `nil asSymbol` fires immediately. (Confirmed to go red on the unguarded
   // engine.)
-  const addAnonymousDictionary = (): string =>
-    exec(`| anon |
+  const addAnonymousDictionary = async (): Promise<string> =>
+    await exec(`| anon |
 anon := SymbolDictionary new.
 System myUserProfile insertDictionary: anon at: 1.
 SessionTemps current at: ${ANON_KEY} put: anon.
 'added'`);
 
-  const removeAnonymousDictionary = (): string =>
-    exec(`| anon |
+  const removeAnonymousDictionary = async (): Promise<string> =>
+    await exec(`| anon |
 anon := SessionTemps current at: ${ANON_KEY} otherwise: nil.
 anon ifNotNil: [System myUserProfile symbolList remove: anon ifAbsent: []].
 SessionTemps current removeKey: ${ANON_KEY} ifAbsent: [].
@@ -225,76 +231,78 @@ SessionTemps current removeKey: ${ANON_KEY} ifAbsent: [].
   const IDA = 'Pr392IntDictA';
   const IDB = 'Pr392IntDictB';
 
-  const addIntDicts = (): string =>
-    exec(`| sl a b |
+  const addIntDicts = async (): Promise<string> =>
+    await exec(`| sl a b |
 sl := System myUserProfile symbolList.
 a := SymbolDictionary new name: #${IDA}; yourself.
 b := SymbolDictionary new name: #${IDB}; yourself.
 sl add: a. sl add: b.
 'ok'`);
 
-  const removeIntDicts = (): string =>
-    exec(`| sl |
+  const removeIntDicts = async (): Promise<string> =>
+    await exec(`| sl |
 sl := System myUserProfile symbolList.
 (sl detect: [:d | d name == #${IDA}] ifNone: [nil]) ifNotNil: [:d | d removeKey: #Pr392IntFoo ifAbsent: []. d removeKey: #Pr392IntShadow ifAbsent: []. sl remove: d ifAbsent: []].
 (sl detect: [:d | d name == #${IDB}] ifNone: [nil]) ifNotNil: [:d | d removeKey: #Pr392IntShadow ifAbsent: []. sl remove: d ifAbsent: []].
 'removed'`);
 
-  it("resolves a class's own defining dictionary independent of any selection", (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it("resolves a class's own defining dictionary independent of any selection", async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    addIntDicts();
+    await addIntDicts();
 
     try {
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: 'Pr392IntFoo' instVarNames: #() classVars: #() classInstVars: #() ` +
           `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDA}])`,
       );
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: 'Pr392IntShadow' instVarNames: #() classVars: #() classInstVars: #() ` +
           `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDA}])`,
       );
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session(),
         `Object subclass: 'Pr392IntShadow' instVarNames: #() classVars: #() classInstVars: #() ` +
           `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDB}])`,
       );
 
-      const idxOf = (name: string): number =>
+      const idxOf = async (name: string): Promise<number> =>
         Number(
-          exec(
-            `(System myUserProfile symbolList indexOf: ` +
-              `(System myUserProfile symbolList detect: [:d | d name == #${name}])) printString`,
+          (
+            await exec(
+              `(System myUserProfile symbolList indexOf: ` +
+                `(System myUserProfile symbolList detect: [:d | d name == #${name}])) printString`,
+            )
           ).trim(),
         );
-      const idxA = idxOf(IDA);
-      const idxB = idxOf(IDB);
+      const idxA = await idxOf(IDA);
+      const idxB = await idxOf(IDB);
 
-      expect(q.classDefiningDictionaryName(session(), 'Pr392IntFoo', undefined)).toBe(IDA);
-      expect(q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxA)).toBe(IDA);
-      expect(q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxB)).toBe(IDB);
+      expect(await q.classDefiningDictionaryName(session(), 'Pr392IntFoo', undefined)).toBe(IDA);
+      expect(await q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxA)).toBe(IDA);
+      expect(await q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxB)).toBe(IDB);
     } finally {
-      removeIntDicts();
+      await removeIntDicts();
     }
   });
 
   it('previews a dictionary-scoped rename when an unnamed dictionary is on the symbol list', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${ANON_BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${ANON_REF}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), ANON_REF, false, 'making', `usesBase\n\t^${ANON_BASE} new`);
-    addAnonymousDictionary();
+    await q.compileMethod(session(), ANON_REF, false, 'making', `usesBase\n\t^${ANON_BASE} new`);
+    await addAnonymousDictionary();
 
     try {
       const start = parseStartPreview(
@@ -328,7 +336,7 @@ sl := System myUserProfile symbolList.
       expect(ref, 'in-scope reference was dropped (nil-named-dictionary regression)').toBeDefined();
       expect(ref?.newSource).toContain(`${ANON_RENAMED} new`);
     } finally {
-      removeAnonymousDictionary();
+      await removeAnonymousDictionary();
     }
   });
 });

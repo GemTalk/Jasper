@@ -309,7 +309,7 @@ export async function confirmLogoutWithUncommittedChanges(
   sessionId: number,
   sessionLabel: string,
   needsCommit: boolean | undefined,
-  commit: (id: number) => { success: boolean; err: { number: number; message: string } },
+  commit: (id: number) => Promise<{ success: boolean; err: { number: number; message: string } }>,
   inTransaction?: boolean,
 ): Promise<'proceed' | 'cancel'> {
   if (needsCommit === false) return 'proceed';
@@ -337,7 +337,7 @@ export async function confirmLogoutWithUncommittedChanges(
 
   if (choice === 'Commit & Logout') {
     try {
-      const { success, err } = commit(sessionId);
+      const { success, err } = await commit(sessionId);
       if (!success) {
         // Same refused/failed split the session Commit draws, minus the conflict
         // set: this flow is handed a `commit` callback rather than a session, so
@@ -642,7 +642,7 @@ async function loadRowanFromDirectory(
   if (spec.minTempObjCacheKB !== undefined) {
     let gemKB: number | undefined;
     try {
-      gemKB = queries.getGemCacheKB(session);
+      gemKB = await queries.getGemCacheKB(session);
     } catch {
       gemKB = undefined;
     }
@@ -760,7 +760,7 @@ async function pickGitRevision(url: string): Promise<string | undefined> {
   )?.trim();
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   // Set when GemStone Search registers (below); the class-compile and commit/abort handlers call its
   // hooks so an open search re-primes/folds in changes instead of going stale.
   let omniSearch: OmniSearchRegistration | undefined;
@@ -1172,10 +1172,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Re-apply breakpoints and refresh browser method list after method recompilation
   context.subscriptions.push(
-    gemstoneFs.onDidChangeFile((events) => {
+    gemstoneFs.onDidChangeFile(async (events) => {
       for (const event of events) {
         if (event.type === vscode.FileChangeType.Changed) {
-          breakpointManager.invalidateForUri(event.uri);
+          await breakpointManager.invalidateForUri(event.uri);
           stepPointHints.refresh();
 
           const uri = event.uri;
@@ -1195,7 +1195,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (parts.length >= 3) {
               const sessionId = parseInt(uri.authority, 10);
               const className = parts[2];
-              SystemBrowser.methodCompiled(sessionId, className);
+              await SystemBrowser.methodCompiled(sessionId, className);
               // Keep the GemStone Explorer's method list in sync too (new-class URIs
               // carry no real class name, so skip those — the class-definition
               // event below handles class creation).
@@ -1492,7 +1492,7 @@ export function activate(context: vscode.ExtensionContext) {
       refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined),
     ),
   );
-  refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined);
+  await refreshTonelAvailability(sessionManager.getSelectedSession() ?? undefined);
 
   // ── Transaction mode ───────────────────────────────────
   // Drive `gemstone.canCommit` / `gemstone.canBegin` off the selected session's
@@ -1699,9 +1699,9 @@ export function activate(context: vscode.ExtensionContext) {
    * that no longer exists. Best effort: it costs one removeKey, and a session
    * that cannot run it has bigger problems than a stale search.
    */
-  const clearClassOrganizer = (session: ActiveSession): void => {
+  const clearClassOrganizer = async (session: ActiveSession): Promise<void> => {
     try {
-      queries.executeFetchString(session, clearClassOrganizerCode());
+      await queries.executeFetchString(session, clearClassOrganizerCode());
     } catch {
       // Nothing to report: the next query simply reuses the organizer it had.
     }
@@ -1739,21 +1739,23 @@ export function activate(context: vscode.ExtensionContext) {
       if (choice !== confirmation.confirmLabel) return;
     }
     try {
-      const { success, err } = sessionManager.commit(session.id);
+      const { success, err } = await sessionManager.commit(session.id);
       if (success) {
         announceSessionAction('Commit', sessionDescription(session), { success: true });
         await exportManager.refreshSession(session);
-        SystemBrowser.refresh(session.id);
+        await SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
         // an open GemStone Search's cached corpora so they show up, and drop the
         // cached ClassOrganizer whose class list they would otherwise be searched
         // against.
-        clearClassOrganizer(session);
+        await clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
         // Only a refusal has a conflict set, so an errored commit costs no extra
         // round trip. Read first — see the transactionConflicts.ts header.
-        const conflicts = isCommitConflict(err) ? queries.transactionConflicts(session) : undefined;
+        const conflicts = isCommitConflict(err)
+          ? await queries.transactionConflicts(session)
+          : undefined;
         const failure = commitFailureMessage(err, conflicts);
         announceSessionAction('Commit', sessionDescription(session), {
           success: false,
@@ -1785,11 +1787,11 @@ export function activate(context: vscode.ExtensionContext) {
    */
   const refreshAfterViewReplaced = async (session: ActiveSession): Promise<void> => {
     await exportManager.refreshSession(session);
-    SystemBrowser.refresh(session.id);
+    await SystemBrowser.refresh(session.id);
     // The new view can hold classes/globals/dicts committed by other sessions —
     // rebuild an open GemStone Search's cached corpora so they show up, and drop
     // the cached ClassOrganizer whose class list they would be searched against.
-    clearClassOrganizer(session);
+    await clearClassOrganizer(session);
     omniSearch?.notifySessionSynced(session.id);
     explorer.onSessionAborted(session.id);
     // The view moved underneath every recorded undo, so each entry now describes a
@@ -1827,7 +1829,7 @@ export function activate(context: vscode.ExtensionContext) {
    */
   const beginSession = async (session: ActiveSession): Promise<void> => {
     const warning = abortConfirmMessage(
-      queries.sessionNeedsCommit(session),
+      await queries.sessionNeedsCommit(session),
       fileInManager.hasUnsavedChanges(session),
     );
     if (warning) {
@@ -1839,7 +1841,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (choice !== 'Begin Transaction') return;
     }
     try {
-      const { success, err } = sessionManager.begin(session.id);
+      const { success, err } = await sessionManager.begin(session.id);
       if (!success) {
         announceSessionAction('Begin Transaction', sessionDescription(session), {
           success: false,
@@ -1871,7 +1873,7 @@ export function activate(context: vscode.ExtensionContext) {
    * stake when the session holds uncommitted work. Cancelling changes nothing.
    */
   const setTransactionModeFor = async (session: ActiveSession): Promise<void> => {
-    sessionManager.refreshTransactionState(session.id);
+    await sessionManager.refreshTransactionState(session.id);
     const current = session.transactionMode;
 
     const pick = await vscode.window.showQuickPick(
@@ -1893,7 +1895,7 @@ export function activate(context: vscode.ExtensionContext) {
       {
         modal: true,
         detail: `${loginLabel(session.login)}\n\n${transactionModeSwitchDetail(
-          queries.sessionNeedsCommit(session),
+          await queries.sessionNeedsCommit(session),
           fileInManager.hasUnsavedChanges(session),
         )}`,
       },
@@ -1902,7 +1904,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (choice !== 'Switch Mode') return;
 
     try {
-      sessionManager.setTransactionMode(session.id, pick.mode);
+      await sessionManager.setTransactionMode(session.id, pick.mode);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(
@@ -1913,7 +1915,7 @@ export function activate(context: vscode.ExtensionContext) {
       // view. Ask the stone rather than leave the cached mode describing a session
       // that is no longer in it, and bring the browsers along while it is still
       // logged in.
-      sessionManager.refreshTransactionState(session.id);
+      await sessionManager.refreshTransactionState(session.id);
       if (sessionManager.getSession(session.id)) await refreshAfterViewReplaced(session);
       return;
     }
@@ -1932,7 +1934,7 @@ export function activate(context: vscode.ExtensionContext) {
       sessionId: session.id,
       sessionLabel: loginLabel(session.login),
       warning: abortConfirmMessage(
-        queries.sessionNeedsCommit(session),
+        await queries.sessionNeedsCommit(session),
         fileInManager.hasUnsavedChanges(session),
       ),
       ask: options?.ask ?? false,
@@ -1946,7 +1948,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (choice !== confirmation.confirmLabel) return;
     }
     try {
-      const { success, err } = sessionManager.abort(session.id);
+      const { success, err } = await sessionManager.abort(session.id);
       if (success) {
         announceSessionAction('Abort', sessionDescription(session), { success: true });
         await refreshAfterViewReplaced(session);
@@ -2466,8 +2468,8 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        refreshEnhancedInspectorAvailable(session);
-        refreshRefactoringSupportAvailable(session);
+        await refreshEnhancedInspectorAvailable(session);
+        await refreshRefactoringSupportAvailable(session);
         updateRefactoringSupportContext();
         refreshUndoUi(session);
         treeProvider.refresh();
@@ -2640,7 +2642,7 @@ export function activate(context: vscode.ExtensionContext) {
         }));
       if (!className) return;
 
-      const owners = queries.findRowanClassOwners(session, className);
+      const owners = await queries.findRowanClassOwners(session, className);
       const parts = [
         ...owners.defined.map((o) => `defined in ${o.project} / ${o.package}`),
         ...owners.extended.map((o) => `extended by ${o.project} / ${o.package}`),
@@ -2684,7 +2686,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!picked) return;
 
       // Reveal the class's source in the System Browser (opens one if needed).
-      SystemBrowser.navigateBeside(session, {
+      await SystemBrowser.navigateBeside(session, {
         dictName: picked.cls.symbolDict,
         className: picked.cls.name,
         isMeta: false,
@@ -2767,7 +2769,7 @@ export function activate(context: vscode.ExtensionContext) {
         // the Rowan view's context menu (tree item).
         let projectName = typeof nameArg === 'string' ? nameArg : nameArg?.project.name;
         if (!projectName) {
-          const projects = queries.listRowanProjects(session).projects;
+          const projects = (await queries.listRowanProjects(session)).projects;
           projectName = await vscode.window.showQuickPick(
             projects.map((p) => p.name),
             { placeHolder: 'Unload which Rowan project?' },
@@ -2818,7 +2820,7 @@ export function activate(context: vscode.ExtensionContext) {
         const decision = await confirmLogoutWithUncommittedChanges(
           session.id,
           loginLabel(session.login),
-          queries.sessionNeedsCommit(session),
+          await queries.sessionNeedsCommit(session),
           (id) => sessionManager.commit(id),
           session.inTransaction,
         );
@@ -2985,14 +2987,14 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       try {
-        if (!queries.canForkGem(session)) {
+        if (!(await queries.canForkGem(session))) {
           vscode.window.showErrorMessage(
             `This database (GemStone ${session.stoneVersion}) cannot start a gem this way — ` +
               'it needs one-time password logins, which arrived in a later release.',
           );
           return;
         }
-        const gemSession = queries.forkGemRunning(session, code);
+        const gemSession = await queries.forkGemRunning(session, code);
         // Say plainly that it is now unmanaged: nothing lists or stops a gem
         // started this way, so the id is all the user has to go on.
         vscode.window.showInformationMessage(
@@ -3150,7 +3152,7 @@ export function activate(context: vscode.ExtensionContext) {
           .get<number>('maxEnvironment', 0);
         const all: queries.MethodSearchResult[] = [];
         for (let env = 0; env <= maxEnv; env++) {
-          all.push(...queries.sendersOf(session, args.selector, env));
+          all.push(...(await queries.sendersOf(session, args.selector, env)));
         }
         const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Senders of #${args.selector}`);
@@ -3167,7 +3169,7 @@ export function activate(context: vscode.ExtensionContext) {
           .get<number>('maxEnvironment', 0);
         const all: queries.MethodSearchResult[] = [];
         for (let env = 0; env <= maxEnv; env++) {
-          all.push(...queries.implementorsOf(session, args.selector, env));
+          all.push(...(await queries.implementorsOf(session, args.selector, env)));
         }
         const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Implementors of #${args.selector}`);
@@ -3192,7 +3194,7 @@ export function activate(context: vscode.ExtensionContext) {
         const all: queries.MethodSearchResult[] = [];
         for (let env = 0; env <= maxEnv; env++) {
           all.push(
-            ...queries.hierarchyImplementorsOf(
+            ...(await queries.hierarchyImplementorsOf(
               session,
               args.dictIndex,
               args.className,
@@ -3200,7 +3202,7 @@ export function activate(context: vscode.ExtensionContext) {
               args.isMeta,
               args.direction,
               env,
-            ),
+            )),
           );
         }
         const results = dedupeMethodResults(all);
@@ -3223,7 +3225,7 @@ export function activate(context: vscode.ExtensionContext) {
           .get<number>('maxEnvironment', 0);
         const all: queries.MethodSearchResult[] = [];
         for (let env = 0; env <= maxEnv; env++) {
-          all.push(...queries.referencesToObject(session, args.objectName, env));
+          all.push(...(await queries.referencesToObject(session, args.objectName, env)));
         }
         const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `References to ${args.objectName}`);
@@ -3292,12 +3294,12 @@ export function activate(context: vscode.ExtensionContext) {
             title: `Finding senders of #${selector}...`,
             cancellable: false,
           },
-          () => {
+          async () => {
             const all: queries.MethodSearchResult[] = [];
             for (let env = 0; env <= maxEnv; env++) {
-              all.push(...queries.sendersOf(session, selector, env));
+              all.push(...(await queries.sendersOf(session, selector, env)));
             }
-            return Promise.resolve(dedupeMethodResults(all));
+            return await Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -3326,12 +3328,12 @@ export function activate(context: vscode.ExtensionContext) {
             title: `Finding implementors of #${selector}...`,
             cancellable: false,
           },
-          () => {
+          async () => {
             const all: queries.MethodSearchResult[] = [];
             for (let env = 0; env <= maxEnv; env++) {
-              all.push(...queries.implementorsOf(session, selector, env));
+              all.push(...(await queries.implementorsOf(session, selector, env)));
             }
-            return Promise.resolve(dedupeMethodResults(all));
+            return await Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -3410,19 +3412,19 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('gemstone.openDocument', uri);
     }),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', () => {
+    vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (editor) breakpointManager.toggleAtCursor(editor);
+      if (editor) await breakpointManager.toggleAtCursor(editor);
     }),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.enableAtCursor', () => {
+    vscode.commands.registerCommand('gemstone.breakpoints.enableAtCursor', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (editor) breakpointManager.setEnabledAtCursor(editor, true);
+      if (editor) await breakpointManager.setEnabledAtCursor(editor, true);
     }),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.disableAtCursor', () => {
+    vscode.commands.registerCommand('gemstone.breakpoints.disableAtCursor', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (editor) breakpointManager.setEnabledAtCursor(editor, false);
+      if (editor) await breakpointManager.setEnabledAtCursor(editor, false);
     }),
 
     vscode.commands.registerCommand('gemstone.breakpoints.clearMethod', () => {
@@ -3479,24 +3481,36 @@ export function activate(context: vscode.ExtensionContext) {
       revealBreakpoint(sessionManager, node),
     ),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {
-      if (node?.kind === 'breakpoint') breakpointManager.removeStoneBreakpoint(node.bp);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.remove',
+      async (node?: BreakpointNode) => {
+        if (node?.kind === 'breakpoint') await breakpointManager.removeStoneBreakpoint(node.bp);
+      },
+    ),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.enable', (node?: BreakpointNode) => {
-      if (node?.kind === 'breakpoint')
-        breakpointManager.setEnabledForStoneBreakpoint(node.bp, true);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.enable',
+      async (node?: BreakpointNode) => {
+        if (node?.kind === 'breakpoint')
+          await breakpointManager.setEnabledForStoneBreakpoint(node.bp, true);
+      },
+    ),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.disable', (node?: BreakpointNode) => {
-      if (node?.kind === 'breakpoint')
-        breakpointManager.setEnabledForStoneBreakpoint(node.bp, false);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.disable',
+      async (node?: BreakpointNode) => {
+        if (node?.kind === 'breakpoint')
+          await breakpointManager.setEnabledForStoneBreakpoint(node.bp, false);
+      },
+    ),
 
-    vscode.commands.registerCommand('gemstone.breakpoints.clearClass', (node?: BreakpointNode) => {
-      if (node?.kind !== 'class') return;
-      for (const bp of node.breakpoints) breakpointManager.removeStoneBreakpoint(bp);
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.clearClass',
+      async (node?: BreakpointNode) => {
+        if (node?.kind !== 'class') return;
+        for (const bp of node.breakpoints) await breakpointManager.removeStoneBreakpoint(bp);
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.findClass', async () => {
       const session = await sessionManager.resolveSession();
@@ -3512,12 +3526,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (!picked) return;
 
       if (
-        !SystemBrowser.navigateToClass(
+        !(await SystemBrowser.navigateToClass(
           session.id,
           picked.entry.dictName,
           picked.entry.className,
           picked.entry.dictIndex,
-        )
+        ))
       ) {
         // ?dict=<index> scopes the definition to the exact dictionary the entry
         // came from, so aliases sharing a key (or dictionaries sharing a name)
@@ -3646,7 +3660,7 @@ export function activate(context: vscode.ExtensionContext) {
     const workspacePath = workspaceRoots[0].uri.fsPath;
     const mcpSocketServer = new McpSocketServer({
       getSession: () => sessionManager.getSelectedSession(),
-      onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
+      onTransactionStateMayHaveMoved: (id) => void sessionManager.refreshTransactionState(id),
       getSessionLabel: () => {
         const session = sessionManager.getSelectedSession();
         return session ? `${loginLabel(session.login)} (id ${session.id})` : undefined;
@@ -3764,7 +3778,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       httpServer = new McpHttpServer({
         getSession: () => sessionManager.getSelectedSession(),
-        onTransactionStateMayHaveMoved: (id) => sessionManager.refreshTransactionState(id),
+        onTransactionStateMayHaveMoved: (id) => void sessionManager.refreshTransactionState(id),
         port: httpPort,
         tls: { cert: tls.cert, key: tls.key },
       });
@@ -4325,7 +4339,11 @@ export function activate(context: vscode.ExtensionContext) {
           title: `Export a copy of "${item.project.name}" to…`,
         });
         if (!folder || folder.length === 0) return;
-        const result = queries.exportRowanProject(session, item.project.name, folder[0].fsPath);
+        const result = await queries.exportRowanProject(
+          session,
+          item.project.name,
+          folder[0].fsPath,
+        );
         if (!result.success) {
           vscode.window.showErrorMessage(
             `Export of "${item.project.name}" failed: ${result.detail}`,
@@ -4350,7 +4368,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!session) return;
         const projectName =
           item instanceof RowanChangesProjectItem ? item.projectName : item.project.name;
-        const diff = queries.diffRowanProject(session, projectName);
+        const diff = await queries.diffRowanProject(session, projectName);
         if (!diff.ok) {
           vscode.window.showErrorMessage(`Diff of "${projectName}" failed: ${diff.error}`);
           return;
@@ -5422,9 +5440,9 @@ export function activate(context: vscode.ExtensionContext) {
           stoneName: managed.config.stoneName,
           hasFileControl: () =>
             hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
-          listBackupFiles: () => {
+          listBackupFiles: async () => {
             const execute = (code: string) => queries.executeFetchString(session, code);
-            return serverBackupFilePaths(execute, backupFolderInServer(execute));
+            return await serverBackupFilePaths(execute, await backupFolderInServer(execute));
           },
           closeCurrentSession: async () => {
             sessionManager.logout(sessionId);
@@ -5494,7 +5512,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (libraryPath) {
             try {
               const s = await sessionManager.login(harvested, libraryPath);
-              refreshEnhancedInspectorAvailable(s);
+              await refreshEnhancedInspectorAvailable(s);
             } catch {
               /* user reconnects manually */
             }

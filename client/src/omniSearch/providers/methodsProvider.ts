@@ -25,7 +25,7 @@ export type SelectorSearchRunner = (
   term: string,
   limit: number,
   ignoreCase: boolean,
-) => SelectorSearchResult[];
+) => Promise<SelectorSearchResult[]>;
 
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
  *  wider pool to pick the best matches from — the tie-break by class name (below) can only be A→Z
@@ -41,12 +41,12 @@ export function createMethodsProvider(
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.methods,
-    search(
+    async search(
       query: string,
       cfg: OmniConfig,
       _token?: OmniCancel,
       reportTruncated?: OmniTruncationSink,
-    ): OmniResult[] {
+    ): Promise<OmniResult[]> {
       const term = query.trim();
       if (term.length < cfg.methodMinQueryLength) return [];
 
@@ -63,7 +63,7 @@ export function createMethodsProvider(
       // its rows by match tier, so what a full slice drops is the least relevant tail (issue #517).
       const ceiling = cfg.maxServerScan;
       const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, ceiling);
-      const rows = runSearch(term, serverLimit, !cfg.caseSensitive);
+      const rows = await runSearch(term, serverLimit, !cfg.caseSensitive);
       // A FULL slice means the scan had rows it could not hand back, so the image almost certainly
       // holds matches we never saw: the count is a floor, not a total. Judged on the RAW row count, before the re-filter
       // below — that drops rows and would mask the fact that we stopped early. When the image happens

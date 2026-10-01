@@ -55,14 +55,14 @@ describe('SUnit non-blocking runs (integration)', () => {
   let theSession: ActiveSession;
   const session = (): ActiveSession =>
     (theSession ??= { id: 1, gci, handle } as unknown as ActiveSession);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  beforeEach(() => {
-    installSunitProbeFixture(exec);
+  beforeEach(async () => {
+    await installSunitProbeFixture(exec);
   });
 
-  function installSlowTest(): void {
-    exec(
+  async function installSlowTest(): Promise<void> {
+    await exec(
       `(UserGlobals at: #'${SUNIT_PROBE_TEST_CLASS}')
          compileMethod: '${SLOW_SOURCE.replace(/'/g, "''")}'
          dictionaries: System myUserProfile symbolList
@@ -179,7 +179,7 @@ describe('SUnit non-blocking runs (integration)', () => {
     // Both halves matter. Before the drain fix the break worked but left the call
     // "in progress" for good, so the NEXT run was refused as "session is busy" —
     // which reads as the run silently doing nothing.
-    installSlowTest();
+    await installSlowTest();
 
     const { run, cancel } = await startSlowRun();
     cancel(); // one press — soft break
@@ -210,7 +210,7 @@ describe('SUnit non-blocking runs (integration)', () => {
     // the gap between the two GciTsBreak calls with the wall clock: that
     // measurement is inherently racy on a loaded CI runner and is exactly what
     // the unit test replaces.
-    installSlowTest();
+    await installSlowTest();
 
     // The ORDER of the breaks, though, needs no clock, so it is still observed
     // here — and the real break still goes through, since a stubbed GCI cannot
@@ -278,8 +278,8 @@ describe('SUnit non-blocking runs (integration)', () => {
     if (gestureFailed) throw originalFailure;
   }, 120_000);
 
-  it('discovers the probe class, and its methods carry the category the URI needs', () => {
-    const found = discoverTestClasses(exec).find(
+  it('discovers the probe class, and its methods carry the category the URI needs', async () => {
+    const found = (await discoverTestClasses(exec)).find(
       (c) => c.className === SUNIT_PROBE_TEST_CLASS && c.dictName === 'UserGlobals',
     );
     expect(found).toBeDefined();
@@ -287,21 +287,21 @@ describe('SUnit non-blocking runs (integration)', () => {
     // The dictionary index is what scopes the gemstone:// URI a gutter icon needs.
     expect(found!.dictIndex).toBeGreaterThan(0);
 
-    const methods = discoverTestMethods(exec, SUNIT_PROBE_TEST_CLASS, 'UserGlobals');
+    const methods = await discoverTestMethods(exec, SUNIT_PROBE_TEST_CLASS, 'UserGlobals');
     expect(methods.map((m) => m.selector)).toContain(SUNIT_PROBE_PASSING_SELECTOR);
   });
 
-  it('round-trips a method whose category contains a slash', () => {
+  it('round-trips a method whose category contains a slash', async () => {
     // `initialize/release` is a stock GemStone category. Building a URI for a
     // method in one used to throw, which took the Methods pane down with it.
-    exec(
+    await exec(
       `(UserGlobals at: #'${SUNIT_PROBE_TEST_CLASS}')
          compileMethod: 'testInCategoryWithASlash  self assert: true'
          dictionaries: System myUserProfile symbolList
          category: 'initialize/release'. 'ok'`,
     );
 
-    const method = discoverTestMethods(exec, SUNIT_PROBE_TEST_CLASS, 'UserGlobals').find(
+    const method = (await discoverTestMethods(exec, SUNIT_PROBE_TEST_CLASS, 'UserGlobals')).find(
       (m) => m.selector === 'testInCategoryWithASlash',
     );
     expect(method?.category).toBe('initialize/release');

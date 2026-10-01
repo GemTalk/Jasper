@@ -7,7 +7,7 @@ export interface ClassNameEntry {
   className: string;
 }
 
-export function getAllClassNames(execute: QueryExecutor): ClassNameEntry[] {
+export async function getAllClassNames(execute: QueryExecutor): Promise<ClassNameEntry[]> {
   // List EVERY (dictionary, key) pair whose value is a class. A class object can
   // be registered under more than one key/dictionary (e.g. Globals>Object and
   // Python>object, or OrderedCollection aliased as Python>list); each such alias
@@ -25,7 +25,7 @@ sl := System myUserProfile symbolList.
       ws nextPutAll: idx printString; tab; nextPutAll: dict name; tab; nextPutAll: k; lf]]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: ClassNameEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;
@@ -47,10 +47,10 @@ ws contents`;
  * (`dict at: #'Name'`), which is O(dictionaries) and sidesteps the 3.6.x Unicode7 literal-compare
  * gotcha (see `util.ts`) — never a `= 'name'` against an image value.
  */
-export function getClassNameEntriesFor(
+export async function getClassNameEntriesFor(
   execute: QueryExecutor,
   className: string,
-): ClassNameEntry[] {
+): Promise<ClassNameEntry[]> {
   const esc = escapeString(className);
   const code = `| ws sl target |
 ws := WriteStream on: Unicode7 new.
@@ -64,7 +64,7 @@ target := #'${esc}'.
     ws nextPutAll: idx printString; tab; nextPutAll: dict name; tab; nextPutAll: target; lf]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: ClassNameEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

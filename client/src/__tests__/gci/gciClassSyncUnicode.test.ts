@@ -29,7 +29,7 @@ describe('Class sync round-trip with non-ASCII source (integration)', () => {
   let session: ActiveSession;
   let ugIndex: number;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     gci = new GciLibrary(GCI_LIBRARY_PATH);
     const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
     expect(login.session).not.toBeNull();
@@ -41,7 +41,7 @@ describe('Class sync round-trip with non-ASCII source (integration)', () => {
       stoneVersion: '3.7.2',
     };
 
-    queries.compileClassDefinition(
+    await queries.compileClassDefinition(
       session,
       `Object subclass: '${TEST_CLASS}'
   instVarNames: #()
@@ -51,15 +51,15 @@ describe('Class sync round-trip with non-ASCII source (integration)', () => {
   inDictionary: UserGlobals
   options: #()`,
     );
-    queries.setClassComment(session, TEST_CLASS, `An em${EM_DASH}dash in the comment.`);
-    queries.compileMethod(
+    await queries.setClassComment(session, TEST_CLASS, `An em${EM_DASH}dash in the comment.`);
+    await queries.compileMethod(
       session,
       TEST_CLASS,
       false,
       'testing',
       `answer\n  "another em${EM_DASH}dash here"\n  ^ 42`,
     );
-    ugIndex = queries.getDictionaryNames(session).indexOf('UserGlobals') + 1;
+    ugIndex = (await queries.getDictionaryNames(session)).indexOf('UserGlobals') + 1;
   });
 
   afterAll(() => {

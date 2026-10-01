@@ -24,22 +24,24 @@ describe('classesProvider', () => {
     { dictIndex: 3, dictName: 'Python', className: 'object' },
   ];
 
-  it('loads the corpus in prime(), then matches client-side WITHOUT reloading on each search', () => {
-    const load = vi.fn(() => entries);
+  it('loads the corpus in prime(), then matches client-side WITHOUT reloading on each search', async () => {
+    const load = vi.fn(async () => entries);
     const p = createClassesProvider(42, load);
-    void p.prime?.(NEVER_CANCELLED);
-    const r1 = p.search('oc', cfg(), NEVER_CANCELLED) as ReturnType<typeof Array.prototype.slice>;
-    const r2 = p.search('obj', cfg(), NEVER_CANCELLED);
+    await p.prime?.(NEVER_CANCELLED);
+    const r1 = (await p.search('oc', cfg(), NEVER_CANCELLED)) as ReturnType<
+      typeof Array.prototype.slice
+    >;
+    const r2 = await p.search('obj', cfg(), NEVER_CANCELLED);
     // Load happened once (in prime); neither search re-queried — this is the caching guarantee.
     expect(load).toHaveBeenCalledTimes(1);
     expect((r1 as { label: string }[])[0].label).toBe('OrderedCollection');
     expect((r2 as { label: string }[]).map((x) => x.label)).toContain('Object');
   });
 
-  it('produces an openClass action carrying the picked entry + session', () => {
-    const p = createClassesProvider(7, () => entries);
-    void p.prime?.(NEVER_CANCELLED);
-    const [top] = p.search('OrderedCollection', cfg(), NEVER_CANCELLED) as {
+  it('produces an openClass action carrying the picked entry + session', async () => {
+    const p = createClassesProvider(7, async () => entries);
+    await p.prime?.(NEVER_CANCELLED);
+    const [top] = (await p.search('OrderedCollection', cfg(), NEVER_CANCELLED)) as {
       action: { kind: string; sessionId: number; className: string; dictIndex: number };
     }[];
     expect(top.action).toEqual({
@@ -51,23 +53,25 @@ describe('classesProvider', () => {
     });
   });
 
-  it('respects maxResultsPerCategory', () => {
+  it('respects maxResultsPerCategory', async () => {
     const many = Array.from({ length: 100 }, (_, i) => ({
       dictIndex: 1,
       dictName: 'Globals',
       className: `Widget${i}`,
     }));
-    const p = createClassesProvider(1, () => many);
-    void p.prime?.(NEVER_CANCELLED);
-    expect(p.search('widget', cfg({ maxResultsPerCategory: 5 }), NEVER_CANCELLED)).toHaveLength(5);
+    const p = createClassesProvider(1, async () => many);
+    await p.prime?.(NEVER_CANCELLED);
+    expect(
+      await p.search('widget', cfg({ maxResultsPerCategory: 5 }), NEVER_CANCELLED),
+    ).toHaveLength(5);
   });
 });
 
 describe('dictionariesProvider', () => {
-  it('matches names and produces a revealDictionary action', () => {
-    const p = createDictionariesProvider(9, () => ['Globals', 'Published', 'UserGlobals']);
-    void p.prime?.(NEVER_CANCELLED);
-    const results = p.search('glob', cfg(), NEVER_CANCELLED) as {
+  it('matches names and produces a revealDictionary action', async () => {
+    const p = createDictionariesProvider(9, async () => ['Globals', 'Published', 'UserGlobals']);
+    await p.prime?.(NEVER_CANCELLED);
+    const results = (await p.search('glob', cfg(), NEVER_CANCELLED)) as {
       label: string;
       action: unknown;
     }[];
@@ -81,14 +85,14 @@ describe('dictionariesProvider', () => {
 });
 
 describe('globalsProvider', () => {
-  it('matches non-class names and produces a revealGlobal action carrying the value class', () => {
-    const p = createGlobalsProvider(9, () => [
+  it('matches non-class names and produces a revealGlobal action carrying the value class', async () => {
+    const p = createGlobalsProvider(9, async () => [
       { dictIndex: 1, dictName: 'Globals', name: 'Transcript', className: 'GsTerminalStream' },
       { dictIndex: 1, dictName: 'Globals', name: 'AllUsers', className: 'UserProfileSet' },
     ]);
-    void p.prime?.(NEVER_CANCELLED);
+    await p.prime?.(NEVER_CANCELLED);
 
-    const results = p.search('trans', cfg(), NEVER_CANCELLED) as {
+    const results = (await p.search('trans', cfg(), NEVER_CANCELLED)) as {
       label: string;
       description?: string;
       action: unknown;
@@ -118,11 +122,11 @@ describe('sourceProvider', () => {
     },
   ];
 
-  it('does not run below the method-min-query length (it is heavyweight)', () => {
-    const runSearch = vi.fn(() => rows);
+  it('does not run below the method-min-query length (it is heavyweight)', async () => {
+    const runSearch = vi.fn(async () => rows);
     const p = createSourceProvider(1, runSearch);
 
-    expect(p.search('ab', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('ab', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)).toEqual([]);
     expect(runSearch).not.toHaveBeenCalled();
   });
 
@@ -132,10 +136,10 @@ describe('sourceProvider', () => {
    * to run the identical substring scan in all three positions.
    */
   describe('honours the match-algorithm chip', () => {
-    const runWith = (matchMode: OmniConfig['matchMode']) => {
-      const runSearch = vi.fn<SourceSearchRunner>(() => rows);
+    const runWith = async (matchMode: OmniConfig['matchMode']) => {
+      const runSearch = vi.fn<SourceSearchRunner>(async () => rows);
       const p = createSourceProvider(1, runSearch);
-      void p.search('foo', cfg({ methodMinQueryLength: 3, matchMode }), NEVER_CANCELLED);
+      await p.search('foo', cfg({ methodMinQueryLength: 3, matchMode }), NEVER_CANCELLED);
       return runSearch;
     };
 
@@ -145,23 +149,24 @@ describe('sourceProvider', () => {
       ['prefix', 'wordStart'],
       ['fuzzy', 'fuzzyToken'],
       ['substring', 'substring'],
-    ] as const)('asks for the %s reading of the chip', (chip, scan) => {
-      expect(runWith(chip)).toHaveBeenCalledWith('foo', true, scan);
+    ] as const)('asks for the %s reading of the chip', async (chip, scan) => {
+      expect(await runWith(chip)).toHaveBeenCalledWith('foo', true, scan);
     });
 
-    it('maps the three chip positions onto three different scans', () => {
-      const scans = (['prefix', 'fuzzy', 'substring'] as const).map(
-        (m) => runWith(m).mock.calls[0][2],
-      );
+    it('maps the three chip positions onto three different scans', async () => {
+      const scans: unknown[] = [];
+      for (const m of ['prefix', 'fuzzy', 'substring'] as const) {
+        scans.push((await runWith(m)).mock.calls[0][2]);
+      }
       expect(new Set(scans).size).toBe(3);
     });
 
     // The scan mode is independent of case sensitivity; both reach the stone.
-    it('still passes case sensitivity alongside it', () => {
-      const runSearch = vi.fn(() => rows);
+    it('still passes case sensitivity alongside it', async () => {
+      const runSearch = vi.fn(async () => rows);
       const p = createSourceProvider(1, runSearch);
 
-      void p.search(
+      await p.search(
         'foo',
         cfg({ methodMinQueryLength: 3, matchMode: 'prefix', caseSensitive: true }),
         NEVER_CANCELLED,
@@ -171,10 +176,14 @@ describe('sourceProvider', () => {
     });
   });
 
-  it('groups its hits under the source category but still opens the method', () => {
-    const p = createSourceProvider(7, () => rows);
+  it('groups its hits under the source category but still opens the method', async () => {
+    const p = createSourceProvider(7, async () => rows);
 
-    const results = p.search('doSomething', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED) as {
+    const results = (await p.search(
+      'doSomething',
+      cfg({ methodMinQueryLength: 3 }),
+      NEVER_CANCELLED,
+    )) as {
       label: string;
       categoryId: string;
       action: { kind: string; selector: string };
@@ -198,23 +207,23 @@ describe('literalsProvider', () => {
     },
   ];
 
-  it('rejects anything that is not a #symbol or a quoted string', () => {
-    const runSymbol = vi.fn(() => rows);
-    const runString = vi.fn(() => rows);
+  it('rejects anything that is not a #symbol or a quoted string', async () => {
+    const runSymbol = vi.fn(async () => rows);
+    const runString = vi.fn(async () => rows);
     const p = createLiteralsProvider(1, runSymbol, runString);
 
-    expect(p.search('42', cfg(), NEVER_CANCELLED)).toEqual([]);
-    expect(p.search('$a', cfg(), NEVER_CANCELLED)).toEqual([]);
-    expect(p.search('   ', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('42', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('$a', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('   ', cfg(), NEVER_CANCELLED)).toEqual([]);
     expect(runSymbol).not.toHaveBeenCalled();
     expect(runString).not.toHaveBeenCalled();
   });
 
-  it('reference-searches a #symbol, under the literals category', () => {
-    const runSymbol = vi.fn(() => rows);
+  it('reference-searches a #symbol, under the literals category', async () => {
+    const runSymbol = vi.fn(async () => rows);
     const p = createLiteralsProvider(7, runSymbol, vi.fn());
 
-    const results = p.search('#at:put:', cfg(), NEVER_CANCELLED) as {
+    const results = (await p.search('#at:put:', cfg(), NEVER_CANCELLED)) as {
       label: string;
       categoryId: string;
       action: { kind: string };
@@ -226,36 +235,40 @@ describe('literalsProvider', () => {
     expect(results[0].action).toMatchObject({ kind: 'openMethod' });
   });
 
-  it('never evaluates a # entry that is not a complete symbol literal', () => {
-    const runSymbol = vi.fn(() => rows);
+  it('never evaluates a # entry that is not a complete symbol literal', async () => {
+    const runSymbol = vi.fn(async () => rows);
     const p = createLiteralsProvider(1, runSymbol, vi.fn());
 
-    expect(p.search('#foo. System abortTransaction', cfg(), NEVER_CANCELLED)).toEqual([]);
-    expect(p.search('#at:put: bar', cfg(), NEVER_CANCELLED)).toEqual([]);
-    expect(p.search('#', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('#foo. System abortTransaction', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('#at:put: bar', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('#', cfg(), NEVER_CANCELLED)).toEqual([]);
     expect(runSymbol).not.toHaveBeenCalled();
   });
 
-  it("routes a closed 'string' to a source search of its content (case per config)", () => {
-    const runString = vi.fn(() => rows);
+  it("routes a closed 'string' to a source search of its content (case per config)", async () => {
+    const runString = vi.fn(async () => rows);
     const p = createLiteralsProvider(1, vi.fn(), runString);
 
-    const results = p.search("'no such element'", cfg({ caseSensitive: true }), NEVER_CANCELLED);
+    const results = await p.search(
+      "'no such element'",
+      cfg({ caseSensitive: true }),
+      NEVER_CANCELLED,
+    );
 
     expect(runString).toHaveBeenCalledWith('no such element', false);
     expect(results).toHaveLength(1);
   });
 
-  it('waits for a complete, non-empty string before searching', () => {
-    const runString = vi.fn(() => rows);
+  it('waits for a complete, non-empty string before searching', async () => {
+    const runString = vi.fn(async () => rows);
     const p = createLiteralsProvider(1, vi.fn(), runString);
 
-    expect(p.search("'unterminated", cfg(), NEVER_CANCELLED)).toEqual([]);
-    expect(p.search("''", cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search("'unterminated", cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search("''", cfg(), NEVER_CANCELLED)).toEqual([]);
     expect(runString).not.toHaveBeenCalled();
   });
 
-  it('shows nothing (no throw) when the runner raises', () => {
+  it('shows nothing (no throw) when the runner raises', async () => {
     const p = createLiteralsProvider(
       1,
       () => {
@@ -264,7 +277,7 @@ describe('literalsProvider', () => {
       vi.fn(),
     );
 
-    expect(p.search('#at:put:', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('#at:put:', cfg(), NEVER_CANCELLED)).toEqual([]);
   });
 });
 
@@ -294,22 +307,22 @@ describe('categoriesProvider', () => {
     { dictIndex: 5, dictName: 'UserGlobals', category: 'MyApp-Model' },
   ];
 
-  it('loads the corpus lazily — only on the first search, not before', () => {
-    const load = vi.fn(() => entries);
+  it('loads the corpus lazily — only on the first search, not before', async () => {
+    const load = vi.fn(async () => entries);
     const p = createCategoriesProvider(1, load);
 
     expect(p.prime).toBeUndefined();
     expect(load).not.toHaveBeenCalled(); // constructing the provider must not scan the image
 
-    void p.search('kernel', cfg(), NEVER_CANCELLED);
-    void p.search('app', cfg(), NEVER_CANCELLED);
+    await p.search('kernel', cfg(), NEVER_CANCELLED);
+    await p.search('app', cfg(), NEVER_CANCELLED);
     expect(load).toHaveBeenCalledTimes(1); // loaded once, then matched client-side
   });
 
-  it('matches category names and produces a revealCategory action', () => {
-    const p = createCategoriesProvider(7, () => entries);
+  it('matches category names and produces a revealCategory action', async () => {
+    const p = createCategoriesProvider(7, async () => entries);
 
-    const results = p.search('MyApp', cfg(), NEVER_CANCELLED) as {
+    const results = (await p.search('MyApp', cfg(), NEVER_CANCELLED)) as {
       label: string;
       description?: string;
       action: unknown;
@@ -345,17 +358,17 @@ describe('methodsProvider', () => {
     },
   ];
 
-  it('does not hit the stone below methodMinQueryLength', () => {
-    const runSearch = vi.fn(() => rows);
+  it('does not hit the stone below methodMinQueryLength', async () => {
+    const runSearch = vi.fn(async () => rows);
     const p = createMethodsProvider(1, runSearch);
-    expect(p.search('ad', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)).toEqual([]);
+    expect(await p.search('ad', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)).toEqual([]);
     expect(runSearch).not.toHaveBeenCalled();
   });
 
-  it('queries the stone (case-folded per config) and builds Class>>selector labels', () => {
-    const runSearch = vi.fn(() => rows);
+  it('queries the stone (case-folded per config) and builds Class>>selector labels', async () => {
+    const runSearch = vi.fn(async () => rows);
     const p = createMethodsProvider(5, runSearch);
-    const results = p.search('add', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED) as {
+    const results = (await p.search('add', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)) as {
       label: string;
       description?: string;
       action: { kind: string; selector: string; isMeta: boolean };
@@ -372,21 +385,21 @@ describe('methodsProvider', () => {
     expect(add?.action).toMatchObject({ kind: 'openMethod', selector: 'add:', isMeta: false });
   });
 
-  it('labels the class side as `Class class>>selector`', () => {
-    const p = createMethodsProvider(1, () => rows);
-    const results = p.search('with', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED) as {
+  it('labels the class side as `Class class>>selector`', async () => {
+    const p = createMethodsProvider(1, async () => rows);
+    const results = (await p.search('with', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED)) as {
       label: string;
     }[];
     expect(results.some((r) => r.label === 'Array class>>with:')).toBe(true);
   });
 
-  it('shifts highlight ranges from selector into label coordinates', () => {
-    const p = createMethodsProvider(1, () => [rows[0]]);
-    const [r] = p.search(
+  it('shifts highlight ranges from selector into label coordinates', async () => {
+    const p = createMethodsProvider(1, async () => [rows[0]]);
+    const [r] = (await p.search(
       'add',
       cfg({ methodMinQueryLength: 3, matchMode: 'prefix' }),
       NEVER_CANCELLED,
-    ) as {
+    )) as {
       label: string;
       ranges: [number, number][];
     }[];
@@ -403,21 +416,25 @@ describe('methodsProvider', () => {
       { dictName: 'Globals', className: 'Array', isMeta: false, selector: 'at:', category: 'a' },
     ];
 
-    it('puts the instance side before the class side of the same selector', () => {
-      const p = createMethodsProvider(1, () => sides);
-      const results = p.search('at:', cfg({ methodMinQueryLength: 2 }), NEVER_CANCELLED) as {
+    it('puts the instance side before the class side of the same selector', async () => {
+      const p = createMethodsProvider(1, async () => sides);
+      const results = (await p.search(
+        'at:',
+        cfg({ methodMinQueryLength: 2 }),
+        NEVER_CANCELLED,
+      )) as {
         label: string;
       }[];
       expect(results.map((r) => r.label)).toEqual(['Array>>at:', 'Array class>>at:']);
     });
 
-    it('keeps the instance side, not the class side, when the display cap admits only one', () => {
-      const p = createMethodsProvider(1, () => sides);
-      const results = p.search(
+    it('keeps the instance side, not the class side, when the display cap admits only one', async () => {
+      const p = createMethodsProvider(1, async () => sides);
+      const results = (await p.search(
         'at:',
         cfg({ methodMinQueryLength: 2, maxResultsPerCategory: 1 }),
         NEVER_CANCELLED,
-      ) as { label: string }[];
+      )) as { label: string }[];
       expect(results.map((r) => r.label)).toEqual(['Array>>at:']);
     });
   });
@@ -435,11 +452,11 @@ describe('methodsProvider', () => {
         category: 'accessing',
       }));
 
-    it('clamps the server slice to the configured scan ceiling, not the display cap', () => {
-      const runSearch = vi.fn(() => manyRows(200));
+    it('clamps the server slice to the configured scan ceiling, not the display cap', async () => {
+      const runSearch = vi.fn(async () => manyRows(200));
       const p = createMethodsProvider(1, runSearch);
       // At the Load-All cap, SERVER_OVERFETCH would ask for hundreds of thousands; the clamp must win.
-      void p.search(
+      await p.search(
         'add',
         cfg({ methodMinQueryLength: 3, maxResultsPerCategory: LOAD_ALL_LIMIT, maxServerScan: 200 }),
         NEVER_CANCELLED,
@@ -447,10 +464,10 @@ describe('methodsProvider', () => {
       expect(runSearch).toHaveBeenCalledWith('add', 200, true);
     });
 
-    it('honors a RAISED maxServerScan setting', () => {
-      const runSearch = vi.fn(() => manyRows(1000));
+    it('honors a RAISED maxServerScan setting', async () => {
+      const runSearch = vi.fn(async () => manyRows(1000));
       const p = createMethodsProvider(1, runSearch);
-      void p.search(
+      await p.search(
         'add',
         cfg({
           methodMinQueryLength: 3,
@@ -462,10 +479,10 @@ describe('methodsProvider', () => {
       expect(runSearch).toHaveBeenCalledWith('add', 1000, true);
     });
 
-    it('reports the CONFIGURED ceiling in the truncation, so the note shows the real number', () => {
-      const p = createMethodsProvider(1, () => manyRows(1000));
+    it('reports the CONFIGURED ceiling in the truncation, so the note shows the real number', async () => {
+      const p = createMethodsProvider(1, async () => manyRows(1000));
       const report = vi.fn();
-      void p.search(
+      await p.search(
         'add',
         cfg({
           methodMinQueryLength: 3,
@@ -483,10 +500,10 @@ describe('methodsProvider', () => {
       });
     });
 
-    it('still overfetches when the display cap leaves room under the ceiling', () => {
-      const runSearch = vi.fn(() => manyRows(4));
+    it('still overfetches when the display cap leaves room under the ceiling', async () => {
+      const runSearch = vi.fn(async () => manyRows(4));
       const p = createMethodsProvider(1, runSearch);
-      void p.search(
+      await p.search(
         'add',
         cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 10 }),
         NEVER_CANCELLED,
@@ -495,10 +512,10 @@ describe('methodsProvider', () => {
       expect(10 * SERVER_OVERFETCH).toBeLessThan(OMNI_DEFAULTS.maxServerScan); // clamp didn't bind
     });
 
-    it('reports truncation when the server slice comes back full', () => {
-      const p = createMethodsProvider(1, () => manyRows(OMNI_DEFAULTS.maxServerScan));
+    it('reports truncation when the server slice comes back full', async () => {
+      const p = createMethodsProvider(1, async () => manyRows(OMNI_DEFAULTS.maxServerScan));
       const report = vi.fn();
-      void p.search(
+      await p.search(
         'add',
         cfg({ methodMinQueryLength: 3, maxResultsPerCategory: LOAD_ALL_LIMIT }),
         NEVER_CANCELLED,
@@ -512,10 +529,10 @@ describe('methodsProvider', () => {
       });
     });
 
-    it('reports NO truncation when the server returns fewer rows than it was allowed', () => {
-      const p = createMethodsProvider(1, () => manyRows(3));
+    it('reports NO truncation when the server returns fewer rows than it was allowed', async () => {
+      const p = createMethodsProvider(1, async () => manyRows(3));
       const report = vi.fn();
-      void p.search(
+      await p.search(
         'add',
         cfg({ methodMinQueryLength: 3, maxResultsPerCategory: LOAD_ALL_LIMIT }),
         NEVER_CANCELLED,
@@ -524,19 +541,19 @@ describe('methodsProvider', () => {
       expect(report).not.toHaveBeenCalled(); // no call at all IS the "nothing was cut off" signal
     });
 
-    it('reports truncation from the RAW row count, not the post-filter count', () => {
+    it('reports truncation from the RAW row count, not the post-filter count', async () => {
       // Every row comes back, filling the slice, but the client matcher rejects all but one — the
       // count the user sees is 1, yet the scan still stopped early, so this IS truncated.
       const rowsIn = manyRows(8);
       rowsIn[0].selector = 'addThing0'; // the only one matching the term below
-      const p = createMethodsProvider(1, () => rowsIn);
+      const p = createMethodsProvider(1, async () => rowsIn);
       const report = vi.fn();
-      const out = p.search(
+      const out = (await p.search(
         'addThing0',
         cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 2, matchMode: 'prefix' }),
         NEVER_CANCELLED,
         report,
-      ) as unknown[];
+      )) as unknown[];
       expect(out).toHaveLength(1);
       // 8 raw rows >= the 8-row slice (2 × SERVER_OVERFETCH), even though only 1 survived the filter.
       // The over-fetch bound it, not the ceiling, so `atCeiling` is false — incomplete, but Load-more
@@ -554,12 +571,12 @@ describe('methodsProvider', () => {
     // — the over-fetch, not his setting — and it moves every time the cap grows. So while the over-fetch
     // is the tighter bound this is NOT a ceiling hit (Load-more really does fetch more), and the number
     // shown must be the configured ceiling, which never changes.
-    it("reports the setting's value, not the over-fetch slice, as the ceiling", () => {
-      const p = createMethodsProvider(1, () => manyRows(1000));
+    it("reports the setting's value, not the over-fetch slice, as the ceiling", async () => {
+      const p = createMethodsProvider(1, async () => manyRows(1000));
       const report = vi.fn();
-      const at = (maxResultsPerCategory: number) => {
+      const at = async (maxResultsPerCategory: number) => {
         report.mockClear();
-        void p.search(
+        await p.search(
           'add',
           cfg({ methodMinQueryLength: 3, maxResultsPerCategory, maxServerScan: 400 }),
           NEVER_CANCELLED,
@@ -570,7 +587,7 @@ describe('methodsProvider', () => {
 
       // cap 60 → slice min(240, 400) = 240: the OVER-FETCH bound it, so not a ceiling hit — but the
       // reported ceiling is still 400, the number the user set.
-      expect(at(60)).toEqual({
+      expect(await at(60)).toEqual({
         categoryId: 'methods',
         scanned: 240,
         ceiling: 400,
@@ -578,7 +595,7 @@ describe('methodsProvider', () => {
       });
 
       // One Load-more later (cap 120) → slice min(480, 400) = 400: NOW the setting is the wall.
-      expect(at(120)).toEqual({
+      expect(await at(120)).toEqual({
         categoryId: 'methods',
         scanned: 400,
         ceiling: 400,
@@ -586,7 +603,7 @@ describe('methodsProvider', () => {
       });
 
       // And it stays 400 however far the cap is raised — the number no longer drifts.
-      expect(at(LOAD_ALL_LIMIT)).toEqual({
+      expect(await at(LOAD_ALL_LIMIT)).toEqual({
         categoryId: 'methods',
         scanned: 400,
         ceiling: 400,
@@ -594,10 +611,10 @@ describe('methodsProvider', () => {
       });
     });
 
-    it('does not report at all below methodMinQueryLength (no fetch happened)', () => {
-      const p = createMethodsProvider(1, () => manyRows(5));
+    it('does not report at all below methodMinQueryLength (no fetch happened)', async () => {
+      const p = createMethodsProvider(1, async () => manyRows(5));
       const report = vi.fn();
-      void p.search('ad', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED, report);
+      await p.search('ad', cfg({ methodMinQueryLength: 3 }), NEVER_CANCELLED, report);
       expect(report).not.toHaveBeenCalled();
     });
   });

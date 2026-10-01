@@ -30,21 +30,21 @@ describe('full logical backup (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  it('confirms the connected user holds the FileControl privilege backups require', () => {
-    expect(hasFileControlPrivilege(exec)).toBe(true);
+  it('confirms the connected user holds the FileControl privilege backups require', async () => {
+    expect(await hasFileControlPrivilege(exec)).toBe(true);
   });
 
-  it('sees a freshly begun transaction as having no uncommitted changes', () => {
-    expect(sessionNeedsCommit(exec)).toBe(false);
+  it('sees a freshly begun transaction as having no uncommitted changes', async () => {
+    expect(await sessionNeedsCommit(exec)).toBe(false);
   });
 
   // runLogicalBackup derives its destination directory from the stone's
   // extents and refuses to back up at all if that answer isn't an absolute
   // POSIX path, whatever the client's OS — this pins down that contract.
-  it('reports its extent locations as absolute paths in the stone’s own POSIX form', () => {
-    const extents = extentFileNames(exec);
+  it('reports its extent locations as absolute paths in the stone’s own POSIX form', async () => {
+    const extents = await extentFileNames(exec);
 
     expect(extents.length).toBeGreaterThan(0);
     for (const extent of extents) {
@@ -57,18 +57,18 @@ describe('full logical backup (integration)', () => {
   // quiescent — ~5s when a checkpoint is still settling (e.g. from a backup in
   // a recent test run), which straddles vitest's 5s default timeout. The wait
   // is legitimate stone behavior, so give the backup an explicit budget.
-  it('writes a real backup file to the requested destination', { timeout: 30000 }, () => {
-    withTemporaryServerFolderDo(handle, gci, (temporaryFolderPath) => {
+  it('writes a real backup file to the requested destination', { timeout: 30000 }, async () => {
+    await withTemporaryServerFolderDo(handle, gci, async (temporaryFolderPath) => {
       const backupFilePath = path.posix.join(temporaryFolderPath, temporaryFileName('.dbf'));
-      const modeBefore = exec('System transactionMode printString').trim();
+      const modeBefore = (await exec('System transactionMode printString')).trim();
 
-      const result = exec(fullBackupCode(backupFilePath)).trim();
+      const result = (await exec(fullBackupCode(backupFilePath))).trim();
 
       expect(result).toBe('OK');
-      expect(sizeInBytesOfServerFile(exec, backupFilePath)).toBeGreaterThan(0);
+      expect(await sizeInBytesOfServerFile(exec, backupFilePath)).toBeGreaterThan(0);
       // fullBackupTo: leaves the session in manualBegin; the ensure: block in
       // fullBackupCode must put the transaction mode back where it was.
-      expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
+      expect((await exec('System transactionMode printString')).trim()).toBe(modeBefore);
     });
   });
 });

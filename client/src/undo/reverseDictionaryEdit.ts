@@ -44,7 +44,7 @@ export async function reverseDictionaryEdit(
 
   let asItWas;
   try {
-    asItWas = captureDictionary(execute, entry.before.name);
+    asItWas = await captureDictionary(execute, entry.before.name);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the symbol list ` +
@@ -64,8 +64,8 @@ export async function reverseDictionaryEdit(
   }
 
   const error = entry.after.present
-    ? renameBack(session, entry)
-    : reinsertDictionary(execute, entry.stashKey ?? '', entry.before.index);
+    ? await renameBack(session, entry)
+    : await reinsertDictionary(execute, entry.stashKey ?? '', entry.before.index);
 
   if (error !== null) {
     void vscode.window.showErrorMessage(`Undo of ${entry.label} failed: ${error}`);
@@ -101,7 +101,7 @@ async function unlistCreated(
 ): Promise<boolean> {
   let now;
   try {
-    now = captureDictionary(execute, entry.after.name);
+    now = await captureDictionary(execute, entry.after.name);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo failed: could not read the symbol list ` +
@@ -122,7 +122,7 @@ async function unlistCreated(
   // modal — the same state the user was in before this warning existed.
   let held = 0;
   try {
-    held = dictionaryEntryCount(execute, entry.after.name);
+    held = await dictionaryEntryCount(execute, entry.after.name);
   } catch (e: unknown) {
     logInfo(
       `[undo] could not count what ${entry.after.name} holds: ` +
@@ -136,7 +136,7 @@ async function unlistCreated(
 
   let answer: string;
   try {
-    answer = removeDictionary(session, entry.after.name);
+    answer = await removeDictionary(session, entry.after.name);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Undo of ${entry.label} failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -180,10 +180,13 @@ async function confirmNotEmpty(entry: DictionaryUndoEntry, held: number): Promis
 /** Rename the dictionary back, found under the name the forward rename gave it. Answers null
  *  on success and the reason otherwise — `renameDictionary` reports a refusal (a system
  *  dictionary, a name collision, no such dictionary) by RETURNING it rather than raising. */
-function renameBack(session: ActiveSession, entry: DictionaryUndoEntry): string | null {
+async function renameBack(
+  session: ActiveSession,
+  entry: DictionaryUndoEntry,
+): Promise<string | null> {
   let answer: string;
   try {
-    answer = renameDictionary(session, entry.after.name, entry.before.name);
+    answer = await renameDictionary(session, entry.after.name, entry.before.name);
   } catch (e: unknown) {
     return e instanceof Error ? e.message : String(e);
   }

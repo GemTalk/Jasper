@@ -13,7 +13,7 @@ import {
  */
 
 const asyncExec = () => vi.fn(async (_label: string, code: string) => code);
-const syncExec = () => vi.fn((code: string) => code);
+const syncExec = () => vi.fn(async (code: string) => code);
 
 describe('inline-temporary query builders', () => {
   it('builds a pre-flight that analyses the temporary at the given offset', async () => {
@@ -64,10 +64,10 @@ describe('inline-temporary query builders', () => {
     expect(code).toContain('deselected: #()');
   });
 
-  it('clears a finished preview by token', () => {
+  it('clears a finished preview by token', async () => {
     const exec = syncExec();
 
-    const code = clearInlineTemporaryPreview(exec, 'tok');
+    const code = await clearInlineTemporaryPreview(exec, 'tok');
 
     expect(code).toContain("clearToken: 'tok'");
   });

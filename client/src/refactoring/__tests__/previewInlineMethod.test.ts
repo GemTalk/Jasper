@@ -13,7 +13,7 @@ import {
  */
 
 const asyncExec = () => vi.fn(async (_label: string, code: string) => code);
-const syncExec = () => vi.fn((code: string) => code);
+const syncExec = () => vi.fn(async (code: string) => code);
 
 describe('inline-method query builders', () => {
   it('builds a pre-flight that analyses the send at the given offset', async () => {
@@ -63,10 +63,10 @@ describe('inline-method query builders', () => {
     expect(code).toContain("deselected: #('2')");
   });
 
-  it('clears a finished preview by token', () => {
+  it('clears a finished preview by token', async () => {
     const exec = syncExec();
 
-    const code = clearInlineMethodPreview(exec, 'tok');
+    const code = await clearInlineMethodPreview(exec, 'tok');
 
     expect(code).toContain("clearToken: 'tok'");
   });
