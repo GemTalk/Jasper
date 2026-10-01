@@ -30,12 +30,35 @@ Class {
 	#category : 'Refactoring-Core'
 }
 
+{ #category : 'private' }
+GsClassHistory class >> classNamed: aName inDictionary: aDictRef [
+	"The class bound to aName, scoped to aDictRef -- a 1-based SymbolList index (canonical, and
+	 what the client sends), a dictionary name, or nil for the old unscoped lookup.
+
+	 Delegates to GsRefactoringEnvironment, which is the one home for this question. It used to be
+	 a second copy with the same intent, and two resolvers for ''class X in dictionary Y'' is how
+	 they drift apart (#396 review, D3)."
+	^GsRefactoringEnvironment new classNamed: aName inDictionaryNamed: aDictRef
+]
+
 { #category : 'accessing' }
 GsClassHistory class >> forClassNamed: aName [
 	"A JSON array of the class's definition versions, newest first, or an error
-	 envelope if the name is unbound. Read-only."
+	 envelope if the name is unbound. Read-only.
+
+	 Unscoped, so it answers the first binding on the symbol list. Prefer
+	 #forClassNamed:inDictionary:, which cannot describe a same-named class from another
+	 dictionary (#396); this is kept for callers that have no dictionary to give."
+	^self forClassNamed: aName inDictionary: nil
+]
+
+{ #category : 'accessing' }
+GsClassHistory class >> forClassNamed: aName inDictionary: aDictRef [
+	"A JSON array of the class's definition versions, newest first, or an error envelope if the
+	 name is unbound in aDictRef. aDictRef is a 1-based SymbolList index, a dictionary name, or
+	 nil for the unscoped lookup. Read-only."
 	| cls hist ws n |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.
@@ -117,6 +140,14 @@ GsClassHistory class >> source: sel in: aClass [
 
 { #category : 'redo' }
 GsClassHistory class >> revertClassNamed: aName toIndex: anInt [
+	"Unscoped; see #revertClassNamed:toIndex:inDictionary:, which this delegates to. Kept for
+	 callers that have no dictionary to give -- but a shadowed name resolves to the first binding
+	 on the symbol list, and this operation REWRITES whatever it resolves (#396)."
+	^self revertClassNamed: aName toIndex: anInt inDictionary: nil
+]
+
+{ #category : 'redo' }
+GsClassHistory class >> revertClassNamed: aName toIndex: anInt inDictionary: aDictRef [
 	"Restore a class to the definition (name, shape, AND methods) of the version at
 	 index anInt, as a NEW version -- a redo. This is the same operation as a rename to
 	 that version's name: it re-parents every subclass onto the restored version and,
@@ -125,7 +156,7 @@ GsClassHistory class >> revertClassNamed: aName toIndex: anInt [
 	 {reverted, index, newIndex, name, failed} or an error envelope. `name` is the
 	 restored class's (possibly changed) name so the client can re-key its view."
 	| cls hist target ref restored applied |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"reverted":false,"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.
@@ -136,7 +167,9 @@ GsClassHistory class >> revertClassNamed: aName toIndex: anInt [
 		ifTrue: [^'{"reverted":false,"error":"that version is already current"}'].
 	ref := (self resolve: #GsRenameClassRefactoring) restoreClass: cls toVersion: target.
 	applied := ref applyDeselected: #().
-	restored := System myUserProfile symbolList objectNamed: target name asSymbol.
+	"Scoped the same way: the restored class is bound in the dictionary we acted in, and an
+	 unscoped re-read would report another dictionary's same-named class's version index."
+	restored := self classNamed: target name asString inDictionary: aDictRef.
 	^'{"reverted":true,"index":', anInt printString,
 	  ',"name":', (self jsonQuote: target name asString),
 	  ',"newIndex":', (restored isNil ifTrue: ['0'] ifFalse: [(restored classHistory indexOf: restored) printString]),
@@ -145,6 +178,12 @@ GsClassHistory class >> revertClassNamed: aName toIndex: anInt [
 
 { #category : 'redo' }
 GsClassHistory class >> removeVersionOf: aName index: anInt [
+	"Unscoped; see #removeVersionOf:index:inDictionary:, which this delegates to (#396)."
+	^self removeVersionOf: aName index: anInt inDictionary: nil
+]
+
+{ #category : 'redo' }
+GsClassHistory class >> removeVersionOf: aName index: anInt inDictionary: aDictRef [
 	"Remove the version at index anInt from the named class's class history
 	 (ClassHistory>>removeVersion:), so it no longer appears in the history. The
 	 currently-bound version cannot be removed. Does NOT commit -- the user commits.
@@ -152,7 +191,7 @@ GsClassHistory class >> removeVersionOf: aName index: anInt [
 	 that still has (un-migrated) instances leaves those instances referring to a
 	 version no longer in the history; the client warns before calling."
 	| cls hist target |
-	cls := System myUserProfile symbolList objectNamed: aName asSymbol.
+	cls := self classNamed: aName inDictionary: aDictRef.
 	(cls isNil or: [(cls isKindOf: Behavior) not])
 		ifTrue: [^'{"removed":false,"error":"not a class: ', (self jsonEscape: aName), '"}'].
 	hist := cls classHistory.

@@ -28,6 +28,7 @@ import {
   BrokenMethod,
 } from './instVarRefactorPreview';
 import { showInstVarRefactorPanel } from './instVarRefactorPanel';
+import { dictionaryNameFor, qualifiedClassName } from './dictionaryLabel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo, logWarning } from '../gciLog';
 import { notifyRefactoringApplied } from './refactoringAppliedToast';
@@ -65,9 +66,12 @@ export interface InstVarRefactorOutcome {
   autoApplied: boolean;
 }
 
-function titleFor(req: InstVarRefactorRequest): string {
-  if (req.op === 'add') return `Add ${req.ivarName} to ${req.className}`;
-  return `Remove ${req.ivarName} from ${req.className}`;
+function titleFor(req: InstVarRefactorRequest, dictName?: string): string {
+  // The class is named with its dictionary, so the toast and the Undo label afterwards say which
+  // class was reshaped rather than a name that may be bound in several dictionaries (#396).
+  const cls = qualifiedClassName(req.className, dictName);
+  if (req.op === 'add') return `Add ${req.ivarName} to ${cls}`;
+  return `Remove ${req.ivarName} from ${cls}`;
 }
 
 /**
@@ -100,6 +104,10 @@ export async function runInstVarRefactor(
   req: InstVarRefactorRequest,
 ): Promise<InstVarRefactorOutcome | undefined> {
   const { session, op, className, ivarName, dict, accessorSpecs, autoApply } = req;
+  // Resolved once: every message below names the class with its dictionary, including the undo
+  // label, which is where a refactoring that went to the wrong class is last catchable (#396).
+  const dictName = dictionaryNameFor(session, dict);
+  const title = (): string => titleFor(req, dictName);
   logInfo(`[instVar] ${op} ${ivarName} on ${className}`);
 
   const verb = op === 'add' ? 'Adding' : 'Removing';
@@ -175,7 +183,7 @@ export async function runInstVarRefactor(
       );
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
-        `${titleFor(req)} failed: ${e instanceof Error ? e.message : String(e)}`,
+        `${title()} failed: ${e instanceof Error ? e.message : String(e)}`,
       );
       safeClear();
       return undefined;
@@ -183,10 +191,10 @@ export async function runInstVarRefactor(
     safeClear();
     const failure = result.error ?? result.failed[0]?.error;
     if (failure !== undefined) {
-      void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${failure}`);
+      void vscode.window.showErrorMessage(`${title()} failed: ${failure}`);
       return undefined;
     }
-    reportDropped(titleFor(req), result.dropped);
+    reportDropped(title(), result.dropped);
     return {
       applied: result.applied,
       committed: result.committed,
@@ -200,7 +208,7 @@ export async function runInstVarRefactor(
       ? `Accessors added with this change: ${accessorSpecs.map((a) => a.selector).join(', ')}`
       : undefined;
   const result = await showInstVarRefactorPanel(
-    titleFor(req),
+    title(),
     start,
     {
       loadPage: async (off) =>
@@ -234,7 +242,7 @@ export async function runInstVarRefactor(
   // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
 
-  reportDropped(titleFor(req), result.dropped);
+  reportDropped(title(), result.dropped);
   const droppedNote =
     result.dropped.length > 0
       ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped. See the GemStone GCI channel for the list.`
@@ -254,8 +262,12 @@ export async function runInstVarRefactor(
         className,
         ivarName,
         ivarName,
-        titleFor(req),
+        title(),
         'GsInstVarRefactoring',
+        undefined,
+        // The class's own dictionary. Without it the reversal re-resolves the class by name and
+        // reshapes a same-named class in another dictionary instead (#396).
+        req.dict,
       );
     } catch (e: unknown) {
       logInfo(
@@ -265,7 +277,7 @@ export async function runInstVarRefactor(
       );
     }
   }
-  notifyRefactoringApplied(session, `${titleFor(req)}.${droppedNote}${commitNote}`, 'toast');
+  notifyRefactoringApplied(session, `${title()}.${droppedNote}${commitNote}`, 'toast');
 
   return {
     applied: result.applied,

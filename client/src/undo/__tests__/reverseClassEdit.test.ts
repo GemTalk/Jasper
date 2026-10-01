@@ -237,4 +237,23 @@ describe('reverseClassEdit', () => {
     expect(await reverseClassEdit(session, entry([bound('1')], [bound('2')]))).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
   });
+
+  // Same reason as the class-variable undo: findClass on a bare name lands on the first binding
+  // in the symbol list, which is a different class when the name is shadowed (#396). A class
+  // slot always carries a dictionary, so the reveal is scoped to it.
+  it('reveals the rebound class in its own dictionary, not the first of that name', async () => {
+    // A removed class put back: an exact restore, so a rebind op runs and the reveal follows it.
+    vi.mocked(captureClassSlots).mockReturnValue([unbound]);
+    const e = entry([bound('1', ['plain'])], [unbound]);
+    e.slots = [{ dict: 'DictionaryB', className: 'Shadowed' }];
+
+    await reverseClassEdit(session, e);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Shadowed',
+      undefined,
+      'DictionaryB',
+    );
+  });
 });

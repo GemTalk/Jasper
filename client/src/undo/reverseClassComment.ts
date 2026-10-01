@@ -1,5 +1,5 @@
 /**
- * Undoing a class comment save — with no preview (issue #434).
+ * Undoing a class comment save (issue #434).
  *
  * A comment is one piece of text on one class, and the user just wrote it, so this follows
  * the method-edit path rather than the class-edit one: reverse, report what it did, and call

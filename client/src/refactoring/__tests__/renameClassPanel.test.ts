@@ -69,7 +69,7 @@ function mount(over: Partial<Parameters<typeof renderClassPanelHtml>[0]> = {}) {
     removeOldFromHistory: false,
     changes: [renameChange, reparentChange, refChange],
     done: true,
-    outOfScope: { references: 0, descendants: 1, skipped: 0, collision: null },
+    outOfScope: { references: 0, descendants: 1, skipped: 0, collision: null, shadowedFrom: null },
     skippedMethods: [],
     nonce: 'test',
     script: '',
@@ -114,6 +114,7 @@ describe('rename-class preview panel HTML', () => {
         descendants: 0,
         skipped: 0,
         collision: 'the name Bar is already in use',
+        shadowedFrom: null,
       },
     });
 

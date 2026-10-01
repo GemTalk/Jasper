@@ -27,7 +27,7 @@ GsRefactoringChangeSet >> addClassDefinitionEditInDictionary: dn className: cn o
 	 commits. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classDefinitionEditId: self nextIdString dictName: dn className: cn
+		classDefinitionEditId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -41,7 +41,7 @@ GsRefactoringChangeSet >> addMethodRecompileInDictionary: dn className: cn isMet
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRecompileId: self nextIdString dictName: dn className: cn
+		methodRecompileId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -55,7 +55,7 @@ GsRefactoringChangeSet >> addMethodAddInDictionary: dn className: cn isMeta: aBo
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodAddId: self nextIdString dictName: dn className: cn
+		methodAddId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat newSource: ns.
 	changes add: change.
 	^change
@@ -71,7 +71,7 @@ GsRefactoringChangeSet >> addMethodOverwriteInDictionary: dn className: cn isMet
 	 GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodOverwriteId: self nextIdString dictName: dn className: cn
+		methodOverwriteId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w.
 	changes add: change.
 	^change
@@ -84,7 +84,7 @@ GsRefactoringChangeSet >> addMethodRemoveInDictionary: dn className: cn isMeta: 
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRemoveId: self nextIdString dictName: dn className: cn
+		methodRemoveId: self nextIdString dict: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os.
 	changes add: change.
 	^change
@@ -97,7 +97,7 @@ GsRefactoringChangeSet >> addMethodRenameInDictionary: dn className: cn isMeta: 
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		methodRenameId: self nextIdString dictName: dn className: cn
+		methodRenameId: self nextIdString dict: dn className: cn
 		isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat
 		oldSource: os newSource: ns.
 	changes add: change.
@@ -112,7 +112,7 @@ GsRefactoringChangeSet >> addClassRenameInDictionary: dn className: cn newName: 
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classRenameId: self nextIdString dictName: dn className: cn
+		classRenameId: self nextIdString dict: dn className: cn
 		newName: nn oldSource: os newSource: ns.
 	changes add: change.
 	^change
@@ -125,7 +125,7 @@ GsRefactoringChangeSet >> addClassAddInDictionary: dn className: cn superclassNa
 	 superclassName. Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classAddId: self nextIdString dictName: dn className: cn
+		classAddId: self nextIdString dict: dn className: cn
 		superclassName: sn newSource: ns.
 	changes add: change.
 	^change
@@ -135,10 +135,10 @@ GsRefactoringChangeSet >> addClassAddInDictionary: dn className: cn superclassNa
 GsRefactoringChangeSet >> addClassRemoveInDictionary: dn className: cn oldSource: os [
 	"Stage the UNBINDING of a class. Records the change only; NEVER removes or commits. Staged
 	 only by an undo reversing a refactoring that created the class -- see
-	 GsRefactoringChange class>>classRemoveId:dictName:className:oldSource:."
+	 GsRefactoringChange class>>classRemoveId:dict:className:oldSource:."
 	| change |
 	change := GsRefactoringChange
-		classRemoveId: self nextIdString dictName: dn className: cn oldSource: os.
+		classRemoveId: self nextIdString dict: dn className: cn oldSource: os.
 	changes add: change.
 	^change
 ]
@@ -151,7 +151,7 @@ GsRefactoringChangeSet >> addClassReparentInDictionary: dn className: cn oldSour
 	 Returns the new GsRefactoringChange."
 	| change |
 	change := GsRefactoringChange
-		classReparentId: self nextIdString dictName: dn className: cn
+		classReparentId: self nextIdString dict: dn className: cn
 		oldSource: os newSource: ns.
 	changes add: change.
 	^change

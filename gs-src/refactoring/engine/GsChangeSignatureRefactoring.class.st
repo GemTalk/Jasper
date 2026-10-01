@@ -327,10 +327,12 @@ GsChangeSignatureRefactoring >> keyForClass: aClass isMeta: aBool [
 ]
 
 { #category : 'private' }
-GsChangeSignatureRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsChangeSignatureRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -454,7 +456,7 @@ GsChangeSignatureRefactoring >> stageImplementorRename: aMethod base: base isMet
 	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRenameInDictionary: (self dictNameForClass: base)
+		addMethodRenameInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		oldSelector: oldSelector
@@ -492,7 +494,7 @@ GsChangeSignatureRefactoring >> stageSenderRewrite: aMethod base: base isMeta: i
 	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
 		ifNil: ['as yet unclassified'].
 	aChangeSet
-		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		addMethodRecompileInDictionary: (self dictForClass: base)
 		className: base name
 		isMeta: isMeta
 		selector: senderSel
@@ -650,7 +652,7 @@ GsChangeSignatureRefactoring >> applyChange: aChange [
 	"Apply one staged change in the stone WITHOUT committing: compile the new source,
 	 and for a genuine rename (selector actually changed) remove the old method."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment

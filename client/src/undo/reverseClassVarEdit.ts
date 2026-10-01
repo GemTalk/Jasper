@@ -24,6 +24,7 @@
  * names the methods, in the same shape as the class revert's discard prompt.
  */
 import * as vscode from 'vscode';
+import { dictionaryNameFor } from '../refactoring/dictionaryLabel';
 import { ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing } from '../browserQueries';
 import { logInfo } from '../gciLog';
@@ -140,7 +141,16 @@ export async function reverseClassVarEdit(
   await refreshExplorer();
   await refreshSearch(session.id);
   try {
-    await vscode.commands.executeCommand('gemstone.explorer.findClass', entry.slot.className);
+    // Scoped to the slot's own dictionary. findClass resolves a bare name against the whole
+    // symbol list and lands on the FIRST match, so undoing a class-variable add on a shadowed
+    // class name selected another dictionary's class of that name (#396). The method reveal
+    // beside this one has always passed its slot's dictionary; this one now does too.
+    await vscode.commands.executeCommand(
+      'gemstone.explorer.findClass',
+      entry.slot.className,
+      undefined,
+      dictionaryNameFor(session, entry.slot.dict),
+    );
   } catch {
     /* the Explorer may not be active */
   }

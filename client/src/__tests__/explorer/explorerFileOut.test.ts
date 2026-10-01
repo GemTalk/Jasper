@@ -237,6 +237,17 @@ describe('Explorer file out', () => {
       expect(queries.fileOutClass).toHaveBeenCalledWith(expect.anything(), 'Object', 'Globals');
     });
 
+    it("files out a hierarchy row by its dictionary's POSITION when the row carries one", async () => {
+      // Two dictionaries can share a name, and the name alone finds the first of them (#396).
+      const ctl = makeController();
+
+      await ctl.fileOutClass(
+        new HierarchyItem('Object', 'Globals', 'ancestor', 0, false, undefined, 2),
+      );
+
+      expect(queries.fileOutClass).toHaveBeenCalledWith(expect.anything(), 'Object', 2);
+    });
+
     it('files a class out as TONEL, with the Tonel filters and .class.st name', async () => {
       // The Explorer handler had no test at all while its chunk sibling above did —
       // found by inventorying the diff's functions rather than by reading it.
@@ -260,6 +271,16 @@ describe('Explorer file out', () => {
         'Object',
         'Globals',
       );
+    });
+
+    it("files a Tonel hierarchy row out by its dictionary's POSITION when the row carries one", async () => {
+      const ctl = makeController();
+
+      await ctl.fileOutClassAsTonel(
+        new HierarchyItem('Object', 'Globals', 'ancestor', 0, false, undefined, 2),
+      );
+
+      expect(queries.fileOutClassTonel).toHaveBeenCalledWith(expect.anything(), 'Object', 2);
     });
 
     it('refuses the Tonel file-out on a stone without the machinery, writing nothing', async () => {

@@ -88,6 +88,7 @@ import {
   parseMethodUri,
   isMethodEditorUri,
   listOpenGemstoneTabs,
+  classCompiledTarget,
 } from '../gemstoneFileSystemProvider';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
@@ -2766,5 +2767,28 @@ describe('recording a class definition save for revert (#434)', () => {
     expect(() => write(definitionUri, DEF)).not.toThrow();
     expect(queries.compileClassDefinition).toHaveBeenCalled();
     expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+});
+
+describe('classCompiledTarget', () => {
+  // Two dictionaries can share a name, so a compiled definition's position is what says which
+  // one it was compiled in (#396).
+  it('reads the class, its dictionary and its position off a definition URI', () => {
+    expect(classCompiledTarget(buildClassDefinitionUri(1, 'Shared', 'Shadowed', 3))).toEqual({
+      sessionId: 1,
+      dictName: 'Shared',
+      className: 'Shadowed',
+      dictIndex: 3,
+    });
+  });
+
+  it('answers no position for a definition URI that carries none', () => {
+    expect(classCompiledTarget(buildClassDefinitionUri(1, 'Shared', 'Shadowed'))?.dictIndex).toBe(
+      undefined,
+    );
+  });
+
+  it('answers nothing for a URI too short to name a class', () => {
+    expect(classCompiledTarget(Uri.parse('gemstone://1/Shared'))).toBeUndefined();
   });
 });

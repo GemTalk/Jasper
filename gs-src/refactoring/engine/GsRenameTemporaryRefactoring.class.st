@@ -324,7 +324,7 @@ GsRenameTemporaryRefactoring >> buildChangeSet [
 			replaceFrom: node start to: node stop with: newName).
 		node token value: newName].
 	cs
-		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		addMethodRecompileInDictionary: (self dictForClass: definingClass)
 		className: definingClass name
 		isMeta: isMeta
 		selector: selector
@@ -341,11 +341,12 @@ GsRenameTemporaryRefactoring >> methodCategory [
 ]
 
 { #category : 'private' }
-GsRenameTemporaryRefactoring >> dictNameForClass: aClass [
-	"The name of the first dictionary that defines aClass, as a String, or nil."
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsRenameTemporaryRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'preconditions' }
@@ -489,7 +490,7 @@ GsRenameTemporaryRefactoring >> applyChange: aChange [
 GsRenameTemporaryRefactoring >> applyMethodRecompile: aChange [
 	"Recompile the one method with its rewritten (new-name) source."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment

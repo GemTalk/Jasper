@@ -350,3 +350,158 @@ GsRefactoringEnvironmentTest >> testTheInstVarNameQueriesHaveExactlyOneImplement
 GsRefactoringEnvironmentTest >> testUnknownClassNameResolvesToNil [
 	self assert: (GsRefactoringEnvironment new classNamed: #GsNoSuchClass_ZZZ) isNil
 ]
+
+{ #category : 'tests - dictionary-scoped resolution' }
+GsRefactoringEnvironmentTest >> testScopedLookupAnswersNilWhenTheNamedDictionaryDoesNotBindTheClass [
+	"The miss is the whole point. Being told which dictionary and not finding the class there
+	 means the answer is not known -- falling back to first-match picks the OTHER dictionary''s
+	 class, which is the write-to-the-wrong-class defect this engine exists to remove (#396).
+	 Callers turn nil into ''Class not found: ...'', a decline the user can act on."
+	| sl env dictA dictB |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvMissDictA; yourself.
+	dictB := SymbolDictionary new name: #GsEnvMissDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 Object subclass: 'GsEnvMissShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: dictA.
+	 env := GsRefactoringEnvironment new.
+
+	 "bound in A, asked for in B -- nil, NOT A's class"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvMissDictB) isNil.
+	 "and by index, which is the form the client sends"
+	 self assert: (env classNamed: 'GsEnvMissShadow'
+		inDictionaryNamed: (sl indexOf: dictB)) isNil.
+	 "a dictionary that is not on the symbol list at all"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvNoSuchDict_ZZZ) isNil.
+	 "an index past the end -- the stale-index case, after a dictionary is removed"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: sl size + 5) isNil.
+	 "and it still resolves where the class really is"
+	 self assert: (env classNamed: 'GsEnvMissShadow' inDictionaryNamed: #GsEnvMissDictA) notNil]
+		ensure: [
+			dictA removeKey: #GsEnvMissShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: []. sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests - dictionary-scoped resolution' }
+GsRefactoringEnvironmentTest >> testScopedLookupFallsBackOnlyWhenNoDictionaryWasNamed [
+	"The one legitimate fallback: a record made before #396, or a caller with nothing to give."
+	| sl env dictA |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvNilDictA; yourself.
+	[sl add: dictA.
+	 Object subclass: 'GsEnvNilShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: dictA.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvNilShadow' inDictionaryNamed: nil) notNil.
+	 self assert: (env classNamed: 'GsEnvNilShadow' inDictionaryNamed: nil)
+		== (env classNamed: 'GsEnvNilShadow')]
+		ensure: [
+			dictA removeKey: #GsEnvNilShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: []]
+]
+
+{ #category : 'tests - dictionary-scoped resolution' }
+GsRefactoringEnvironmentTest >> testScopedLookupIgnoresANonClassBindingOfTheSameName [
+	"A global that merely shares the name is not the class living there. Answering it would hand
+	 a refactoring something it cannot reshape."
+	| sl env dictA |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvNonClassDict; yourself.
+	[sl add: dictA.
+	 dictA at: #GsEnvNonClassName put: 42.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvNonClassName' inDictionaryNamed: #GsEnvNonClassDict) isNil.
+	 self assert: (env classNamed: 'GsEnvNonClassName'
+		inDictionaryNamed: (sl indexOf: dictA)) isNil]
+		ensure: [sl remove: dictA ifAbsent: []]
+]
+
+{ #category : 'tests - dictionary-scoped resolution' }
+GsRefactoringEnvironmentTest >> testScopedLookupByNameDoesNotGuessBetweenTwoDictionariesOfThatName [
+	"Two dictionaries can share a NAME, which is why an index is canonical. Asked by name, the
+	 lookup takes the first one of that name and answers what IT binds -- it does not search on
+	 for another dictionary that happens to hold the class."
+	| sl env first second |
+	sl := System myUserProfile symbolList.
+	first := SymbolDictionary new name: #GsEnvTwinDict; yourself.
+	second := SymbolDictionary new name: #GsEnvTwinDict; yourself.
+	[sl add: first. sl add: second.
+	 Object subclass: 'GsEnvTwinShadow' instVarNames: #() classVars: #() classInstVars: #()
+		poolDictionaries: #() inDictionary: second.
+	 env := GsRefactoringEnvironment new.
+
+	 self assert: (env classNamed: 'GsEnvTwinShadow' inDictionaryNamed: #GsEnvTwinDict) isNil.
+	 "the index is unambiguous, and finds it"
+	 self assert: (env classNamed: 'GsEnvTwinShadow'
+		inDictionaryNamed: (sl indexOf: second)) notNil]
+		ensure: [
+			second removeKey: #GsEnvTwinShadow ifAbsent: [].
+			sl remove: first ifAbsent: []. sl remove: second ifAbsent: []]
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testLineageOfIsSharedByEveryVersionOfAClassAndNoOtherClass [
+	"A class history is the one object every version of a class shares and no other class does,
+	 which is what lets a staged change find its class after the class has been re-versioned."
+	| env old new twinDict twin |
+	env := GsRefactoringEnvironment new.
+	old := UserGlobals at: #GsRefEnvFixtureSuper.
+	new := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #('alpha' 'delta')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	twinDict := SymbolDictionary new name: #GsRefEnvTwinDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 self deny: new == old.
+	 self assert: (env lineageOf: new) == (env lineageOf: old).
+	 self deny: (env lineageOf: twin) == (env lineageOf: old)]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testLineageOfNothingIsNil [
+	"nil, not a shared answer two history-less callers could match on."
+	self assert: (GsRefactoringEnvironment new lineageOf: nil) isNil
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testANewVersionIsBoundInTheDictionaryThatBindsTheClassItself [
+	"Not the first dictionary binding the NAME: a same-named class ahead of UserGlobals must not
+	 take the new version (#396)."
+	| decoy decoyClass |
+	decoy := SymbolDictionary new name: #GsRefEnvDecoyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsRefEnvFixtureSuper'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 self
+		assert: (GsRefactoringEnvironment new
+			dictionaryForNewVersionOf: (UserGlobals at: #GsRefEnvFixtureSuper))
+		== UserGlobals.
+	 self
+		assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: decoyClass)
+		== decoy]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - class identity' }
+GsRefactoringEnvironmentTest >> testANewVersionOfAClassNoDictionaryBindsGoesToUserGlobals [
+	| loose |
+	loose := Object
+		subclass: 'GsRefEnvLoose'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	UserGlobals removeKey: #GsRefEnvLoose.
+	self assert: (GsRefactoringEnvironment new dictionaryForNewVersionOf: loose) == UserGlobals
+]

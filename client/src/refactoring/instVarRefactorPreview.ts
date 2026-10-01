@@ -1,5 +1,6 @@
 import { asCount } from './previewCounts';
 import { ApplyResult as BaseApplyResult, parseApplyResultWith } from './previewEnvelope';
+import { classNameForRow } from './qualifiedClassName';
 /**
  * Pure helpers for the add / remove instance-variable (V1) preview: parsing the engine's
  * pre-flight analysis, the paginated preview envelope, and the apply result. No `vscode`
@@ -263,9 +264,14 @@ export function describeApplyFailure(
   return null;
 }
 
-/** A human label for a preview row: "Class — edited" or "Class — recompiled". */
-export function instVarChangeLabel(change: InstVarChange): string {
+/** A human label for a preview row: "Class — edited" or "Class — recompiled".
+ *
+ *  `ambiguous` is the set of class names this change set claims from more than one dictionary
+ *  (see `ambiguousClassNames`); those rows are qualified, so two rows that name the same class
+ *  and mean different ones can be told apart (#396). */
+export function instVarChangeLabel(change: InstVarChange, ambiguous?: ReadonlySet<string>): string {
+  const name = classNameForRow(change.className, change.dictName, ambiguous);
   return change.kind === 'classDefinitionEdit'
-    ? `${change.className} (definition edited)`
-    : `${change.className} (recompiled)`;
+    ? `${name} (definition edited)`
+    : `${name} (recompiled)`;
 }

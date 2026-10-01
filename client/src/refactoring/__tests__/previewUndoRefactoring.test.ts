@@ -6,6 +6,8 @@ import {
   applyUndoRefactoring,
   clearUndoRefactoringPreview,
   clearRefactoringUndo,
+  recordReverseRename,
+  captureClassHistory,
 } from '../queries/previewUndoRefactoring';
 
 /**
@@ -71,5 +73,51 @@ describe('undo refactoring queries', () => {
     const exec = vi.fn().mockResolvedValue('{}');
     await applyUndoRefactoring(exec, "to'k", []);
     expect(exec.mock.calls[0][1]).toContain("'to''k'");
+  });
+});
+
+describe('the recorded reversal carries the class’s own dictionary', () => {
+  /**
+   * `classDictName:` is what keeps an undo on the class the refactoring touched. Without it the
+   * reversal re-resolves the class by name and applies the opposite operation to whichever
+   * same-named class the symbol list reaches first (#396).
+   *
+   * Only the integration suite covered this, and it runs locally against one stone version.
+   */
+  const record = (classDict?: number | string): string => {
+    const exec = vi.fn().mockReturnValue('ok');
+    recordReverseRename(
+      exec,
+      'instVarAdd',
+      'Shadowed',
+      'x',
+      'x',
+      'Add x to Shadowed',
+      'GsInstVarRefactoring',
+      undefined,
+      classDict,
+    );
+    return exec.mock.calls[0][0] as string;
+  };
+
+  it('sends a SymbolList index as an Integer', () => {
+    // Coerced to a String it became '10', matched no dictionary NAME, and fell back to the
+    // first match — silently, because that fallback is legitimate for a record made without a
+    // dictionary at all.
+    expect(record(10)).toContain('classDictName: 10');
+  });
+
+  it('quotes and escapes a dictionary given by name', () => {
+    expect(record("Di'ct")).toContain("classDictName: 'Di''ct'");
+  });
+
+  it('sends nil when the caller has no dictionary', () => {
+    expect(record()).toContain('classDictName: nil');
+  });
+
+  it('scopes the pre-apply history capture the same way', () => {
+    const exec = vi.fn().mockReturnValue('ok');
+    captureClassHistory(exec, 'Shadowed', 3);
+    expect(exec.mock.calls[0][0]).toContain("captureClassHistoryOf: 'Shadowed' inDictionary: 3");
   });
 });
