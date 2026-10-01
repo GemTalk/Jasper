@@ -864,6 +864,30 @@ describe('DebuggerPanel', () => {
     expect(html).toMatch(/\.subtitle\s*\{[^}]*--vscode-descriptionForeground/);
   });
 
+  it('leads the subtitle with the session number in multiple-session mode, and follows the mode', () => {
+    __setConfig('gemstone', 'sessionMode', 'multiple');
+    try {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      expect(panel.webview.html).toContain('Session 1 · For DataCurator on gs64stone @ devhost');
+      expect(panel.title).toBe('GemStone Debugger · Session 1');
+
+      __setConfig('gemstone', 'sessionMode', 'single');
+      for (const [listener] of vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls) {
+        (listener as (e: unknown) => void)({
+          affectsConfiguration: (key: string) => key === 'gemstone.sessionMode',
+        });
+      }
+      expect(panel.webview.postMessage).toHaveBeenCalledWith({
+        command: 'subtitle',
+        text: 'For DataCurator on gs64stone @ devhost',
+      });
+      expect(panel.title).toBe('GemStone Debugger');
+    } finally {
+      __setConfig('gemstone', 'sessionMode', undefined);
+    }
+  });
+
   it('styles editable variable rows with a pointer cursor (the editable affordance)', () => {
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     const html = lastPanel().webview.html;
@@ -897,7 +921,7 @@ describe('DebuggerPanel', () => {
     const html = lastPanel().webview.html;
 
     expect(html).toContain(
-      '<span class="subtitle">For &lt;img src=x&gt; on s&amp;s @ h&quot;h</span>',
+      '<span class="subtitle" id="subtitle">For &lt;img src=x&gt; on s&amp;s @ h&quot;h</span>',
     );
     expect(html).not.toContain('<img src=x>'); // raw, unescaped tag must not appear
   });
@@ -907,7 +931,7 @@ describe('DebuggerPanel', () => {
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     const html = lastPanel().webview.html;
 
-    expect(html).toContain('<span class="subtitle">For solo</span>');
+    expect(html).toContain('<span class="subtitle" id="subtitle">For solo</span>');
   });
 
   it('disposeForSession disposes every panel created for the session', () => {

@@ -137,9 +137,14 @@ import { openWorkspace } from './workspace';
 import { openScratchNotebook } from './scratchNotebook';
 import {
   chooseActiveSession,
+  describeSession,
+  multipleSessionMode,
+  onDidChangeActiveSession,
+  onDidChangeSessionMode,
   WorkspaceSessionLensProvider,
   WORKSPACE_SESSION_SELECTORS,
 } from './activeSessionDisplay';
+import { SessionEditorDecorationProvider } from './sessionEditorDecoration';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook, registerTutorialContext } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
@@ -1348,7 +1353,10 @@ export function activate(context: vscode.ExtensionContext) {
   function updateStatusBar() {
     const session = sessionManager.getSelectedSession();
     if (session) {
-      statusBarItem.text = `$(database) ${loginLabel(session.login)}`;
+      // The login alone in single-session mode; in multiple, the number too, which
+      // is what tells two logins to the same stone as the same user apart.
+      const label = multipleSessionMode() ? describeSession(session) : loginLabel(session.login);
+      statusBarItem.text = `$(database) ${label}`;
       statusBarItem.tooltip = 'GemStone: click to change session';
       statusBarItem.show();
     } else if (sessionManager.getSessions().length > 0) {
@@ -1360,7 +1368,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  context.subscriptions.push(sessionManager.onDidChangeSelection(() => updateStatusBar()));
+  context.subscriptions.push(
+    onDidChangeActiveSession(sessionManager, () => updateStatusBar()),
+    onDidChangeSessionMode(() => updateStatusBar()),
+  );
   updateStatusBar();
 
   // ── Status Bar: Connect Feedback (left) ────────────────
@@ -4007,6 +4018,7 @@ export function activate(context: vscode.ExtensionContext) {
   refreshRowanWorkspaceContext();
   refreshRowanProjectView();
   const activeEditorDecorations = new ActiveEditorDecorationProvider();
+  const sessionEditorDecorations = new SessionEditorDecorationProvider(sessionManager);
   activeEditorDecorations.setActiveEditor(vscode.window.activeTextEditor?.document.uri);
   context.subscriptions.push(
     rowanProjectView,
@@ -4019,6 +4031,9 @@ export function activate(context: vscode.ExtensionContext) {
     // selected method reads as connected to its source even when the tree isn't
     // focused (its selection goes muted grey then).
     vscode.window.registerFileDecorationProvider(activeEditorDecorations),
+    // The session number on each gemstone:// editor tab, in multiple-session mode.
+    vscode.window.registerFileDecorationProvider(sessionEditorDecorations),
+    sessionEditorDecorations,
     vscode.window.onDidChangeActiveTextEditor((ed) =>
       activeEditorDecorations.setActiveEditor(ed?.document.uri),
     ),
