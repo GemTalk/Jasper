@@ -237,13 +237,20 @@
     // the mouse leaves nothing to hear either. The keyup alone therefore ate the first
     // DELIBERATE Enter and the Enter-to-Enter flow needed two presses.
     //
-    // A short idle closes that without weakening the guard, because the two cases are separated
-    // by orders of magnitude: an auto-repeat cascade lands within tens of milliseconds of the
-    // panel appearing, and a person who has read a preview takes far longer. Testing e.repeat
-    // instead was the other candidate and is NOT safe here -- the flag is the browser's record
-    // of the key already being down, kept per document, so the first keydown delivered to a
-    // webview that only just took focus can arrive unflagged, and an unflagged repeat is
-    // exactly the cascade this exists to stop.
+    // A short idle closes that, because the two cases are separated by orders of magnitude: an
+    // auto-repeat cascade lands within tens of milliseconds of the panel appearing, and a person
+    // who has read a preview takes far longer.
+    //
+    // The idle ALONE is not enough either. It opens on a clock, so a key still held when the
+    // window elapses auto-repeats straight into Apply. So a repeat-flagged keydown is refused
+    // outright, whatever the arming says -- nothing good ever comes of auto-repeat activating
+    // the primary action.
+    //
+    // The two together is what makes this hold. Testing e.repeat alone was the other candidate
+    // and is not safe on its own: the flag is the browser's record of the key already being
+    // down, kept per document, so the first keydown delivered to a webview that only just took
+    // focus can arrive unflagged. That unflagged one lands in the first few milliseconds, which
+    // is exactly where the idle is still shut -- each covers the other's gap.
     doc.__gsEnterArmed = false;
     doc.__gsArmAt = Date.now() + 300;
     if (doc.__gsArmEnter) doc.removeEventListener('keyup', doc.__gsArmEnter);
@@ -256,6 +263,11 @@
         applyEl.removeEventListener('keydown', applyEl.__gsEnterGuard, true);
       applyEl.__gsEnterGuard = function (e) {
         if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.repeat) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         if (doc.__gsEnterArmed || Date.now() >= doc.__gsArmAt) return;
         e.preventDefault();
         e.stopPropagation();
@@ -267,6 +279,7 @@
     doc.__gsApplyOnEnter = function (e) {
       if (e.key !== 'Enter' || e.defaultPrevented) return;
       // a held Enter from an earlier step, not a new one
+      if (e.repeat) return;
       if (!(doc.__gsEnterArmed || Date.now() >= doc.__gsArmAt)) return;
       const t = e.target;
       const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';

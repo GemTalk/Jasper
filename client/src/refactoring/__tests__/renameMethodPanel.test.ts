@@ -349,6 +349,60 @@ describe('paginated rename-method panel', () => {
         expect(e.defaultPrevented).toBe(false);
       });
 
+      it('refuses a held key that outlasts the window, from the page', () => {
+        // The gap in arming on a clock alone: the window opens whether or not the key came up,
+        // so a key still down when it elapses auto-repeats into Apply. Raised in review.
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+            repeat: true,
+          }),
+        );
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
+      it('refuses a held key that outlasts the window, on Apply itself', () => {
+        mount([change('1', 'A')], 1, true);
+
+        advance(350);
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          repeat: true,
+        });
+        document.getElementById('apply')!.dispatchEvent(e);
+
+        expect(e.defaultPrevented).toBe(true);
+      });
+
+      it('refuses a repeat even once a keyup has armed it', () => {
+        // Auto-repeat should never activate the primary action, whatever armed the panel.
+        const { vscode } = mount([change('1', 'A')], 1, true);
+
+        release();
+        document.body.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+            repeat: true,
+          }),
+        );
+
+        expect(vscode.postMessage).not.toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'apply' }),
+        );
+      });
+
       it('arms on a keyup without waiting, when there is one to hear', () => {
         const { vscode } = mount([change('1', 'A')], 1, true);
 
