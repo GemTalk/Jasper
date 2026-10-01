@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString } from '../../queries/util';
+import { dictionaryArgExpr, escapeString } from '../../queries/util';
 import type { AsyncQueryExecutor } from './previewRenameMethod';
 
 /**
@@ -128,9 +128,15 @@ export function recordReverseRename(
   label: string,
   engineClassName: string,
   scope?: { kind: string; dictName?: string },
+  // The HOME dictionary of `className` -- a 1-based SymbolList index or a name. Distinct from
+  // `scope`, which is a rename's search scope. Without it the reversal re-resolves the class by
+  // name and re-applies the opposite operation to whichever same-named class the symbol list
+  // reaches first (#396).
+  classDict?: number | string,
 ): string {
   const scopeKind = scope ? `#${scope.kind}` : 'nil';
   const scopeDict = scope?.dictName ? `'${escapeString(scope.dictName)}'` : 'nil';
+  const classDictArg = dictionaryArgExpr(classDict);
   return execute(
     `| c |
 c := ${UNDO_CLASS}.
@@ -142,6 +148,7 @@ c isNil ifTrue: ['no-undo-support'] ifFalse: [
     to: '${escapeString(to)}'
     scopeKind: ${scopeKind}
     scopeDictName: ${scopeDict}
+    classDictName: ${classDictArg}
     label: '${escapeString(label)}'
     engine: '${escapeString(engineClassName)}']`,
   );
@@ -155,11 +162,20 @@ c isNil ifTrue: ['no-undo-support'] ifFalse: [
  * Must be called BEFORE the apply. Answers `'ok'`, `'not a class'`, or `'ok'` as a no-op on a
  * stone whose engine predates undo.
  */
-export function captureClassHistory(execute: QueryExecutor, rootClassName: string): string {
+export function captureClassHistory(
+  execute: QueryExecutor,
+  rootClassName: string,
+  // The root class's dictionary -- a 1-based SymbolList index or a name. Without it the capture
+  // is taken from, and the reversal applied to, whichever same-named class the symbol list
+  // reaches first (#396).
+  dict?: number | string,
+): string {
+  const dictArg = dictionaryArgExpr(dict);
   return execute(
     `| c |
 c := ${UNDO_CLASS}.
-c isNil ifTrue: ['ok'] ifFalse: [c captureClassHistoryOf: '${escapeString(rootClassName)}']`,
+c isNil ifTrue: ['ok'] ifFalse: [
+  c captureClassHistoryOf: '${escapeString(rootClassName)}' inDictionary: ${dictArg}]`,
   );
 }
 

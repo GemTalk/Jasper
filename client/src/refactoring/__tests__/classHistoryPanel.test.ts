@@ -134,4 +134,34 @@ describe('class history viewer behaviour', () => {
 
     expect(document.querySelectorAll('li.version')).toHaveLength(1);
   });
+
+  // A class name does not identify a class: the same name can be bound in several dictionaries,
+  // each with its own history, and Restore rewrites whichever one the panel is showing. These
+  // pin that the panel says WHICH -- the help the user had no way to get before (#396).
+  describe('naming the dictionary the history belongs to', () => {
+    const html = (dictName?: string): string =>
+      renderClassHistoryHtml({
+        className: 'Shadowed',
+        versions,
+        nonce: 'n',
+        script: '',
+        dictName,
+      });
+
+    it('names the dictionary beside the class in the header', () => {
+      expect(html('DictionaryB')).toContain(
+        'Definition history of <code>Shadowed</code> in <code>DictionaryB</code>',
+      );
+    });
+
+    it('leaves the header unqualified when no dictionary was given', () => {
+      expect(html(undefined)).toContain('Definition history of <code>Shadowed</code></div>');
+    });
+
+    it('escapes a dictionary name rather than letting it reach the DOM as markup', () => {
+      const out = html('<img src=x>');
+      expect(out).not.toContain('<img src=x>');
+      expect(out).toContain('&lt;img src=x&gt;');
+    });
+  });
 });

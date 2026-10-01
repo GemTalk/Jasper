@@ -68,6 +68,11 @@ import {
   ClassReference,
 } from './refactoring/queries/resolveClassReference';
 import { classDefiningDictionaryName as sharedClassDefiningDictionaryName } from './refactoring/queries/classDefiningDictionaryName';
+import {
+  dictionariesShadowedByRename as sharedDictionariesShadowedByRename,
+  ShadowingHolder,
+} from './refactoring/queries/dictionariesShadowedByRename';
+export type { ShadowingHolder };
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -222,7 +227,10 @@ import {
   getMethodHistory as sharedGetMethodHistory,
   removeMethodHistory as sharedRemoveMethodHistory,
 } from './methodHistory/queries/methodHistory';
-import { globalNameInUse as sharedGlobalNameInUse } from './refactoring/queries/globalNameInUse';
+import {
+  globalNameInUse as sharedGlobalNameInUse,
+  globalNameInUseInDictionary as sharedGlobalNameInUseInDictionary,
+} from './refactoring/queries/globalNameInUse';
 import { isKernelClass as sharedIsKernelClass } from './refactoring/queries/isKernelClass';
 import {
   getGrailStubReflection as sharedGetGrailStubReflection,
@@ -820,6 +828,22 @@ export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
 /** Which symbol dictionaries hold a class of this name, in symbol-list order. */
 export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
   return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
+}
+
+/** The dictionaries a rename to `newName` would shadow: those already holding a class of that
+ *  name, minus the one the renamed class lives in, excluded by identity in the stone. */
+export function dictionariesShadowedByRename(
+  session: ActiveSession,
+  newName: string,
+  oldName: string,
+  dict?: number | string,
+): ShadowingHolder[] {
+  return sharedDictionariesShadowedByRename(
+    defaultQueryExecutorUsing(session),
+    newName,
+    oldName,
+    dict,
+  );
 }
 
 export function fileOutClass(
@@ -1573,10 +1597,20 @@ export function analyzeMoveMethod(
   targetName: string,
   toMeta: boolean,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing move…');
-  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+  return sharedAnalyzeMoveMethod(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    dict,
+    targetDict,
+  );
 }
 
 export function startMoveMethodPreview(
@@ -1589,6 +1623,7 @@ export function startMoveMethodPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
+  targetDict?: number | string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Previewing move…');
@@ -1602,6 +1637,7 @@ export function startMoveMethodPreview(
     token,
     maxBytes,
     dict,
+    targetDict,
   );
 }
 
@@ -2056,16 +2092,21 @@ export function clearSplitClassPreview(session: ActiveSession, token: string): s
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and
 // the redo (restore a historical version as a new version, no commit).
-export function getClassHistory(session: ActiveSession, className: string): string {
-  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className);
+export function getClassHistory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function revertClassToVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
@@ -2103,6 +2144,14 @@ export function removeMethodHistory(
   );
 }
 
+export function globalNameInUseInDictionary(
+  session: ActiveSession,
+  name: string,
+  dict: number | string | undefined,
+): boolean {
+  return sharedGlobalNameInUseInDictionary(defaultQueryExecutorUsing(session), name, dict);
+}
+
 export function globalNameInUse(session: ActiveSession, name: string): boolean {
   return sharedGlobalNameInUse(defaultQueryExecutorUsing(session), name);
 }
@@ -2115,8 +2164,9 @@ export function removeClassVersion(
   session: ActiveSession,
   className: string,
   index: number,
+  dict?: number | string,
 ): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index);
+  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
 export function getGrailStubReflection(
@@ -2649,6 +2699,7 @@ export function recordReverseRename(
   label: string,
   engineClassName: string,
   scope?: { kind: string; dictName?: string },
+  classDict?: number | string,
 ): string {
   return sharedRecordReverseRename(
     defaultQueryExecutorUsing(session),
@@ -2659,6 +2710,7 @@ export function recordReverseRename(
     label,
     engineClassName,
     scope,
+    classDict,
   );
 }
 
@@ -2670,8 +2722,12 @@ export function recordReverseRename(
  * apply really landed -- these refactorings report partial application, and a capture promoted
  * after a partial reshape would describe a state the stone was never in.
  */
-export function captureClassHistory(session: ActiveSession, rootClassName: string): string {
-  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName);
+export function captureClassHistory(
+  session: ActiveSession,
+  rootClassName: string,
+  dict?: number | string,
+): string {
+  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName, dict);
 }
 
 export function discardPendingCapture(session: ActiveSession): string {

@@ -830,6 +830,17 @@ describe('explorer queries (integration)', () => {
       expect(superclassesOf(shadowIdx)).toContain('Array');
     });
 
+    it("getClassHierarchy answers each shadow's own dictionary position", () => {
+      // The name alone cannot say which dictionary binds which shadow when two dictionaries
+      // share a name, so the node carries the position of the one that binds it (#396).
+      const shadowIdx = defineShadowPair();
+      const selfIn = (dict: number) =>
+        q.getClassHierarchy(session(), SHADOW, dict).find((e) => e.kind === 'self');
+
+      expect(selfIn(userIndex())?.dictIndex).toBe(userIndex());
+      expect(selfIn(shadowIdx)?.dictIndex).toBe(shadowIdx);
+    });
+
     it('deleteClass removes only the shadow in the targeted dictionary (I)', () => {
       const shadowIdx = defineShadowPair();
 

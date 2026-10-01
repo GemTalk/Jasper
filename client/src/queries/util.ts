@@ -174,3 +174,28 @@ export function homeDictionaryNameExpr(classVar: string): string {
     slot = 0 ifTrue: [''] ifFalse: [((symList at: slot) name ifNil: ['']) asString]]
       value: System myUserProfile symbolList)`;
 }
+
+/**
+ * The `inDictionary:` / `classDictName:` argument for a dictionary-scoped engine call.
+ *
+ * A 1-based SymbolList index goes in bare, a name goes in quoted and escaped, and `undefined`
+ * becomes `nil`. The index is canonical for Jasper: two dictionaries can share a NAME, so a name
+ * cannot be relied on to pick one.
+ *
+ * Sending `nil` is not the same as omitting the scope — it asks the engine to take whichever
+ * class of that name the symbol list reaches first, which for a shadowed name is a class the
+ * user did not choose (#396). Only a caller that genuinely has no dictionary should reach it.
+ *
+ * One function, not one per query file: each copy was a separate chance for a mutation to drop
+ * the scope or the escaping unnoticed.
+ */
+export function dictionaryArgExpr(dict: number | string | undefined): string {
+  if (dict === undefined) return 'nil';
+  if (typeof dict !== 'number') return `'${escapeString(dict)}'`;
+  // `String(NaN)` is 'NaN' and `String(Infinity)` is 'Infinity' -- neither is a Smalltalk
+  // literal, so the whole doit fails to compile and the caller sees a compile error instead of
+  // its refactoring. 1.5 compiles and then indexes nothing. A scope that cannot be expressed is
+  // a scope the engine must decline over, not fall back from, so it goes as an out-of-range
+  // index rather than as nil.
+  return Number.isInteger(dict) ? String(dict) : '-1';
+}

@@ -67,7 +67,9 @@ export function showRenameClassEditor(
 ): Promise<ClassEditResult | undefined> {
   const panel = vscode.window.createWebviewPanel(
     'gemstoneRenameClassEditor',
-    `Rename ${opts.oldName}`,
+    // The dictionary is part of which class this is: the same name can be bound in several, and
+    // a rename rewrites references image-wide (#396).
+    opts.dictName ? `Rename ${opts.oldName} (${opts.dictName})` : `Rename ${opts.oldName}`,
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
   );

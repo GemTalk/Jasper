@@ -83,13 +83,21 @@ export interface ClassHistoryHtmlOptions {
   versions: ClassVersion[];
   nonce: string;
   script: string;
+  /**
+   * The dictionary whose class this history belongs to. Shown beside the class name, because a
+   * class name alone does not identify a class: the same name can be bound in several
+   * dictionaries, and the versions listed here -- and anything Restore does -- belong to exactly
+   * one of them.
+   */
+  dictName?: string;
 }
 
 /** Build the viewer's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderClassHistoryHtml(opts: ClassHistoryHtmlOptions): string {
-  const { className, versions, nonce, script } = opts;
+  const { className, versions, nonce, script, dictName } = opts;
   const rows = renderVersionRows(versions);
   const count = versions.length;
+  const inDict = dictName ? ` in <code>${escapeHtml(dictName)}</code>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -173,7 +181,7 @@ export function renderClassHistoryHtml(opts: ClassHistoryHtmlOptions): string {
 </head>
 <body>
   <header>
-    <div class="title">Definition history of <code>${escapeHtml(className)}</code></div>
+    <div class="title">Definition history of <code>${escapeHtml(className)}</code>${inDict}</div>
     <div class="subtitle">${count} version${count === 1 ? '' : 's'} in this stone — newest first. Read-only; a restore is a new version and is not committed.</div>
   </header>
   <ul class="versions">

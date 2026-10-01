@@ -259,6 +259,8 @@ describe('undoLastRefactoringCommand', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
       'Original',
+      undefined,
+      undefined,
     );
   });
 
@@ -302,6 +304,50 @@ describe('undoLastRefactoringCommand', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
       'Account',
+      undefined,
+      undefined,
+    );
+  });
+
+  it('lands on the reshaped class in ITS dictionary, not the first of that name', async () => {
+    // findClass resolves a bare name against the whole symbol list and lands on the first match,
+    // so undoing a change to a shadowed class jumped the Explorer to another dictionary's class
+    // of the same name (#396). The change row carries the dictionary; the reveal must use it.
+    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
+      JSON.stringify({
+        token: 't1',
+        label: 'Add x to Shadowed (DictionaryB)',
+        mechanism: 'historyRevert',
+        total: 1,
+        page: {
+          changes: [
+            {
+              id: '1',
+              kind: 'classDefinitionEdit',
+              className: 'Shadowed',
+              dictName: 'DictionaryB',
+              isMeta: false,
+              selector: null,
+              newName: null,
+              category: null,
+              oldSource: 'a',
+              newSource: 'b',
+              warning: null,
+            },
+          ],
+          nextOffset: 0,
+          done: true,
+        },
+      }),
+    );
+
+    await undoLastRefactoringCommand(sessionsWith(true));
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Shadowed',
+      undefined,
+      'DictionaryB',
     );
   });
 

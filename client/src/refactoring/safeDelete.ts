@@ -34,7 +34,13 @@ import * as vscode from 'vscode';
 import { MethodSearchResult } from '../queries/methodSearch';
 import { showMethodResults } from '../methodResultsPicker';
 
-export type SafeDeleteKind = 'method' | 'class' | 'instance variable' | 'class variable';
+export type SafeDeleteKind =
+  | 'method'
+  | 'class'
+  | 'instance variable'
+  | 'class variable'
+  // Several methods removed as one action, e.g. `3 methods`.
+  | `${number} methods`;
 
 /** What is about to be deleted, and everything known about why it might not be safe. */
 export interface SafeDeleteTarget {
@@ -97,7 +103,13 @@ function listing(items: string[]): string {
 }
 
 /** How a non-default method environment is named in the dialog. Environment 0 is left
- *  unadorned so the ordinary single-environment stone reads exactly as it always did. */
+ *  unadorned so the ordinary single-environment stone reads exactly as it always did.
+ *
+ *  This goes on the RECEIVER, which is why it is bracketed and sits mid-name rather than
+ *  taking `describeMethodResult`'s trailing ` · env N`: a grouped line carries several
+ *  selectors (`Account [env 1] >> #balance, #deposit:`), and a suffix at the end of that
+ *  line would read as applying only to the last of them. The two spellings name the same
+ *  thing in two different positions, not two different things. */
 export function environmentSuffix(environmentId: number): string {
   return environmentId === 0 ? '' : ` [env ${environmentId}]`;
 }
@@ -185,8 +197,10 @@ export function groupReferencesByReceiver(references: MethodSearchResult[]): str
 
 function detailFor(target: SafeDeleteTarget): string {
   const lines: string[] = [];
+  // A multi-method removal is several targets at once.
+  const it = target.kind.endsWith('methods') ? 'them' : 'it';
   if (target.scanFailed) {
-    lines.push(`Could not check what references it: ${target.scanFailed}`);
+    lines.push(`Could not check what references ${it}: ${target.scanFailed}`);
   }
   if (target.references.length > 0) {
     const n = target.references.length;
@@ -202,7 +216,7 @@ function detailFor(target: SafeDeleteTarget): string {
     const atCap = target.truncated === true;
     const count = atCap ? `At least ${n}` : `${n}`;
     lines.push(
-      `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} it${atCap ? ' (the list below is not complete)' : ''}:`,
+      `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} ${it}${atCap ? ' (the list below is not complete)' : ''}:`,
     );
     // One line per referencing class, so the block reads as a list rather than a paragraph.
     lines.push(groupReferencesByReceiver(target.references).join('\n'));

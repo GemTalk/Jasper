@@ -14,6 +14,7 @@
  * evaluation go through the kernel sends in `debugQueries.ts`.
  */
 import * as vscode from 'vscode';
+import { SessionPanelTitle } from '../activeSessionDisplay';
 import { EvalMode } from '../evaluateMode';
 import * as crypto from 'crypto';
 import { ActiveSession } from '../sessionManager';
@@ -162,6 +163,8 @@ export class BasicInspector {
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
+  // Titles go through this, never `panel.title`, so they keep the session tag.
+  private readonly title: SessionPanelTitle;
   /** Monotonic id handed to each miller column; the root column is 0. */
   private nextColumnId = 1;
 
@@ -249,6 +252,8 @@ export class BasicInspector {
   ) {
     this.panel = panel;
     this.sessionId = session.id;
+    this.title = new SessionPanelTitle(panel, session.id, 'Inspector');
+    this.disposables.push(this.title);
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
@@ -343,7 +348,7 @@ export class BasicInspector {
           }
           return;
         case 'setTitle':
-          this.panel.title = msg.title ? `Inspector: ${msg.title}` : 'Inspector';
+          this.title.setTitle(msg.title ? `Inspector: ${msg.title}` : 'Inspector');
           return;
         case 'closePanel':
           this.panel.dispose();
@@ -1096,6 +1101,11 @@ export class BasicInspector {
   <div id="methodCtxMenu" class="ctx-menu">
     <div class="ctx-item" data-action="browseMethod">Browse Method</div>
   </div>
+  <!-- The column header and the Meta tab's header are read-only labels, so the
+       host's Cut and Paste mean nothing over them; this menu keeps only Copy. -->
+  <div id="headerCtxMenu" class="ctx-menu">
+    <div class="ctx-item" data-action="copy">Copy</div>
+  </div>
   <script nonce="${nonce}">${evaluatePaneJs}</script>
   <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">${basicInspectorViewJs}</script>
@@ -1104,6 +1114,7 @@ export class BasicInspector {
       strip: document.getElementById('columnStrip'),
       ctxMenu: document.getElementById('rowCtxMenu'),
       methodCtxMenu: document.getElementById('methodCtxMenu'),
+      headerCtxMenu: document.getElementById('headerCtxMenu'),
       vscode: acquireVsCodeApi(),
       pageSize: ${PAGE_SIZE},
       defaultColumnWidth: ${DEFAULT_COLUMN_WIDTH},

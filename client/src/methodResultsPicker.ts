@@ -16,19 +16,24 @@ import { SystemBrowser } from './systemBrowser';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 
 /**
- * How a method reads in a list or a sentence: `Account class >> #reset`.
+ * How a method reads in a list or a sentence: `Account class >> #reset`, with
+ * ` · env 1` after it for a method found above environment 0.
  *
- * Takes only the three parts of the name so it serves anything that names a
- * method — a search result, a method URI's coordinates, a breakpoint's — rather
- * than each caller growing its own copy of the format and drifting apart from
- * this one.
+ * Takes only the parts of the name so it serves anything that names a method — a
+ * search result, a method URI's coordinates, a breakpoint's — rather than each
+ * caller growing its own copy of the format. The environment is optional because
+ * only a swept result knows one; without it the same selector found in two
+ * environments read as two identical rows. The suffix matches the selector
+ * hover's implementor list.
  */
 export function describeMethodResult(result: {
   className: string;
   isMeta: boolean;
   selector: string;
+  environmentId?: number;
 }): string {
-  return `${result.className}${result.isMeta ? ' class' : ''} >> #${result.selector}`;
+  const env = (result.environmentId ?? 0) > 0 ? ` · env ${result.environmentId}` : '';
+  return `${result.className}${result.isMeta ? ' class' : ''} >> #${result.selector}${env}`;
 }
 
 /**

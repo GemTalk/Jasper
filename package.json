@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -1495,6 +1495,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gemstone.explorer.removeMethods",
+        "title": "Remove…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.removeClass",
         "title": "Remove Class",
         "category": "GemStone",
@@ -2496,6 +2501,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeMethods",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeClass",
           "when": "false"
         },
@@ -3166,6 +3175,11 @@
           "command": "gemstone.explorer.removeMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "inline@6"
+        },
+        {
+          "command": "gemstone.explorer.removeMethods",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "5_remove@0"
         },
         {
           "command": "gemstone.explorer.renameClass",

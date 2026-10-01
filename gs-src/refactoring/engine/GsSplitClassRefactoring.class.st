@@ -267,8 +267,10 @@ GsSplitClassRefactoring >> computeAnalysis [
 	"classNamed: only matches a Class binding; a name bound to a NON-class global would
 	 otherwise slip past and be silently clobbered by applyClassAdd:'s
 	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
-	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
-	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 symbol list -- the same question GsExtractSuperclassRefactoring>>computeAnalysis asks,
+	 and stricter than GsRenameClassRefactoring>>newNameCollision, which is destination-only
+	 and lets a rename shadow after a warning. Creating a class is not moving one: there is
+	 nothing to weigh against a free name (#396). The split client validates only the
 	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
 	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
 	 source's own dictionary."
@@ -369,9 +371,9 @@ GsSplitClassRefactoring >> buildChangeSet [
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
 	decline notNil ifTrue: [^cs].
-	dn := self newClassDictName.
+	dn := self dictObjectForNewClass.
 	sn := sourceClass name asString.
-	srcDict := self dictNameForClass: sourceClass.
+	srcDict := self dictForClass: sourceClass.
 	cs
 		addClassAddInDictionary: dn
 		className: newName
@@ -392,7 +394,7 @@ GsSplitClassRefactoring >> buildChangeSet [
 		newSource: self sourceDefinitionAfterSplit.
 	(environment descendantsOf: sourceClass) do: [:d |
 		cs
-			addClassReparentInDictionary: (self dictNameForClass: d)
+			addClassReparentInDictionary: (self dictForClass: d)
 			className: d name asString
 			oldSource: d definition
 			newSource: d definition].
@@ -524,15 +526,37 @@ GsSplitClassRefactoring >> answersSelf: aSelector in: aClass [
 
 { #category : 'private' }
 GsSplitClassRefactoring >> newClassDictName [
+	"What to WRITE in the generated `inDictionary:` of the new class's definition -- display only.
+
+	 It reads the dictionary dictObjectForNewClass answers, which is the one the apply actually
+	 files the class into, so the definition on screen cannot name a different dictionary from
+	 the one the refactoring writes to. It used to read the ANCHOR's dictionary instead: the two
+	 agree in the ordinary case, and disagreeing about which dictionary is exactly the defect
+	 this branch exists to remove.
+
+	 A dictionary with NO name -- what `SymbolDictionary new` answers until someone names one --
+	 is written by its symbol-list position, which is unambiguous and is valid Smalltalk. Asking
+	 for its name answered nil, and concatenating nil into the definition raised, so a
+	 refactoring that applies perfectly well could not even be previewed there. Nothing that does
+	 the work ever needed a name: the staged change carries the dictionary itself."
+	| d idx |
 	dictNameOrNil ifNotNil: [:dn | ^dn].
-	^self dictNameForClass: sourceClass
+	d := self dictObjectForNewClass.
+	d isNil ifTrue: [^'UserGlobals'].
+	d name ifNotNil: [:n | ^n asString].
+	idx := environment symbolList indexOf: d.
+	^idx = 0
+		ifTrue: ['UserGlobals']
+		ifFalse: ['(System myUserProfile symbolList at: ', idx printString, ')']
 ]
 
 { #category : 'private' }
-GsSplitClassRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+GsSplitClassRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'serializing' }
@@ -664,7 +688,7 @@ GsSplitClassRefactoring >> applyClassChange: aChange [
 	 the component ivar, and drops the moved methods on copy-forward; a DESCENDANT (a #classReparent)
 	 just re-points at its freshly-versioned ancestor with its own shape unchanged."
 	| old isSource parentNew list skip new |
-	old := environment classNamed: aChange className.
+	old := environment classForChange: aChange.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	isSource := aChange kind == #classDefinitionEdit.
 	parentNew := isSource
@@ -688,7 +712,7 @@ GsSplitClassRefactoring >> makeNewVersionOf: old superclass: sup instVarNames: i
 		classVars: (old classVarNames collect: [:e | e asString])
 		classInstVars: (old class instVarNames collect: [:e | e asString])
 		poolDictionaries: old sharedPools
-		inDictionary: (self dictObjectFor: old)
+		inDictionary: (environment dictionaryForNewVersionOf: old)
 		inClassHistory: old classHistory
 		description: ([old commentForFileout] on: Error do: [:e | ''])
 		options: #()
@@ -709,7 +733,7 @@ GsSplitClassRefactoring >> applyMethodAdd: aChange [
 	| target |
 	target := aChange className = newName
 		ifTrue: [newClass]
-		ifFalse: [environment classNamed: aChange className].
+		ifFalse: [environment classForChange: aChange].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	environment
 		compile: aChange newSource
@@ -718,20 +742,11 @@ GsSplitClassRefactoring >> applyMethodAdd: aChange [
 ]
 
 { #category : 'applying' }
-GsSplitClassRefactoring >> dictObjectFor: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty
-		ifTrue: [environment symbolList objectNamed: #UserGlobals]
-		ifFalse: [dicts first]
-]
-
-{ #category : 'applying' }
 GsSplitClassRefactoring >> dictObjectForNewClass [
 	dictNameOrNil ifNotNil: [:dn |
 		^(environment symbolList objectNamed: dn asSymbol)
-			ifNil: [self dictObjectFor: sourceClass]].
-	^self dictObjectFor: sourceClass
+			ifNil: [environment dictionaryForNewVersionOf: sourceClass]].
+	^environment dictionaryForNewVersionOf: sourceClass
 ]
 
 { #category : 'serializing' }

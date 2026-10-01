@@ -197,10 +197,12 @@ GsPushDownMethodRefactoring >> tree: aTree referencesName: aName [
 ]
 
 { #category : 'private' }
-GsPushDownMethodRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+GsPushDownMethodRefactoring >> dictForClass: aClass [
+	"The dictionary that binds aClass ITSELF -- by identity, never by name, and the OBJECT
+	 rather than its name, which two dictionaries can share and a nameless one has not got.
+	 See GsRefactoringEnvironment>>dictionaryPinnedForClass:, which is where the rule and
+	 its reasons live."
+	^environment dictionaryPinnedForClass: aClass
 ]
 
 { #category : 'private' }
@@ -305,14 +307,14 @@ GsPushDownMethodRefactoring >> stagePushOf: aSelector into: cs [
 		existing := self existingSourceIn: sub for: aSelector.
 		existing isNil
 			ifTrue: [cs
-				addMethodAddInDictionary: (self dictNameForClass: sub)
+				addMethodAddInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
 				category: cat
 				newSource: src]
 			ifFalse: [cs
-				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				addMethodOverwriteInDictionary: (self dictForClass: sub)
 				className: sub name asString
 				isMeta: isMeta
 				selector: aSelector
@@ -321,7 +323,7 @@ GsPushDownMethodRefactoring >> stagePushOf: aSelector into: cs [
 				newSource: src
 				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
 	cs
-		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		addMethodRemoveInDictionary: (self dictForClass: sourceClass)
 		className: sourceClass name asString
 		isMeta: isMeta
 		selector: aSelector
@@ -468,7 +470,7 @@ GsPushDownMethodRefactoring >> applyMethodAdd: aChange [
 	 already understood the selector via its own override). The compile RAISES when it fails, so
 	 the record is only reached once the method is actually installed on the subclass."
 	| cls target |
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
 	environment
@@ -491,7 +493,7 @@ GsPushDownMethodRefactoring >> applyMethodRemove: aChange [
 	(appliedAddSelectors includes: sel) ifFalse: [^false].
 	(subClasses allSatisfy: [:s | (self behaviorFor: s) includesSelector: sel])
 		ifFalse: [^false].
-	cls := environment classNamed: aChange className.
+	cls := environment classForChange: aChange.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	(aChange isMeta ifTrue: [cls class] ifFalse: [cls]) removeSelector: sel.
 	^true

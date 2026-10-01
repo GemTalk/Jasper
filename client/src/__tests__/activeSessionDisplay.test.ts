@@ -5,6 +5,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { EventEmitter, workspace, __setConfig, __resetConfig } from '../__mocks__/vscode';
 import {
   chooseActiveSession,
+  SessionPanelTitle,
   WorkspaceSessionLensProvider,
   WORKSPACE_SESSION_SELECTORS,
 } from '../activeSessionDisplay';
@@ -43,6 +44,15 @@ function makeSessionManager(sessionIds: number[], selectedId?: number) {
   return { manager, select, login, logout };
 }
 
+function changeSessionMode(mode: 'single' | 'multiple') {
+  __setConfig('gemstone', 'sessionMode', mode);
+  for (const [listener] of vi.mocked(workspace.onDidChangeConfiguration).mock.calls) {
+    (listener as (e: unknown) => void)({
+      affectsConfiguration: (key: string) => key === 'gemstone.sessionMode',
+    });
+  }
+}
+
 function lens(provider: WorkspaceSessionLensProvider) {
   const lenses = provider.provideCodeLenses();
   expect(lenses).toHaveLength(1);
@@ -56,15 +66,6 @@ describe('WorkspaceSessionLensProvider', () => {
     __resetConfig();
     __setConfig('gemstone', 'sessionMode', 'multiple');
   });
-
-  function changeSessionMode(mode: 'single' | 'multiple') {
-    __setConfig('gemstone', 'sessionMode', mode);
-    for (const [listener] of vi.mocked(workspace.onDidChangeConfiguration).mock.calls) {
-      (listener as (e: unknown) => void)({
-        affectsConfiguration: (key: string) => key === 'gemstone.sessionMode',
-      });
-    }
-  }
 
   it('shows nothing in single-session mode, where there is only one session to run in', () => {
     __setConfig('gemstone', 'sessionMode', 'single');
@@ -165,5 +166,51 @@ describe('chooseActiveSession', () => {
     ];
     await chooseActiveSession({ resolveSession, getSessions } as unknown as SessionManager);
     expect(resolveSession).toHaveBeenCalledWith(expect.objectContaining({ alwaysAsk: true }));
+  });
+});
+
+describe('SessionPanelTitle', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetConfig();
+    __setConfig('gemstone', 'sessionMode', 'multiple');
+  });
+
+  it('tags the title with the session number in multiple-session mode', () => {
+    const panel = { title: '' };
+    new SessionPanelTitle(panel, 2, 'Inspector');
+    expect(panel.title).toBe('Inspector · Session 2');
+  });
+
+  it('leaves the title alone in single-session mode', () => {
+    __setConfig('gemstone', 'sessionMode', 'single');
+    const panel = { title: '' };
+    new SessionPanelTitle(panel, 2, 'Inspector');
+    expect(panel.title).toBe('Inspector');
+  });
+
+  it('keeps the tag through a new title and a new session', () => {
+    const panel = { title: '' };
+    const title = new SessionPanelTitle(panel, 2, 'Inspector');
+
+    title.setTitle('Inspector: anArray');
+    expect(panel.title).toBe('Inspector: anArray · Session 2');
+    title.setSession(5);
+    expect(panel.title).toBe('Inspector: anArray · Session 5');
+  });
+
+  it('adds and drops the tag as the mode setting changes, until disposed', () => {
+    const panel = { title: '' };
+    const title = new SessionPanelTitle(panel, 2, 'GemStone Debugger');
+
+    changeSessionMode('single');
+    expect(panel.title).toBe('GemStone Debugger');
+    changeSessionMode('multiple');
+    expect(panel.title).toBe('GemStone Debugger · Session 2');
+
+    const unsubscribe = vi.mocked(workspace.onDidChangeConfiguration).mock.results[0].value;
+    const dispose = vi.spyOn(unsubscribe, 'dispose');
+    title.dispose();
+    expect(dispose).toHaveBeenCalled();
   });
 });

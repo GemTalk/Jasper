@@ -30,6 +30,7 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import { checkRefactoringUndoAvailable, warnUndoUnsupported } from './refactoringUndoAvailability';
+import { type UndoStatus } from './undoRefactoringPreview';
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
 import { logInfo } from '../gciLog';
@@ -43,8 +44,33 @@ export type PlainNoticeStyle = 'statusBar' | 'toast';
 const UNDO_ACTION = 'Undo';
 
 /**
- * Announce a completed refactoring and, when the stone recorded an undo for it, put it on
- * the undo stack and offer to undo it right there. Returns immediately.
+ * Put the stone's recorded reversal on the client's undo stack, and answer what it found.
+ *
+ * Separate from the toast because a refactoring that only PARTLY applied still needs the Undo
+ * button armed. The stone has the reversal -- the recording sites now write it before they report
+ * a failure -- but nothing reaches the user until an entry is pushed here, so a partial apply
+ * offered no way back at all and the only recourse was an abort, which discards every uncommitted
+ * change in the session rather than the one refactoring (#396).
+ *
+ * Pushing is all it takes: the stack's change listener is what lights the pane's Undo button and
+ * writes its tooltip, so no recording site updates the UI itself.
+ */
+export function armRefactoringUndo(session: ActiveSession | undefined): UndoStatus {
+  const status = checkRefactoringUndoAvailable(session);
+  if (!status.available || !session) return status;
+  logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
+  pushUndoEntry({
+    kind: 'refactoring',
+    sessionId: session.id,
+    label: status.label,
+    sequence: status.sequence,
+  });
+  return status;
+}
+
+/**
+ * Announce a completed refactoring and, when the stone recorded an undo for it, put it on the
+ * undo stack and offer to undo it right there. Returns immediately.
  */
 export function notifyRefactoringApplied(
   session: ActiveSession | undefined,
@@ -63,7 +89,7 @@ export function notifyRefactoringApplied(
     ).then(undefined, () => undefined);
   }
   void (async () => {
-    const status = checkRefactoringUndoAvailable(session);
+    const status = armRefactoringUndo(session);
     if (!status.available || !session) {
       logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);
@@ -74,16 +100,6 @@ export function notifyRefactoringApplied(
       if (session && !status.supported) warnUndoUnsupported(session);
       return;
     }
-    logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
-    // Pushing is all it takes: the stack's change listener is what lights the pane's Undo
-    // button and writes its tooltip, so no recording site updates the UI itself.
-    pushUndoEntry({
-      kind: 'refactoring',
-      sessionId: session.id,
-      label: status.label,
-      sequence: status.sequence,
-    });
-
     const choice = await vscode.window.showInformationMessage(message, UNDO_ACTION);
     if (choice !== UNDO_ACTION) return;
     await vscode.commands.executeCommand(UNDO_COMMAND);

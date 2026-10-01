@@ -27,6 +27,15 @@ setUp builds a throwaway hierarchy plus an unrelated sender class in UserGlobals
 and tearDown removes them. Fixture selectors are spellings unique to the fixture
 (movePointX:y:, csPing, ~>, csComputeWith:unused:, ...), so an image-wide
 implementor/sender search finds only the fixture.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
+
+The dictionary-scope test above covers which implementors are in SCOPE; the shadow test covers
+where the new signature is then WRITTEN.
 "
 Class {
 	#name : 'GsChangeSignatureRefactoringTest',
@@ -620,4 +629,29 @@ GsChangeSignatureRefactoringTest >> testDictionaryScopeExcludesSameNamedImplemen
 			dictB removeKey: #GsCSShadow ifAbsent: [].
 			sl remove: dictA ifAbsent: [].
 			sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests - shadowed class name' }
+GsChangeSignatureRefactoringTest >> testChangeSignatureCompilesOntoTheActedOnClassNotAGlobalFirstMatch [
+	"The existing dictionary-scope test here stops at the change set -- which implementors are in
+	 scope. This is the apply half: each staged change records its class by NAME and is re-resolved
+	 with `environment classNamed:`, first-match across the symbol list, so a decoy binding GsCSBase
+	 ahead of UserGlobals used to receive the new signature (#396)."
+	| decoy decoyClass base json |
+	decoy := SymbolDictionary new name: #GsCSShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsCSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 base := self baseFixture.
+	 json := (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #class) applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	 self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]

@@ -29,6 +29,15 @@ This suite pins down:
     than counted as moved.
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
+
+The `tests - shadowed class name` category covers #396. This refactoring reshapes no class, so it
+is not the `dictionaryForNewVersionOf:` half; it exercises the wider one, where a staged change records its
+class by name and the apply resolves that name against a dictionary. Each test also asserts
+`"failed":[]`, so a fix that redirected the write but left the refactoring half-applied would not
+satisfy it.
+
+The SOURCE end is what the shadow test covers. Choosing the destination by name up front is a
+separate concern, already covered on the resolve side elsewhere in the suite.
 "
 Class {
 	#name : 'GsMoveMethodRefactoringTest',
@@ -394,4 +403,77 @@ GsMoveMethodRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError
 GsMoveMethodRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsMoveMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - shadowed class name' }
+GsMoveMethodRefactoringTest >> testMoveRemovesFromTheRealSourceNotAGlobalFirstMatch [
+	"The SOURCE side of a move is the half that is re-resolved at apply time by NAME through
+	 `environment classNamed:` (the destination is chosen by name up front, which is a separate
+	 concern). A decoy binding GsMMSource ahead of UserGlobals used to aim the removal at the decoy, so the
+	 real source kept the method it was supposed to give away (#396)."
+	| decoy decoyClass json |
+	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyClass := Object
+		subclass: 'GsMMSource'
+		instVarNames: #('balance')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: decoy.
+	 json := (self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self assert: (self targetFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) notNil.
+	 self assert: (self sourceFixture compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil.
+	 self assert: (decoyClass compiledMethodAt: #pureCompute environmentId: 0 otherwise: nil) isNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsMoveMethodRefactoringTest >> testMoveResolvesTheTargetInTheNamedDictionary [
+	"toClassNamed: resolved the target through the symbol list, first match wins. With a decoy
+	 GsMMTarget in a dictionary ahead of UserGlobals, the method was moved ONTO THE DECOY and
+	 removed from the source -- the user''s own target never got it, and nothing failed. The
+	 dictionary-qualified constructor is the fix. See #396."
+	| decoy decoyTarget json realTarget |
+	decoy := SymbolDictionary new name: #GsMMShadowDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[decoyTarget := Object
+		subclass: 'GsMMTarget' instVarNames: #('balance')
+		classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: decoy.
+
+	 json := (GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: #(#pureCompute)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		inDictionary: 'UserGlobals'
+		toMeta: false) applyDeselected: #().
+	 self assert: json includesSubstring: '"failed":[]'.
+
+	 realTarget := UserGlobals at: #GsMMTarget.
+	 self assert: (realTarget includesSelector: #pureCompute).
+	 self deny: (decoyTarget includesSelector: #pureCompute).
+	 self deny: (self sourceFixture includesSelector: #pureCompute)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - shadowed name' }
+GsMoveMethodRefactoringTest >> testMoveDeclinesWhenTheNamedDictionaryDoesNotBindTheTarget [
+	"Naming a dictionary that does not bind the target is a miss, not an invitation to look
+	 elsewhere. The decline names the dictionary so the user can see what was asked for."
+	| decoy json |
+	decoy := SymbolDictionary new name: #GsMMEmptyDict; yourself.
+	System myUserProfile insertDictionary: decoy at: 1.
+	[json := (GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: #(#pureCompute)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		inDictionary: 'GsMMEmptyDict'
+		toMeta: false) analysisJsonString.
+	 self assert: json includesSubstring: 'GsMMEmptyDict'.
+	 self assert: json includesSubstring: 'was not found'.
+	 "and nothing moved"
+	 self assert: (self sourceFixture includesSelector: #pureCompute)]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
 ]
