@@ -23,7 +23,7 @@ import {
 
 const exec = () => vi.fn().mockResolvedValue('{}');
 
-const target = (className: string, dictIndex: number) => ({ className, dictIndex });
+const target = (className: string, dictIndex: number | undefined) => ({ className, dictIndex });
 
 /** The code a move pre-flight sends. */
 async function analyzeCode(
@@ -99,6 +99,21 @@ describe('sending a move’s destinations', () => {
     const destinationsIn = (code: string): string =>
       code.slice(code.indexOf('toClasses:'), code.indexOf('direction:'));
     expect(destinationsIn(preview)).toBe(destinationsIn(analyze));
+  });
+
+  it('sends a bare name for a destination no dictionary binds', async () => {
+    // A superseded ancestor answers no `dictIndex`, and an unbound descendant answers 0. Neither
+    // names a dictionary, so the destination goes out as its name alone — which brings the
+    // ambiguity decline back for that hierarchy, and that is the honest answer. What must not
+    // happen is the missing index reaching the Smalltalk as `undefined` or as a 0 the engine
+    // would read as a position.
+    const code = await analyzeCode([target('Base', undefined), target('Leaf', 0)], 'up');
+    const destinations = code.slice(code.indexOf('toClasses:'), code.indexOf('direction:'));
+
+    expect(destinations).not.toContain('undefined');
+    expect(destinations).not.toMatch(/\b0\b/);
+    expect(destinations).toContain("'Base'");
+    expect(destinations).toContain("'Leaf'");
   });
 
   it('escapes a class name that carries a quote', async () => {

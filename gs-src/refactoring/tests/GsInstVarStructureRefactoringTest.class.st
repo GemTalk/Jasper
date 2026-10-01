@@ -1145,6 +1145,28 @@ GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheDictionary
 ]
 
 { #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheFirstDictionaryWhenThatWasNamed [
+	"The same send naming the OTHER dictionary. Neither test discriminates alone: a fix that unpacks
+	 the pair and then resolves the name by itself lands on whichever class the descendant walk
+	 reaches first, and passes the one of the two that happens to name it. Together they fail it
+	 whichever way the walk is ordered. This one also catches a fix that gets the second dictionary
+	 right by breaking the first."
+	| dicts first ref edited |
+	dicts := self sameNamedDestinationDictionaries.
+	first := dicts first.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: first)))
+		direction: #down.
+	 edited := self editChangeFor: 'GsVSPairLeaf' in: ref changeSet.
+
+	 self assert: edited notNil.
+	 self assert: edited dict == first]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
 GsInstVarStructureRefactoringTest >> testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet [
 	"Exactly one of the two was picked. A change set naming both moves the variable into a class
 	 nobody chose, which is the outcome the ambiguity decline exists to prevent."

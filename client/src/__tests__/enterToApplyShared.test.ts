@@ -134,7 +134,7 @@ describe('the shared guard', () => {
   it('lets an Enter through once the panel has been open a moment', () => {
     // The panel is built after a round trip, so the Enter that opened it was released while no
     // page was listening; waiting for a keyup alone ate the first deliberate press.
-    vi.setSystemTime(new Date(Date.now() + 350));
+    vi.advanceTimersByTime(350);
 
     expect(enter(apply)).toBe(false);
   });
@@ -177,7 +177,7 @@ describe('the shared guard', () => {
   it('blocks an auto-repeat that outlasts the idle window', () => {
     // The window opens on a clock whether or not the key came up, so the idle alone would let a
     // still-held key repeat straight into Apply.
-    vi.setSystemTime(new Date(Date.now() + 350));
+    vi.advanceTimersByTime(350);
 
     expect(enter(apply, true)).toBe(true);
   });

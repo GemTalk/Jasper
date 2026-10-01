@@ -29,7 +29,7 @@ import { InstVarChange, InstVarOutOfScope } from '../instVarRefactorPreview';
  */
 
 beforeAll(() => {
-  // Both panels share the rename-method panel's view script.
+  // The class panel runs on the rename-method panel's view script; the ivar panel has its own.
   new Function(fs.readFileSync(path.resolve(__dirname, '../renameMethodPanelView.js'), 'utf8'))();
   new Function(
     fs.readFileSync(path.resolve(__dirname, '../instVarRefactorPanelView.js'), 'utf8'),

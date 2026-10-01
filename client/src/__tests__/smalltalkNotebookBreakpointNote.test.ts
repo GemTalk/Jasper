@@ -8,7 +8,10 @@ vi.mock('../gciLog', () => ({
 }));
 
 import { notebooks } from '../__mocks__/vscode';
-import { SmalltalkNotebookController } from '../smalltalkNotebookController';
+import {
+  SmalltalkNotebookController,
+  smalltalkSessionKernel,
+} from '../smalltalkNotebookController';
 import { SessionManager } from '../sessionManager';
 import { SMALLTALK_LANGUAGE } from '../languageIds';
 
@@ -19,13 +22,17 @@ import { SMALLTALK_LANGUAGE } from '../languageIds';
  * different ways depending on where it was run from.
  *
  * Cells stay non-debuggable (real debugging from a cell is its own piece of work), so the only
- * thing these pin is that the skip is VISIBLE: a run that walked past an armed breakpoint says
- * so in its own output, instead of printing a result as though nothing were set.
+ * thing these pin is that the skip is VISIBLE: a cell run while any enabled breakpoint is armed
+ * says, in its own output, that breakpoints don't stop in cells. It cannot say more than that —
+ * the client has no way to know whether a run with flags 0 actually reached a breakpointed
+ * method (`1 + 2` below never does), so the note states the rule, not that a skip happened.
  *
  * The note is carried on every run while something is armed. A breakpoint is per-gem state the
  * user can set, clear and re-arm from outside the notebook at any point, so "has this notebook
- * been told already" is a question with no stable answer; a note tied to the run that actually
- * skipped one always describes that run.
+ * been told already" is a question with no stable answer.
+ *
+ * Both kernels are covered: the per-session kernels run cells through the same `evalSmalltalk`,
+ * and a fix placed in the active-session controller alone would leave them silent.
  *
  * The "says nothing" cases pass today only because there is no note at all to suppress. They
  * become coverage once the note exists; until then they protect nothing.
@@ -69,6 +76,7 @@ function makeSessionManager(gci: ReturnType<typeof makeGci>) {
   const session = { id: 1, gci, handle: {}, login: { label: 'Test' }, stoneVersion: '3.6.2' };
   return {
     resolveSession: vi.fn(async () => session),
+    getSession: vi.fn(() => session),
     getSelectedSession: vi.fn(() => undefined),
     getSessions: vi.fn(() => []),
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
@@ -114,7 +122,7 @@ beforeEach(() => {
 });
 
 describe('a notebook cell run while a breakpoint is armed', () => {
-  it('says in its own output that the breakpoint did not stop it', async () => {
+  it('says in its own output that breakpoints do not stop in cells', async () => {
     const ctrl = new SmalltalkNotebookController(makeSessionManager(makeGci(breakpointRow())));
 
     await runCells([makeCell('1 + 2')]);
@@ -137,7 +145,8 @@ describe('a notebook cell run while a breakpoint is armed', () => {
 
     await runCells([makeCell('1 + 2')]);
 
-    expect(outputText(0)).toContain('3');
+    // Begins with the result: a note that replaced it could still contain a "3".
+    expect(outputText(0)).toMatch(/^3\b/);
     ctrl.dispose();
   });
 
@@ -158,6 +167,17 @@ describe('a notebook cell run while a breakpoint is armed', () => {
     expect(outputText(0)).toMatch(MENTIONS_THE_SKIP);
     expect(outputText(1)).toMatch(MENTIONS_THE_SKIP);
     ctrl.dispose();
+  });
+});
+
+describe('a cell run on a per-session kernel while a breakpoint is armed', () => {
+  it('carries the same note', async () => {
+    const kernel = smalltalkSessionKernel(makeSessionManager(makeGci(breakpointRow())), 1);
+
+    await runCells([makeCell('1 + 2')]);
+
+    expect(outputText(0)).toMatch(MENTIONS_THE_SKIP);
+    kernel.dispose();
   });
 });
 

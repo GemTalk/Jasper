@@ -45,6 +45,14 @@ import type { ActiveSession } from '../../sessionManager';
  * The notice afterwards has the matching problem from the other end: it reports every accessor
  * operation as a restore, whatever the operation was, so undoing an add says the accessors were
  * "put back" at the moment it removed them.
+ *
+ * Not covered here, and the fix has to handle it: these build the plan from the entry alone, so
+ * "skipped" means before == recorded after. The reversal decides on before == the slot's state
+ * read at undo time. The two agree only while nothing has drifted — if the user edits the
+ * skipped `registry` after the add, the reversal will recompile it, and a plan that went by the
+ * recorded after hides that row. Nothing is written unannounced — the drift prompt names that
+ * slot before the reversal acts — but the panel's count is one short. Whichever way the two are
+ * joined, a drifted skipped slot has to reappear in the plan.
  */
 
 const session = { id: 1 } as ActiveSession;

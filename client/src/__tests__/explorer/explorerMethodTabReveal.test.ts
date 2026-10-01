@@ -113,6 +113,7 @@ describe('focusing a method editor tab after the Methods pane was rebuilt', () =
 
     await ctl.syncToEditor(Uri.parse(URI));
 
+    expect(method.reveal).toHaveBeenCalled();
     expect(method.reveal.mock.calls[0][1]).toMatchObject({ focus: false });
   });
 
@@ -123,6 +124,7 @@ describe('focusing a method editor tab after the Methods pane was rebuilt', () =
 
     await ctl.syncToEditor(Uri.parse(URI));
 
+    expect(method.reveal).toHaveBeenCalled();
     expect((method.reveal.mock.calls[0][0] as MethodItem).info.selector).toBe('isNotNil');
   });
 
