@@ -35,11 +35,23 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 // Loads `client/.env.test` into process.env (vite/vitest do this automatically;
 // a plain Node script has to do it itself). Missing file is fine —
 // `resolveTestConnection` (called below) reports it with actionable guidance.
-// Real environment variables win (dotenv's default: it never overwrites an
-// already-set process.env value).
+// Real environment variables win: dotenv never overwrites an already-set
+// process.env value unless told to.
+//
+// Every option is pinned because dotenv also reads its options from ambient
+// DOTENV_* / DOTENV_CONFIG_* variables, and an explicit option beats them. A
+// stray DOTENV_OVERRIDE would otherwise let the file clobber real variables,
+// and DOTENV_FAST would switch to a different parser.
 function loadEnvTestFile() {
-  // quiet: suppress dotenv's stdout banner (injected-env tip) — noise in CI logs.
-  dotenv.config({ path: path.join(repoRoot, 'client', '.env.test'), quiet: true });
+  dotenv.config({
+    path: path.join(repoRoot, 'client', '.env.test'),
+    encoding: 'utf8',
+    override: false,
+    fast: false,
+    debug: false,
+    // Suppresses the "injected env" line dotenv writes to stderr: noise in CI logs.
+    quiet: true,
+  });
 }
 
 async function main() {
