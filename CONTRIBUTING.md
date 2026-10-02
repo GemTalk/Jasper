@@ -66,6 +66,8 @@ Follow these steps in order after cloning the repo:
 
 **Current floor:** VS Code `1.101.0` → bundled Node `22.15.1`.
 
+The dev toolchain supports Node LTS lines 22 and 24 only (`devEngines.runtime` in `package.json`). Each line also has a minimum patch, so an older patch of 22 or 24 fails with `EBADDEVENGINES`, as do other majors such as 23 or 25.
+
 See [docs/how-to/raising-the-version-floor.md](docs/how-to/raising-the-version-floor.md) for the policy behind this floor and the steps to raise it.
 
 ## npm version

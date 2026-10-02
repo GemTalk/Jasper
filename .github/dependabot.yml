@@ -13,6 +13,24 @@ updates:
       # Only bumped by hand, together with the rest of that file list.
       - dependency-name: '@types/node'
       - dependency-name: '@types/vscode'
+      # jsdom 30's engines.node (^22.22.2 || ^24.15.0 || >=26.0.0) excludes
+      # part of the range devEngines.runtime allows, so `npm ci` fails there
+      # (.npmrc sets engine-strict). Lift this once every Node
+      # devEngines.runtime allows satisfies jsdom's engines.node. @types/jsdom must stay at or
+      # below the installed jsdom major (it can lag: there is no
+      # @types/jsdom 29), or tsc would accept APIs the installed jsdom lacks.
+      #
+      # update-types rather than `versions: ['>=30']`: a `versions` ignore
+      # also suppresses security-update PRs, so an advisory fixed only in
+      # jsdom 30 would produce no PR at all. update-types only applies to
+      # version updates (GitHub's "Controlling which dependencies are
+      # updated by Dependabot" docs), so such a fix still opens a PR. It
+      # fails `npm ci` on the CI floor leg, but a red PR gets noticed and a
+      # missing one does not.
+      - dependency-name: 'jsdom'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/jsdom'
+        update-types: ['version-update:semver-major']
     groups:
       dev-dependencies:
         dependency-type: 'development'

@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { withTemporaryFolderDo } from './support/file';
 
 // Tests for scripts/lint-supply-chain.mjs — the guard that asserts npm's install-script
-// supply-chain controls are actually in effect and that the lockfile / allowScripts policy
+// supply-chain controls (plus engine-strict) are actually in effect and that the lockfile / allowScripts policy
 // have not drifted. It is itself a security control, so a silent regression in it (a check
 // that stops detecting what it claims to detect) is invisible: the script keeps printing
 // green ✓ lines and CI keeps passing.
@@ -31,6 +31,7 @@ const EXAMPLE_NPMRC = [
   'allow-git=none',
   'allow-remote=none',
   'min-release-age=7',
+  'engine-strict=true',
   '',
 ].join('\n');
 
@@ -42,12 +43,20 @@ const EXAMPLE_NPMRC = [
 // The version numbers are deliberately unlike this repo's real floors: what the check asserts is
 // that the four values agree with each other, not what any of them happens to be.
 const EXAMPLE_COMPLIANT_ENGINES = { vscode: '^3.7.0', node: '>=9.4.2' };
+const EXAMPLE_COMPLIANT_DEV_ENGINES = devNodeRange('^9.4.2 || ^11.0.0');
 const EXAMPLE_COMPLIANT_ROOT_TYPES = { '@types/node': '~9.4' };
 const EXAMPLE_COMPLIANT_CLIENT_TYPES = { '@types/vscode': '~3.7.0' };
 const EXAMPLE_COMPLIANT_TYPE_PACKAGES = {
   'node_modules/@types/node': entry('@types/node', '9.4.11'),
   'client/node_modules/@types/vscode': entry('@types/vscode', '3.7.0'),
 };
+
+// A `devEngines` whose runtime range is `version`. `npm config` is itself devEngines-gated, so
+// with npm's default `onFail: 'error'` a range excluding the Node running the tests would fail
+// every config assertion before the script reached its own check.
+function devNodeRange(version: string) {
+  return { runtime: { name: 'node', version, onFail: 'ignore' } };
+}
 
 interface Fixture {
   npmrc?: string;
@@ -92,6 +101,7 @@ function runLint({
         name: 'fixture',
         version: '0.0.0',
         engines: EXAMPLE_COMPLIANT_ENGINES,
+        devEngines: EXAMPLE_COMPLIANT_DEV_ENGINES,
         devDependencies: EXAMPLE_COMPLIANT_ROOT_TYPES,
         ...packageJson,
       }),
@@ -208,7 +218,7 @@ function typeFloorFixture({
 }
 
 describe('lint-supply-chain: npm config assertions', () => {
-  it('passes when every install-script control is in effect', () => {
+  it('passes when every enforced npm setting is in effect', () => {
     const { status, stdout } = runLint({});
 
     expect(status).toBe(0);
@@ -217,6 +227,7 @@ describe('lint-supply-chain: npm config assertions', () => {
     expect(stdout).toContain("✓ npm config 'allow-remote' is 'none'");
     expect(stdout).toContain("✓ npm config 'allow-scripts' is unset");
     expect(stdout).toContain("✓ npm config 'min-release-age' is '7'");
+    expect(stdout).toContain("✓ npm config 'engine-strict' is 'true'");
   });
 
   it('fails when a control is turned off', () => {
@@ -226,6 +237,25 @@ describe('lint-supply-chain: npm config assertions', () => {
 
     expect(status).toBe(1);
     expect(stderr).toContain("✗ npm config 'strict-allow-scripts' is 'false', expected 'true'");
+  });
+
+  it('fails when engine-strict is turned off', () => {
+    const { status, stderr } = runLint({
+      npmrc: EXAMPLE_NPMRC.replace('engine-strict=true', 'engine-strict=false'),
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("✗ npm config 'engine-strict' is 'false', expected 'true'");
+  });
+
+  it('catches an env-var override turning engine-strict off', () => {
+    const { status, stderr } = runLint({
+      npmrc: EXAMPLE_NPMRC,
+      env: { npm_config_engine_strict: 'false' },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("✗ npm config 'engine-strict' is 'false', expected 'true'");
   });
 
   // The whole reason the script reads through `npm config get` instead of parsing .npmrc:
@@ -599,6 +629,70 @@ describe('lint-supply-chain: @types floor pinning', () => {
       '✗ engines.vscode is missing or unparseable — nothing pins @types/vscode',
     );
     expect(stderr).toContain('✗ engines.node is missing or unparseable — nothing pins @types/node');
+  });
+});
+
+describe('lint-supply-chain: dev Node range floor', () => {
+  it('passes when the dev Node range starts at the shipped Node floor', () => {
+    const { status, stdout } = runLint({});
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime starts at engines.node's floor");
+  });
+
+  // A floor raise can put the new major first; the range still starts at its lowest alternative.
+  it('reads where the dev Node range starts regardless of the order its majors are listed', () => {
+    const { status, stdout } = runLint({
+      packageJson: { devEngines: devNodeRange('^11.0.0 || ^9.4.2') },
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime starts at engines.node's floor");
+  });
+
+  // The partial floor raise: engines.node and its @types move, the dev Node range is forgotten.
+  it('fails when the shipped Node floor rises without the dev Node range', () => {
+    const fixture = typeFloorFixture({
+      vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+      node: { enginesFloor: '>=11.2.0', manifestRange: '~11.2', lockfileVersion: '11.2.4' },
+    });
+
+    const { status, stderr } = runLint(fixture);
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ devEngines.runtime starts at 9.4.2 but engines.node's floor is 11.2.0, raise them together",
+    );
+  });
+
+  // The CI floor leg runs exactly the shipped floor, which a range one patch above it rejects.
+  it('fails when the dev Node range starts a patch above the shipped Node floor', () => {
+    const { status, stderr } = runLint({
+      packageJson: { devEngines: devNodeRange('^9.4.3 || ^11.0.0') },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ devEngines.runtime starts at 9.4.3 but engines.node's floor is 9.4.2, raise them together",
+    );
+  });
+
+  it('fails when package.json declares no dev Node range', () => {
+    const { status, stderr } = runLint({ packageJson: { devEngines: {} } });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      '✗ devEngines.runtime is missing or unparseable, expected it to start at 9.4.2',
+    );
+  });
+
+  it('fails when package.json declares no shipped Node floor', () => {
+    const { status, stderr } = runLint({ packageJson: { engines: { vscode: '^3.7.0' } } });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      '✗ engines.node is missing or unparseable, so nothing anchors devEngines.runtime',
+    );
   });
 });
 
