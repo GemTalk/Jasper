@@ -16,7 +16,11 @@ import * as esbuild from 'esbuild';
  * exactly what would ship real events with nothing enforcing consent.
  */
 function assertNoTelemetryInBundle(outfile, result) {
-  if (!result.metafile) return;
+  if (!result.metafile) {
+    throw new Error(
+      `${outfile} was built without \`metafile: true\`, so the telemetry check cannot run.`,
+    );
+  }
   const inputs = Object.keys(result.metafile.inputs);
   const reachedOwnModule = inputs.some((input) => input.endsWith('client/src/telemetry.ts'));
   const reachedPackage = inputs.some((input) =>
