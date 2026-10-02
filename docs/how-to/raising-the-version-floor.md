@@ -6,7 +6,7 @@
 
 Jasper's runtime floor is dictated by `engines.vscode`: VS Code bundles a specific Electron/Node build, and that bundled Node is the actual lowest common denominator the extension runs on — regardless of what `@types/node` or local dev tooling assume.
 
-We want the floor as far back as reasonably possible, to keep supporting users on VS Code installs that haven't auto-updated recently. Two independent ceilings limit how far back we're willing to go — whichever one lands on the *more recent* release wins:
+We want the floor as far back as reasonably possible, to keep supporting users on VS Code installs that haven't auto-updated recently. Two independent ceilings limit how far back we're willing to go — whichever one lands on the _more recent_ release wins:
 
 1. **Node LTS support.** The bundled Node must still be an actively-maintained LTS, not EOL — an EOL Node no longer receives security patches, so the extension's stated runtime floor would be unpatched.
 2. **Adoption ceiling, ~1 year.** Even when an older release's Node hasn't gone EOL yet, we don't chase VS Code installs back indefinitely. About a year is judged enough time for the userbase to have auto-updated past very old releases, so reaching back further has diminishing returns and just adds support burden.
@@ -28,16 +28,18 @@ The `@typescript/native` devDependency range is a separate, compiler-version con
    - the VS Code release from about a year ago.
 
    That release is the new floor; note its bundled Node version.
+
 2. Update all of these together — they encode the same runtime floor and are a **coordinated set, not independent knobs**. A partial bump lets the type checker or bundler assume APIs that don't exist on the shipped runtime floor:
-   - `engines.vscode` and `engines.node` (root `package.json`)
-   - `devEngines.runtime` (root `package.json`) — mirrors `engines.node`; a partial bump desyncs it. `devEngines.packageManager`, alongside it, pins the *npm* floor instead — a separate, dev-toolchain-only concern that this document does not govern, but with an invariant this list still has to protect: that floor must stay ≤ the npm bundled by `.nvmrc`'s Node, or every setup path (contributor and CI alike) needs an explicit `npm i -g` step. Bumping `.nvmrc` down (or the `devEngines.packageManager` floor up) can break that silently — and if it holds, re-pin the global `npm install -g npm@…` calls in the CI floor job and `acceptance/Dockerfile` to whatever npm the new `.nvmrc` bundles
+   - `engines.vscode` and `engines.node` (root `package.json`). `engines.node` stays an open `>=` floor: it ships in the .vsix as the extension's runtime claim, so it must not exclude a newer Node that a future VS Code bundles
+   - `devEngines.runtime` (root `package.json`): the dev toolchain's Node range. Its lowest bound mirrors `engines.node` down to the patch, and `npm run lint:supply-chain` fails when they differ. Unlike `engines.node`, it lists each supported Node LTS major explicitly (`^22.15.1 || ^24.19.0`): `.npmrc` sets `engine-strict`, so an odd-numbered release or an untested future major would pass an open `>=` range and then fail `npm ci` on a dependency's `engines.node`. Drop majors below the new floor, and add a new LTS major only once CI runs it. Each major's lower bound is a patch CI actually runs: the floor major's is the floor leg's Node, and the newest major's is `.nvmrc`'s, so bump it whenever `.nvmrc` moves. `devEngines.packageManager`, alongside it, pins the _npm_ floor instead — a separate, dev-toolchain-only concern that this document does not govern, but with an invariant this list still has to protect: that floor must stay ≤ the npm bundled by `.nvmrc`'s Node, or every setup path (contributor and CI alike) needs an explicit `npm i -g` step. Bumping `.nvmrc` down (or the `devEngines.packageManager` floor up) can break that silently — and if it holds, re-pin the global `npm install -g npm@…` calls in the CI floor job and `acceptance/Dockerfile` to whatever npm the new `.nvmrc` bundles
    - root `@types/node` — keep it a **tilde** on the floor's Node minor, never a caret; see above for why the shape matters
    - `client/package.json`'s `@types/vscode` — keep it a **tilde** on `engines.vscode`'s minor, never a caret; see above
    - `tsconfig.base.json`'s `target` and `lib` (copy the values from the matching Node-version preset in [tsconfig/bases](https://github.com/tsconfig/bases) — see above for why we copy rather than `extends`)
    - `esbuild.mjs`'s `target` (the `client` and `server` build calls)
-   - the floor `node-version` in the `health-check.yml` CI `include` job (the *dev* jobs read `.nvmrc` automatically and don't need a separate edit)
+   - the floor `node-version` in the `health-check.yml` CI `include` job (the _dev_ jobs read `.nvmrc` automatically and don't need a separate edit)
 3. If the `lib` bump requires a newer TypeScript feature, raise the `@typescript/native` devDependency range in root `package.json` to match (see the release-notes link above). Leave the `typescript` alias alone — it tracks typescript-eslint's needs, not the compiler's.
-4. Run `npm run compile && npm test` to confirm the new floor builds and passes.
+4. Revisit the major-version ignores in `.github/dependabot.yml` that hold a dependency back because its `engines.node` excludes part of the old floor (today: `jsdom` and `@types/jsdom`). Drop each one whose `engines.node` now covers every Node the new `devEngines.runtime` allows (not the root `engines.node`, whose open `>=` range no such dependency can cover); otherwise Dependabot keeps withholding its majors after they stop being a problem.
+5. Run `npm run compile && npm test` to confirm the new floor builds and passes.
 
 ## TypeScript 7 is installed under an alias
 
@@ -45,15 +47,15 @@ TypeScript 7 is the native Go compiler, and it ships **no JS API** — the `type
 
 So the root `package.json` uses the [side-by-side layout](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0) TypeScript recommends, with two npm aliases:
 
-| devDependency | Resolves to | Provides | Read by |
-| --- | --- | --- | --- |
-| `@typescript/native` | `typescript@7` | the `tsc` bin | every `compile:*` script, and `watch` |
-| `typescript` | `@typescript/typescript6` | the TS 6 JS API, plus a `tsc6` bin nothing calls. It depends on `@typescript/old` (itself `npm:typescript@^6`), which npm hoists to top level | typescript-eslint only |
+| devDependency        | Resolves to               | Provides                                                                                                                                      | Read by                               |
+| -------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `@typescript/native` | `typescript@7`            | the `tsc` bin                                                                                                                                 | every `compile:*` script, and `watch` |
+| `typescript`         | `@typescript/typescript6` | the TS 6 JS API, plus a `tsc6` bin nothing calls. It depends on `@typescript/old` (itself `npm:typescript@^6`), which npm hoists to top level | typescript-eslint only                |
 
 Consequences worth knowing:
 
 - **Type checking and type-aware linting run on different compilers.** `npm run compile` is TS 7; `npm run lint` type-checks through TS 6. A disagreement between them is possible in principle, and would show up as a rule firing (or not) against code `tsc` is happy with.
-- **Two packages claim the `tsc` bin; npm links one of them silently.** The hoisted `@typescript/old` declares *both* a `tsc` and a `tsserver` bin, so it collides with `@typescript/native` over `tsc`. npm resolves such a collision first-wins by tree order, with no warning: today `node_modules/.bin/tsc` points at `@typescript/native` (TS 7) and `@typescript/old`'s `tsc` is simply dropped, while `node_modules/.bin/tsserver` — uncontested — points at TS 6. `npm run lint:toolchain` (`scripts/lint-toolchain.mjs`, run in CI) is what pins that resolution: it fails the build if `.bin/tsc` is not TypeScript 7 — which is also the first place to look if `npm run compile` ever starts type-checking on TS 6.
+- **Two packages claim the `tsc` bin; npm links one of them silently.** The hoisted `@typescript/old` declares _both_ a `tsc` and a `tsserver` bin, so it collides with `@typescript/native` over `tsc`. npm resolves such a collision first-wins by tree order, with no warning: today `node_modules/.bin/tsc` points at `@typescript/native` (TS 7) and `@typescript/old`'s `tsc` is simply dropped, while `node_modules/.bin/tsserver` — uncontested — points at TS 6. `npm run lint:toolchain` (`scripts/lint-toolchain.mjs`, run in CI) is what pins that resolution: it fails the build if `.bin/tsc` is not TypeScript 7 — which is also the first place to look if `npm run compile` ever starts type-checking on TS 6.
 - **`lint:lockfile` has to name the aliases.** `lockfile-lint --validate-package-names` rejects every npm alias, so the script carries three `--allowed-package-name-aliases` entries — the two above, plus `@typescript/old`, which is how `@typescript/typescript6` aliases TS 6 internally.
 - **Don't point VS Code at the workspace TypeScript.** `node_modules/typescript/lib` has no `tsserver.js` under this layout, so `typescript.tsdk` set to it will not load. Use the editor's bundled TypeScript (the default — no workspace setting pins it).
 

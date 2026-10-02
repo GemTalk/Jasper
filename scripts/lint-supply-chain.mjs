@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
-// Asserts npm's install-script supply-chain controls are actually in effect,
-// not just present in .npmrc. Every config assertion reads through `npm config
+// Asserts npm's install-script supply-chain controls (plus `engine-strict`, see
+// below) are actually in effect, not just present in .npmrc. Every config assertion reads through `npm config
 // get` (one batched call, see getConfigs) rather than parsing the file, which is
 // both simpler and strictly
 // stronger: it sees the merged, effective value, so it also catches an override
@@ -9,6 +9,10 @@
 // (which a naive `key=` grep of .npmrc misses entirely). And because `npm
 // config` is devEngines-gated, it fails outright on an npm too old to honor the
 // settings.
+//
+// `engine-strict` rides along although it is not an install-script control: it
+// turns a dependency whose `engines.node` excludes the Node floor into an `npm ci`
+// failure on the CI floor leg instead of a warning nobody reads.
 //
 // Most settings are asserted to equal the committed value exactly; `min-release-age` is
 // asserted as a floor, so raising the cooldown is allowed but lowering or disabling it is not
@@ -26,6 +30,9 @@
 // Last, checks that the `@types` packages stay pinned to the declared runtime
 // floor (see checkTypeFloorPinned below) — a range that resolves above
 // `engines.vscode`/`engines.node` lets tsc accept APIs the shipped floor lacks.
+//
+// And checks that `devEngines.runtime` starts exactly at the `engines.node` floor (see
+// checkRuntimeFloorSynced below).
 //
 //   node scripts/lint-supply-chain.mjs
 
@@ -59,13 +66,14 @@ const CONFIG_ASSERTIONS = [
   { key: 'allow-remote', expected: 'none' },
   { key: 'allow-scripts', expected: '', hint: ALLOW_SCRIPTS_HINT },
   { key: 'min-release-age', expected: '7', floor: true },
+  { key: 'engine-strict', expected: 'true' },
 ];
 
 const REGISTRY_PREFIX = 'https://registry.npmjs.org/';
 
 // One spawn for every key rather than one per key: npm's cold start dominates this script
-// (~0.38s for five sequential gets vs ~0.08s batched), and lintSupplyChain.test.ts runs the
-// whole script once per case. Asked for multiple keys npm prints `key=value` lines instead of
+// (~0.38s for one get per key vs ~0.08s batched, measured at five keys), and
+// lintSupplyChain.test.ts runs the whole script once per case. Asked for multiple keys npm prints `key=value` lines instead of
 // a bare value, but each value is byte-identical to the single-key form — including the
 // literal 'null' an unset min-release-age reads back as, and the comma-joined form of an
 // array setting. (`npm config list --json` would batch too, but it hands back JSON types —
@@ -306,13 +314,64 @@ function checkTypeFloorPinned() {
   return failed;
 }
 
+// The lowest bound of a range is its lowest alternative's `major.minor.patch`, wherever that
+// alternative sits: `^24.19.0 || ^22.15.1` starts at 22.15.1, not at the first match. A
+// missing patch reads as 0.
+function lowestBoundOf(range) {
+  const bounds = (range ?? '')
+    .split('||')
+    .map((alternative) => /(\d+)\.(\d+)(?:\.(\d+))?/.exec(alternative))
+    .filter((match) => match !== null)
+    .map((match) => [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)]);
+  const lowest = bounds.reduce(
+    (low, bound) =>
+      (bound[0] - low[0] || bound[1] - low[1] || bound[2] - low[2]) < 0 ? bound : low,
+    bounds[0],
+  );
+  return lowest === undefined ? null : lowest.join('.');
+}
+
+// `devEngines.runtime` is the Node range contributors and CI install under; `engines.node` is
+// the floor the .vsix claims. Nothing derives one from the other, so a floor raise that moves
+// only `engines.node` leaves CI installing and testing on a Node below the shipped claim. The
+// patch counts too: the CI floor leg runs exactly `engines.node`'s version, so a
+// `devEngines.runtime` starting one patch above it fails `npm ci` there.
+function checkRuntimeFloorSynced() {
+  const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  const shipped = lowestBoundOf(manifest.engines?.node);
+  const dev = lowestBoundOf(manifest.devEngines?.runtime?.version);
+
+  if (shipped === null) {
+    console.error(
+      '✗ engines.node is missing or unparseable, so nothing anchors devEngines.runtime',
+    );
+    return true;
+  }
+  if (dev === null) {
+    console.error(
+      `✗ devEngines.runtime is missing or unparseable, expected it to start at ${shipped}`,
+    );
+    return true;
+  }
+  if (dev !== shipped) {
+    console.error(
+      `✗ devEngines.runtime starts at ${dev} but engines.node's floor is ${shipped}, raise them together`,
+    );
+    return true;
+  }
+
+  console.log("✓ devEngines.runtime starts at engines.node's floor");
+  return false;
+}
+
 function main() {
   const configFailed = checkConfig();
   const driftFailed = checkLockfileDrift();
   const allowScriptsFailed = checkAllowScriptsPinned();
   const typeFloorFailed = checkTypeFloorPinned();
+  const runtimeFloorFailed = checkRuntimeFloorSynced();
 
-  if (configFailed || driftFailed || allowScriptsFailed || typeFloorFailed) {
+  if (configFailed || driftFailed || allowScriptsFailed || typeFloorFailed || runtimeFloorFailed) {
     process.exit(1);
   }
 }
