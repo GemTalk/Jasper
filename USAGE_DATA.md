@@ -80,12 +80,12 @@ Jasper honours VS Code's `telemetry.telemetryLevel` setting via
 ## Accessing or deleting your data
 
 Events are keyed only by `common.vscodemachineid`, so we cannot look up or
-delete data for you without that value. To find yours, run **Help: About**
-in VS Code's Command Palette, or check the `machineId` field on
-`vscode.env`. If you send it to the contact address above, we will locate
-and delete the matching records.
+delete data for you without that value. To get yours, run **GemStone: Copy
+Telemetry ID** from VS Code's Command Palette; it copies the value to your
+clipboard. If you send it to the contact address above, we will locate and
+delete the matching records.
 
 ## Changes
 
-Last updated: 2026-09-24. Changes to this notice will be published in this
+Last updated: 2026-10-02. Changes to this notice will be published in this
 repository.

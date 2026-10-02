@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
-import { initTelemetry, reportActivation, startActivationTelemetry } from '../telemetry';
+import {
+  initTelemetry,
+  registerCopyTelemetryIdCommand,
+  reportActivation,
+  startActivationTelemetry,
+} from '../telemetry';
 
 function fakeContext(mode: number = ExtensionMode.Production): vscode.ExtensionContext {
   return {
@@ -75,6 +80,22 @@ describe('telemetry', () => {
       finish();
 
       expect(eventsNamed('activated')).toHaveLength(1);
+    });
+  });
+
+  describe('registerCopyTelemetryIdCommand', () => {
+    it('copies the machine ID to the clipboard', async () => {
+      const registerCommand = vi.mocked(vscode.commands.registerCommand);
+      registerCommand.mockClear();
+      const context = fakeContext();
+
+      registerCopyTelemetryIdCommand(context);
+
+      expect(context.subscriptions).toHaveLength(1);
+      const [command, callback] = registerCommand.mock.calls[0];
+      expect(command).toBe('gemstone.copyTelemetryId');
+      await (callback as () => Promise<void>)();
+      expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(vscode.env.machineId);
     });
   });
 });

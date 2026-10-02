@@ -1088,6 +1088,11 @@
         "icon": "$(output)"
       },
       {
+        "command": "gemstone.copyTelemetryId",
+        "title": "Copy Telemetry ID",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.openBrowser",
         "title": "Open System Browser (Classic)",
         "category": "GemStone"
