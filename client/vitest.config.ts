@@ -102,6 +102,7 @@ export default defineConfig({
         test: {
           name: 'gci',
           include: ['src/__tests__/gci/**/*.test.ts'],
+          setupFiles: ['src/__tests__/vitest.telemetrySetup.ts'],
           maxConcurrency: 5,
           fileParallelism: false,
           sequence: {
