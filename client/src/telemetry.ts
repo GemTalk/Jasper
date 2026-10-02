@@ -140,15 +140,28 @@ export function reportActivation(activationMs: number): void {
  * exit path in `activate()` can call it unconditionally without worrying
  * about double-counting an activation whose control flow passes through more
  * than one exit.
+ *
+ * Neither this nor `finish` ever throws: `activate()` calls them unguarded,
+ * and an analytics failure must not fail activation. If the reporter cannot
+ * be constructed, `finish` is a no-op.
  */
 export function startActivationTelemetry(context: vscode.ExtensionContext): () => void {
   const stopwatch = Stopwatch.start();
-  initTelemetry(context);
+  try {
+    initTelemetry(context);
+  } catch (err) {
+    console.error('Jasper telemetry failed to initialize; continuing without it.', err);
+    return () => {};
+  }
 
   let finished = false;
   return function finish(): void {
     if (finished) return;
     finished = true;
-    reportActivation(stopwatch.elapsedMs());
+    try {
+      reportActivation(stopwatch.elapsedMs());
+    } catch (err) {
+      console.error('Jasper telemetry failed to send the activated event.', err);
+    }
   };
 }

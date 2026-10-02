@@ -81,6 +81,17 @@ describe('telemetry', () => {
 
       expect(eventsNamed('activated')).toHaveLength(1);
     });
+
+    it('returns a working finish even when the reporter fails to construct', () => {
+      vi.spyOn(vscode.env, 'createTelemetryLogger').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+      vi.spyOn(console, 'error').mockImplementationOnce(() => {});
+
+      const finish = startActivationTelemetry(fakeContext());
+
+      expect(() => finish()).not.toThrow();
+    });
   });
 
   describe('registerCopyTelemetryIdCommand', () => {
