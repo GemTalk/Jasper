@@ -25,7 +25,7 @@ export class IntegratedBrowser {
     await urlBar.fill(url);
     await urlBar.press('Enter');
 
-    return this.pageShowing(url);
+    return await this.pageShowing(url);
   }
 
   /** The browser's page for `url`, once it turns up in the Electron context. */

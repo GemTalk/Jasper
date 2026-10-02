@@ -2373,7 +2373,7 @@ export class GciLibrary {
     code: string,
     callback: (oop: bigint) => Promise<T>,
   ): Promise<T> {
-    return this.releaseAfterUseAsync(
+    return await this.releaseAfterUseAsync(
       session,
       await this.executeAndFetchOop(session, code),
       callback,
@@ -2420,7 +2420,7 @@ export class GciLibrary {
   public async executeAndFetchOop(session: unknown, code: string): Promise<bigint> {
     this.executeNb(session, code);
 
-    return this.fetchNbResult(session);
+    return await this.fetchNbResult(session);
   }
 
   /**
@@ -2647,7 +2647,7 @@ export class GciLibrary {
   ): Promise<bigint> {
     this.performNb(session, receiverOop, selector);
 
-    return this.fetchNbResult(session);
+    return await this.fetchNbResult(session);
   }
 
   /**
@@ -2745,7 +2745,7 @@ export class GciLibrary {
     selector: string,
     callback: (oop: bigint) => Promise<T>,
   ): Promise<T> {
-    return this.releaseAfterUseAsync(
+    return await this.releaseAfterUseAsync(
       session,
       await this.performAsync(session, receiverOop, selector),
       callback,
@@ -3457,7 +3457,7 @@ export class GciLibrary {
     // source (e.g. `[ ${code} ] value encodeAsUTF8`): a non-local return
     // inside `code` exits the whole doit, so an appended send would never run
     // and the raw, unencoded result would reach the byte fetch instead.
-    return this.executeAndReleaseAsync(session, code, (resultOop) =>
+    return await this.executeAndReleaseAsync(session, code, (resultOop) =>
       this.performAndReleaseAsync(session, resultOop, 'encodeAsUTF8', async (utf8StringOop) =>
         this.fetchUtf8String(session, utf8StringOop, GciLibrary.FETCH_STRING_PAGE_SIZE_BYTES),
       ),
