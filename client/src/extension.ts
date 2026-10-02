@@ -37,6 +37,7 @@ import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { refreshTonelAvailability } from './tonelAvailability';
+import { registerCopyTelemetryIdCommand, startActivationTelemetry } from './telemetry';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
@@ -783,6 +784,9 @@ export function activate(context: vscode.ExtensionContext) {
     getTranscriptChannel(),
     getSysadminChannel(),
   );
+
+  const finishTelemetry = startActivationTelemetry(context);
+  registerCopyTelemetryIdCommand(context);
 
   initializeBundledGci(context.extensionPath);
 
@@ -5504,6 +5508,8 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
   );
+
+  finishTelemetry();
 }
 
 export function deactivate(): Thenable<void> | undefined {
