@@ -3711,7 +3711,7 @@
     "koffi": "^2.16.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.7",
+    "fast-uri": "^3.1.8",
     "js-yaml": "^4.3.2"
   },
   "allowScripts": {
