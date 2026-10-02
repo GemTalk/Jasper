@@ -142,7 +142,10 @@ const TS_EXTENSION_IMPORT = {
 // The esbuild metafile check in esbuild.mjs backs this up, and is the one a
 // re-export or facade module cannot get past.
 const NO_TELEMETRY_IN_SERVER_OR_MCP = [
-  { group: ['**/telemetry'], message: TELEMETRY_OUTSIDE_EXTENSION_HOST },
+  {
+    group: ['**/telemetry', '**/telemetry.js', '**/telemetry.ts'],
+    message: TELEMETRY_OUTSIDE_EXTENSION_HOST,
+  },
   { group: ['@vscode/extension-telemetry'], message: TELEMETRY_OUTSIDE_EXTENSION_HOST },
 ];
 
