@@ -37,7 +37,7 @@ import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { refreshTonelAvailability } from './tonelAvailability';
-import { startActivationTelemetry } from './telemetry';
+import { registerCopyTelemetryIdCommand, startActivationTelemetry } from './telemetry';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
@@ -786,6 +786,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const finishTelemetry = startActivationTelemetry(context);
+  registerCopyTelemetryIdCommand(context);
 
   initializeBundledGci(context.extensionPath);
 

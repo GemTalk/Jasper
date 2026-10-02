@@ -545,6 +545,7 @@ export const __telemetry: FakeTelemetryEvent[] = [];
 const FAKE_COMMON_PROPERTIES: Record<string, string> = { 'common.fake': 'yes' };
 
 export const env = {
+  machineId: 'fake-machine-id',
   clipboard: {
     writeText: vi.fn(async (_text: string) => {}),
     readText: vi.fn(async () => ''),

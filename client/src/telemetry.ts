@@ -80,6 +80,21 @@ export function initTelemetry(context: vscode.ExtensionContext): void {
 }
 
 /**
+ * Registers the command USAGE_DATA.md points users to for access or deletion
+ * requests: `vscode.env.machineId` (sent as `common.vscodemachineid`) is
+ * shown nowhere in VS Code's own UI. Deliberately not gated on the telemetry
+ * setting — someone who has opted out may still want past data deleted.
+ */
+export function registerCopyTelemetryIdCommand(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('gemstone.copyTelemetryId', async () => {
+      await vscode.env.clipboard.writeText(vscode.env.machineId);
+      void vscode.window.showInformationMessage('Telemetry ID copied to the clipboard.');
+    }),
+  );
+}
+
+/**
  * The single send site.
  *
  * **Not exported, and not to be called inline from new code.** Every event
