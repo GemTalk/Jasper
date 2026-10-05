@@ -201,8 +201,14 @@ describe('GCI session lifecycle (integration)', () => {
 
       bindings._GciTsContinueWith = syncOnlyBinding;
       try {
-        await expect(async () =>
-          gci.GciTsContinueWithAsync(session, OOP_NIL, OOP_ILLEGAL, null, 0),
+        // The async binding throws synchronously, not as a rejection. Calling it
+        // inside then() turns that throw into a rejection for `.rejects`. An
+        // `async () => await ...` wrapper would do the same, but
+        // vitest/no-unneeded-async-expect-function flags it as unneeded.
+        await expect(
+          Promise.resolve().then(() =>
+            gci.GciTsContinueWithAsync(session, OOP_NIL, OOP_ILLEGAL, null, 0),
+          ),
         ).rejects.toThrow(TypeError);
       } finally {
         bindings._GciTsContinueWith = realBinding;

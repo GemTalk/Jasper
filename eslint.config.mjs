@@ -331,6 +331,10 @@ export default tseslint.config(
       '@typescript-eslint/no-unnecessary-type-assertion': 'error',
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      // `always` rather than the default `in-try-catch`: outside try/catch an
+      // un-awaited return drops the function from the async stack trace.
+      '@typescript-eslint/return-await': ['error', 'always'],
     },
   },
   {

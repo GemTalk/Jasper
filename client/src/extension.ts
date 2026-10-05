@@ -1019,7 +1019,7 @@ export function activate(context: vscode.ExtensionContext) {
       // than guess): a not-yet-started client or a request failure THROWS; only a
       // live "no selector here" answers null.
       if (!client) throw new Error('language server not started');
-      return client.sendRequest<string | null>('gemstone/selectorAtPosition', {
+      return await client.sendRequest<string | null>('gemstone/selectorAtPosition', {
         textDocument: { uri: document.uri.toString() },
         position,
       });
@@ -1669,7 +1669,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    return vscode.window.showInputBox({
+    return await vscode.window.showInputBox({
       prompt: 'Enter selector',
       placeHolder: 'e.g. at:put:',
     });
@@ -4464,7 +4464,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    return clearSessionsForStop(
+    return await clearSessionsForStop(
       {
         reapSessions: () => reapSessionsOf(db),
         // The stone's own processes are filtered out: a running stone and its
@@ -5007,7 +5007,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           },
           promptPassword: async () =>
-            vscode.window.showInputBox({
+            await vscode.window.showInputBox({
               prompt: `DataCurator password to stop "${stoneName}"`,
               password: true,
               ignoreFocusOut: true,
@@ -5113,7 +5113,7 @@ export function activate(context: vscode.ExtensionContext) {
             report: () => {
               /* no surrounding progress notification here; the Admin channel has the detail */
             },
-            showError: (m) => vscode.window.showErrorMessage(m),
+            showError: (m) => void vscode.window.showErrorMessage(m),
           },
         );
         if (outcome.kind === 'stopped') {
