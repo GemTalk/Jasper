@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { Stopwatch } from './stopwatch';
-import { isLocalHost } from './databaseForLogin';
 import { normalizeGemStoneVersion } from './gemStoneVersionParsing';
 import { GemStoneLogin } from './loginTypes';
 
@@ -170,6 +170,31 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
   };
 }
 
+/**
+ * Whether a login's host names this machine, for `serverLocation` only.
+ * Deliberately broader than `isLocalHost` in databaseForLogin.ts, which gates
+ * starting a stone and must stay narrow. No DNS lookup: it would put a network
+ * round trip on the connect path. If the OS refuses to list interfaces, the
+ * host is judged on its name alone rather than losing the event.
+ */
+function isThisMachine(host: string): boolean {
+  const h = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, '$1');
+  const hostname = os.hostname().toLowerCase();
+  if (['localhost', '127.0.0.1', '::1', '0.0.0.0', hostname, hostname.split('.')[0]].includes(h)) {
+    return true;
+  }
+  try {
+    return Object.values(os.networkInterfaces()).some((addrs) =>
+      addrs?.some((a) => a.address.toLowerCase() === h),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** How a run of the connect command ended, named for what the user saw. */
 export type LoginOutcome = 'connected' | 'failed' | 'cancelled' | 'noClientLibrary';
 
@@ -189,7 +214,7 @@ export function reportLoginAttempt(
   send(EVENT.loginAttempted, {
     gemstoneVersion: normalizeGemStoneVersion(login.version) ?? 'unknown',
     outcome,
-    serverLocation: isLocalHost(login.gem_host) ? 'local' : 'remote',
+    serverLocation: isThisMachine(login.gem_host) ? 'local' : 'remote',
   });
 }
 

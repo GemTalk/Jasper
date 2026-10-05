@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
+import * as os from 'os';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
 import {
@@ -132,6 +133,10 @@ describe('telemetry', () => {
       ['127.0.0.1', 'local'],
       ['::1', 'local'],
       ['[::1]', 'local'],
+      ['LocalHost', 'local'],
+      [' localhost ', 'local'],
+      ['0.0.0.0', 'local'],
+      [os.hostname(), 'local'],
       ['db.example.com', 'remote'],
       ['127.0.0.2', 'remote'],
     ])('says whether the server is on this machine (%s → %s)', (gem_host, expected) => {
@@ -141,6 +146,20 @@ describe('telemetry', () => {
 
       expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
         serverLocation: expected,
+      });
+    });
+
+    // Not every machine has a non-loopback interface (a CI container may not).
+    const lanAddress = Object.values(os.networkInterfaces())
+      .flat()
+      .find((a) => a && !a.internal)?.address;
+    it.skipIf(!lanAddress)("counts an address on one of this machine's interfaces as local", () => {
+      initTelemetry(fakeContext());
+
+      reportLoginAttempt({ ...login, gem_host: lanAddress! }, 'connected');
+
+      expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+        serverLocation: 'local',
       });
     });
 
