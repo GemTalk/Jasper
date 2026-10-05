@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 describe('telemetry', () => {
-  it('records a single activated event with extensionMode and activationMs', () => {
+  it('records one activation event saying how the extension was launched and how long it took to start', () => {
     initTelemetry(fakeContext());
 
     reportActivation(42);
@@ -44,7 +44,7 @@ describe('telemetry', () => {
     expect(events[0].measurements).toEqual({ activationMs: 42 });
   });
 
-  it('always passes a properties object, proven by the fake common property', () => {
+  it("keeps VS Code's common properties on every event", () => {
     initTelemetry(fakeContext());
 
     reportActivation(0);
@@ -56,7 +56,7 @@ describe('telemetry', () => {
     [ExtensionMode.Production, 'production'],
     [ExtensionMode.Development, 'development'],
     [ExtensionMode.Test, 'test'],
-  ])('maps extension mode %d to %s', (mode, expected) => {
+  ])('reports the launch mode by name (%d → %s)', (mode, expected) => {
     initTelemetry(fakeContext(mode));
 
     reportActivation(0);
@@ -64,8 +64,8 @@ describe('telemetry', () => {
     expect(eventsNamed('activated')[0].properties).toMatchObject({ extensionMode: expected });
   });
 
-  describe('startActivationTelemetry', () => {
-    it('sends a single activated event when finish is called', () => {
+  describe('timing activation', () => {
+    it('sends one activation event when activation finishes', () => {
       const finish = startActivationTelemetry(fakeContext());
 
       finish();
@@ -73,7 +73,7 @@ describe('telemetry', () => {
       expect(eventsNamed('activated')).toHaveLength(1);
     });
 
-    it('sends nothing more on a second finish call', () => {
+    it('sends nothing more if activation finishes twice', () => {
       const finish = startActivationTelemetry(fakeContext());
 
       finish();
@@ -82,7 +82,7 @@ describe('telemetry', () => {
       expect(eventsNamed('activated')).toHaveLength(1);
     });
 
-    it('returns a working finish even when the reporter fails to construct', () => {
+    it("still lets activation finish when telemetry can't be set up", () => {
       vi.spyOn(vscode.env, 'createTelemetryLogger').mockImplementationOnce(() => {
         throw new Error('boom');
       });
@@ -94,7 +94,7 @@ describe('telemetry', () => {
     });
   });
 
-  describe('registerCopyTelemetryIdCommand', () => {
+  describe('the Copy Telemetry ID command', () => {
     it('copies the machine ID to the clipboard', async () => {
       const registerCommand = vi.mocked(vscode.commands.registerCommand);
       registerCommand.mockClear();

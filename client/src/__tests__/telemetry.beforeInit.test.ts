@@ -10,7 +10,7 @@ import { reportActivation } from '../telemetry';
 // project shuffles test order within a file (client/vitest.config.ts), so
 // putting this there would make it depend on which test happened to run
 // first.
-describe('telemetry, before initTelemetry has run', () => {
+describe('telemetry, before it has been set up', () => {
   it('sends nothing', () => {
     reportActivation(123);
 
