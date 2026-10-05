@@ -23,9 +23,9 @@ version, extension version). [USAGE_DATA.md](../../USAGE_DATA.md) lists them.
 The extension host finished activating a VS Code window. Sent only when
 activation completes; an activation that fails sends nothing.
 
-| Property / measure | Values                                    |
-| ------------------ | ----------------------------------------- |
-| `activationMs`     | how long activation took, in milliseconds |
+| Property / measure | Values                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `activationMs`     | how long the extension's synchronous startup took, in milliseconds, not including the language server starting |
 
 ## Changing this document
 
