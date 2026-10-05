@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
+import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
 import {
   initTelemetry,
+  LoginOutcome,
   registerCopyTelemetryIdCommand,
   reportActivation,
+  reportLoginAttempt,
   startActivationTelemetry,
+  startLoginAttemptTelemetry,
 } from '../telemetry';
 
 function fakeContext(mode: number = ExtensionMode.Production): vscode.ExtensionContext {
@@ -91,6 +95,99 @@ describe('telemetry', () => {
       const finish = startActivationTelemetry(fakeContext());
 
       expect(() => finish()).not.toThrow();
+    });
+  });
+
+  describe('connect attempts', () => {
+    const login = { version: '3.7.2', gem_host: 'localhost' };
+
+    it.each<LoginOutcome>(['connected', 'failed', 'cancelled', 'noClientLibrary'])(
+      'records how the attempt ended (%s)',
+      (outcome) => {
+        initTelemetry(fakeContext());
+
+        reportLoginAttempt(login, outcome);
+
+        expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({ outcome });
+      },
+    );
+
+    it.each([
+      ['3.7.2', '3.7.2'],
+      ['3.7', '3.7.0'],
+      ['', 'unknown'],
+      ['latest', 'unknown'],
+    ])('records the configured GemStone version as digits only (%j → %s)', (version, expected) => {
+      initTelemetry(fakeContext());
+
+      reportLoginAttempt({ ...login, version }, 'connected');
+
+      expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+        gemstoneVersion: expected,
+      });
+    });
+
+    it.each([
+      ['localhost', 'local'],
+      ['127.0.0.1', 'local'],
+      ['::1', 'local'],
+      ['[::1]', 'local'],
+      ['db.example.com', 'remote'],
+      ['127.0.0.2', 'remote'],
+    ])('says whether the server is on this machine (%s → %s)', (gem_host, expected) => {
+      initTelemetry(fakeContext());
+
+      reportLoginAttempt({ ...login, gem_host }, 'connected');
+
+      expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+        serverLocation: expected,
+      });
+    });
+
+    it('leaves out the host, stone, user and password', () => {
+      initTelemetry(fakeContext());
+      const fullLogin = {
+        version: '3.7.2',
+        gem_host: 'db.acme-corp.example',
+        stone: 'acme_production',
+        gs_user: 'jsmith',
+        gs_password: 'hunter2',
+      };
+
+      reportLoginAttempt(fullLogin, 'connected');
+
+      const { properties } = eventsNamed('loginAttempted')[0];
+      const ownNames = Object.keys(properties).filter((name) => !name.startsWith('common.'));
+      expect(ownNames.sort()).toEqual([
+        'extensionMode',
+        'gemstoneVersion',
+        'outcome',
+        'serverLocation',
+      ]);
+    });
+
+    it('sends one event, with the first outcome, if the attempt finishes twice', () => {
+      initTelemetry(fakeContext());
+      const finish = startLoginAttemptTelemetry(login);
+
+      finish('cancelled');
+      finish('failed');
+
+      const events = eventsNamed('loginAttempted');
+      expect(events).toHaveLength(1);
+      expect(events[0].properties).toMatchObject({ outcome: 'cancelled' });
+    });
+
+    it("still lets the attempt finish when the event can't be sent", () => {
+      initTelemetry(fakeContext());
+      vi.spyOn(TelemetryReporter.prototype, 'sendTelemetryEvent').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+      vi.spyOn(console, 'error').mockImplementationOnce(() => {});
+
+      const finish = startLoginAttemptTelemetry(login);
+
+      expect(() => finish('failed')).not.toThrow();
     });
   });
 

@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { Stopwatch } from './stopwatch';
+import { isLocalHost } from './databaseForLogin';
+import { normalizeGemStoneVersion } from './gemStoneVersionParsing';
+import { GemStoneLogin } from './loginTypes';
 
 /**
  * Jasper's telemetry: one named function per thing worth counting.
@@ -38,6 +41,7 @@ const CONNECTION_STRING =
  */
 export const EVENT = {
   activated: 'activated',
+  loginAttempted: 'loginAttempted',
 } as const;
 export type EventName = (typeof EVENT)[keyof typeof EVENT];
 
@@ -162,6 +166,52 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
       reportActivation(stopwatch.elapsedMs());
     } catch (err) {
       console.error('Jasper telemetry failed to send the activated event.', err);
+    }
+  };
+}
+
+/** How a run of the connect command ended, named for what the user saw. */
+export type LoginOutcome = 'connected' | 'failed' | 'cancelled' | 'noClientLibrary';
+
+/**
+ * The user ran the connect command for a login — once per run that gets past
+ * the open-folder check, whatever the outcome.
+ *
+ * `gemstoneVersion` and `serverLocation` are worked out here rather than
+ * passed in, so a caller cannot hand over free text from the login's
+ * settings: the version is reduced to its digits (or `unknown`) and the host
+ * to `local`/`remote`.
+ */
+export function reportLoginAttempt(
+  login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
+  outcome: LoginOutcome,
+): void {
+  send(EVENT.loginAttempted, {
+    gemstoneVersion: normalizeGemStoneVersion(login.version) ?? 'unknown',
+    outcome,
+    serverLocation: isLocalHost(login.gem_host) ? 'local' : 'remote',
+  });
+}
+
+/**
+ * Returns a `finish(outcome)` callback for one run of the connect command.
+ *
+ * Like `startActivationTelemetry`'s, `finish` is idempotent so the handler
+ * can call it with the specific outcome at each exit and again with `failed`
+ * from a `finally`; the first call wins. It never throws: in that `finally`,
+ * a throw would replace the login's own error.
+ */
+export function startLoginAttemptTelemetry(
+  login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
+): (outcome: LoginOutcome) => void {
+  let finished = false;
+  return function finish(outcome: LoginOutcome): void {
+    if (finished) return;
+    finished = true;
+    try {
+      reportLoginAttempt(login, outcome);
+    } catch (err) {
+      console.error('Jasper telemetry failed to send the loginAttempted event.', err);
     }
   };
 }
