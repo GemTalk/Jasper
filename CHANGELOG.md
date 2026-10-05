@@ -6,7 +6,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Added
 
-- **Jasper now sends a minimal usage event on activation.** A single `activated` event, timed and reporting whether the extension is running from a real install or from source, so we can count active installations and see which operating systems, VS Code versions and regions Jasper is used on. It is governed by VS Code's `telemetry.telemetryLevel` setting and never carries file paths or source code. See [USAGE_DATA.md](USAGE_DATA.md) for exactly what is and isn't collected.
+- **Jasper now sends minimal usage events.** An `activated` event when the extension starts, timed and reporting whether it is running from a real install or from source, so we can count active installations and see which operating systems, VS Code versions and regions Jasper is used on. A `loginAttempted` event each time you connect, reporting the GemStone version set on the login, whether its server is on this machine, and how the attempt ended, so we can see which GemStone versions people try to use and whether connecting works. Both are governed by VS Code's `telemetry.telemetryLevel` setting and never carry file paths, source code, host names or user names. See [USAGE_DATA.md](USAGE_DATA.md) for exactly what is and isn't collected.
 
 ## [1.13.0] - 2026-10-01
 
