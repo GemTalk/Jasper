@@ -9,9 +9,9 @@ It does not cover any other GemTalk product.
 
 Jasper sends a single usage event, `activated`, when the extension starts up,
 so we can count how many installations use it, on which operating systems and
-VS Code versions, and in which regions. It
-carries only non-identifying, extension-level information — never the
-contents of your work (see "What we do not collect" below).
+VS Code versions, and in which regions. It carries only extension-level
+information — never the contents of your work (see "What we do not collect"
+below).
 [docs/reference/telemetry.md](docs/reference/telemetry.md) lists the event
 and what each of its properties and measures can say.
 
@@ -87,5 +87,5 @@ delete the matching records.
 
 ## Changes
 
-Last updated: 2026-10-02. Changes to this notice will be published in this
+Last updated: 2026-10-05. Changes to this notice will be published in this
 repository.

@@ -498,7 +498,7 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 
 ## Privacy
 
-Jasper sends a minimal, non-identifying usage event, governed by VS Code's
+Jasper sends a minimal usage event, governed by VS Code's
 `telemetry.telemetryLevel` setting. See [USAGE_DATA.md](USAGE_DATA.md) for
 what is and isn't collected.
 
