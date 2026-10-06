@@ -65,8 +65,8 @@ afterEach(() => {
   if (originalEnv.GEMSTONE_GLOBAL_DIR === undefined) delete process.env.GEMSTONE_GLOBAL_DIR;
 });
 
-describe('attemptLogin outcomes', () => {
-  it('reports cancelled when the GemStone password prompt is dismissed', async () => {
+describe('attempting a login', () => {
+  it('reports the login as cancelled when the GemStone password prompt is dismissed', async () => {
     vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce(undefined);
     const deps = makeDeps();
 
@@ -74,7 +74,7 @@ describe('attemptLogin outcomes', () => {
     expect(deps.connect).not.toHaveBeenCalled();
   });
 
-  it('reports cancelled when the host password prompt is dismissed', async () => {
+  it('reports the login as cancelled when the host password prompt is dismissed', async () => {
     vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce(undefined);
     const deps = makeDeps();
 
@@ -82,7 +82,7 @@ describe('attemptLogin outcomes', () => {
     expect(deps.connect).not.toHaveBeenCalled();
   });
 
-  it('reports noClientLibrary when the library picker is dismissed', async () => {
+  it('reports that no client library was available when the library picker is dismissed', async () => {
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValueOnce(undefined);
     const deps = makeDeps({ getGciLibraryPath: vi.fn(() => undefined) });
 
@@ -90,7 +90,7 @@ describe('attemptLogin outcomes', () => {
     expect(deps.connect).not.toHaveBeenCalled();
   });
 
-  it('reports noClientLibrary when a misnamed library is not confirmed', async () => {
+  it('reports that no client library was available when a misnamed library is not confirmed', async () => {
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValueOnce([
       vscode.Uri.file('/tmp/not-a-gci.dylib'),
     ]);
@@ -103,14 +103,14 @@ describe('attemptLogin outcomes', () => {
     expect(deps.connect).not.toHaveBeenCalled();
   });
 
-  it('reports failed when connect yields no session', async () => {
+  it('reports a failure when connecting yields no session', async () => {
     const deps = makeDeps({ connect: vi.fn(async () => undefined) });
 
     expect(await attemptLogin(LOGIN, deps)).toBe('failed');
     expect(deps.connected).not.toHaveBeenCalled();
   });
 
-  it('lets a connect that throws reject, for the caller to report as failed', async () => {
+  it('lets a connection error propagate, for the caller to report as a failure', async () => {
     const deps = makeDeps({
       connect: vi.fn(async () => {
         throw new Error('boom');
@@ -121,7 +121,7 @@ describe('attemptLogin outcomes', () => {
     expect(deps.connected).not.toHaveBeenCalled();
   });
 
-  it('reports connected and hands the session on', async () => {
+  it('reports success and hands the new session on', async () => {
     const deps = makeDeps();
 
     expect(await attemptLogin(LOGIN, deps)).toBe('connected');
@@ -139,7 +139,7 @@ describe('attemptLogin outcomes', () => {
 
     const noLibrary = () => makeDeps({ getGciLibraryPath: vi.fn(() => undefined) });
 
-    it('reports noClientLibrary when the bundled library does not match the architecture', async () => {
+    it('reports that no client library was available when the bundled library does not match the architecture', async () => {
       vi.mocked(bundledWindowsClientGciPath).mockReturnValue('C:\\bundled\\libgcits-3.7.5-64.dll');
       vi.mocked(bundledGciArchSupported).mockReturnValue(false);
       const deps = noLibrary();
@@ -148,14 +148,14 @@ describe('attemptLogin outcomes', () => {
       expect(deps.connect).not.toHaveBeenCalled();
     });
 
-    it('reports noClientLibrary when the login has no version to download', async () => {
+    it('reports that no client library was available when the login has no version to download', async () => {
       const deps = noLibrary();
 
       expect(await attemptLogin({ ...LOGIN, version: ' ' }, deps)).toBe('noClientLibrary');
       expect(deps.connect).not.toHaveBeenCalled();
     });
 
-    it('reports noClientLibrary when the client download fails', async () => {
+    it('reports that no client library was available when the client download fails', async () => {
       vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce(
         'Download' as unknown as vscode.MessageItem,
       );
@@ -170,7 +170,7 @@ describe('attemptLogin outcomes', () => {
       expect(deps.connect).not.toHaveBeenCalled();
     });
 
-    it('reports noClientLibrary when the download offer is dismissed', async () => {
+    it('reports that no client library was available when the download offer is dismissed', async () => {
       vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce(undefined);
       const deps = noLibrary();
 
