@@ -24,11 +24,6 @@ VS Code automatically attaches its own common properties to every event:
 `common.isnewappinstall`, `common.sqmid`, `common.devDeviceId`,
 `common.telemetryclientversion`.
 
-Jasper adds one property of its own to every event:
-
-- `extensionMode`, which is `production` for an installed extension and
-  `development` or `test` when a Jasper developer is running it from source.
-
 `common.vscodemachineid` is a pseudonymous identifier VS Code generates per
 installation. It is not tied to your name or email, but under GDPR it counts
 as an online identifier, which is why this notice exists.
@@ -43,10 +38,10 @@ is used in.
 ## What we do not collect
 
 File paths, file names, Smalltalk source code, method bodies, class names,
-query text, database contents, GemStone session or cache names, usernames,
-email addresses, environment variables, error messages, or exception text, or
-your IP address (see "Approximate location" above for what Azure derives from
-it before discarding it).
+query text, database contents, GemStone host, stone, session or cache names,
+usernames, email addresses, environment variables, error messages, or
+exception text, or your IP address (see "Approximate location" above for what
+Azure derives from it before discarding it).
 
 ## Why we collect it
 
@@ -88,5 +83,5 @@ delete the matching records.
 
 ## Changes
 
-Last updated: 2026-10-05. Changes to this notice will be published in this
+Last updated: 2026-10-06. Changes to this notice will be published in this
 repository.
