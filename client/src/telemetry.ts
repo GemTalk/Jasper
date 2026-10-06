@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
-import * as os from 'os';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { Stopwatch } from './stopwatch';
 import { normalizeGemStoneVersion } from './gemStoneVersionParsing';
 import { GemStoneLogin } from './loginTypes';
-import { getWslNetworkInfoCached } from './wslBridge';
+import { isThisMachine } from './thisMachine';
 
 /**
  * Jasper's telemetry: one named function per thing worth counting.
@@ -171,37 +170,6 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
     finished = true;
     reportActivation(stopwatch.elapsedMs());
   };
-}
-
-/**
- * Whether a login's host names this machine, for `serverLocation` only.
- * Deliberately broader than `isLocalHost` in databaseForLogin.ts, which gates
- * starting a stone and must stay narrow. No DNS lookup: it would put a network
- * round trip on the connect path. If the OS refuses to list interfaces, the
- * host is judged on its name alone rather than losing the event.
- *
- * A stone in WSL under NAT networking is reached at the WSL VM's IP, which is
- * on no Windows interface, so it is matched against the cached probe instead.
- * Only the cache is read, for the same no-round-trip reason; before the first
- * probe lands, such a login still counts as remote.
- */
-function isThisMachine(host: string): boolean {
-  const h = host
-    .trim()
-    .toLowerCase()
-    .replace(/^\[(.*)\]$/, '$1');
-  const hostname = os.hostname().toLowerCase();
-  const names = ['localhost', '127.0.0.1', '::1', '0.0.0.0', hostname, hostname.split('.')[0]];
-  if (names.includes(h) || h === getWslNetworkInfoCached()?.ip) {
-    return true;
-  }
-  try {
-    return Object.values(os.networkInterfaces()).some((addrs) =>
-      addrs?.some((a) => a.address.toLowerCase() === h),
-    );
-  } catch {
-    return false;
-  }
 }
 
 /** How a run of the connect command ended, named for what the user saw. */
