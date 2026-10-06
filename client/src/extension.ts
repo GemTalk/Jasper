@@ -40,7 +40,8 @@ import { refreshTonelAvailability } from './tonelAvailability';
 import {
   registerCopyTelemetryIdCommand,
   startActivationTelemetry,
-  startLoginAttemptTelemetry,
+  LoginOutcome,
+  reportingLoginAttempt,
 } from './telemetry';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
@@ -2219,8 +2220,7 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        const finishLoginAttempt = startLoginAttemptTelemetry(item.login);
-        try {
+        await reportingLoginAttempt(item.login, async (): Promise<LoginOutcome> => {
           const login = { ...item.login };
 
           // If the login is configured to use the OS keychain, fetch the password
@@ -2238,8 +2238,7 @@ export function activate(context: vscode.ExtensionContext) {
               password: true,
             });
             if (password === undefined) {
-              finishLoginAttempt('cancelled');
-              return;
+              return 'cancelled';
             }
             login.gs_password = password;
           }
@@ -2250,8 +2249,7 @@ export function activate(context: vscode.ExtensionContext) {
               password: true,
             });
             if (password === undefined) {
-              finishLoginAttempt('cancelled');
-              return;
+              return 'cancelled';
             }
             login.host_password = password;
           }
@@ -2276,8 +2274,7 @@ export function activate(context: vscode.ExtensionContext) {
                     `running as ${process.arch}. Install and run the x64 build of VS Code (it runs under ` +
                     `emulation on Windows on ARM) to use the bundled library.`,
                 );
-                finishLoginAttempt('noClientLibrary');
-                return;
+                return 'noClientLibrary';
               }
             }
           }
@@ -2311,8 +2308,7 @@ export function activate(context: vscode.ExtensionContext) {
               vscode.window.showErrorMessage(
                 'Cannot download a Windows client: the login has no GemStone version set. Edit the login to choose a version first.',
               );
-              finishLoginAttempt('noClientLibrary');
-              return;
+              return 'noClientLibrary';
             }
             const choice = await vscode.window.showInformationMessage(
               `Windows client library not found for GemStone ${login.version}. Download it?`,
@@ -2337,12 +2333,10 @@ export function activate(context: vscode.ExtensionContext) {
                 refreshVersions();
               } catch (e) {
                 showInstallOutcome(e, 'Windows client install failed');
-                finishLoginAttempt('noClientLibrary');
-                return;
+                return 'noClientLibrary';
               }
             } else if (choice !== 'Browse...') {
-              finishLoginAttempt('noClientLibrary');
-              return;
+              return 'noClientLibrary';
             }
           }
 
@@ -2364,8 +2358,7 @@ export function activate(context: vscode.ExtensionContext) {
               filters,
             });
             if (!result || result.length === 0) {
-              finishLoginAttempt('noClientLibrary');
-              return;
+              return 'noClientLibrary';
             }
             gciPath = result[0].fsPath;
 
@@ -2378,8 +2371,7 @@ export function activate(context: vscode.ExtensionContext) {
                 'No',
               );
               if (pick !== 'Yes') {
-                finishLoginAttempt('noClientLibrary');
-                return;
+                return 'noClientLibrary';
               }
             }
             await storage.setGciLibraryPath(login.version, gciPath);
@@ -2477,8 +2469,7 @@ export function activate(context: vscode.ExtensionContext) {
             failureMessage = `Login failed: ${msg}`;
             vscode.window.showErrorMessage(failureMessage);
             showLoginError(failureMessage);
-            finishLoginAttempt('failed');
-            return;
+            return 'failed';
           } finally {
             treeProvider.setConnecting(item.login, false);
             // The connect-status item is not cleared here: the outcome code below
@@ -2490,10 +2481,8 @@ export function activate(context: vscode.ExtensionContext) {
           // in the status bar so the reason survives after the toast dismisses.
           if (!session) {
             showLoginError(failureMessage ?? 'Login failed');
-            finishLoginAttempt('failed');
-            return;
+            return 'failed';
           }
-          finishLoginAttempt('connected');
 
           refreshEnhancedInspectorAvailable(session);
           refreshRefactoringSupportAvailable(session);
@@ -2522,11 +2511,8 @@ export function activate(context: vscode.ExtensionContext) {
           // shows one Install/Always/Never modal, `never` does nothing.
           // Fire-and-forget; no-ops when the stone already has everything applicable.
           void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
-        } finally {
-          // Catches any exit not marked above, including a throw; a no-op
-          // after one that was, since only the first outcome is sent.
-          finishLoginAttempt('failed');
-        }
+          return 'connected';
+        });
       }),
     ),
 

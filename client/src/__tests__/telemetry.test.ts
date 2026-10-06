@@ -10,8 +10,8 @@ import {
   registerCopyTelemetryIdCommand,
   reportActivation,
   reportLoginAttempt,
+  reportingLoginAttempt,
   startActivationTelemetry,
-  startLoginAttemptTelemetry,
 } from '../telemetry';
 
 function fakeContext(mode: number = ExtensionMode.Production): vscode.ExtensionContext {
@@ -187,28 +187,48 @@ describe('telemetry', () => {
       ]);
     });
 
-    it('sends one event, with the first outcome, if the attempt finishes twice', () => {
+    it('sends the outcome the attempt returns', async () => {
       initTelemetry(fakeContext());
-      const finish = startLoginAttemptTelemetry(login);
 
-      finish('cancelled');
-      finish('failed');
+      await reportingLoginAttempt(login, () => Promise.resolve('cancelled'));
 
       const events = eventsNamed('loginAttempted');
       expect(events).toHaveLength(1);
       expect(events[0].properties).toMatchObject({ outcome: 'cancelled' });
     });
 
-    it("still lets the attempt finish when the event can't be sent", () => {
+    it('sends failed and rethrows when the attempt throws', async () => {
+      initTelemetry(fakeContext());
+      const error = new Error('login exploded');
+
+      await expect(reportingLoginAttempt(login, () => Promise.reject(error))).rejects.toBe(error);
+
+      const events = eventsNamed('loginAttempted');
+      expect(events).toHaveLength(1);
+      expect(events[0].properties).toMatchObject({ outcome: 'failed' });
+    });
+
+    it("keeps the attempt's own error when the event can't be sent", async () => {
+      initTelemetry(fakeContext());
+      vi.spyOn(TelemetryReporter.prototype, 'sendTelemetryEvent').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+      vi.spyOn(console, 'error').mockImplementationOnce(() => {});
+      const error = new Error('login exploded');
+
+      await expect(reportingLoginAttempt(login, () => Promise.reject(error))).rejects.toBe(error);
+    });
+
+    it("finishes the attempt when the event can't be sent", async () => {
       initTelemetry(fakeContext());
       vi.spyOn(TelemetryReporter.prototype, 'sendTelemetryEvent').mockImplementationOnce(() => {
         throw new Error('boom');
       });
       vi.spyOn(console, 'error').mockImplementationOnce(() => {});
 
-      const finish = startLoginAttemptTelemetry(login);
-
-      expect(() => finish('failed')).not.toThrow();
+      await expect(
+        reportingLoginAttempt(login, () => Promise.resolve('connected')),
+      ).resolves.toBeUndefined();
     });
   });
 

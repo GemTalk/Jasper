@@ -219,24 +219,22 @@ export function reportLoginAttempt(
 }
 
 /**
- * Returns a `finish(outcome)` callback for one run of the connect command.
- *
- * Like `startActivationTelemetry`'s, `finish` is idempotent so the handler
- * can call it with the specific outcome at each exit and again with `failed`
- * from a `finally`; the first call wins. It never throws: in that `finally`,
- * a throw would replace the login's own error.
+ * Runs one connect attempt and reports how it ended: the outcome `attempt`
+ * returns, or `failed` if it throws (the error still propagates). Sending
+ * never throws: in the `finally`, a throw would replace the login's own error.
  */
-export function startLoginAttemptTelemetry(
+export async function reportingLoginAttempt(
   login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
-): (outcome: LoginOutcome) => void {
-  let finished = false;
-  return function finish(outcome: LoginOutcome): void {
-    if (finished) return;
-    finished = true;
+  attempt: () => Promise<LoginOutcome>,
+): Promise<void> {
+  let outcome: LoginOutcome = 'failed';
+  try {
+    outcome = await attempt();
+  } finally {
     try {
       reportLoginAttempt(login, outcome);
     } catch (err) {
       console.error('Jasper telemetry failed to send the loginAttempted event.', err);
     }
-  };
+  }
 }
