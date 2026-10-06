@@ -116,6 +116,8 @@ describe('telemetry', () => {
     it.each([
       ['3.7.2', '3.7.2'],
       ['3.7', '3.7.0'],
+      ['3.7.1.4', '3.7.1.4'],
+      [' 3.7.2 ', '3.7.2'],
       ['', 'unknown'],
       ['latest', 'unknown'],
     ])('records the configured GemStone version as digits only (%j → %s)', (version, expected) => {

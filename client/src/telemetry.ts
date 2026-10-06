@@ -212,7 +212,7 @@ export function reportLoginAttempt(
   outcome: LoginOutcome,
 ): void {
   send(EVENT.loginAttempted, {
-    gemstoneVersion: normalizeGemStoneVersion(login.version) ?? 'unknown',
+    gemstoneVersion: normalizeGemStoneVersion(login.version?.trim()) ?? 'unknown',
     outcome,
     serverLocation: isThisMachine(login.gem_host) ? 'local' : 'remote',
   });
