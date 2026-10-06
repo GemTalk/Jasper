@@ -4,6 +4,7 @@ import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { Stopwatch } from './stopwatch';
 import { normalizeGemStoneVersion } from './gemStoneVersionParsing';
 import { GemStoneLogin } from './loginTypes';
+import { getWslNetworkInfoCached } from './wslBridge';
 
 /**
  * Jasper's telemetry: one named function per thing worth counting.
@@ -176,6 +177,11 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
  * starting a stone and must stay narrow. No DNS lookup: it would put a network
  * round trip on the connect path. If the OS refuses to list interfaces, the
  * host is judged on its name alone rather than losing the event.
+ *
+ * A stone in WSL under NAT networking is reached at the WSL VM's IP, which is
+ * on no Windows interface, so it is matched against the cached probe instead.
+ * Only the cache is read, for the same no-round-trip reason; before the first
+ * probe lands, such a login still counts as remote.
  */
 function isThisMachine(host: string): boolean {
   const h = host
@@ -183,7 +189,8 @@ function isThisMachine(host: string): boolean {
     .toLowerCase()
     .replace(/^\[(.*)\]$/, '$1');
   const hostname = os.hostname().toLowerCase();
-  if (['localhost', '127.0.0.1', '::1', '0.0.0.0', hostname, hostname.split('.')[0]].includes(h)) {
+  const names = ['localhost', '127.0.0.1', '::1', '0.0.0.0', hostname, hostname.split('.')[0]];
+  if (names.includes(h) || h === getWslNetworkInfoCached()?.ip) {
     return true;
   }
   try {

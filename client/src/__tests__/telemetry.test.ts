@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('../wslBridge', () => ({ getWslNetworkInfoCached: vi.fn(() => undefined) }));
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
+import { getWslNetworkInfoCached, WslNetworkInfo } from '../wslBridge';
 import {
   initTelemetry,
   LoginOutcome,
@@ -162,6 +164,33 @@ describe('telemetry', () => {
 
       expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
         serverLocation: 'local',
+      });
+    });
+
+    describe('with a stone in WSL under NAT networking', () => {
+      const wslIp = '172.20.1.5';
+
+      it("counts the WSL VM's address as local", () => {
+        vi.mocked(getWslNetworkInfoCached).mockReturnValueOnce({
+          ip: wslIp,
+        } as WslNetworkInfo);
+        initTelemetry(fakeContext());
+
+        reportLoginAttempt({ ...login, gem_host: wslIp }, 'connected');
+
+        expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+          serverLocation: 'local',
+        });
+      });
+
+      it('counts it as remote when no WSL probe has run yet', () => {
+        initTelemetry(fakeContext());
+
+        reportLoginAttempt({ ...login, gem_host: wslIp }, 'connected');
+
+        expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+          serverLocation: 'remote',
+        });
       });
     });
 
