@@ -6,6 +6,7 @@ import * as os from 'os';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
 import { getWslNetworkInfoCached, WslNetworkInfo } from '../wslBridge';
+import { GemStoneLogin } from '../loginTypes';
 import {
   initTelemetry,
   LoginOutcome,
@@ -150,6 +151,16 @@ describe('telemetry', () => {
 
       expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
         serverLocation: expected,
+      });
+    });
+
+    it('counts a login with no host as remote', () => {
+      initTelemetry(fakeContext());
+
+      reportLoginAttempt({ version: '3.7.2' } as GemStoneLogin, 'connected');
+
+      expect(eventsNamed('loginAttempted')[0].properties).toMatchObject({
+        serverLocation: 'remote',
       });
     });
 
