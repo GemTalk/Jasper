@@ -209,7 +209,7 @@ export type LoginOutcome = 'connected' | 'failed' | 'cancelled' | 'noClientLibra
 
 /**
  * The user ran the connect command for a login — once per run that gets past
- * the open-folder check, whatever the outcome.
+ * the duplicate-click guard and the open-folder check, whatever the outcome.
  *
  * `gemstoneVersion` and `serverLocation` are worked out here rather than
  * passed in, so a caller cannot hand over free text from the login's

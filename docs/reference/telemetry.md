@@ -29,9 +29,11 @@ activation completes; an activation that fails sends nothing.
 
 ### `loginAttempted`
 
-The user connected to GemStone from a login in **Logins & Sessions**. Sent
-once per attempt, however it ends. Nothing is sent if no folder is open,
-because Jasper refuses to connect before asking for anything.
+The user connected to GemStone from a login, in **Logins & Sessions** or the
+**Databases & Versions** panel. Sent once per attempt, however it ends.
+Nothing is sent if no folder is open, because Jasper refuses to connect before
+asking for anything, or for a repeat click on a login that is already
+connecting (or finished under a second ago), which Jasper ignores.
 
 | Property          | Values                                                | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
