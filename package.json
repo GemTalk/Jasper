@@ -26,7 +26,7 @@
     },
     "runtime": {
       "name": "node",
-      "version": ">=22.15.1",
+      "version": "^22.15.1 || ^24.19.0",
       "onFail": "error"
     }
   },
@@ -3698,12 +3698,13 @@
     "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
-    "jsdom": "^30.1.1",
+    "jsdom": "^29.1.1",
     "lefthook": "^2.1.14",
     "lockfile-lint": "^5.0.1",
     "ovsx": "^1.2.0",
     "playwright-bdd": "^9.2.1",
     "prettier": "^3.9.9",
+    "semver": "^7.8.5",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.70.1",
