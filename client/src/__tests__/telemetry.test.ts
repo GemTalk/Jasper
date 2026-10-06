@@ -61,7 +61,7 @@ describe('telemetry', () => {
     [ExtensionMode.Production, 'production'],
     [ExtensionMode.Development, 'development'],
     [ExtensionMode.Test, 'test'],
-  ])('reports the launch mode by name (%d → %s)', (mode, expected) => {
+  ])('reports the launch mode by name', (mode, expected) => {
     initTelemetry(fakeContext(mode));
 
     reportActivation(0);
@@ -103,7 +103,7 @@ describe('telemetry', () => {
     const login = { version: '3.7.2', gem_host: 'localhost' };
 
     it.each<LoginOutcome>(['connected', 'failed', 'cancelled', 'noClientLibrary'])(
-      'records how the attempt ended (%s)',
+      'records how the attempt ended',
       (outcome) => {
         initTelemetry(fakeContext());
 
@@ -120,7 +120,7 @@ describe('telemetry', () => {
       [' 3.7.2 ', '3.7.2'],
       ['', 'unknown'],
       ['latest', 'unknown'],
-    ])('records the configured GemStone version as digits only (%j → %s)', (version, expected) => {
+    ])('records the configured GemStone version as digits only', (version, expected) => {
       initTelemetry(fakeContext());
 
       reportLoginAttempt({ ...login, version }, 'connected');
@@ -141,7 +141,7 @@ describe('telemetry', () => {
       [os.hostname(), 'local'],
       ['db.example.com', 'remote'],
       ['127.0.0.2', 'remote'],
-    ])('says whether the server is on this machine (%s → %s)', (gem_host, expected) => {
+    ])('says whether the server is on this machine', (gem_host, expected) => {
       initTelemetry(fakeContext());
 
       reportLoginAttempt({ ...login, gem_host }, 'connected');
