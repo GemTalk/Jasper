@@ -2350,6 +2350,9 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
+        // Run after the event is sent, so a throw in the UI wiring can't count
+        // an attempt whose session is already open as failed.
+        let afterReported: (() => void) | undefined;
         await reportingLoginAttempt(item.login, () =>
           attemptLogin(item.login, {
             keychainPassword: (login) => getLoginPassword(context.secrets, login),
@@ -2362,9 +2365,12 @@ export function activate(context: vscode.ExtensionContext) {
               versionManager.downloadAndExtractWindowsClient(version, progress, token),
             refreshVersions: () => refreshVersions(),
             connect: (login, gciPath) => connectWithFeedback(item.login, login, gciPath),
-            connected: (login, session) => afterConnected(login, session),
+            connected: (login, session) => {
+              afterReported = () => afterConnected(login, session);
+            },
           }),
         );
+        afterReported?.();
       }),
     ),
 
