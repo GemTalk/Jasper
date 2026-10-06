@@ -117,13 +117,19 @@ export function registerCopyTelemetryIdCommand(context: vscode.ExtensionContext)
  * when it is not, it merges them into the top level of `data` instead, where
  * `@vscode/extension-telemetry`'s App Insights client — which reads only
  * `data.properties` — silently drops every one of them.
+ *
+ * Never throws: an analytics failure must not break the feature that reported it.
  */
 function send(
   name: EventName,
   properties?: Record<string, string>,
   measures?: Record<string, number>,
 ): void {
-  reporter?.sendTelemetryEvent(name, { ...baseProperties, ...properties }, measures);
+  try {
+    reporter?.sendTelemetryEvent(name, { ...baseProperties, ...properties }, measures);
+  } catch (err) {
+    console.error(`Jasper telemetry failed to send the ${name} event.`, err);
+  }
 }
 
 /**
@@ -163,11 +169,7 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
   return function finish(): void {
     if (finished) return;
     finished = true;
-    try {
-      reportActivation(stopwatch.elapsedMs());
-    } catch (err) {
-      console.error('Jasper telemetry failed to send the activated event.', err);
-    }
+    reportActivation(stopwatch.elapsedMs());
   };
 }
 
@@ -227,8 +229,10 @@ export function reportLoginAttempt(
 
 /**
  * Runs one connect attempt and reports how it ended: the outcome `attempt`
- * returns, or `failed` if it throws (the error still propagates). Sending
- * never throws: in the `finally`, a throw would replace the login's own error.
+ * returns, or `failed` if it throws (the error still propagates). `send`
+ * already swallows its own failures; this guard is for working out the
+ * properties from the login's unvalidated settings, since a throw in the
+ * `finally` would replace the login's own error.
  */
 export async function reportingLoginAttempt(
   login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
@@ -241,7 +245,7 @@ export async function reportingLoginAttempt(
     try {
       reportLoginAttempt(login, outcome);
     } catch (err) {
-      console.error('Jasper telemetry failed to send the loginAttempted event.', err);
+      console.error('Jasper telemetry failed to report the loginAttempted event.', err);
     }
   }
 }
