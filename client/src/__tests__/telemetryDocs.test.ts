@@ -3,7 +3,7 @@ import * as path from 'path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { __telemetry, ExtensionMode } from '../__mocks__/vscode';
-import { EVENT, initTelemetry, reportActivation } from '../telemetry';
+import { EVENT, initTelemetry, reportActivation, reportLoginAttempt } from '../telemetry';
 
 // docs/reference/telemetry.md is how people who read the data learn what an
 // event means, so it has to keep up with telemetry.ts. This catches an
@@ -24,6 +24,7 @@ beforeAll(() => {
   initTelemetry({ extensionMode: ExtensionMode.Production, subscriptions: [] } as never);
 
   reportActivation(1);
+  reportLoginAttempt({ version: '3.7.2', gem_host: 'localhost' }, 'connected');
 
   for (const event of __telemetry) {
     for (const name of Object.keys(event.properties)) {

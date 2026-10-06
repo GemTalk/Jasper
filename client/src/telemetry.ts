@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
 import { Stopwatch } from './stopwatch';
+import { normalizeGemStoneVersion } from './gemStoneVersionParsing';
+import { GemStoneLogin } from './loginTypes';
+import { isThisMachine } from './thisMachine';
 
 /**
  * Jasper's telemetry: one named function per thing worth counting.
@@ -38,6 +41,7 @@ const CONNECTION_STRING =
  */
 export const EVENT = {
   activated: 'activated',
+  loginAttempted: 'loginAttempted',
 } as const;
 export type EventName = (typeof EVENT)[keyof typeof EVENT];
 
@@ -112,13 +116,19 @@ export function registerCopyTelemetryIdCommand(context: vscode.ExtensionContext)
  * when it is not, it merges them into the top level of `data` instead, where
  * `@vscode/extension-telemetry`'s App Insights client — which reads only
  * `data.properties` — silently drops every one of them.
+ *
+ * Never throws: an analytics failure must not break the feature that reported it.
  */
 function send(
   name: EventName,
   properties?: Record<string, string>,
   measures?: Record<string, number>,
 ): void {
-  reporter?.sendTelemetryEvent(name, { ...baseProperties, ...properties }, measures);
+  try {
+    reporter?.sendTelemetryEvent(name, { ...baseProperties, ...properties }, measures);
+  } catch (err) {
+    console.error(`Jasper telemetry failed to send the ${name} event.`, err);
+  }
 }
 
 /**
@@ -158,10 +168,52 @@ export function startActivationTelemetry(context: vscode.ExtensionContext): () =
   return function finish(): void {
     if (finished) return;
     finished = true;
-    try {
-      reportActivation(stopwatch.elapsedMs());
-    } catch (err) {
-      console.error('Jasper telemetry failed to send the activated event.', err);
-    }
+    reportActivation(stopwatch.elapsedMs());
   };
+}
+
+/** How a run of the connect command ended, named for what the user saw. */
+export type LoginOutcome = 'connected' | 'failed' | 'cancelled' | 'noClientLibrary';
+
+/**
+ * The user ran the connect command for a login — once per run that gets past
+ * the duplicate-click guard and the open-folder check, whatever the outcome.
+ *
+ * `gemstoneVersion` and `serverLocation` are worked out here rather than
+ * passed in, so a caller cannot hand over free text from the login's
+ * settings: the version is reduced to its digits (or `unknown`) and the host
+ * to `local`/`remote`.
+ */
+export function reportLoginAttempt(
+  login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
+  outcome: LoginOutcome,
+): void {
+  send(EVENT.loginAttempted, {
+    gemstoneVersion: normalizeGemStoneVersion(login.version?.trim()) ?? 'unknown',
+    outcome,
+    serverLocation: isThisMachine(login.gem_host ?? '') ? 'local' : 'remote',
+  });
+}
+
+/**
+ * Runs one connect attempt and reports how it ended: the outcome `attempt`
+ * returns, or `failed` if it throws (the error still propagates). `send`
+ * already swallows its own failures; this guard is for working out the
+ * properties from the login's unvalidated settings, since a throw in the
+ * `finally` would replace the login's own error.
+ */
+export async function reportingLoginAttempt(
+  login: Pick<GemStoneLogin, 'version' | 'gem_host'>,
+  attempt: () => Promise<LoginOutcome>,
+): Promise<void> {
+  let outcome: LoginOutcome = 'failed';
+  try {
+    outcome = await attempt();
+  } finally {
+    try {
+      reportLoginAttempt(login, outcome);
+    } catch (err) {
+      console.error('Jasper telemetry failed to report the loginAttempted event.', err);
+    }
+  }
 }

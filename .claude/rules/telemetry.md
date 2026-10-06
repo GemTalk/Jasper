@@ -13,7 +13,8 @@ Two documents describe `client/src/telemetry.ts` to people who never read it:
   what each property and measure means. Written for a product owner reading
   the data.
 - `USAGE_DATA.md` — the privacy notice users see. It names categories, not
-  events.
+  events or properties; per-event detail lives in
+  `docs/reference/telemetry.md`.
 
 A change to any event, property or measure updates `docs/reference/telemetry.md`
 in the same commit. `client/src/__tests__/telemetryDocs.test.ts` catches a
