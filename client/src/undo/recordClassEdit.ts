@@ -32,7 +32,7 @@ export interface ClassEditRecording {
   readonly before: ClassSlotState[];
   /** Record the edit, reading back what it left. Answers the stored entry, or `undefined`
    *  when nothing was recorded, so the caller can offer Revert on its own notice. */
-  commit(label: string): UndoEntry | undefined;
+  commit(label: string): Promise<UndoEntry | undefined>;
 }
 
 function same(a: ClassSlotState, b: ClassSlotState): boolean {
@@ -47,10 +47,10 @@ function same(a: ClassSlotState, b: ClassSlotState): boolean {
  * Answers `undefined` when the capture fails — the edit then proceeds exactly as it did
  * before undo existed, and there is simply nothing to revert.
  */
-export function beginClassEdit(
+export async function beginClassEdit(
   session: ActiveSession,
   slots: ClassSlot[],
-): ClassEditRecording | undefined {
+): Promise<ClassEditRecording | undefined> {
   if (slots.length === 0) return undefined;
   const stashKeys = slots.map(() => newStashKey(session.id));
 
@@ -60,7 +60,7 @@ export function beginClassEdit(
   let before: ClassSlotState[];
   try {
     execute = defaultQueryExecutorUsing(session);
-    before = captureClassSlots(execute, slots, stashKeys);
+    before = await captureClassSlots(execute, slots, stashKeys);
   } catch (e: unknown) {
     logInfo(`[undo] class capture failed, edit will not be revertible: ${describe(e)}`);
     return undefined;
@@ -73,12 +73,12 @@ export function beginClassEdit(
   // The capture has already pinned a version per bound slot. Nothing on the stack will ever
   // name those keys if this recording is declined, so the decline releases them itself —
   // `releaseStash.ts` only sees keys that made it onto an entry.
-  const abandon = (): undefined => {
+  const abandon = async (): Promise<undefined> => {
     const pinned = stashKeys.filter((_key, i) => before[i].bound);
     forgetStashKeys(session.id, stashKeys);
     if (pinned.length === 0) return undefined;
     try {
-      releaseStashKeys(execute, pinned);
+      await releaseStashKeys(execute, pinned);
     } catch (e: unknown) {
       logInfo(`[undo] could not release the abandoned class stash: ${describe(e)}`);
     }
@@ -87,19 +87,19 @@ export function beginClassEdit(
 
   return {
     before,
-    commit(label: string): UndoEntry | undefined {
+    async commit(label: string): Promise<UndoEntry | undefined> {
       let after: ClassSlotState[];
       try {
         // No stash keys: this reads the live state, and pinning the version the edit just
         // produced would hold a class nothing else needs.
-        after = captureClassSlots(execute, slots);
+        after = await captureClassSlots(execute, slots);
       } catch (e: unknown) {
         logInfo(`[undo] not recording "${label}": could not read the result (${describe(e)})`);
-        return abandon();
+        return await abandon();
       }
       if (after.length === slots.length && after.every((s, i) => same(s, before[i]))) {
         logInfo(`[undo] not recording "${label}": the edit changed nothing`);
-        return abandon();
+        return await abandon();
       }
       const entry = pushUndoEntry({
         kind: 'classEdit',
@@ -123,11 +123,11 @@ export function beginClassEdit(
  * so this takes a list and records it as ONE entry — putting back half a subtree is not a
  * reversal of anything the user asked for.
  */
-export function beginClassDeletion(
+export async function beginClassDeletion(
   session: ActiveSession,
   slots: ClassSlot[],
-): { commit(): UndoEntry | undefined } | undefined {
-  const recording = beginClassEdit(session, slots);
+): Promise<{ commit(): Promise<UndoEntry | undefined> } | undefined> {
+  const recording = await beginClassEdit(session, slots);
   if (!recording) return undefined;
   if (!recording.before.some((s) => s.bound)) return undefined;
   const label =

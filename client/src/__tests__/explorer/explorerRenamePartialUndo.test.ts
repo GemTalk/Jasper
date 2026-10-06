@@ -54,7 +54,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks clears calls, not implementations, so a test that makes the stone decline
   // would otherwise leak that into the next one.
-  vi.mocked(queries.recordReverseRename).mockReturnValue('ok');
+  vi.mocked(queries.recordReverseRename).mockResolvedValue('ok');
   // reportRenameFailures chains off showErrorMessage, so it has to answer a promise
   vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(undefined);
   vi.mocked(showRenameClassEditor).mockResolvedValue({
@@ -190,11 +190,11 @@ describe('the shadowing-rename warning names which class the new name will mean'
     vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
     // The stone answers holders with their symbol-list POSITION, having already dropped the
     // renamed class's own dictionary by identity.
-    vi.mocked(queries.dictionariesShadowedByRename).mockReturnValue(
+    vi.mocked(queries.dictionariesShadowedByRename).mockResolvedValue(
       elsewhere.map((name) => ({ position: order.indexOf(name) + 1, name })),
     );
     // where the class being renamed actually lives — the rename files it back into this one
-    vi.mocked(queries.classDefiningDictionaryName).mockReturnValue(destination);
+    vi.mocked(queries.classDefiningDictionaryName).mockResolvedValue(destination);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
     await makeController().renameClassNamed('ShadowedAAAAA', destination);
     const call = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
@@ -223,8 +223,8 @@ describe('the shadowing-rename warning names which class the new name will mean'
     // out along with the destination itself. The stone drops the one dictionary by identity, so
     // the twin survives and is warned about (#396).
     vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
-    vi.mocked(queries.classDefiningDictionaryName).mockReturnValue('ZzTwin');
-    vi.mocked(queries.dictionariesShadowedByRename).mockReturnValue([
+    vi.mocked(queries.classDefiningDictionaryName).mockResolvedValue('ZzTwin');
+    vi.mocked(queries.dictionariesShadowedByRename).mockResolvedValue([
       { position: 1, name: 'ZzTwin' },
     ]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
@@ -237,7 +237,7 @@ describe('the shadowing-rename warning names which class the new name will mean'
 
   it('asks the stone to exclude the renamed class’s own dictionary, not the client', async () => {
     vi.mocked(queries.applyRenameClass).mockReturnValue(applied([]) as never);
-    vi.mocked(queries.classDefiningDictionaryName).mockReturnValue('DictionaryA');
+    vi.mocked(queries.classDefiningDictionaryName).mockResolvedValue('DictionaryA');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename anyway' as never);
 
     await makeController().renameClassNamed('ShadowedAAAAA', 'DictionaryA');
@@ -262,7 +262,7 @@ describe('arming the Undo button follows what the stone actually recorded', () =
     vi.mocked(queries.applyRenameClass).mockReturnValue(
       applied([{ id: '1', label: 'Sub>>#m', error: 'nope' }]) as never,
     );
-    vi.mocked(queries.recordReverseRename).mockReturnValue('unsupported');
+    vi.mocked(queries.recordReverseRename).mockResolvedValue('unsupported');
 
     await makeController().renameClassNamed('ShadowedAAAAA', 5);
 
@@ -273,7 +273,7 @@ describe('arming the Undo button follows what the stone actually recorded', () =
     vi.mocked(queries.applyRenameClass).mockReturnValue(
       applied([{ id: '1', label: 'Sub>>#m', error: 'nope' }]) as never,
     );
-    vi.mocked(queries.recordReverseRename).mockImplementation(() => {
+    vi.mocked(queries.recordReverseRename).mockImplementation(async () => {
       throw new Error('no session');
     });
 
@@ -298,7 +298,7 @@ describe('arming the Undo button follows what the stone actually recorded', () =
     vi.mocked(queries.applyRenameClass).mockReturnValue(
       applied([{ id: '1', label: 'Sub>>#m', error: 'nope' }]) as never,
     );
-    vi.mocked(queries.recordReverseRename).mockReturnValue('unsupported');
+    vi.mocked(queries.recordReverseRename).mockResolvedValue('unsupported');
 
     await makeController().renameClassNamed('ShadowedAAAAA', 5);
 

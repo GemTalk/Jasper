@@ -13,7 +13,9 @@ export interface ClassCategoryNameEntry {
  * a whole-image scan, so the Categories omni provider loads it lazily (only when the user scopes to
  * Categories), never on every picker open.
  */
-export function getAllClassCategories(execute: QueryExecutor): ClassCategoryNameEntry[] {
+export async function getAllClassCategories(
+  execute: QueryExecutor,
+): Promise<ClassCategoryNameEntry[]> {
   const code = `| ws sl seen |
 ws := WriteStream on: Unicode7 new.
 seen := Set new.
@@ -32,7 +34,7 @@ sl := System myUserProfile symbolList.
         ws nextPutAll: idx printString; tab; nextPutAll: dict name; tab; nextPutAll: cat asString; lf]]]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: ClassCategoryNameEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

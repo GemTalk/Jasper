@@ -36,7 +36,7 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
       // Captured as a const: TypeScript drops the null-narrowing inside the sweep callback.
       const sel = selector;
       // `gemstone.maxEnvironment` is a ceiling — see sweepEnvironments, which carries the rule.
-      const all = sweepEnvironments((env) => queries.implementorsOf(session, sel, env));
+      const all = await sweepEnvironments((env) => queries.implementorsOf(session, sel, env));
       // Spread the row in: it carries the environment it was found in, and without that an
       // implementor above environment 0 opens the environment-0 method of the same name.
       return dedupeMethodResults(all).map(
@@ -56,7 +56,9 @@ export class GemStoneDefinitionProvider implements vscode.DefinitionProvider {
       return [];
     }
 
-    const classEntries = queries.getAllClassNames(session).filter((e) => e.className === word);
+    const classEntries = (await queries.getAllClassNames(session)).filter(
+      (e) => e.className === word,
+    );
     return classEntries.map((e) => {
       const uri = vscode.Uri.parse(
         `gemstone://${session.id}` +

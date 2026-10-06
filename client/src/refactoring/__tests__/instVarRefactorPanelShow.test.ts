@@ -95,8 +95,8 @@ function handlers() {
       dropped: [],
       committed: false,
     })),
-    abort: vi.fn(),
-    sessionNeedsCommit: undefined as undefined | (() => boolean | undefined),
+    abort: vi.fn(async () => {}),
+    sessionNeedsCommit: undefined as undefined | (() => Promise<boolean | undefined>),
     cleanup: vi.fn(),
   };
 }
@@ -204,7 +204,7 @@ describe('showInstVarRefactorPanel', () => {
   it('warns from a LIVE re-probe, not the stale preview snapshot, at commit time', async () => {
     (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
     const h = handlers();
-    h.sessionNeedsCommit = vi.fn(() => true); // session picked up other work since the preview
+    h.sessionNeedsCommit = vi.fn(async () => true); // session picked up other work since the preview
 
     void showInstVarRefactorPanel('Add tally to Foo', start, h); // start snapshot is clean
     lastPanel().__emit({
@@ -440,6 +440,7 @@ describe('showInstVarRefactorPanel', () => {
     panel.__emit(applyMsg);
     await new Promise((r) => setTimeout(r, 0));
     panel.__emit({ command: 'abort' });
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(h.abort).toHaveBeenCalledOnce();
     expect(panel.webview.postMessage).toHaveBeenCalledWith(

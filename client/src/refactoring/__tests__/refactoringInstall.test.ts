@@ -103,7 +103,7 @@ describe('supportsServerUtf8FileIn', () => {
 describe('installRefactoringSupport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    executeFetchStringMock.mockImplementation(happyPath);
+    executeFetchStringMock.mockImplementation(async (s, code) => happyPath(s, code));
     // Tests configure behaviour on the synchronous mock; route the non-blocking
     // one through it so one responder covers both.
     // Call the synchronous mock's IMPLEMENTATION rather than the mock itself, so
@@ -115,8 +115,8 @@ describe('installRefactoringSupport', () => {
       const respond = executeFetchStringMock.getMockImplementation() as (
         s: unknown,
         code: string,
-      ) => string;
-      return Promise.resolve(respond(s, code));
+      ) => Promise<string>;
+      return respond(s, code);
     });
   });
 
@@ -133,7 +133,7 @@ describe('installRefactoringSupport', () => {
   it('files in the loader before driving it', async () => {
     const { session } = createMockSession();
     const order: string[] = [];
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('GsFileIn')) order.push('file-in');
       if (code.includes('loadFromServerDir')) order.push('run');
       return happyPath(s, code);
@@ -191,7 +191,7 @@ describe('installRefactoringSupport', () => {
 
   it('fails clearly without running the loader when the gem cannot read the payload', async () => {
     const { session } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('existsOnServer')) return 'false';
       return happyPath(s, code);
     });
@@ -223,7 +223,7 @@ describe('installRefactoringSupport', () => {
 
   it('rolls back and reports failure when the loader file-in raises', async () => {
     const { session, abort } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('GsFileIn')) throw new Error('compile failed');
       return happyPath(s, code);
     });
@@ -237,7 +237,7 @@ describe('installRefactoringSupport', () => {
 
   it('rolls back and reports failure when the loader cannot even run', async () => {
     const { session, abort } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('loadFromServerDir')) throw new Error('session dropped');
       return happyPath(s, code);
     });
@@ -253,7 +253,7 @@ describe('installRefactoringSupport', () => {
     const failReport =
       '[GsRefactoring]   [FAIL] Classes present -- missing: RBParser\n' +
       '[GsRefactoring] INCOMPLETE -- one or more checks failed (see above).\n';
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('loadFromServerDir')) return `FAIL\n${failReport}`;
       return happyPath(s, code);
     });
@@ -280,7 +280,7 @@ describe('installRefactoringSupport', () => {
   it('checks that the gem can read every payload file, not just the loader', async () => {
     const { session } = createMockSession();
     const checked: string[] = [];
-    executeFetchStringMock.mockImplementation((s, code: string) => {
+    executeFetchStringMock.mockImplementation(async (s, code: string) => {
       if (code.includes('existsOnServer')) {
         const f = REFACTORING_PAYLOAD_FILES.find((name) => code.includes(name));
         if (f) checked.push(f);
@@ -297,18 +297,18 @@ describe('installRefactoringSupport', () => {
 describe('isRefactoringSupportInstalled', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('delegates to the refactoring-support probe', () => {
+  it('delegates to the refactoring-support probe', async () => {
     const { session } = createMockSession();
-    checkAvailableMock.mockReturnValue(true);
+    checkAvailableMock.mockResolvedValue(true);
 
-    expect(isRefactoringSupportInstalled(session)).toBe(true);
+    expect(await isRefactoringSupportInstalled(session)).toBe(true);
     expect(checkAvailableMock).toHaveBeenCalledWith(session);
   });
 
-  it('is false when the probe reports the engine is absent', () => {
+  it('is false when the probe reports the engine is absent', async () => {
     const { session } = createMockSession();
-    checkAvailableMock.mockReturnValue(false);
+    checkAvailableMock.mockResolvedValue(false);
 
-    expect(isRefactoringSupportInstalled(session)).toBe(false);
+    expect(await isRefactoringSupportInstalled(session)).toBe(false);
   });
 });

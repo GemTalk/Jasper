@@ -44,7 +44,7 @@ export async function resyncEditorsAfterAbort(session: ActiveSession): Promise<v
     // session is in no state to answer. Closing nothing is the safe way to be
     // wrong: the reload below still runs, and a stale tab beats a tab closed over
     // a method that is really still there.
-    const states = readMethodSlotState(session, open);
+    const states = await readMethodSlotState(session, open);
     if (states) {
       const gone = open.filter((_, i) => !states[i].exists);
       if (gone.length > 0) {

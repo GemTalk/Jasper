@@ -93,13 +93,13 @@ const showInformationMessage = vi.mocked(window.showInformationMessage);
 const showErrorMessage = vi.mocked(window.showErrorMessage);
 
 /** Every selector has a sender somewhere, so the removal has to ask. */
-const everythingIsSent = () => sendersOf.mockReturnValue([sender()]);
+const everythingIsSent = () => sendersOf.mockResolvedValue([sender()]);
 
 /** The capture answers a real method for every slot it is asked about. */
 const everySlotHoldsAMethod = () =>
   vi
     .mocked(captureMethodSlots)
-    .mockImplementation((_exec: unknown, slots: MethodSlot[]) =>
+    .mockImplementation(async (_exec: unknown, slots: MethodSlot[]) =>
       slots.map((sl) => ({ exists: true, source: `${sl.selector}\n\t^1`, category: 'accessing' })),
     );
 
@@ -123,11 +123,11 @@ beforeEach(() => {
   __resetConfig();
   resetUndoStacks();
   window.tabGroups.all = [];
-  canClassBeWritten.mockReturnValue(true);
-  deleteMethod.mockReturnValue('Deleted: Array >> at:');
-  sendersOf.mockReturnValue([]);
-  hierarchyImplementorsOf.mockReturnValue([]);
-  getClassEnvironments.mockReturnValue([]);
+  canClassBeWritten.mockResolvedValue(true);
+  deleteMethod.mockResolvedValue('Deleted: Array >> at:');
+  sendersOf.mockResolvedValue([]);
+  hierarchyImplementorsOf.mockResolvedValue([]);
+  getClassEnvironments.mockResolvedValue([]);
   showWarningMessage.mockResolvedValue(undefined);
   vi.mocked(captureMethodSlots).mockReset();
 });
@@ -156,7 +156,7 @@ describe('removing several methods nothing sends', () => {
 
   it('does not count a send from another method in the same removal as a survivor', async () => {
     // #size sends #at:, but #size is going too, so nothing is left calling #at:.
-    sendersOf.mockImplementation((_s: unknown, selector: string) =>
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) =>
       selector === 'at:' ? [sender({ className: 'Array', selector: 'size' })] : [],
     );
 
@@ -174,7 +174,7 @@ describe('removing several methods nothing sends', () => {
    */
   it('does not claim nothing referenced them when every method is an override', async () => {
     hierarchyImplementorsOf.mockImplementation(
-      (_s: unknown, _d: number, _c: string, selector: string) => [
+      async (_s: unknown, _d: number, _c: string, selector: string) => [
         sender({ className: 'Object', selector }),
       ],
     );
@@ -195,7 +195,7 @@ describe('removing several methods nothing sends', () => {
 
   it('names only the scanned methods when some of them are overrides', async () => {
     hierarchyImplementorsOf.mockImplementation(
-      (_s: unknown, _d: number, _c: string, selector: string) =>
+      async (_s: unknown, _d: number, _c: string, selector: string) =>
         selector === 'printOn:' ? [sender({ className: 'Object', selector: 'printOn:' })] : [],
     );
 
@@ -210,7 +210,7 @@ describe('removing several methods nothing sends', () => {
 
   it("carries an override's note: senders resolve to the inherited method", async () => {
     hierarchyImplementorsOf.mockImplementation(
-      (_s: unknown, _d: number, _c: string, selector: string) =>
+      async (_s: unknown, _d: number, _c: string, selector: string) =>
         selector === 'printOn:' ? [sender({ className: 'Object', selector: 'printOn:' })] : [],
     );
 
@@ -222,11 +222,11 @@ describe('removing several methods nothing sends', () => {
 
   it('carries the note that another environment still implements a selector', async () => {
     const ctl = makeController();
-    getClassEnvironments.mockReturnValue([
+    getClassEnvironments.mockResolvedValue([
       { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:', 'size'] },
       { isMeta: false, envId: 1, category: 'accessing', selectors: ['at:'] },
     ]);
-    ctl.reloadCurrentClassMethods();
+    await ctl.reloadCurrentClassMethods();
 
     await removeMethods(ctl, [row('at:'), row('size')]);
 
@@ -247,7 +247,7 @@ describe('removing several methods something still sends — the one confirmatio
   });
 
   it('asks once, and names all of them, when only ONE of them has a sender', async () => {
-    sendersOf.mockImplementation((_s: unknown, selector: string) =>
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) =>
       selector === 'size' ? [sender()] : [],
     );
 
@@ -276,7 +276,7 @@ describe('removing several methods something still sends — the one confirmatio
   });
 
   it('speaks of the methods in the plural', async () => {
-    sendersOf.mockImplementation((_s: unknown, selector: string) => {
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) => {
       if (selector === 'size') throw new Error('a SecurityError occurred');
       return [sender()];
     });
@@ -290,7 +290,7 @@ describe('removing several methods something still sends — the one confirmatio
   });
 
   it('lists the surviving senders of every method in one list', async () => {
-    sendersOf.mockImplementation((_s: unknown, selector: string) =>
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) =>
       selector === 'at:'
         ? [sender({ className: 'Caller', selector: 'usesAt' })]
         : [sender({ className: 'Other', selector: 'usesSize' })],
@@ -304,7 +304,7 @@ describe('removing several methods something still sends — the one confirmatio
   });
 
   it('does not list a send from another method in the same removal', async () => {
-    sendersOf.mockImplementation((_s: unknown, selector: string) =>
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) =>
       selector === 'at:' ? [sender({ className: 'Array', selector: 'size' }), sender()] : [],
     );
 
@@ -315,7 +315,7 @@ describe('removing several methods something still sends — the one confirmatio
 
   it('still counts a same-named sender on the side that is NOT being removed', async () => {
     // Removing instance-side #size takes nothing from the class side.
-    sendersOf.mockImplementation((_s: unknown, selector: string) =>
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) =>
       selector === 'at:' ? [sender({ className: 'Array', isMeta: true, selector: 'size' })] : [],
     );
 
@@ -326,7 +326,7 @@ describe('removing several methods something still sends — the one confirmatio
 
   it("keeps an override's note beside the senders of the others", async () => {
     hierarchyImplementorsOf.mockImplementation(
-      (_s: unknown, _d: number, _c: string, selector: string) =>
+      async (_s: unknown, _d: number, _c: string, selector: string) =>
         selector === 'printOn:' ? [sender({ className: 'Object', selector: 'printOn:' })] : [],
     );
 
@@ -337,11 +337,11 @@ describe('removing several methods something still sends — the one confirmatio
 
   it('keeps the note that another environment still implements a selector', async () => {
     const ctl = makeController();
-    getClassEnvironments.mockReturnValue([
+    getClassEnvironments.mockResolvedValue([
       { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:', 'size'] },
       { isMeta: false, envId: 1, category: 'accessing', selectors: ['at:'] },
     ]);
-    ctl.reloadCurrentClassMethods();
+    await ctl.reloadCurrentClassMethods();
 
     await removeMethods(ctl, [row('at:'), row('size')]);
 
@@ -349,7 +349,7 @@ describe('removing several methods something still sends — the one confirmatio
   });
 
   it('asks, rather than removing unasked, when one of the sender scans failed', async () => {
-    sendersOf.mockImplementation((_s: unknown, selector: string) => {
+    sendersOf.mockImplementation(async (_s: unknown, selector: string) => {
       if (selector === 'size') throw new Error('a SecurityError occurred');
       return [];
     });
@@ -407,8 +407,9 @@ describe('removing several methods — one of them cannot be removed', () => {
   const errorText = () => String(showErrorMessage.mock.calls[0][0]);
 
   it('removes the methods listed after the one that is already gone', async () => {
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
-      selector === 'b' ? 'Selector not found: Array >> b' : 'Deleted: Array >> x',
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) =>
+        selector === 'b' ? 'Selector not found: Array >> b' : 'Deleted: Array >> x',
     );
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
@@ -422,10 +423,12 @@ describe('removing several methods — one of them cannot be removed', () => {
   });
 
   it('carries on past a raised error as well', async () => {
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
-      if (selector === 'b') throw new Error('removeSelector: refused');
-      return 'Deleted: Array >> x';
-    });
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) => {
+        if (selector === 'b') throw new Error('removeSelector: refused');
+        return 'Deleted: Array >> x';
+      },
+    );
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
 
@@ -435,8 +438,9 @@ describe('removing several methods — one of them cannot be removed', () => {
   });
 
   it('names every method that could not be removed, not only the first', async () => {
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
-      selector === 'b' ? 'Deleted: Array >> b' : 'Selector not found',
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) =>
+        selector === 'b' ? 'Deleted: Array >> b' : 'Selector not found',
     );
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
@@ -448,7 +452,7 @@ describe('removing several methods — one of them cannot be removed', () => {
   });
 
   it('says none were removed when every one of them fails', async () => {
-    deleteMethod.mockReturnValue('Selector not found');
+    deleteMethod.mockResolvedValue('Selector not found');
 
     await removeMethods(makeController(), [row('a'), row('b')]);
 
@@ -456,7 +460,7 @@ describe('removing several methods — one of them cannot be removed', () => {
   });
 
   it('names the class side of a method that could not be removed', async () => {
-    deleteMethod.mockImplementation((_s: unknown, _c: string, isMeta: boolean) =>
+    deleteMethod.mockImplementation(async (_s: unknown, _c: string, isMeta: boolean) =>
       isMeta ? 'Selector not found' : 'Deleted: Array >> a',
     );
 
@@ -469,8 +473,9 @@ describe('removing several methods — one of them cannot be removed', () => {
     // The silent notice is the user's only hint the removal can be undone, and a failure
     // replaces it. Without the button they are told what broke and left with no way back.
     everySlotHoldsAMethod();
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) =>
-      selector === 'b' ? 'Selector not found' : 'Deleted: Array >> x',
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) =>
+        selector === 'b' ? 'Selector not found' : 'Deleted: Array >> x',
     );
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
@@ -480,7 +485,7 @@ describe('removing several methods — one of them cannot be removed', () => {
 
   it('shows the error plain when nothing was removed to undo', async () => {
     everySlotHoldsAMethod();
-    deleteMethod.mockReturnValue('Selector not found');
+    deleteMethod.mockResolvedValue('Selector not found');
 
     await removeMethods(makeController(), [row('a'), row('b')]);
 
@@ -489,10 +494,12 @@ describe('removing several methods — one of them cannot be removed', () => {
   });
 
   it('still redraws the pane, which has lost whatever did go', async () => {
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
-      if (selector === 'b') throw new Error('refused');
-      return 'Deleted: Array >> x';
-    });
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) => {
+        if (selector === 'b') throw new Error('refused');
+        return 'Deleted: Array >> x';
+      },
+    );
     const ctl = makeController();
     const reload = vi.spyOn(ctl, 'reloadCurrentClassMethods');
 
@@ -506,7 +513,7 @@ describe('removing several methods — the pane moving under the run', () => {
   it('judges every row against the class the removal started on', async () => {
     // The checks read the pane's own state, and the run is several whole-image scans long.
     // Whatever the pane holds by the end, the rows are the ones the user selected.
-    hierarchyImplementorsOf.mockImplementation((_s: unknown, dict: number) => {
+    hierarchyImplementorsOf.mockImplementation(async (_s: unknown, dict: number) => {
       ctl.state.className = 'Bag';
       ctl.state.dictIndex = 9;
       return dict === 1 ? [] : [sender({ className: 'Wrong' })];
@@ -556,11 +563,11 @@ describe('removing several methods — undo', () => {
 
   it('captures every method before removing any of them', async () => {
     const order: string[] = [];
-    vi.mocked(captureMethodSlots).mockImplementation((_e: unknown, slots: MethodSlot[]) => {
+    vi.mocked(captureMethodSlots).mockImplementation(async (_e: unknown, slots: MethodSlot[]) => {
       order.push('capture');
       return slots.map(() => ({ exists: true, source: 'x', category: 'accessing' }));
     });
-    deleteMethod.mockImplementation(() => {
+    deleteMethod.mockImplementation(async () => {
       order.push('delete');
       return 'Deleted: Array >> x';
     });
@@ -597,10 +604,12 @@ describe('removing several methods — undo', () => {
   it('covers only the methods actually removed when one of them fails', async () => {
     // Offering to restore #b would restore a method that never went away.
     everySlotHoldsAMethod();
-    deleteMethod.mockImplementation((_s: unknown, _c: string, _m: boolean, selector: string) => {
-      if (selector === 'b') throw new Error('refused');
-      return 'Deleted: Array >> x';
-    });
+    deleteMethod.mockImplementation(
+      async (_s: unknown, _c: string, _m: boolean, selector: string) => {
+        if (selector === 'b') throw new Error('refused');
+        return 'Deleted: Array >> x';
+      },
+    );
 
     await removeMethods(makeController(), [row('a'), row('b'), row('c')]);
 
@@ -610,7 +619,7 @@ describe('removing several methods — undo', () => {
 
   it('records nothing when none of the removals succeeds', async () => {
     everySlotHoldsAMethod();
-    deleteMethod.mockReturnValue('Not found');
+    deleteMethod.mockResolvedValue('Not found');
 
     await removeMethods(makeController(), [row('a'), row('b')]);
 
@@ -628,7 +637,7 @@ describe('removing several methods — undo', () => {
   });
 
   it('still removes them all when the capture fails, just without an undo', async () => {
-    vi.mocked(captureMethodSlots).mockImplementation(() => {
+    vi.mocked(captureMethodSlots).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
@@ -664,7 +673,7 @@ describe('removing several methods — guards', () => {
   });
 
   it('asks nothing and removes nothing on a class that cannot be written', async () => {
-    canClassBeWritten.mockReturnValue(false);
+    canClassBeWritten.mockResolvedValue(false);
 
     await removeMethods(makeController(), [row('at:'), row('size')]);
 

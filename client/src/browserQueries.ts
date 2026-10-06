@@ -1,6 +1,7 @@
 import { ActiveSession } from './sessionManager';
 import { OOP_ILLEGAL, OOP_NIL } from './gciConstants';
 import { logError } from './gciLog';
+import { fetchString } from './stringFetch';
 import { runNbCall } from './nbRunner';
 
 import { QueryExecutor } from './queries/types';
@@ -353,7 +354,7 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // result as UTF-8 in Smalltalk before paging it out, so results decode
 // correctly regardless of their original encoding and are not capped at a
 // single fixed-size buffer.
-export function executeFetchString(session: ActiveSession, code: string): string {
+export async function executeFetchString(session: ActiveSession, code: string): Promise<string> {
   // Check if session is busy with an async operation (e.g., Display It)
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -363,7 +364,7 @@ export function executeFetchString(session: ActiveSession, code: string): string
   }
 
   try {
-    return session.gci.executeAndFetchString(session.handle, code);
+    return await fetchString(session, code);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logError(session.id, msg);
@@ -474,9 +475,9 @@ export function boundLimitExecutor(session: ActiveSession) {
     executeFetchStringWithLimit(session, label, code, maxBytes);
 }
 
-export function checkEnhancedInspectorAvailable(session: ActiveSession): boolean {
+export async function checkEnhancedInspectorAvailable(session: ActiveSession): Promise<boolean> {
   try {
-    const result = executeFetchString(
+    const result = await executeFetchString(
       session,
       "[GtRemotePhlowViewedObject notNil printString] on: Error do: [:e | 'false']",
     );
@@ -498,9 +499,9 @@ export function checkEnhancedInspectorAvailable(session: ActiveSession): boolean
  *  down — so a `#symbol` probe would blow up on exactly the bare stones this is
  *  meant to report `false` for. A String literal never creates a symbol, and
  *  `objectNamed:` resolves it against existing symbols only. */
-export function checkRefactoringSupportAvailable(session: ActiveSession): boolean {
+export async function checkRefactoringSupportAvailable(session: ActiveSession): Promise<boolean> {
   try {
-    const result = executeFetchString(
+    const result = await executeFetchString(
       session,
       "(System myUserProfile symbolList objectNamed: 'GsRenameInstanceVariableRefactoring') notNil printString",
     );
@@ -518,9 +519,9 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
  * Callers must treat `undefined` like `true` — prompt rather than silently
  * discard — since a failed probe is not evidence that the transaction is clean.
  */
-export function sessionNeedsCommit(session: ActiveSession): boolean | undefined {
+export async function sessionNeedsCommit(session: ActiveSession): Promise<boolean | undefined> {
   try {
-    const result = executeFetchString(session, 'System needsCommit printString').trim();
+    const result = (await executeFetchString(session, 'System needsCommit printString')).trim();
     if (result === 'true') return true;
     if (result === 'false') return false;
     return undefined;
@@ -534,8 +535,8 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
  * whatever the caller happens to be undoing. Callers must have told the user that, and
  * should probe {@link sessionNeedsCommit} first when they need to say how much is at stake.
  */
-export function abortSessionTransaction(session: ActiveSession): string {
-  return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+export async function abortSessionTransaction(session: ActiveSession): Promise<string> {
+  return await sharedAbortTransaction(defaultQueryExecutorUsing(session));
 }
 
 /**
@@ -545,8 +546,10 @@ export function abortSessionTransaction(session: ActiveSession): string {
  * Call it before anything else touches the transaction — why is the
  * queries/transactionConflicts.ts header.
  */
-export function transactionConflicts(session: ActiveSession): TransactionConflicts | undefined {
-  return sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
+export async function transactionConflicts(
+  session: ActiveSession,
+): Promise<TransactionConflicts | undefined> {
+  return await sharedTryTransactionConflicts(defaultQueryExecutorUsing(session));
 }
 
 /**
@@ -566,30 +569,34 @@ export function defaultQueryExecutorUsing(activeSession: ActiveSession): QueryEx
 
 // ── Read-only queries (thin delegates to client/src/queries/) ─────────────
 
-export function getDictionaryNames(session: ActiveSession): string[] {
-  return sharedGetDictionaryNames(defaultQueryExecutorUsing(session));
+export async function getDictionaryNames(session: ActiveSession): Promise<string[]> {
+  return await sharedGetDictionaryNames(defaultQueryExecutorUsing(session));
 }
 
 // ── Rowan browser queries ─────────────────────────────────────────────────
 
-export function getGemCacheKB(session: ActiveSession) {
-  return sharedGetGemCacheKB(defaultQueryExecutorUsing(session));
+export async function getGemCacheKB(session: ActiveSession) {
+  return await sharedGetGemCacheKB(defaultQueryExecutorUsing(session));
 }
 
-export function listRowanProjects(session: ActiveSession) {
-  return sharedListRowanProjects(defaultQueryExecutorUsing(session));
+export async function listRowanProjects(session: ActiveSession) {
+  return await sharedListRowanProjects(defaultQueryExecutorUsing(session));
 }
 
-export function exportRowanProject(session: ActiveSession, projectName: string, targetDir: string) {
-  return sharedExportRowanProject(defaultQueryExecutorUsing(session), projectName, targetDir);
+export async function exportRowanProject(
+  session: ActiveSession,
+  projectName: string,
+  targetDir: string,
+) {
+  return await sharedExportRowanProject(defaultQueryExecutorUsing(session), projectName, targetDir);
 }
 
-export function findRowanClassOwners(session: ActiveSession, className: string) {
-  return sharedFindRowanClassOwners(defaultQueryExecutorUsing(session), className);
+export async function findRowanClassOwners(session: ActiveSession, className: string) {
+  return await sharedFindRowanClassOwners(defaultQueryExecutorUsing(session), className);
 }
 
-export function listAllRowanClasses(session: ActiveSession) {
-  return sharedListAllRowanClasses(defaultQueryExecutorUsing(session));
+export async function listAllRowanClasses(session: ActiveSession) {
+  return await sharedListAllRowanClasses(defaultQueryExecutorUsing(session));
 }
 
 // Non-blocking load for the extension: same Smalltalk, run via
@@ -610,12 +617,12 @@ export async function loadRowanProjectNb(
   return parseRowanLoadResult(raw);
 }
 
-export function diffRowanProject(session: ActiveSession, projectName: string) {
-  return sharedDiffRowanProject(defaultQueryExecutorUsing(session), projectName);
+export async function diffRowanProject(session: ActiveSession, projectName: string) {
+  return await sharedDiffRowanProject(defaultQueryExecutorUsing(session), projectName);
 }
 
-export function unloadRowanProject(session: ActiveSession, projectName: string) {
-  return sharedUnloadRowanProject(defaultQueryExecutorUsing(session), projectName);
+export async function unloadRowanProject(session: ActiveSession, projectName: string) {
+  return await sharedUnloadRowanProject(defaultQueryExecutorUsing(session), projectName);
 }
 
 /**
@@ -624,60 +631,68 @@ export function unloadRowanProject(session: ActiveSession, projectName: string) 
  * GemStone's default name is wrong for most stones.
  */
 /** Whether this stone's version can fork a gem at all (3.6.2 cannot). */
-export function canForkGem(session: ActiveSession) {
-  return sharedCanForkGem(defaultQueryExecutorUsing(session));
+export async function canForkGem(session: ActiveSession) {
+  return await sharedCanForkGem(defaultQueryExecutorUsing(session));
 }
 
-export function forkGemRunning(session: ActiveSession, expression: string) {
-  return sharedForkGemRunning(
+export async function forkGemRunning(session: ActiveSession, expression: string) {
+  return await sharedForkGemRunning(
     defaultQueryExecutorUsing(session),
     expression,
     gemNrsFor(session.login),
   );
 }
 
-export function getClassNames(session: ActiveSession, dict: number | string): string[] {
-  return sharedGetClassNames(defaultQueryExecutorUsing(session), dict);
-}
-
-export function getClassesWithCategory(
+export async function getClassNames(
   session: ActiveSession,
   dict: number | string,
-): ClassCategoryEntry[] {
-  return sharedGetClassesWithCategory(defaultQueryExecutorUsing(session), dict);
+): Promise<string[]> {
+  return await sharedGetClassNames(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getDictionaryClassFileOutOrder(
+export async function getClassesWithCategory(
   session: ActiveSession,
   dict: number | string,
-): string[] {
-  return sharedGetDictionaryClassFileOutOrder(defaultQueryExecutorUsing(session), dict);
+): Promise<ClassCategoryEntry[]> {
+  return await sharedGetClassesWithCategory(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getDictionaryEntries(session: ActiveSession, dict: number | string) {
-  return sharedGetDictionaryEntries(defaultQueryExecutorUsing(session), dict);
+export async function getDictionaryClassFileOutOrder(
+  session: ActiveSession,
+  dict: number | string,
+): Promise<string[]> {
+  return await sharedGetDictionaryClassFileOutOrder(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getGlobalsForDictionary(session: ActiveSession, dictIndex: number) {
-  return sharedGetGlobalsForDictionary(defaultQueryExecutorUsing(session), dictIndex);
+export async function getDictionaryEntries(session: ActiveSession, dict: number | string) {
+  return await sharedGetDictionaryEntries(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getMethodCategories(
+export async function getGlobalsForDictionary(session: ActiveSession, dictIndex: number) {
+  return await sharedGetGlobalsForDictionary(defaultQueryExecutorUsing(session), dictIndex);
+}
+
+export async function getMethodCategories(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   dict?: number | string,
-): string[] {
-  return sharedGetMethodCategories(defaultQueryExecutorUsing(session), className, isMeta, dict);
+): Promise<string[]> {
+  return await sharedGetMethodCategories(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    dict,
+  );
 }
 
-export function getClassEnvironments(
+export async function getClassEnvironments(
   session: ActiveSession,
   dictIndex: number,
   className: string,
   maxEnv: number,
 ) {
-  return sharedGetClassEnvironments(
+  return await sharedGetClassEnvironments(
     defaultQueryExecutorUsing(session),
     dictIndex,
     className,
@@ -685,13 +700,13 @@ export function getClassEnvironments(
   );
 }
 
-export function getMethodInstVarAccess(
+export async function getMethodInstVarAccess(
   session: ActiveSession,
   dictIndex: number,
   className: string,
   maxEnv: number,
 ) {
-  return sharedGetMethodInstVarAccess(
+  return await sharedGetMethodInstVarAccess(
     defaultQueryExecutorUsing(session),
     dictIndex,
     className,
@@ -699,15 +714,15 @@ export function getMethodInstVarAccess(
   );
 }
 
-export function getMethodSource(
+export async function getMethodSource(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedGetMethodSource(
+): Promise<string> {
+  return await sharedGetMethodSource(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -717,15 +732,15 @@ export function getMethodSource(
   );
 }
 
-export function getBaseMethodSource(
+export async function getBaseMethodSource(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedGetBaseMethodSource(
+): Promise<string> {
+  return await sharedGetBaseMethodSource(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -735,110 +750,113 @@ export function getBaseMethodSource(
   );
 }
 
-export function getClassDefinition(
+export async function getClassDefinition(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getClassCategory(
+export async function getClassCategory(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function classExistsInDictionary(
+export async function classExistsInDictionary(
   session: ActiveSession,
   className: string,
   dict: number | string,
-): boolean {
-  return sharedClassExistsInDictionary(defaultQueryExecutorUsing(session), className, dict);
+): Promise<boolean> {
+  return await sharedClassExistsInDictionary(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getClassComment(
+export async function getClassComment(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassComment(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedGetClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getStoredClassComment(
+export async function getStoredClassComment(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedGetStoredClassComment(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function canClassBeWritten(
+export async function canClassBeWritten(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): boolean {
-  return sharedCanClassBeWritten(defaultQueryExecutorUsing(session), className, dict);
+): Promise<boolean> {
+  return await sharedCanClassBeWritten(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getAllClassNames(session: ActiveSession) {
-  return sharedGetAllClassNames(defaultQueryExecutorUsing(session));
+export async function getAllClassNames(session: ActiveSession) {
+  return await sharedGetAllClassNames(defaultQueryExecutorUsing(session));
 }
 
-export function getClassHierarchy(
+export async function getClassHierarchy(
   session: ActiveSession,
   className: string,
   dict?: number | string,
 ) {
-  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+  return await sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getClassDescendantNames(
+export async function getClassDescendantNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): DescendantClass[] {
-  return sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<DescendantClass[]> {
+  return await sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getSiblingClassNames(
+export async function getSiblingClassNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string[] {
-  return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string[]> {
+  return await sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 /** One class as Tonel source, or a sentinel (see `isTonelFileOutError`). */
-export function fileOutClassTonel(
+export async function fileOutClassTonel(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedFileOutClassTonel(defaultQueryExecutorUsing(session), className, dict);
 }
 
 /** Which parts of the Tonel machinery this session can reach. */
-export function tonelCapability(session: ActiveSession): TonelCapabilityResult {
-  return sharedTonelCapability(defaultQueryExecutorUsing(session));
+export async function tonelCapability(session: ActiveSession): Promise<TonelCapabilityResult> {
+  return await sharedTonelCapability(defaultQueryExecutorUsing(session));
 }
 
 /** Which symbol dictionaries hold a class of this name, in symbol-list order. */
-export function dictionariesContainingClass(session: ActiveSession, className: string): string[] {
-  return sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
+export async function dictionariesContainingClass(
+  session: ActiveSession,
+  className: string,
+): Promise<string[]> {
+  return await sharedDictionariesContainingClass(defaultQueryExecutorUsing(session), className);
 }
 
 /** The dictionaries a rename to `newName` would shadow: those already holding a class of that
  *  name, minus the one the renamed class lives in, excluded by identity in the stone. */
-export function dictionariesShadowedByRename(
+export async function dictionariesShadowedByRename(
   session: ActiveSession,
   newName: string,
   oldName: string,
   dict?: number | string,
-): ShadowingHolder[] {
-  return sharedDictionariesShadowedByRename(
+): Promise<ShadowingHolder[]> {
+  return await sharedDictionariesShadowedByRename(
     defaultQueryExecutorUsing(session),
     newName,
     oldName,
@@ -846,36 +864,42 @@ export function dictionariesShadowedByRename(
   );
 }
 
-export function fileOutClass(
+export async function fileOutClass(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedFileOutClass(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedFileOutClass(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function fileOutHeader(session: ActiveSession): string {
-  return sharedFileOutHeader(defaultQueryExecutorUsing(session));
+export async function fileOutHeader(session: ActiveSession): Promise<string> {
+  return await sharedFileOutHeader(defaultQueryExecutorUsing(session));
 }
 
-export function fileOutMethod(
+export async function fileOutMethod(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   dict?: number | string,
-): string {
-  return sharedFileOutMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict);
+): Promise<string> {
+  return await sharedFileOutMethod(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    dict,
+  );
 }
 
-export function fileOutMethodCategory(
+export async function fileOutMethodCategory(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   category: string,
   dict?: number | string,
-): string {
-  return sharedFileOutMethodCategory(
+): Promise<string> {
+  return await sharedFileOutMethodCategory(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -884,61 +908,64 @@ export function fileOutMethodCategory(
   );
 }
 
-export function fileOutDictionary(session: ActiveSession, dict: number | string): string {
-  return sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
+export async function fileOutDictionary(
+  session: ActiveSession,
+  dict: number | string,
+): Promise<string> {
+  return await sharedFileOutDictionary(defaultQueryExecutorUsing(session), dict);
 }
 
-export function fileInChunk(session: ActiveSession, code: string): string {
-  return sharedFileInChunk(defaultQueryExecutorUsing(session), code);
+export async function fileInChunk(session: ActiveSession, code: string): Promise<string> {
+  return await sharedFileInChunk(defaultQueryExecutorUsing(session), code);
 }
 
-export function removeAllMethods(
+export async function removeAllMethods(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
-  return sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
+): Promise<string> {
+  return await sharedRemoveAllMethods(defaultQueryExecutorUsing(session), className, isMeta, dict);
 }
 
-export function describeClass(
+export async function describeClass(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedDescribeClass(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedDescribeClass(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getInstVarNames(
+export async function getInstVarNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string[] {
-  return sharedGetInstVarNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string[]> {
+  return await sharedGetInstVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getDefinedInstVarNames(
+export async function getDefinedInstVarNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string[] {
-  return sharedGetDefinedInstVarNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string[]> {
+  return await sharedGetDefinedInstVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getDefinedInstVarCounts(
+export async function getDefinedInstVarCounts(
   session: ActiveSession,
   dict: number | string,
-): Map<string, number> {
-  return sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
+): Promise<Map<string, number>> {
+  return await sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getDefiningClassOfInstVar(
+export async function getDefiningClassOfInstVar(
   session: ActiveSession,
   className: string,
   ivarName: string,
   dict?: number | string,
-): DefiningClass | undefined {
-  return sharedGetDefiningClassOfInstVar(
+): Promise<DefiningClass | undefined> {
+  return await sharedGetDefiningClassOfInstVar(
     defaultQueryExecutorUsing(session),
     className,
     ivarName,
@@ -946,28 +973,32 @@ export function getDefiningClassOfInstVar(
   );
 }
 
-export function resolveClassReference(
+export async function resolveClassReference(
   session: ActiveSession,
   name: string,
-): ClassReference | undefined {
-  return sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
+): Promise<ClassReference | undefined> {
+  return await sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
 }
 
-export function classDefiningDictionaryName(
+export async function classDefiningDictionaryName(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedClassDefiningDictionaryName(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedClassDefiningDictionaryName(
+    defaultQueryExecutorUsing(session),
+    className,
+    dict,
+  );
 }
 
-export function getDefiningClassOfClassVar(
+export async function getDefiningClassOfClassVar(
   session: ActiveSession,
   className: string,
   classVarName: string,
   dict?: number | string,
-): DefiningClass | undefined {
-  return sharedGetDefiningClassOfClassVar(
+): Promise<DefiningClass | undefined> {
+  return await sharedGetDefiningClassOfClassVar(
     defaultQueryExecutorUsing(session),
     className,
     classVarName,
@@ -975,22 +1006,13 @@ export function getDefiningClassOfClassVar(
   );
 }
 
-export function addClassVariable(
+export async function addClassVariable(
   session: ActiveSession,
   className: string,
   classVarName: string,
   dict?: number | string,
-): string {
-  return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
-}
-
-export function deleteClassVariable(
-  session: ActiveSession,
-  className: string,
-  classVarName: string,
-  dict?: number | string,
-): string {
-  return sharedDeleteClassVariable(
+): Promise<string> {
+  return await sharedAddClassVariable(
     defaultQueryExecutorUsing(session),
     className,
     classVarName,
@@ -998,55 +1020,75 @@ export function deleteClassVariable(
   );
 }
 
-export function addAccessors(
+export async function deleteClassVariable(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): Promise<string> {
+  return await sharedDeleteClassVariable(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+  );
+}
+
+export async function addAccessors(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   accessors: Accessor[],
   dict?: number | string,
-): AddAccessorsResult {
-  return sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict);
+): Promise<AddAccessorsResult> {
+  return await sharedAddAccessors(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    accessors,
+    dict,
+  );
 }
 
-export function getDefinedClassVarNames(
+export async function getDefinedClassVarNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string[] {
-  return sharedGetDefinedClassVarNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string[]> {
+  return await sharedGetDefinedClassVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getVisibleClassVarNames(
+export async function getVisibleClassVarNames(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string[] {
-  return sharedGetVisibleClassVarNames(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string[]> {
+  return await sharedGetVisibleClassVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getDefinedClassVarCounts(
+export async function getDefinedClassVarCounts(
   session: ActiveSession,
   dict: number | string,
-): Map<string, number> {
-  return sharedGetDefinedClassVarCounts(defaultQueryExecutorUsing(session), dict);
+): Promise<Map<string, number>> {
+  return await sharedGetDefinedClassVarCounts(defaultQueryExecutorUsing(session), dict);
 }
 
-export function getClassVersions(
+export async function getClassVersions(
   session: ActiveSession,
   dict: number | string,
-): Map<string, ClassVersionInfo> {
-  return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
+): Promise<Map<string, ClassVersionInfo>> {
+  return await sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
 }
 
-export function startRenameInstVarPreview(
+export async function startRenameInstVarPreview(
   session: ActiveSession,
   className: string,
   oldName: string,
   newName: string,
   token: string,
   dict?: number | string,
-): string {
-  return sharedStartRenameInstVarPreview(
+): Promise<string> {
+  return await sharedStartRenameInstVarPreview(
     defaultQueryExecutorUsing(session),
     className,
     oldName,
@@ -1056,26 +1098,29 @@ export function startRenameInstVarPreview(
   );
 }
 
-export function applyRenameInstVar(
+export async function applyRenameInstVar(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
-): string {
+): Promise<string> {
   // Synchronous, so the invalidation is inline rather than through
   // invalidatingRefactoringUndo -- same rule, same "runs even if the apply throws".
   try {
-    return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+    return await sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
   } finally {
     try {
-      clearRefactoringUndo(session);
+      await clearRefactoringUndo(session);
     } catch {
       /* best-effort: never let the bookkeeping fail an apply */
     }
   }
 }
 
-export function clearRenameInstVarPreview(session: ActiveSession, token: string): string {
-  return sharedClearRenameInstVarPreview(defaultQueryExecutorUsing(session), token);
+export async function clearRenameInstVarPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearRenameInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-method preview: fetched NON-BLOCKING so a slow build shows a
@@ -1129,8 +1174,11 @@ export function applyRenameMethod(
   return sharedApplyRenameMethod(exec, token, deselectedIds, undoLabel);
 }
 
-export function clearRenameMethodPreview(session: ActiveSession, token: string): string {
-  return sharedClearRenameMethodPreview(defaultQueryExecutorUsing(session), token);
+export async function clearRenameMethodPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearRenameMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Change-method-signature (M5) wrappers: mirror the rename-method ones, adding a
@@ -1203,8 +1251,11 @@ export function applyChangeSignature(
   return sharedApplyChangeSignature(exec, token, deselectedIds, undoLabel);
 }
 
-export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
-  return sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
+export async function clearChangeSignaturePreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Push-up / push-down method (M7 / M8) wrappers: mirror the move-method shape but with
@@ -1271,12 +1322,12 @@ export function applyPushMethod(
   return sharedApplyPushMethod(exec, direction, token, deselectedIds, undoLabel);
 }
 
-export function clearPushMethodPreview(
+export async function clearPushMethodPreview(
   session: ActiveSession,
   direction: PushDirection,
   token: string,
-): string {
-  return sharedClearPushMethodPreview(defaultQueryExecutorUsing(session), direction, token);
+): Promise<string> {
+  return await sharedClearPushMethodPreview(defaultQueryExecutorUsing(session), direction, token);
 }
 
 // Paginated rename-class preview: fetched NON-BLOCKING (progress + responsive),
@@ -1328,8 +1379,11 @@ export function applyRenameClass(
   );
 }
 
-export function clearRenameClassPreview(session: ActiveSession, token: string): string {
-  return sharedClearRenameClassPreview(defaultQueryExecutorUsing(session), token);
+export async function clearRenameClassPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearRenameClassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-class-variable preview: fetched NON-BLOCKING (progress +
@@ -1367,8 +1421,11 @@ export function applyRenameClassVar(session: ActiveSession, token: string): Prom
   return invalidatingRefactoringUndo(session, () => sharedApplyRenameClassVar(exec, token));
 }
 
-export function clearRenameClassVarPreview(session: ActiveSession, token: string): string {
-  return sharedClearRenameClassVarPreview(defaultQueryExecutorUsing(session), token);
+export async function clearRenameClassVarPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearRenameClassVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-temporary/argument (R5) preview: method-local, a single
@@ -1423,8 +1480,11 @@ export function applyRenameTemporary(
   return sharedApplyRenameTemporary(exec, token, undoLabel);
 }
 
-export function clearRenameTemporaryPreview(session: ActiveSession, token: string): string {
-  return sharedClearRenameTemporaryPreview(defaultQueryExecutorUsing(session), token);
+export async function clearRenameTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearRenameTemporaryPreview(defaultQueryExecutorUsing(session), token);
 }
 
 export function renameTemporaryDeclineReason(
@@ -1518,8 +1578,11 @@ export function applyExtractMethod(
   return sharedApplyExtractMethod(exec, token, deselectedIds, undoLabel);
 }
 
-export function clearExtractMethodPreview(session: ActiveSession, token: string): string {
-  return sharedClearExtractMethodPreview(defaultQueryExecutorUsing(session), token);
+export async function clearExtractMethodPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearExtractMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 export function analyzeInlineSend(
@@ -1581,8 +1644,11 @@ export function applyInlineMethod(
   return sharedApplyInlineMethod(exec, token, deselectedIds, undoLabel);
 }
 
-export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
-  return sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
+export async function clearInlineMethodPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Move-method (M6) preview: pre-flight analysis (which selectors move, and why the
@@ -1663,8 +1729,11 @@ export function applyMoveMethod(
   return sharedApplyMoveMethod(exec, token, deselectedIds, undoLabel);
 }
 
-export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
-  return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
+export async function clearMoveMethodPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Add / remove instance-variable (V1) preview: pre-flight analysis (decline reason,
@@ -1725,8 +1794,8 @@ export function applyInstVar(
   );
 }
 
-export function clearInstVarPreview(session: ActiveSession, token: string): string {
-  return sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
+export async function clearInstVarPreview(session: ActiveSession, token: string): Promise<string> {
+  return await sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched
@@ -1797,8 +1866,11 @@ export function applyExtractTemporary(
   return sharedApplyExtractTemporary(exec, token, undoLabel);
 }
 
-export function clearExtractTemporaryPreview(session: ActiveSession, token: string): string {
-  return sharedClearExtractTemporaryPreview(defaultQueryExecutorUsing(session), token);
+export async function clearExtractTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearExtractTemporaryPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Inline-temporary (M4) preview: pre-flight analysis, paginated start/page fetched
@@ -1862,8 +1934,11 @@ export function applyInlineTemporary(
   return sharedApplyInlineTemporary(exec, token, undoLabel);
 }
 
-export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
-  return sharedClearInlineTemporaryPreview(defaultQueryExecutorUsing(session), token);
+export async function clearInlineTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearInlineTemporaryPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Instance-variable structure (V2 push up / V3 push down / V5 convert temporary) wrappers.
@@ -1945,8 +2020,11 @@ export function applyInstVarStructure(
   );
 }
 
-export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {
-  return sharedClearInstVarStructurePreview(defaultQueryExecutorUsing(session), token);
+export async function clearInstVarStructurePreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearInstVarStructurePreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-superclass (V6 insert superclass / V7 extract superclass) wrappers. One engine
@@ -2017,8 +2095,11 @@ export function applyExtractSuperclass(session: ActiveSession, token: string): P
   return invalidatingRefactoringUndo(session, () => sharedApplyExtractSuperclass(exec, token));
 }
 
-export function clearExtractSuperclassPreview(session: ActiveSession, token: string): string {
-  return sharedClearExtractSuperclassPreview(defaultQueryExecutorUsing(session), token);
+export async function clearExtractSuperclassPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearExtractSuperclassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Split-class (V8 / extract class) wrappers. GsSplitClassRefactoring extracts a chosen set of the
@@ -2086,40 +2167,48 @@ export function applySplitClass(session: ActiveSession, token: string): Promise<
   return invalidatingRefactoringUndo(session, () => sharedApplySplitClass(exec, token));
 }
 
-export function clearSplitClassPreview(session: ActiveSession, token: string): string {
-  return sharedClearSplitClassPreview(defaultQueryExecutorUsing(session), token);
+export async function clearSplitClassPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearSplitClassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and
 // the redo (restore a historical version as a new version, no commit).
-export function getClassHistory(
+export async function getClassHistory(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): string {
-  return sharedGetClassHistory(defaultQueryExecutorUsing(session), className, dict);
+): Promise<string> {
+  return await sharedGetClassHistory(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function revertClassToVersion(
+export async function revertClassToVersion(
   session: ActiveSession,
   className: string,
   index: number,
   dict?: number | string,
-): string {
-  return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index, dict);
+): Promise<string> {
+  return await sharedRevertClassToVersion(
+    defaultQueryExecutorUsing(session),
+    className,
+    index,
+    dict,
+  );
 }
 
 // Per-method source history (in-stone, per-user, this-stone-only, read-only) and
 // forgetting a method's recorded history. Restoring a version is not a query here:
 // it is just a recompile through the ordinary compile path (which records it).
-export function getMethodHistory(
+export async function getMethodHistory(
   session: ActiveSession,
   className: string,
   selector: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
-  return sharedGetMethodHistory(
+): Promise<string> {
+  return await sharedGetMethodHistory(
     defaultQueryExecutorUsing(session),
     className,
     selector,
@@ -2128,14 +2217,14 @@ export function getMethodHistory(
   );
 }
 
-export function removeMethodHistory(
+export async function removeMethodHistory(
   session: ActiveSession,
   className: string,
   selector: string,
   isMeta: boolean,
   dict?: number | string,
-): string {
-  return sharedRemoveMethodHistory(
+): Promise<string> {
+  return await sharedRemoveMethodHistory(
     defaultQueryExecutorUsing(session),
     className,
     selector,
@@ -2144,56 +2233,59 @@ export function removeMethodHistory(
   );
 }
 
-export function globalNameInUseInDictionary(
+export async function globalNameInUseInDictionary(
   session: ActiveSession,
   name: string,
   dict: number | string | undefined,
-): boolean {
-  return sharedGlobalNameInUseInDictionary(defaultQueryExecutorUsing(session), name, dict);
+): Promise<boolean> {
+  return await sharedGlobalNameInUseInDictionary(defaultQueryExecutorUsing(session), name, dict);
 }
 
-export function globalNameInUse(session: ActiveSession, name: string): boolean {
-  return sharedGlobalNameInUse(defaultQueryExecutorUsing(session), name);
+export async function globalNameInUse(session: ActiveSession, name: string): Promise<boolean> {
+  return await sharedGlobalNameInUse(defaultQueryExecutorUsing(session), name);
 }
 
-export function isKernelClass(session: ActiveSession, name: string): boolean {
-  return sharedIsKernelClass(defaultQueryExecutorUsing(session), name);
+export async function isKernelClass(session: ActiveSession, name: string): Promise<boolean> {
+  return await sharedIsKernelClass(defaultQueryExecutorUsing(session), name);
 }
 
-export function removeClassVersion(
+export async function removeClassVersion(
   session: ActiveSession,
   className: string,
   index: number,
   dict?: number | string,
-): string {
-  return sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
+): Promise<string> {
+  return await sharedRemoveClassVersion(defaultQueryExecutorUsing(session), className, index, dict);
 }
 
-export function getGrailStubReflection(
+export async function getGrailStubReflection(
   session: ActiveSession,
   className: string,
   dict?: number | string,
-): GrailStubReflection {
-  return sharedGetGrailStubReflection(defaultQueryExecutorUsing(session), className, dict);
+): Promise<GrailStubReflection> {
+  return await sharedGetGrailStubReflection(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getAllSelectors(session: ActiveSession, className: string): string[] {
-  return sharedGetAllSelectors(defaultQueryExecutorUsing(session), className);
+export async function getAllSelectors(
+  session: ActiveSession,
+  className: string,
+): Promise<string[]> {
+  return await sharedGetAllSelectors(defaultQueryExecutorUsing(session), className);
 }
 
-export function getMethodList(session: ActiveSession, className: string) {
-  return sharedGetMethodList(defaultQueryExecutorUsing(session), className);
+export async function getMethodList(session: ActiveSession, className: string) {
+  return await sharedGetMethodList(defaultQueryExecutorUsing(session), className);
 }
 
-export function getSourceOffsets(
+export async function getSourceOffsets(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): number[] {
-  return sharedGetSourceOffsets(
+): Promise<number[]> {
+  return await sharedGetSourceOffsets(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2203,25 +2295,7 @@ export function getSourceOffsets(
   );
 }
 
-export function getStepPointBundle(
-  session: ActiveSession,
-  className: string,
-  isMeta: boolean,
-  selector: string,
-  environmentId: number = 0,
-  dict?: number | string,
-) {
-  return sharedGetStepPointBundle(
-    defaultQueryExecutorUsing(session),
-    className,
-    isMeta,
-    selector,
-    environmentId,
-    dict,
-  );
-}
-
-export function getStepPointSelectorRanges(
+export async function getStepPointBundle(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2229,7 +2303,7 @@ export function getStepPointSelectorRanges(
   environmentId: number = 0,
   dict?: number | string,
 ) {
-  return sharedGetStepPointSelectorRanges(
+  return await sharedGetStepPointBundle(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2239,28 +2313,50 @@ export function getStepPointSelectorRanges(
   );
 }
 
-export function searchMethodSource(
+export async function getStepPointSelectorRanges(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number = 0,
+  dict?: number | string,
+) {
+  return await sharedGetStepPointSelectorRanges(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    environmentId,
+    dict,
+  );
+}
+
+export async function searchMethodSource(
   session: ActiveSession,
   term: string,
   ignoreCase: boolean,
   mode: SourceScanMode = 'substring',
 ) {
-  return sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
+  return await sharedSearchMethodSource(defaultQueryExecutorUsing(session), term, ignoreCase, mode);
 }
 
-export function sendersOf(session: ActiveSession, selector: string, environmentId: number = 0) {
-  return sharedSendersOf(defaultQueryExecutorUsing(session), selector, environmentId);
-}
-
-export function implementorsOf(
+export async function sendersOf(
   session: ActiveSession,
   selector: string,
   environmentId: number = 0,
 ) {
-  return sharedImplementorsOf(defaultQueryExecutorUsing(session), selector, environmentId);
+  return await sharedSendersOf(defaultQueryExecutorUsing(session), selector, environmentId);
 }
 
-export function hierarchyImplementorsOf(
+export async function implementorsOf(
+  session: ActiveSession,
+  selector: string,
+  environmentId: number = 0,
+) {
+  return await sharedImplementorsOf(defaultQueryExecutorUsing(session), selector, environmentId);
+}
+
+export async function hierarchyImplementorsOf(
   session: ActiveSession,
   dictIndex: number,
   className: string,
@@ -2269,7 +2365,7 @@ export function hierarchyImplementorsOf(
   direction: 'up' | 'down',
   environmentId: number = 0,
 ) {
-  return sharedHierarchyImplementorsOf(
+  return await sharedHierarchyImplementorsOf(
     defaultQueryExecutorUsing(session),
     dictIndex,
     className,
@@ -2280,21 +2376,25 @@ export function hierarchyImplementorsOf(
   );
 }
 
-export function referencesToObject(
+export async function referencesToObject(
   session: ActiveSession,
   objectName: string,
   environmentId: number = 0,
 ) {
-  return sharedReferencesToObject(defaultQueryExecutorUsing(session), objectName, environmentId);
+  return await sharedReferencesToObject(
+    defaultQueryExecutorUsing(session),
+    objectName,
+    environmentId,
+  );
 }
 
-export function referencesToClassInDict(
+export async function referencesToClassInDict(
   session: ActiveSession,
   className: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
-  return sharedReferencesToClassInDict(
+): Promise<MethodSearchResult[]> {
+  return await sharedReferencesToClassInDict(
     defaultQueryExecutorUsing(session),
     className,
     dict,
@@ -2302,14 +2402,14 @@ export function referencesToClassInDict(
   );
 }
 
-export function methodsAccessingInstVar(
+export async function methodsAccessingInstVar(
   session: ActiveSession,
   className: string,
   ivarName: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
-  return sharedMethodsAccessingInstVar(
+): Promise<MethodSearchResult[]> {
+  return await sharedMethodsAccessingInstVar(
     defaultQueryExecutorUsing(session),
     className,
     ivarName,
@@ -2318,14 +2418,14 @@ export function methodsAccessingInstVar(
   );
 }
 
-export function methodsAccessingClassVar(
+export async function methodsAccessingClassVar(
   session: ActiveSession,
   className: string,
   classVarName: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
-  return sharedMethodsAccessingClassVar(
+): Promise<MethodSearchResult[]> {
+  return await sharedMethodsAccessingClassVar(
     defaultQueryExecutorUsing(session),
     className,
     classVarName,
@@ -2337,11 +2437,14 @@ export function methodsAccessingClassVar(
 // ── Write-path queries (mutations) ─────────────────────────────────────────
 // All of these delegate to the shared layer. None auto-commit.
 
-export function compileClassDefinition(session: ActiveSession, source: string): string {
-  return sharedCompileClassDefinition(defaultQueryExecutorUsing(session), source);
+export async function compileClassDefinition(
+  session: ActiveSession,
+  source: string,
+): Promise<string> {
+  return await sharedCompileClassDefinition(defaultQueryExecutorUsing(session), source);
 }
 
-export function compileMethod(
+export async function compileMethod(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2349,8 +2452,8 @@ export function compileMethod(
   source: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedCompileMethod(
+): Promise<string> {
+  return await sharedCompileMethod(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2361,25 +2464,30 @@ export function compileMethod(
   );
 }
 
-export function setClassComment(
+export async function setClassComment(
   session: ActiveSession,
   className: string,
   comment: string,
   dict?: number | string,
-): string {
-  return sharedSetClassComment(defaultQueryExecutorUsing(session), className, comment, dict);
+): Promise<string> {
+  return await sharedSetClassComment(defaultQueryExecutorUsing(session), className, comment, dict);
 }
 
-export function recategorizeClass(
+export async function recategorizeClass(
   session: ActiveSession,
   className: string,
   newCategory: string,
   dict?: number | string,
-): string {
-  return sharedRecategorizeClass(defaultQueryExecutorUsing(session), className, newCategory, dict);
+): Promise<string> {
+  return await sharedRecategorizeClass(
+    defaultQueryExecutorUsing(session),
+    className,
+    newCategory,
+    dict,
+  );
 }
 
-export function copyMethodToClass(
+export async function copyMethodToClass(
   session: ActiveSession,
   sourceClass: string,
   targetClass: string,
@@ -2387,8 +2495,8 @@ export function copyMethodToClass(
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedCopyMethodToClass(
+): Promise<string> {
+  return await sharedCopyMethodToClass(
     defaultQueryExecutorUsing(session),
     sourceClass,
     targetClass,
@@ -2399,25 +2507,31 @@ export function copyMethodToClass(
   );
 }
 
-export function deleteMethod(
+export async function deleteMethod(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   dict?: number | string,
-): string {
-  return sharedDeleteMethod(defaultQueryExecutorUsing(session), className, isMeta, selector, dict);
+): Promise<string> {
+  return await sharedDeleteMethod(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    dict,
+  );
 }
 
-export function recategorizeMethod(
+export async function recategorizeMethod(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   newCategory: string,
   dict?: number | string,
-): string {
-  return sharedRecategorizeMethod(
+): Promise<string> {
+  return await sharedRecategorizeMethod(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2427,14 +2541,14 @@ export function recategorizeMethod(
   );
 }
 
-export function removeMethodCategory(
+export async function removeMethodCategory(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   category: string,
   dict?: number | string,
-): string {
-  return sharedRemoveMethodCategory(
+): Promise<string> {
+  return await sharedRemoveMethodCategory(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2443,15 +2557,15 @@ export function removeMethodCategory(
   );
 }
 
-export function renameCategory(
+export async function renameCategory(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   oldCategory: string,
   newCategory: string,
   dict?: number | string,
-): string {
-  return sharedRenameCategory(
+): Promise<string> {
+  return await sharedRenameCategory(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2461,7 +2575,7 @@ export function renameCategory(
   );
 }
 
-export function removeCategory(
+export async function removeCategory(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2470,8 +2584,8 @@ export function removeCategory(
   // Highest method environment to sweep — see the query. Defaults to environment 0
   // alone, which is what every caller that does not browse higher environments wants.
   maxEnv = 0,
-): string {
-  return sharedRemoveCategory(
+): Promise<string> {
+  return await sharedRemoveCategory(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2481,21 +2595,21 @@ export function removeCategory(
   );
 }
 
-export function deleteClass(
+export async function deleteClass(
   session: ActiveSession,
   dict: number | string,
   className: string,
-): string {
-  return sharedDeleteClass(defaultQueryExecutorUsing(session), dict, className);
+): Promise<string> {
+  return await sharedDeleteClass(defaultQueryExecutorUsing(session), dict, className);
 }
 
-export function moveClass(
+export async function moveClass(
   session: ActiveSession,
   srcDictIndex: number,
   destDictIndex: number,
   className: string,
-): string {
-  return sharedMoveClass(
+): Promise<string> {
+  return await sharedMoveClass(
     defaultQueryExecutorUsing(session),
     srcDictIndex,
     destDictIndex,
@@ -2503,40 +2617,51 @@ export function moveClass(
   );
 }
 
-export function addDictionary(session: ActiveSession, dictName: string): string {
-  return sharedAddDictionary(defaultQueryExecutorUsing(session), dictName);
+export async function addDictionary(session: ActiveSession, dictName: string): Promise<string> {
+  return await sharedAddDictionary(defaultQueryExecutorUsing(session), dictName);
 }
 
-export function removeDictionary(session: ActiveSession, dict: number | string): string {
-  return sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict);
+export async function removeDictionary(
+  session: ActiveSession,
+  dict: number | string,
+): Promise<string> {
+  return await sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict);
 }
 
-export function renameDictionary(
+export async function renameDictionary(
   session: ActiveSession,
   dict: number | string,
   newName: string,
-): string {
-  return sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName);
+): Promise<string> {
+  return await sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName);
 }
 
-export function renameClassCategory(
+export async function renameClassCategory(
   session: ActiveSession,
   dict: number | string,
   oldPath: string,
   newPath: string,
-): string {
-  return sharedRenameClassCategory(defaultQueryExecutorUsing(session), dict, oldPath, newPath);
+): Promise<string> {
+  return await sharedRenameClassCategory(
+    defaultQueryExecutorUsing(session),
+    dict,
+    oldPath,
+    newPath,
+  );
 }
 
-export function moveDictionaryUp(session: ActiveSession, dictIndex: number): string {
-  return sharedMoveDictionaryUp(defaultQueryExecutorUsing(session), dictIndex);
+export async function moveDictionaryUp(session: ActiveSession, dictIndex: number): Promise<string> {
+  return await sharedMoveDictionaryUp(defaultQueryExecutorUsing(session), dictIndex);
 }
 
-export function moveDictionaryDown(session: ActiveSession, dictIndex: number): string {
-  return sharedMoveDictionaryDown(defaultQueryExecutorUsing(session), dictIndex);
+export async function moveDictionaryDown(
+  session: ActiveSession,
+  dictIndex: number,
+): Promise<string> {
+  return await sharedMoveDictionaryDown(defaultQueryExecutorUsing(session), dictIndex);
 }
 
-export function setBreakAtStepPoint(
+export async function setBreakAtStepPoint(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2544,8 +2669,8 @@ export function setBreakAtStepPoint(
   stepPoint: number,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedSetBreakAtStepPoint(
+): Promise<string> {
+  return await sharedSetBreakAtStepPoint(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2556,7 +2681,7 @@ export function setBreakAtStepPoint(
   );
 }
 
-export function clearBreakAtStepPoint(
+export async function clearBreakAtStepPoint(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2564,8 +2689,8 @@ export function clearBreakAtStepPoint(
   stepPoint: number,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedClearBreakAtStepPoint(
+): Promise<string> {
+  return await sharedClearBreakAtStepPoint(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2576,15 +2701,15 @@ export function clearBreakAtStepPoint(
   );
 }
 
-export function clearAllBreaks(
+export async function clearAllBreaks(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedClearAllBreaks(
+): Promise<string> {
+  return await sharedClearAllBreaks(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2618,20 +2743,20 @@ function invalidatingRefactoringUndo(
   session: ActiveSession,
   run: () => Promise<string>,
 ): Promise<string> {
-  const forget = (): void => {
+  const forget = async (): Promise<void> => {
     try {
-      clearRefactoringUndo(session);
+      await clearRefactoringUndo(session);
     } catch {
       /* best-effort: never let the bookkeeping fail an apply */
     }
   };
   return run().then(
-    (answer) => {
-      forget();
+    async (answer) => {
+      await forget();
       return answer;
     },
-    (e: unknown) => {
-      forget();
+    async (e: unknown) => {
+      await forget();
       throw e;
     },
   );
@@ -2641,8 +2766,8 @@ function invalidatingRefactoringUndo(
 // these are round trips; the status probe is a blocking fetch (it is one small string
 // and drives a menu's visibility), while the preview / page / apply are NON-BLOCKING so
 // a large undo shows progress and keeps the extension host responsive.
-export function refactoringUndoStatus(session: ActiveSession): string {
-  return sharedRefactoringUndoStatus(defaultQueryExecutorUsing(session));
+export async function refactoringUndoStatus(session: ActiveSession): Promise<string> {
+  return await sharedRefactoringUndoStatus(defaultQueryExecutorUsing(session));
 }
 
 export function startUndoRefactoringPreview(
@@ -2676,12 +2801,15 @@ export function applyUndoRefactoring(
   return sharedApplyUndoRefactoring(exec, token, deselectedIds);
 }
 
-export function clearUndoRefactoringPreview(session: ActiveSession, token: string): string {
-  return sharedClearUndoRefactoringPreview(defaultQueryExecutorUsing(session), token);
+export async function clearUndoRefactoringPreview(
+  session: ActiveSession,
+  token: string,
+): Promise<string> {
+  return await sharedClearUndoRefactoringPreview(defaultQueryExecutorUsing(session), token);
 }
 
-export function clearRefactoringUndo(session: ActiveSession): string {
-  return sharedClearRefactoringUndo(defaultQueryExecutorUsing(session));
+export async function clearRefactoringUndo(session: ActiveSession): Promise<string> {
+  return await sharedClearRefactoringUndo(defaultQueryExecutorUsing(session));
 }
 
 /**
@@ -2690,7 +2818,7 @@ export function clearRefactoringUndo(session: ActiveSession): string {
  * not folded into the apply wrapper the way the method refactorings' recording is: only the
  * command knows whether the rename it just ran is one worth offering to reverse.
  */
-export function recordReverseRename(
+export async function recordReverseRename(
   session: ActiveSession,
   kind: ReverseRenameKind,
   className: string,
@@ -2700,8 +2828,8 @@ export function recordReverseRename(
   engineClassName: string,
   scope?: { kind: string; dictName?: string },
   classDict?: number | string,
-): string {
-  return sharedRecordReverseRename(
+): Promise<string> {
+  return await sharedRecordReverseRename(
     defaultQueryExecutorUsing(session),
     kind,
     className,
@@ -2722,25 +2850,25 @@ export function recordReverseRename(
  * apply really landed -- these refactorings report partial application, and a capture promoted
  * after a partial reshape would describe a state the stone was never in.
  */
-export function captureClassHistory(
+export async function captureClassHistory(
   session: ActiveSession,
   rootClassName: string,
   dict?: number | string,
-): string {
-  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName, dict);
+): Promise<string> {
+  return await sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName, dict);
 }
 
-export function discardPendingCapture(session: ActiveSession): string {
-  return sharedDiscardPendingCapture(defaultQueryExecutorUsing(session));
+export async function discardPendingCapture(session: ActiveSession): Promise<string> {
+  return await sharedDiscardPendingCapture(defaultQueryExecutorUsing(session));
 }
 
-export function commitHistoryRevert(
+export async function commitHistoryRevert(
   session: ActiveSession,
   label: string,
   engineClassName: string,
   createdClassNames: string[] = [],
-): string {
-  return sharedCommitHistoryRevert(
+): Promise<string> {
+  return await sharedCommitHistoryRevert(
     defaultQueryExecutorUsing(session),
     label,
     engineClassName,
@@ -2748,7 +2876,7 @@ export function commitHistoryRevert(
   );
 }
 
-export function disableBreakAtStepPoint(
+export async function disableBreakAtStepPoint(
   session: ActiveSession,
   className: string,
   isMeta: boolean,
@@ -2756,8 +2884,8 @@ export function disableBreakAtStepPoint(
   stepPoint: number,
   environmentId: number = 0,
   dict?: number | string,
-): string {
-  return sharedDisableBreakAtStepPoint(
+): Promise<string> {
+  return await sharedDisableBreakAtStepPoint(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,
@@ -2768,31 +2896,31 @@ export function disableBreakAtStepPoint(
   );
 }
 
-export function getAllBreakpoints(session: ActiveSession) {
-  return sharedGetAllBreakpoints(defaultQueryExecutorUsing(session));
+export async function getAllBreakpoints(session: ActiveSession) {
+  return await sharedGetAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
-export function enableAllBreakpoints(session: ActiveSession): string {
-  return sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session));
+export async function enableAllBreakpoints(session: ActiveSession): Promise<string> {
+  return await sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
-export function disableAllBreakpoints(session: ActiveSession): string {
-  return sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session));
+export async function disableAllBreakpoints(session: ActiveSession): Promise<string> {
+  return await sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
-export function removeAllBreakpoints(session: ActiveSession): string {
-  return sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session));
+export async function removeAllBreakpoints(session: ActiveSession): Promise<string> {
+  return await sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session));
 }
 
-export function hasBreakpoints(session: ActiveSession): boolean {
-  return sharedHasBreakpoints(defaultQueryExecutorUsing(session));
+export async function hasBreakpoints(session: ActiveSession): Promise<boolean> {
+  return await sharedHasBreakpoints(defaultQueryExecutorUsing(session));
 }
 
-export function breakpointByOop(
+export async function breakpointByOop(
   session: ActiveSession,
   methodOop: string,
   op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
   stepPoint: number,
-): string {
-  return sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint);
+): Promise<string> {
+  return await sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint);
 }

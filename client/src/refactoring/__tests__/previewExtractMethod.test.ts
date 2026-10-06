@@ -92,9 +92,9 @@ describe('previewExtractMethod query builders', () => {
     expect(s.code).toContain('deselected: #()');
   });
 
-  it('clearExtractMethodPreview drops the token', () => {
+  it('clearExtractMethodPreview drops the token', async () => {
     let captured = '';
-    clearExtractMethodPreview((code) => {
+    await clearExtractMethodPreview(async (code) => {
       captured = code;
       return '';
     }, 'tok');

@@ -35,7 +35,7 @@ import { escapeString, receiver } from './util';
  * (refused; n methods are still filed under it across all environments), or
  * `'not-removed'` (GemStone kept it).
  */
-export function removeCategory(
+export async function removeCategory(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
@@ -45,7 +45,7 @@ export function removeCategory(
   // the Methods pane reads, so the guard can never see fewer environments than the
   // row the user clicked was built from.
   maxEnv = 0,
-): string {
+): Promise<string> {
   const cat = escapeString(category);
   const code = `| recv envs cat found count |
 recv := ${receiver(className, isMeta, dict)}.
@@ -73,7 +73,7 @@ recv isNil
                    ifNone: [nil]) isNil
               ifTrue: ['ok']
               ifFalse: ['not-removed']]]]`;
-  return execute(code);
+  return await execute(code);
 }
 
 /** The parsed outcome of `removeCategory` — see its sentinels. */

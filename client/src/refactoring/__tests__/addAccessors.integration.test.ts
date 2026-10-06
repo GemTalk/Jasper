@@ -25,74 +25,80 @@ describe('add accessors (integration)', () => {
   });
 
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const CLS = 'AaccItClass';
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #(count) classVars: #(Registry) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
   };
 
-  const addFor = (varName: string, kind: 'ivar' | 'classvar') => {
+  const addFor = async (varName: string, kind: 'ivar' | 'classvar') => {
     const { isMeta, accessors } = accessorSpecsFor(varName, kind);
-    return q.addAccessors(session(), CLS, isMeta, accessors, userIndex());
+    return await q.addAccessors(session(), CLS, isMeta, accessors, await userIndex());
   };
 
-  it('creates instance-side getter and setter for an instance variable', () => {
-    defineFixture();
+  it('creates instance-side getter and setter for an instance variable', async () => {
+    await defineFixture();
 
-    const result = addFor('count', 'ivar');
+    const result = await addFor('count', 'ivar');
 
     expect(result).toEqual({ created: 2, skipped: 0, noClass: false });
-    expect(exec(`(${CLS} includesSelector: #count) printString`).trim()).toBe('true');
-    expect(exec(`(${CLS} includesSelector: #'count:') printString`).trim()).toBe('true');
+    expect((await exec(`(${CLS} includesSelector: #count) printString`)).trim()).toBe('true');
+    expect((await exec(`(${CLS} includesSelector: #'count:') printString`)).trim()).toBe('true');
     // The generated getter really reads the instance variable.
-    exec(
+    await exec(
       `(UserGlobals at: #AaccInst put: ${CLS} new). (UserGlobals at: #AaccInst) count: 41. true printString`,
     );
-    expect(exec(`(UserGlobals at: #AaccInst) count printString`).trim()).toBe('41');
+    expect((await exec(`(UserGlobals at: #AaccInst) count printString`)).trim()).toBe('41');
   });
 
-  it('creates class-side accessors with a lowercased selector for a class variable', () => {
-    defineFixture();
+  it('creates class-side accessors with a lowercased selector for a class variable', async () => {
+    await defineFixture();
 
-    const result = addFor('Registry', 'classvar');
+    const result = await addFor('Registry', 'classvar');
 
     expect(result).toEqual({ created: 2, skipped: 0, noClass: false });
-    expect(exec(`(${CLS} class includesSelector: #registry) printString`).trim()).toBe('true');
-    expect(exec(`(${CLS} class includesSelector: #'registry:') printString`).trim()).toBe('true');
+    expect((await exec(`(${CLS} class includesSelector: #registry) printString`)).trim()).toBe(
+      'true',
+    );
+    expect((await exec(`(${CLS} class includesSelector: #'registry:') printString`)).trim()).toBe(
+      'true',
+    );
     // The class-side accessor reads/writes the class variable.
-    exec(`${CLS} registry: 7. true printString`);
-    expect(exec(`${CLS} registry printString`).trim()).toBe('7');
+    await exec(`${CLS} registry: 7. true printString`);
+    expect((await exec(`${CLS} registry printString`)).trim()).toBe('7');
   });
 
-  it('skips an accessor that already exists instead of clobbering it', () => {
-    defineFixture();
-    addFor('count', 'ivar'); // create them once
+  it('skips an accessor that already exists instead of clobbering it', async () => {
+    await defineFixture();
+    await addFor('count', 'ivar'); // create them once
 
-    const again = addFor('count', 'ivar'); // second run
+    const again = await addFor('count', 'ivar'); // second run
 
     expect(again).toEqual({ created: 0, skipped: 2, noClass: false });
   });
 
-  it('reports noClass for a name that is not a bound class', () => {
+  it('reports noClass for a name that is not a bound class', async () => {
     const { isMeta, accessors } = accessorSpecsFor('count', 'ivar');
 
-    expect(q.addAccessors(session(), 'NoSuchClassAacc', isMeta, accessors, userIndex())).toEqual({
+    expect(
+      await q.addAccessors(session(), 'NoSuchClassAacc', isMeta, accessors, await userIndex()),
+    ).toEqual({
       created: 0,
       skipped: 0,
       noClass: true,

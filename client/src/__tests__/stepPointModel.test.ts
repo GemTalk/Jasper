@@ -6,17 +6,19 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // delegates to the three separate mocks so every test keeps setting up its
 // method the same way, one fact at a time.
 vi.mock('../browserQueries', () => {
-  const getMethodSource = vi.fn(() => '');
-  const getSourceOffsets = vi.fn((): number[] => []);
-  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  const getMethodSource = vi.fn(async () => '');
+  const getSourceOffsets = vi.fn(async (): Promise<number[]> => []);
+  const getStepPointSelectorRanges = vi.fn(async (): Promise<unknown[]> => []);
   return {
     getMethodSource,
     getSourceOffsets,
     getStepPointSelectorRanges,
-    getStepPointBundle: vi.fn((...args: unknown[]) => ({
-      source: (getMethodSource as (...a: unknown[]) => string)(...args),
-      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
-      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    getStepPointBundle: vi.fn(async (...args: unknown[]) => ({
+      source: await (getMethodSource as (...a: unknown[]) => Promise<string>)(...args),
+      offsets: await (getSourceOffsets as (...a: unknown[]) => Promise<number[]>)(...args),
+      selectors: await (getStepPointSelectorRanges as (...a: unknown[]) => Promise<unknown[]>)(
+        ...args,
+      ),
     })),
   };
 });
@@ -195,72 +197,72 @@ describe('StepPointModel', () => {
   }
 
   beforeEach(() => {
-    mockGetMethodSource.mockReset().mockReturnValue('at: index\n^self basicAt: index');
-    mockGetSourceOffsets.mockReset().mockReturnValue([11]);
-    mockGetRanges.mockReset().mockReturnValue([]);
+    mockGetMethodSource.mockReset().mockResolvedValue('at: index\n^self basicAt: index');
+    mockGetSourceOffsets.mockReset().mockResolvedValue([11]);
+    mockGetRanges.mockReset().mockResolvedValue([]);
   });
 
-  it('converts GemStone 1-based offsets to 0-based', () => {
+  it('converts GemStone 1-based offsets to 0-based', async () => {
     const model = new StepPointModel(makeSessionManager());
-    expect(model.get(makeDocument())?.offsets).toEqual([10]);
+    expect((await model.get(makeDocument()))?.offsets).toEqual([10]);
   });
 
-  it('queries a method once and serves the rest from cache', () => {
+  it('queries a method once and serves the rest from cache', async () => {
     const model = new StepPointModel(makeSessionManager());
-    model.get(makeDocument());
-    model.get(makeDocument());
+    await model.get(makeDocument());
+    await model.get(makeDocument());
     expect(mockGetSourceOffsets).toHaveBeenCalledTimes(1);
   });
 
-  it('re-queries after the method is invalidated', () => {
+  it('re-queries after the method is invalidated', async () => {
     const model = new StepPointModel(makeSessionManager());
-    model.get(makeDocument());
+    await model.get(makeDocument());
     model.invalidate(Uri.parse(METHOD_URI));
-    model.get(makeDocument());
+    await model.get(makeDocument());
     expect(mockGetSourceOffsets).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses a dirty document, whose text no longer matches the offsets', () => {
+  it('refuses a dirty document, whose text no longer matches the offsets', async () => {
     const model = new StepPointModel(makeSessionManager());
-    expect(model.get(makeDocument(METHOD_URI, true))).toBeNull();
+    expect(await model.get(makeDocument(METHOD_URI, true))).toBeNull();
     expect(mockGetSourceOffsets).not.toHaveBeenCalled();
   });
 
-  it('refuses a non-gemstone document', () => {
+  it('refuses a non-gemstone document', async () => {
     const model = new StepPointModel(makeSessionManager());
-    expect(model.get(makeDocument('file:///a.st'))).toBeNull();
+    expect(await model.get(makeDocument('file:///a.st'))).toBeNull();
   });
 
-  it('refuses a diff view, which must never be given a breakpoint', () => {
+  it('refuses a diff view, which must never be given a breakpoint', async () => {
     const model = new StepPointModel(makeSessionManager());
     const diff = makeDocument(
       'gemstone://1/Globals/Array/instance/accessing/at%3A%20(base)?base=1',
     );
-    expect(model.get(diff)).toBeNull();
+    expect(await model.get(diff)).toBeNull();
   });
 
-  it('refuses when no session is selected', () => {
+  it('refuses when no session is selected', async () => {
     const model = new StepPointModel(makeSessionManager(false));
-    expect(model.get(makeDocument())).toBeNull();
+    expect(await model.get(makeDocument())).toBeNull();
   });
 
-  it('returns null rather than throwing when the method is gone', () => {
+  it('returns null rather than throwing when the method is gone', async () => {
     mockGetMethodSource.mockImplementation(() => {
       throw new Error('not found');
     });
     const model = new StepPointModel(makeSessionManager());
-    expect(model.get(makeDocument())).toBeNull();
+    expect(await model.get(makeDocument())).toBeNull();
   });
 
   describe('explain', () => {
     /** The reason `explain` gave, or '' when it produced step points. */
-    const problemFor = (doc: import('vscode').TextDocument) => {
-      const result = new StepPointModel(makeSessionManager()).explain(doc);
+    const problemFor = async (doc: import('vscode').TextDocument) => {
+      const result = await new StepPointModel(makeSessionManager()).explain(doc);
       return 'problem' in result ? result.problem : '';
     };
 
-    it('names the unsaved buffer, the case a developer can actually fix', () => {
-      const problem = problemFor(makeDocument(METHOD_URI, true));
+    it('names the unsaved buffer, the case a developer can actually fix', async () => {
+      const problem = await problemFor(makeDocument(METHOD_URI, true));
       expect(problem).toContain('unsaved edits');
       // Both ways back to a compiled method, since saving a half-finished edit
       // is not always what the developer wants.
@@ -268,63 +270,63 @@ describe('StepPointModel', () => {
       expect(problem).toContain('Revert File');
     });
 
-    it('says breakpoints need GemStone method source for another scheme', () => {
-      expect(problemFor(makeDocument('file:///a.st'))).toContain('GemStone method source');
+    it('says breakpoints need GemStone method source for another scheme', async () => {
+      expect(await problemFor(makeDocument('file:///a.st'))).toContain('GemStone method source');
     });
 
-    it('points at the real method for a comparison view', () => {
+    it('points at the real method for a comparison view', async () => {
       const diff = makeDocument(
         'gemstone://1/Globals/Array/instance/accessing/at%3A%20(base)?base=1',
       );
-      expect(problemFor(diff)).toContain('comparison view');
+      expect(await problemFor(diff)).toContain('comparison view');
     });
 
-    it('reports a missing session', () => {
+    it('reports a missing session', async () => {
       const model = new StepPointModel(makeSessionManager(false));
-      const result = model.explain(makeDocument());
+      const result = await model.explain(makeDocument());
       expect(result).toEqual({ problem: 'No active GemStone session.' });
     });
 
-    it("passes the stone's own words along when the query fails", () => {
+    it("passes the stone's own words along when the query fails", async () => {
       mockGetMethodSource.mockImplementation(() => {
         throw new Error('method not found');
       });
-      const problem = problemFor(makeDocument());
+      const problem = await problemFor(makeDocument());
       expect(problem).toContain('Array>>at:');
       expect(problem).toContain('method not found');
     });
 
-    it('says so when the method compiles but has no step points', () => {
-      mockGetSourceOffsets.mockReturnValue([]);
-      expect(problemFor(makeDocument())).toContain('no step points');
+    it('says so when the method compiles but has no step points', async () => {
+      mockGetSourceOffsets.mockResolvedValue([]);
+      expect(await problemFor(makeDocument())).toContain('no step points');
     });
 
-    it('returns the step points when there is nothing wrong', () => {
-      const result = new StepPointModel(makeSessionManager()).explain(makeDocument());
+    it('returns the step points when there is nothing wrong', async () => {
+      const result = await new StepPointModel(makeSessionManager()).explain(makeDocument());
       expect('info' in result && result.info.offsets).toEqual([10]);
     });
 
-    it('does not leak a stale error into a later successful fetch', () => {
+    it('does not leak a stale error into a later successful fetch', async () => {
       const model = new StepPointModel(makeSessionManager());
       mockGetMethodSource.mockImplementationOnce(() => {
         throw new Error('transient');
       });
-      expect('problem' in model.explain(makeDocument())).toBe(true);
+      expect('problem' in (await model.explain(makeDocument()))).toBe(true);
 
       model.invalidate(Uri.parse(METHOD_URI));
-      expect('info' in model.explain(makeDocument())).toBe(true);
+      expect('info' in (await model.explain(makeDocument()))).toBe(true);
     });
   });
 
-  it('invalidateSession drops only that session', () => {
+  it('invalidateSession drops only that session', async () => {
     const model = new StepPointModel(makeSessionManager());
-    model.get(makeDocument());
+    await model.get(makeDocument());
     model.invalidateSession(2);
-    model.get(makeDocument());
+    await model.get(makeDocument());
     expect(mockGetSourceOffsets).toHaveBeenCalledTimes(1);
 
     model.invalidateSession(1);
-    model.get(makeDocument());
+    await model.get(makeDocument());
     expect(mockGetSourceOffsets).toHaveBeenCalledTimes(2);
   });
 });

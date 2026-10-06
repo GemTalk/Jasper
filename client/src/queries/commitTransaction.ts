@@ -11,14 +11,14 @@ import { describeRefusal, tryTransactionConflicts } from './transactionConflicts
  * instead of answering at all — reachable under manualBegin and transactionless,
  * and left to the caller's error path, which names Begin Transaction.
  */
-export function commitTransaction(execute: QueryExecutor): string {
-  const answer = execute(
-    `System commitTransaction ifTrue: ['committed'] ifFalse: ['refused']`,
+export async function commitTransaction(execute: QueryExecutor): Promise<string> {
+  const answer = (
+    await execute(`System commitTransaction ifTrue: ['committed'] ifFalse: ['refused']`)
   ).trim();
   if (answer === 'committed') return 'Transaction committed';
 
   // Read first — see the transactionConflicts.ts header.
-  const { reason, details } = describeRefusal(tryTransactionConflicts(execute));
+  const { reason, details } = describeRefusal(await tryTransactionConflicts(execute));
   const headline = `Commit refused — ${reason}`;
   return details ? `${headline}\n\n${details}` : headline;
 }

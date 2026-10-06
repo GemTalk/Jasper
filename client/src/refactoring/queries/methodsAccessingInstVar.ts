@@ -29,13 +29,13 @@ import { classLookupExpr, escapeString } from '../../queries/util';
  *  never be offered to the accessed-variables test at all and the scan would wrongly report
  *  the variable unused. Verified on a live stone — `selectors` answers the environment-0
  *  selector and `selectorsForEnvironment: 1` the environment-1 one. */
-export function methodsAccessingInstVar(
+export async function methodsAccessingInstVar(
   execute: QueryExecutor,
   className: string,
   ivarName: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| cls want scanned methods stream limit classDict sl |
 want := '${escapeString(ivarName)}' asSymbol.
 cls := ${classLookupExpr(className, dict)}.
@@ -52,5 +52,5 @@ scanned do: [:each |
 methods := methods asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }

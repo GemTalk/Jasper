@@ -55,8 +55,8 @@ const UNDO_ACTION = 'Undo';
  * Pushing is all it takes: the stack's change listener is what lights the pane's Undo button and
  * writes its tooltip, so no recording site updates the UI itself.
  */
-export function armRefactoringUndo(session: ActiveSession | undefined): UndoStatus {
-  const status = checkRefactoringUndoAvailable(session);
+export async function armRefactoringUndo(session: ActiveSession | undefined): Promise<UndoStatus> {
+  const status = await checkRefactoringUndoAvailable(session);
   if (!status.available || !session) return status;
   logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
   pushUndoEntry({
@@ -89,7 +89,7 @@ export function notifyRefactoringApplied(
     ).then(undefined, () => undefined);
   }
   void (async () => {
-    const status = armRefactoringUndo(session);
+    const status = await armRefactoringUndo(session);
     if (!status.available || !session) {
       logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);

@@ -27,25 +27,25 @@ const slot: ClassSlot = { dict: 'UserGlobals', className: 'Account' };
 beforeEach(() => resetStashKeys());
 
 describe('the class doits', () => {
-  it('never mention the refactoring engine, so they run on any stone', () => {
+  it('never mention the refactoring engine, so they run on any stone', async () => {
     const seen: string[] = [];
-    const execute = (code: string) => {
+    const execute = async (code: string) => {
       seen.push(code);
       return '0\n';
     };
-    captureClassSlots(execute, [slot], ['k1']);
-    applyClassSlotOps(execute, [{ kind: 'rebind', slot, stashKey: 'k1', discarded: [] }]);
-    applyClassSlotOps(execute, [{ kind: 'unbind', slot, stashKey: null, discarded: [] }]);
+    await captureClassSlots(execute, [slot], ['k1']);
+    await applyClassSlotOps(execute, [{ kind: 'rebind', slot, stashKey: 'k1', discarded: [] }]);
+    await applyClassSlotOps(execute, [{ kind: 'unbind', slot, stashKey: null, discarded: [] }]);
 
     for (const code of seen) {
       expect(code).not.toMatch(/GsRefactoring|GsClassHistory|GsRename|GsInstVar/);
     }
   });
 
-  it('stashes the bound version when a key is given', () => {
+  it('stashes the bound version when a key is given', async () => {
     let code = '';
-    captureClassSlots(
-      (c) => {
+    await captureClassSlots(
+      async (c) => {
         code = c;
         return '0\n';
       },
@@ -55,11 +55,11 @@ describe('the class doits', () => {
     expect(code).toContain("SessionTemps current at: #'JasperUndoStash_7' put: cls");
   });
 
-  it('stashes nothing when reading the live state', () => {
+  it('stashes nothing when reading the live state', async () => {
     // The revert-time read must not pin the version the edit produced.
     let code = '';
-    captureClassSlots(
-      (c) => {
+    await captureClassSlots(
+      async (c) => {
         code = c;
         return '0\n';
       },
@@ -68,10 +68,10 @@ describe('the class doits', () => {
     expect(code).not.toContain('SessionTemps');
   });
 
-  it('asks for nothing when there is nothing to ask about', () => {
+  it('asks for nothing when there is nothing to ask about', async () => {
     const execute = vi.fn();
-    expect(captureClassSlots(execute, [])).toEqual([]);
-    expect(applyClassSlotOps(execute, [])).toEqual([]);
+    expect(await captureClassSlots(execute, [])).toEqual([]);
+    expect(await applyClassSlotOps(execute, [])).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -86,13 +86,13 @@ describe('the class doits', () => {
  * removed dictionary the stash is the only reference there is.
  */
 describe('letting go of the stash', () => {
-  it('removes each key without minding one that was never written', () => {
+  it('removes each key without minding one that was never written', async () => {
     // A key issued for a slot that turned out to be unbound was never stored, which is
     // ordinary rather than an error: a release must not be the thing that raises.
     const seen: string[] = [];
 
-    releaseStashKeys(
-      (code) => {
+    await releaseStashKeys(
+      async (code) => {
         seen.push(code);
         return 'released';
       },
@@ -103,10 +103,10 @@ describe('letting go of the stash', () => {
     expect(seen[0]).toContain("removeKey: #'JasperUndoStash_2' ifAbsent: [nil]");
   });
 
-  it('asks for nothing when there is nothing to let go of', () => {
+  it('asks for nothing when there is nothing to let go of', async () => {
     const execute = vi.fn();
 
-    releaseStashKeys(execute, []);
+    await releaseStashKeys(execute, []);
 
     expect(execute).not.toHaveBeenCalled();
   });

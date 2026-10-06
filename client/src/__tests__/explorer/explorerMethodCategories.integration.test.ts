@@ -36,43 +36,42 @@ describe('Explorer method categories (integration)', () => {
 
   const showInputBox = window.showInputBox as ReturnType<typeof vi.fn>;
 
-  const dictIndexOf = (name: string): number => {
-    const index = queries.getDictionaryNames(session()).indexOf(name) + 1;
+  const dictIndexOf = async (name: string): Promise<number> => {
+    const index = (await queries.getDictionaryNames(session())).indexOf(name) + 1;
     expect(index).toBeGreaterThan(0);
     return index;
   };
 
   /** Selectors the stone reports for a class under one side + category. */
-  const selectorsIn = (isMeta: boolean, category: string): string[] =>
-    queries
-      .getClassEnvironments(session(), dictIndexOf('UserGlobals'), TEST_CLASS, 0)
+  const selectorsIn = async (isMeta: boolean, category: string): Promise<string[]> =>
+    (await queries.getClassEnvironments(session(), await dictIndexOf('UserGlobals'), TEST_CLASS, 0))
       .filter((l) => l.isMeta === isMeta && l.category === category)
       .flatMap((l) => l.selectors);
 
   /** A class carrying one instance and one class method, each in OLD_CATEGORY. */
-  const fixtureWithMethods = (): void => {
-    const defined = queries.compileClassDefinition(
+  const fixtureWithMethods = async (): Promise<void> => {
+    const defined = await queries.compileClassDefinition(
       session(),
       `Object subclass: '${TEST_CLASS}' instVarNames: #() classVars: #() ` +
         `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
     );
     expect(defined).toBe(TEST_CLASS);
-    queries.compileMethod(session(), TEST_CLASS, false, OLD_CATEGORY, 'answer ^ 42');
-    queries.compileMethod(session(), TEST_CLASS, true, OLD_CATEGORY, 'build ^ self new');
+    await queries.compileMethod(session(), TEST_CLASS, false, OLD_CATEGORY, 'answer ^ 42');
+    await queries.compileMethod(session(), TEST_CLASS, true, OLD_CATEGORY, 'build ^ self new');
   };
 
   /** A controller on the fixture class, with its env lines loaded from the stone. */
-  const controllerOnFixture = (): ExplorerController => {
+  const controllerOnFixture = async (): Promise<ExplorerController> => {
     const sessionManager = {
       getSelectedSession: () => session(),
     } as unknown as SessionManager;
     const ctl = new ExplorerController(sessionManager);
     ctl.state.dictName = 'UserGlobals';
-    ctl.state.dictIndex = dictIndexOf('UserGlobals');
+    ctl.state.dictIndex = await dictIndexOf('UserGlobals');
     ctl.state.className = TEST_CLASS;
     // Populate envLines from the stone so renameMethodCategory sees the category
     // as server-backed and takes the real rename path (not the overlay-only one).
-    ctl.reloadCurrentClassMethods();
+    await ctl.reloadCurrentClassMethods();
     return ctl;
   };
 
@@ -82,39 +81,39 @@ describe('Explorer method categories (integration)', () => {
   });
 
   it('renames a populated instance-side category on the stone, carrying its method', async () => {
-    fixtureWithMethods();
+    await fixtureWithMethods();
     showInputBox.mockResolvedValue(NEW_CATEGORY);
 
-    await controllerOnFixture().renameMethodCategory(
-      new MethodCategoryItem(false, OLD_CATEGORY, false),
-    );
+    await (
+      await controllerOnFixture()
+    ).renameMethodCategory(new MethodCategoryItem(false, OLD_CATEGORY, false));
 
-    expect(selectorsIn(false, NEW_CATEGORY)).toContain('answer');
-    expect(selectorsIn(false, OLD_CATEGORY)).not.toContain('answer');
+    expect(await selectorsIn(false, NEW_CATEGORY)).toContain('answer');
+    expect(await selectorsIn(false, OLD_CATEGORY)).not.toContain('answer');
   });
 
   it('renames a populated class-side category independently of the instance side', async () => {
-    fixtureWithMethods();
+    await fixtureWithMethods();
     showInputBox.mockResolvedValue(NEW_CATEGORY);
 
-    await controllerOnFixture().renameMethodCategory(
-      new MethodCategoryItem(true, OLD_CATEGORY, false),
-    );
+    await (
+      await controllerOnFixture()
+    ).renameMethodCategory(new MethodCategoryItem(true, OLD_CATEGORY, false));
 
-    expect(selectorsIn(true, NEW_CATEGORY)).toContain('build');
+    expect(await selectorsIn(true, NEW_CATEGORY)).toContain('build');
     // The instance side's identically named category is untouched.
-    expect(selectorsIn(false, OLD_CATEGORY)).toContain('answer');
+    expect(await selectorsIn(false, OLD_CATEGORY)).toContain('answer');
   });
 
   it('does not rename anything when the prompt is cancelled', async () => {
-    fixtureWithMethods();
+    await fixtureWithMethods();
     showInputBox.mockResolvedValue(undefined);
 
-    await controllerOnFixture().renameMethodCategory(
-      new MethodCategoryItem(false, OLD_CATEGORY, false),
-    );
+    await (
+      await controllerOnFixture()
+    ).renameMethodCategory(new MethodCategoryItem(false, OLD_CATEGORY, false));
 
-    expect(selectorsIn(false, OLD_CATEGORY)).toContain('answer');
-    expect(selectorsIn(false, NEW_CATEGORY)).not.toContain('answer');
+    expect(await selectorsIn(false, OLD_CATEGORY)).toContain('answer');
+    expect(await selectorsIn(false, NEW_CATEGORY)).not.toContain('answer');
   });
 });

@@ -25,7 +25,7 @@ import { rankAndLimit } from '../rank';
 
 export function createCategoriesProvider(
   sessionId: number,
-  loadEntries: () => ClassCategoryNameEntry[],
+  loadEntries: () => Promise<ClassCategoryNameEntry[]>,
 ): OmniProvider {
   let entries: readonly ClassCategoryNameEntry[] | null = null;
   return {
@@ -40,8 +40,8 @@ export function createCategoriesProvider(
       if (change.kind === 'class') entries = null;
       return false;
     },
-    search(query: string, cfg: OmniConfig): OmniResult[] {
-      if (entries === null) entries = loadEntries(); // lazy: pay the scan only when first used
+    async search(query: string, cfg: OmniConfig): Promise<OmniResult[]> {
+      if (entries === null) entries = await loadEntries(); // lazy: pay the scan only when first used
       return rankAndLimit(
         query,
         entries,

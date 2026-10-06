@@ -79,7 +79,7 @@ export class GrailNotebookController extends GemStoneNotebookKernel {
     }
 
     try {
-      resetPythonScope(session, editor.notebook.uri.toString());
+      await resetPythonScope(session, editor.notebook.uri.toString());
       vscode.window.showInformationMessage('Grail notebook scope reset.');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

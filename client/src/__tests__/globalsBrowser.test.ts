@@ -64,7 +64,7 @@ describe('GlobalsBrowser', () => {
     });
 
     vi.mocked(commands.executeCommand).mockResolvedValue(undefined);
-    vi.mocked(queries.getGlobalsForDictionary).mockReturnValue(sampleGlobals);
+    vi.mocked(queries.getGlobalsForDictionary).mockResolvedValue(sampleGlobals);
   });
 
   afterEach(() => {
@@ -142,7 +142,7 @@ describe('GlobalsBrowser', () => {
 
     it('sends fresh loadGlobals immediately (panel already ready)', async () => {
       const newGlobals = [{ name: 'SomeGlobal', className: 'String', value: "'hello'" }];
-      vi.mocked(queries.getGlobalsForDictionary).mockReturnValue(newGlobals);
+      vi.mocked(queries.getGlobalsForDictionary).mockResolvedValue(newGlobals);
 
       await GlobalsBrowser.showOrUpdate(session, 'UserGlobals', 2);
 

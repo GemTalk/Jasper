@@ -44,18 +44,19 @@ describe('add instance variable, delete-history commit path (integration)', () =
   );
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const userIndex = (): number => userIndexProbe(exec);
-  const hasIvar = (cls: string, name: string): boolean => hasIvarProbe(exec, cls, name);
+  const userIndex = async (): Promise<number> => await userIndexProbe(exec);
+  const hasIvar = async (cls: string, name: string): Promise<boolean> =>
+    await hasIvarProbe(exec, cls, name);
 
   const CLS = 'XIvCommitHist';
 
   it('deletes prior versions from the class history and commits when delete-history is requested', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
@@ -70,7 +71,7 @@ describe('add instance variable, delete-history commit path (integration)', () =
         'z',
         'xiv-commit-hist',
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     const result = parseApplyResult(
@@ -79,7 +80,7 @@ describe('add instance variable, delete-history commit path (integration)', () =
 
     expect(result.failed).toEqual([]);
     expect(result.committed).toBe(true);
-    expect(hasIvar(CLS, 'z')).toBe(true);
+    expect(await hasIvar(CLS, 'z')).toBe(true);
     // The prior version was pruned: only the current version remains in the history.
     expect(gci.executeAndFetchInteger(handle, `${CLS} classHistory size`)).toBe(1n);
   });

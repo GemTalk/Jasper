@@ -108,21 +108,28 @@ cls setup.
   };
 
   /** Runs `body` against a halt, always releasing the suspended process after. */
-  const atHalt = (code: string, body: (gsProcess: bigint, s: ActiveSession) => void): void => {
+  const atHalt = async (
+    code: string,
+    body: (gsProcess: bigint, s: ActiveSession) => Promise<void> | void,
+  ): Promise<void> => {
     defineFixture();
     const gsProcess = haltAt(code);
     try {
-      body(gsProcess, session());
+      await body(gsProcess, session());
     } finally {
       gci.GciTsClearStack(handle, gsProcess);
     }
   };
 
   /** The level of the topmost frame running a block whose home is `selector`. */
-  const blockFrameLevel = (s: ActiveSession, gsProcess: bigint, selector: string): number => {
+  const blockFrameLevel = async (
+    s: ActiveSession,
+    gsProcess: bigint,
+    selector: string,
+  ): Promise<number> => {
     const depth = debug.getStackDepth(s, gsProcess);
     for (let level = 1; level <= depth; level++) {
-      const info = debug.getFrameInfo(s, gsProcess, level);
+      const info = await debug.getFrameInfo(s, gsProcess, level);
       if (info.homeMethodOop === OOP_NIL) continue;
       if (debug.getMethodInfo(s, info.homeMethodOop).selector === selector) return level;
     }
@@ -130,15 +137,15 @@ cls setup.
   };
 
   /** The level of the topmost frame running `className >> selector` itself. */
-  const methodFrameLevel = (
+  const methodFrameLevel = async (
     s: ActiveSession,
     gsProcess: bigint,
     className: string,
     selector: string,
-  ): number => {
+  ): Promise<number> => {
     const depth = debug.getStackDepth(s, gsProcess);
     for (let level = 1; level <= depth; level++) {
-      const info = debug.getFrameInfo(s, gsProcess, level);
+      const info = await debug.getFrameInfo(s, gsProcess, level);
       if (info.homeMethodOop !== OOP_NIL) continue; // a block frame, not the method
       const method = debug.getMethodInfo(s, info.methodOop);
       if (method.className === className && method.selector === selector) return level;
@@ -150,100 +157,127 @@ cls setup.
     Object.fromEntries(rows.filter((r) => r.group === group).map((r) => [r.name, r.value]));
 
   describe('Variables pane rows', () => {
-    it("shows a user method's argument AND its temporary, with their values", () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
-        const level = methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
-        const argTemps = namedValues(debug.fetchFrameVariables(s, gsProcess, level), 'argtemps');
-        expect(argTemps).toMatchObject({ anArg: '21', aTemp: '42' });
-      });
+    it("shows a user method's argument AND its temporary, with their values", async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`,
+        async (gsProcess, s) => {
+          const level = await methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
+          const argTemps = namedValues(
+            await debug.fetchFrameVariables(s, gsProcess, level),
+            'argtemps',
+          );
+          expect(argTemps).toMatchObject({ anArg: '21', aTemp: '42' });
+        },
+      );
     });
 
-    it("shows a kernel primitive-backed frame's arguments (String >> at:put:)", () => {
+    it("shows a kernel primitive-backed frame's arguments (String >> at:put:)", async () => {
       // The report that started this: an out-of-range at:put: on a String showed
       // no argument values at all. Nothing about at:put: was special — the whole
       // named group was empty on every frame.
-      atHalt('String new at: 5 put: $a', (gsProcess, s) => {
-        const level = methodFrameLevel(s, gsProcess, 'String', 'at:put:');
-        const argTemps = namedValues(debug.fetchFrameVariables(s, gsProcess, level), 'argtemps');
+      await atHalt('String new at: 5 put: $a', async (gsProcess, s) => {
+        const level = await methodFrameLevel(s, gsProcess, 'String', 'at:put:');
+        const argTemps = namedValues(
+          await debug.fetchFrameVariables(s, gsProcess, level),
+          'argtemps',
+        );
         expect(argTemps.anIndex).toBe('5');
         expect(argTemps.aChar).toBe('$a');
       });
     });
 
-    it('shows the HOME receiver and its instVars on a block frame, not the ExecBlock', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`, (gsProcess, s) => {
-        const level = blockFrameLevel(s, gsProcess, 'scanNoSelf:');
-        const rows = debug.fetchFrameVariables(s, gsProcess, level);
-        expect(namedValues(rows, 'receiver').self).toBe(`a${TEST_CLASS}`);
-        expect(namedValues(rows, 'instvars')).toMatchObject({ limit: '99' });
-        // …and the block's own argument and the temp it shares with its home.
-        expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1', total: '1' });
-      });
+    it('shows the HOME receiver and its instVars on a block frame, not the ExecBlock', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`,
+        async (gsProcess, s) => {
+          const level = await blockFrameLevel(s, gsProcess, 'scanNoSelf:');
+          const rows = await debug.fetchFrameVariables(s, gsProcess, level);
+          expect(namedValues(rows, 'receiver').self).toBe(`a${TEST_CLASS}`);
+          expect(namedValues(rows, 'instvars')).toMatchObject({ limit: '99' });
+          // …and the block's own argument and the temp it shares with its home.
+          expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1', total: '1' });
+        },
+      );
     });
 
-    it("lists the enclosing method's arguments and temporaries on a block frame", () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`, (gsProcess, s) => {
-        const rows = debug.fetchFrameVariables(
-          s,
-          gsProcess,
-          blockFrameLevel(s, gsProcess, 'scanNoSelf:'),
-        );
+    it("lists the enclosing method's arguments and temporaries on a block frame", async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`,
+        async (gsProcess, s) => {
+          const rows = await debug.fetchFrameVariables(
+            s,
+            gsProcess,
+            await blockFrameLevel(s, gsProcess, 'scanNoSelf:'),
+          );
 
-        // Everything the eval bar resolves here is now visible here too.
-        expect(namedValues(rows, 'homeargtemps')).toEqual({
-          coll: 'anArray( 1, 2, 3)',
-          tag: '7',
-        });
-        // `total` is one slot the block shares with its home, so it appears once
-        // — under the block, whose row is the editable one.
-        expect(namedValues(rows, 'homeargtemps')).not.toHaveProperty('total');
-      });
+          // Everything the eval bar resolves here is now visible here too.
+          expect(namedValues(rows, 'homeargtemps')).toEqual({
+            coll: 'anArray( 1, 2, 3)',
+            tag: '7',
+          });
+          // `total` is one slot the block shares with its home, so it appears once
+          // — under the block, whose row is the editable one.
+          expect(namedValues(rows, 'homeargtemps')).not.toHaveProperty('total');
+        },
+      );
     });
 
-    it('offers no enclosing group on a frame that is not running a block', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
-        const level = methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
+    it('offers no enclosing group on a frame that is not running a block', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`,
+        async (gsProcess, s) => {
+          const level = await methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
 
-        expect(namedValues(debug.fetchFrameVariables(s, gsProcess, level), 'homeargtemps')).toEqual(
-          {},
-        );
-      });
+          expect(
+            namedValues(await debug.fetchFrameVariables(s, gsProcess, level), 'homeargtemps'),
+          ).toEqual({});
+        },
+      );
     });
 
-    it('carries arguments into the whole-stack dump too (Copy/Dump Stack)', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
-        const level = methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
-        const named = debug
-          .fetchStackDump(s, gsProcess)
-          .filter((r) => r.serverLevel === level && r.group === 'argtemps');
-        expect(Object.fromEntries(named.map((r) => [r.name, r.value]))).toMatchObject({
-          anArg: '21',
-          aTemp: '42',
-        });
-      });
+    it('carries arguments into the whole-stack dump too (Copy/Dump Stack)', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`,
+        async (gsProcess, s) => {
+          const level = await methodFrameLevel(s, gsProcess, TEST_CLASS, 'haltWithArgAndTemp:');
+          const named = (await debug.fetchStackDump(s, gsProcess)).filter(
+            (r) => r.serverLevel === level && r.group === 'argtemps',
+          );
+          expect(Object.fromEntries(named.map((r) => [r.name, r.value]))).toMatchObject({
+            anArg: '21',
+            aTemp: '42',
+          });
+        },
+      );
     });
   });
 
   describe('getFrameInfo resolves a block frame’s self', () => {
-    it('takes it from the home activation when the block never captured self', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`, (gsProcess, s) => {
-        const blockLevel = blockFrameLevel(s, gsProcess, 'scanNoSelf:');
-        const homeLevel = methodFrameLevel(s, gsProcess, TEST_CLASS, 'scanNoSelf:');
-        const block = debug.getFrameInfo(s, gsProcess, blockLevel);
-        expect(block.homeMethodOop).not.toBe(OOP_NIL);
-        expect(block.selfIsUnavailable).toBe(false);
-        expect(block.selfOop).toBe(debug.getFrameInfo(s, gsProcess, homeLevel).selfOop);
-        expect(debug.getObjectClassName(s, block.selfOop)).toBe(TEST_CLASS);
-      });
+    it('takes it from the home activation when the block never captured self', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`,
+        async (gsProcess, s) => {
+          const blockLevel = await blockFrameLevel(s, gsProcess, 'scanNoSelf:');
+          const homeLevel = await methodFrameLevel(s, gsProcess, TEST_CLASS, 'scanNoSelf:');
+          const block = await debug.getFrameInfo(s, gsProcess, blockLevel);
+          expect(block.homeMethodOop).not.toBe(OOP_NIL);
+          expect(block.selfIsUnavailable).toBe(false);
+          expect(block.selfOop).toBe((await debug.getFrameInfo(s, gsProcess, homeLevel)).selfOop);
+          expect(debug.getObjectClassName(s, block.selfOop)).toBe(TEST_CLASS);
+        },
+      );
     });
 
-    it('takes it straight from slot 8 when the block did capture self', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanWithSelf: #(1 2 3)`, (gsProcess, s) => {
-        const blockLevel = blockFrameLevel(s, gsProcess, 'scanWithSelf:');
-        const block = debug.getFrameInfo(s, gsProcess, blockLevel);
-        expect(block.selfIsUnavailable).toBe(false);
-        expect(debug.getObjectClassName(s, block.selfOop)).toBe(TEST_CLASS);
-      });
+    it('takes it straight from slot 8 when the block did capture self', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) scanWithSelf: #(1 2 3)`,
+        async (gsProcess, s) => {
+          const blockLevel = await blockFrameLevel(s, gsProcess, 'scanWithSelf:');
+          const block = await debug.getFrameInfo(s, gsProcess, blockLevel);
+          expect(block.selfIsUnavailable).toBe(false);
+          expect(debug.getObjectClassName(s, block.selfOop)).toBe(TEST_CLASS);
+        },
+      );
     });
   });
 
@@ -266,12 +300,14 @@ cls setup.
     for (const homeSelector of ['scanNoSelf:', 'scanWithSelf:']) {
       describe(`in ${homeSelector}`, () => {
         for (const [expression, printString] of expectations) {
-          it(`resolves \`${expression}\``, () => {
-            atHalt(
+          it(`resolves \`${expression}\``, async () => {
+            await atHalt(
               `(${TEST_CLASS} new limit: 99; yourself) ${homeSelector} #(1 2 3)`,
-              (gsProcess, s) => {
-                const level = blockFrameLevel(s, gsProcess, homeSelector);
-                expect(debug.evaluateInFrame(s, gsProcess, expression, level)).toBe(printString);
+              async (gsProcess, s) => {
+                const level = await blockFrameLevel(s, gsProcess, homeSelector);
+                expect(await debug.evaluateInFrame(s, gsProcess, expression, level)).toBe(
+                  printString,
+                );
               },
             );
           });
@@ -279,13 +315,16 @@ cls setup.
       });
     }
 
-    it('binds the block name, not the home name, when both are spelled the same', () => {
-      atHalt(`(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`, (gsProcess, s) => {
-        const level = blockFrameLevel(s, gsProcess, 'scanNoSelf:');
-        // `total` is the home method's temporary AND is shared into the block;
-        // the block's layer is applied last, so its live value is what shows.
-        expect(debug.evaluateInFrame(s, gsProcess, 'total', level)).toBe('1');
-      });
+    it('binds the block name, not the home name, when both are spelled the same', async () => {
+      await atHalt(
+        `(${TEST_CLASS} new limit: 99; yourself) scanNoSelf: #(1 2 3)`,
+        async (gsProcess, s) => {
+          const level = await blockFrameLevel(s, gsProcess, 'scanNoSelf:');
+          // `total` is the home method's temporary AND is shared into the block;
+          // the block's layer is applied last, so its live value is what shows.
+          expect(await debug.evaluateInFrame(s, gsProcess, 'total', level)).toBe('1');
+        },
+      );
     });
   });
 
@@ -297,62 +336,73 @@ cls setup.
   describe('a block frame whose home activation has already returned', () => {
     const HALT = `(${TEST_CLASS} new limit: 99; yourself) strandedBlock value: 1`;
 
-    const strandedLevel = (s: ActiveSession, gsProcess: bigint): number =>
-      blockFrameLevel(s, gsProcess, 'strandedBlock');
+    const strandedLevel = async (s: ActiveSession, gsProcess: bigint): Promise<number> =>
+      await blockFrameLevel(s, gsProcess, 'strandedBlock');
 
-    it('reports self as unavailable rather than guessing at one', () => {
-      atHalt(HALT, (gsProcess, s) => {
-        const info = debug.getFrameInfo(s, gsProcess, strandedLevel(s, gsProcess));
+    it('reports self as unavailable rather than guessing at one', async () => {
+      await atHalt(HALT, async (gsProcess, s) => {
+        const info = await debug.getFrameInfo(s, gsProcess, await strandedLevel(s, gsProcess));
         expect(info.homeMethodOop).not.toBe(OOP_NIL);
         expect(info.selfIsUnavailable).toBe(true);
         expect(info.selfOop).toBe(OOP_NIL);
       });
     });
 
-    it("still binds the block's own argument", () => {
-      atHalt(HALT, (gsProcess, s) => {
-        expect(debug.evaluateInFrame(s, gsProcess, 'each', strandedLevel(s, gsProcess))).toBe('1');
+    it("still binds the block's own argument", async () => {
+      await atHalt(HALT, async (gsProcess, s) => {
+        expect(
+          await debug.evaluateInFrame(s, gsProcess, 'each', await strandedLevel(s, gsProcess)),
+        ).toBe('1');
       });
     });
 
-    it('degrades `self` to nil instead of resolving it to the ExecBlock', () => {
-      atHalt(HALT, (gsProcess, s) => {
-        const level = strandedLevel(s, gsProcess);
+    it('degrades `self` to nil instead of resolving it to the ExecBlock', async () => {
+      await atHalt(HALT, async (gsProcess, s) => {
+        const level = await strandedLevel(s, gsProcess);
         // Slot 10 holds the ExecBlock here; binding it would make `self class`
         // answer ExecBlock1 and `self limit` a doesNotUnderstand — a plausible
         // looking wrong answer. nil is the honest one.
-        expect(debug.evaluateInFrame(s, gsProcess, 'self class', level)).toBe('UndefinedObject');
+        expect(await debug.evaluateInFrame(s, gsProcess, 'self class', level)).toBe(
+          'UndefinedObject',
+        );
       });
     });
 
-    it('offers no enclosing group either, the activation being gone', () => {
-      atHalt(HALT, (gsProcess, s) => {
-        const rows = debug.fetchFrameVariables(s, gsProcess, strandedLevel(s, gsProcess));
+    it('offers no enclosing group either, the activation being gone', async () => {
+      await atHalt(HALT, async (gsProcess, s) => {
+        const rows = await debug.fetchFrameVariables(
+          s,
+          gsProcess,
+          await strandedLevel(s, gsProcess),
+        );
 
         expect(namedValues(rows, 'homeargtemps')).toEqual({});
         expect(namedValues(rows, 'argtemps')).toMatchObject({ each: '1' });
       });
     });
 
-    it('explains the frame when an expression through the receiver fails', () => {
-      atHalt(HALT, (gsProcess, s) => {
-        const level = strandedLevel(s, gsProcess);
+    it('explains the frame when an expression through the receiver fails', async () => {
+      await atHalt(HALT, async (gsProcess, s) => {
+        const level = await strandedLevel(s, gsProcess);
         // Bare, this is "undefined symbol limit" — which blames the expression.
-        expect(() => debug.evaluateInFrame(s, gsProcess, 'limit', level)).toThrow(
+        await expect(debug.evaluateInFrame(s, gsProcess, 'limit', level)).rejects.toThrow(
           /home method has already returned/,
         );
       });
     });
   });
 
-  it('evaluates in a plain method frame with no named temps at all', () => {
+  it('evaluates in a plain method frame with no named temps at all', async () => {
     // `AbstractException >> signal` takes no arguments and declares no temps, so
     // the frame contributes no names and the evaluation runs against the session's
     // symbol list alone — the shape that fails on 3.6.2 if the one-argument
     // `evaluateInContext:` is ever sent again.
-    atHalt(`(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`, (gsProcess, s) => {
-      const level = methodFrameLevel(s, gsProcess, 'AbstractException', 'signal');
-      expect(debug.evaluateInFrame(s, gsProcess, '3 + 4', level)).toBe('7');
-    });
+    await atHalt(
+      `(${TEST_CLASS} new limit: 99; yourself) haltWithArgAndTemp: 21`,
+      async (gsProcess, s) => {
+        const level = await methodFrameLevel(s, gsProcess, 'AbstractException', 'signal');
+        expect(await debug.evaluateInFrame(s, gsProcess, '3 + 4', level)).toBe('7');
+      },
+    );
   });
 });

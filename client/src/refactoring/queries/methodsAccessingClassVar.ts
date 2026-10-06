@@ -24,13 +24,13 @@ import { classLookupExpr, escapeString } from '../../queries/util';
  *  Like methodsAccessingInstVar this asks the base image directly, so the safe-delete guard
  *  works with or without the server plugin installed, and enumerates selectors with
  *  `selectorsForEnvironment:` rather than `selectors`, which would see environment 0 only. */
-export function methodsAccessingClassVar(
+export async function methodsAccessingClassVar(
   execute: QueryExecutor,
   className: string,
   classVarName: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| cls want owner assoc scanned methods stream limit classDict sl |
 want := '${escapeString(classVarName)}' asSymbol.
 cls := ${classLookupExpr(className, dict)}.
@@ -55,5 +55,5 @@ scanned do: [:each |
 methods := methods asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }

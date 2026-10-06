@@ -24,7 +24,10 @@ import { escapeString, splitLines } from './util';
  *
  * Works on any stone — this asks the symbol list, not Rowan.
  */
-export function dictionariesContainingClass(execute: QueryExecutor, className: string): string[] {
+export async function dictionariesContainingClass(
+  execute: QueryExecutor,
+  className: string,
+): Promise<string[]> {
   const code = `| ws |
 ws := WriteStream on: String new.
 System myUserProfile symbolList do: [:d | | found |
@@ -32,7 +35,7 @@ System myUserProfile symbolList do: [:d | | found |
   (found notNil and: [found isBehavior])
     ifTrue: [ws nextPutAll: d name asString; lf]].
 ws contents`;
-  return splitLines(execute(code))
+  return splitLines(await execute(code))
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }

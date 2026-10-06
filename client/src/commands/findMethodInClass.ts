@@ -82,7 +82,7 @@ export async function findMethodInClass(sessionManager: SessionManager): Promise
     environmentId: 0,
   };
 
-  if (!SystemBrowser.navigateTo(session.id, result)) {
+  if (!(await SystemBrowser.navigateTo(session.id, result))) {
     const uri = buildMethodUri({
       kind: 'method',
       sessionId: session.id,

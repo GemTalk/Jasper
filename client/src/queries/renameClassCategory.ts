@@ -10,12 +10,12 @@ import { escapeString, dictLookupExpr } from './util';
 // commits nothing. Answers `renamed: <n>`.
 //
 // `dict` is a 1-based symbol-list index (canonical) or a dictionary name.
-export function renameClassCategory(
+export async function renameClassCategory(
   execute: QueryExecutor,
   dict: number | string,
   oldPath: string,
   newPath: string,
-): string {
+): Promise<string> {
   const dictExpr = dictLookupExpr(dict);
   // The emitted Smalltalk is kept ASCII-only (no comments/em-dashes in the doit): a
   // non-ASCII char in doit source trips the 3.6.x compiler (ComStrmSetCursor, err 1001).
@@ -63,5 +63,5 @@ dict keysAndValuesDo: [:k :v |
 skipped = 0
   ifTrue: ['renamed: ' , count printString]
   ifFalse: ['renamed: ' , count printString , ' skipped: ' , skipped printString]`;
-  return execute(code);
+  return await execute(code);
 }

@@ -9,18 +9,18 @@ import { getDefiningClassOfClassVar } from '../queries/getDefiningClassOfClassVa
  */
 
 describe('defining-class-of-class-variable query', () => {
-  it('parses the defining class name and its binding dictionary index', () => {
+  it('parses the defining class name and its binding dictionary index', async () => {
     const exec = vi.fn().mockReturnValue('BaseDemo\n5');
 
-    const result = getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3);
+    const result = await getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3);
 
     expect(result).toEqual({ className: 'BaseDemo', dictIndex: 5 });
   });
 
-  it('walks the superclass chain against each class own classVarNames, matching by symbol', () => {
+  it('walks the superclass chain against each class own classVarNames, matching by symbol', async () => {
     const exec = vi.fn().mockReturnValue('BaseDemo\n5');
 
-    getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3);
+    await getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('cls superclass');
@@ -29,25 +29,25 @@ describe('defining-class-of-class-variable query', () => {
     expect(code).toContain("want := 'Registry' asSymbol");
   });
 
-  it('reports index 0 when the defining class is not bound by its own name', () => {
+  it('reports index 0 when the defining class is not bound by its own name', async () => {
     const exec = vi.fn().mockReturnValue('BaseDemo\n0');
 
-    expect(getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3)).toEqual({
+    expect(await getDefiningClassOfClassVar(exec, 'LeafDemo', 'Registry', 3)).toEqual({
       className: 'BaseDemo',
       dictIndex: 0,
     });
   });
 
-  it('answers undefined when no class in the chain declares the class variable', () => {
+  it('answers undefined when no class in the chain declares the class variable', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    expect(getDefiningClassOfClassVar(exec, 'LeafDemo', 'NotAClassVar', 3)).toBeUndefined();
+    expect(await getDefiningClassOfClassVar(exec, 'LeafDemo', 'NotAClassVar', 3)).toBeUndefined();
   });
 
-  it("escapes a quote in the class-variable name so the probe can't be broken out of", () => {
+  it("escapes a quote in the class-variable name so the probe can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    getDefiningClassOfClassVar(exec, 'LeafDemo', "od'd", 3);
+    await getDefiningClassOfClassVar(exec, 'LeafDemo', "od'd", 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("want := 'od''d' asSymbol");

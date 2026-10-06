@@ -5,17 +5,17 @@ import { classLookupExpr, escapeString } from './util';
 // scopes the lookup to a specific dictionary so the same key registered in two
 // dictionaries resolves to the intended class; without it, the class name is
 // resolved as a bare global (first match in the symbol list).
-export function getClassDefinition(
+export async function getClassDefinition(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   if (dict === undefined) {
-    return execute(`${className} definition`);
+    return await execute(`${className} definition`);
   }
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'Class not found: ${escapeString(className)}'].
 cls definition`;
-  return execute(code);
+  return await execute(code);
 }

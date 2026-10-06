@@ -38,12 +38,12 @@ const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS,
 beforeEach(() => vi.clearAllMocks());
 
 describe('buildProviders wires the Literals provider to the GCI log', () => {
-  it('logs a warning when the literal runner throws on a well-formed #symbol', () => {
+  it('logs a warning when the literal runner throws on a well-formed #symbol', async () => {
     const providers = buildProviders({ id: 1 } as ActiveSession, ['literals']);
     const literals = providers.find((p) => p.category.id === 'literals');
     expect(literals).toBeDefined();
 
-    const results = literals!.search('#at:put:', cfg(), NEVER_CANCELLED);
+    const results = await literals!.search('#at:put:', cfg(), NEVER_CANCELLED);
 
     expect(results).toEqual([]); // the swallow-to-[] contract is preserved
     expect(vi.mocked(logWarning)).toHaveBeenCalledTimes(1); // ...but it is no longer silent

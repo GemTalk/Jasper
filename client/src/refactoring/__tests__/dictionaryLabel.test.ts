@@ -17,31 +17,28 @@ const session = {} as ActiveSession;
 // afterwards, which is the last place a refactoring that went somewhere unintended is catchable
 // (#396).
 describe('dictionaryNameLookup', () => {
-  it('reads the symbol list once, however many indexes it names', () => {
+  it('reads the symbol list once, however many indexes it names', async () => {
     vi.mocked(queries.getDictionaryNames).mockClear();
-    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals']);
-    const nameOf = dictionaryNameLookup(session);
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals', 'Globals']);
+    const nameOf = await dictionaryNameLookup(session);
 
     expect([1, 2, 1, 2].map(nameOf)).toEqual(['UserGlobals', 'Globals', 'UserGlobals', 'Globals']);
     expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
   });
 
-  it('never reads the symbol list for a name or for no dictionary', () => {
-    vi.mocked(queries.getDictionaryNames).mockClear();
-    const nameOf = dictionaryNameLookup(session);
+  it('answers a name as itself and no dictionary as no name', async () => {
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals', 'Globals']);
+    const nameOf = await dictionaryNameLookup(session);
 
-    expect(nameOf('Globals')).toBe('Globals');
+    expect(nameOf('DictionaryB')).toBe('DictionaryB');
     expect(nameOf(undefined)).toBeUndefined();
     expect(nameOf('')).toBeUndefined();
-    expect(queries.getDictionaryNames).not.toHaveBeenCalled();
   });
 
-  it('answers no name, and keeps answering it, when the symbol list cannot be read', () => {
+  it('answers no name, and keeps answering it, when the symbol list cannot be read', async () => {
     vi.mocked(queries.getDictionaryNames).mockClear();
-    vi.mocked(queries.getDictionaryNames).mockImplementation(() => {
-      throw new Error('no session');
-    });
-    const nameOf = dictionaryNameLookup(session);
+    vi.mocked(queries.getDictionaryNames).mockRejectedValue(new Error('no session'));
+    const nameOf = await dictionaryNameLookup(session);
 
     expect(nameOf(1)).toBeUndefined();
     expect(nameOf(2)).toBeUndefined();
@@ -51,39 +48,37 @@ describe('dictionaryNameLookup', () => {
 });
 
 describe('dictionaryNameFor', () => {
-  it('resolves a 1-based SymbolList index to its dictionary name', () => {
-    vi.mocked(queries.getDictionaryNames).mockReturnValue([
+  it('resolves a 1-based SymbolList index to its dictionary name', async () => {
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue([
       'UserGlobals',
       'Globals',
       'DictionaryB',
     ]);
 
-    expect(dictionaryNameFor(session, 3)).toBe('DictionaryB');
+    expect(await dictionaryNameFor(session, 3)).toBe('DictionaryB');
   });
 
-  it('passes a name straight through without a round trip', () => {
+  it('passes a name straight through without a round trip', async () => {
     vi.mocked(queries.getDictionaryNames).mockClear();
 
-    expect(dictionaryNameFor(session, 'DictionaryB')).toBe('DictionaryB');
+    expect(await dictionaryNameFor(session, 'DictionaryB')).toBe('DictionaryB');
     expect(queries.getDictionaryNames).not.toHaveBeenCalled();
   });
 
-  it('answers undefined for no reference at all', () => {
-    expect(dictionaryNameFor(session, undefined)).toBeUndefined();
+  it('answers undefined for no reference at all', async () => {
+    expect(await dictionaryNameFor(session, undefined)).toBeUndefined();
   });
 
-  it('answers undefined for an index past the end of the symbol list', () => {
-    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals']);
+  it('answers undefined for an index past the end of the symbol list', async () => {
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals']);
 
-    expect(dictionaryNameFor(session, 9)).toBeUndefined();
+    expect(await dictionaryNameFor(session, 9)).toBeUndefined();
   });
 
-  it('answers undefined rather than throwing when the query fails', () => {
-    vi.mocked(queries.getDictionaryNames).mockImplementation(() => {
-      throw new Error('session gone');
-    });
+  it('answers undefined rather than throwing when the query fails', async () => {
+    vi.mocked(queries.getDictionaryNames).mockRejectedValue(new Error('session gone'));
 
-    expect(dictionaryNameFor(session, 2)).toBeUndefined();
+    expect(await dictionaryNameFor(session, 2)).toBeUndefined();
   });
 });
 

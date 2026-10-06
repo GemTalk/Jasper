@@ -103,7 +103,7 @@ export interface NbRunOptions {
    * whichever process was running, which may be a fork (see transcriptSink.ts).
    * Not called if collection gives up. Anything it throws is logged.
    */
-  onAbandonedCollected?: () => void;
+  onAbandonedCollected?: () => Promise<void>;
 }
 
 /**
@@ -158,7 +158,7 @@ const draining = new Map<number, Promise<void>>();
 function drainAbandonedCall(
   session: ActiveSession,
   disposableProcess: boolean,
-  onCollected?: () => void,
+  onCollected?: () => Promise<void>,
 ): Promise<void> {
   const existing = draining.get(session.id);
   if (existing) return existing;
@@ -178,8 +178,9 @@ function drainAbandonedCall(
         if (result === 1) {
           const { err } = session.gci.GciTsNbResult(session.handle);
           if (disposableProcess) clearStoppedProcess(session, err?.context);
-          runCollectedHook(session, onCollected);
-          resolve();
+          // Released only once the hook is done, so no new call can reach the
+          // session while the hook's own call is still in flight.
+          void runCollectedHook(session, onCollected).then(resolve);
           return;
         }
         if (result === -1 || n >= DRAIN_ATTEMPTS) {
@@ -242,7 +243,7 @@ const ABANDONED_READ_WAIT_MS = 30_000;
 function awaitAbandonedRead(
   session: ActiveSession,
   read: Promise<unknown>,
-  onCollected?: () => void,
+  onCollected?: () => Promise<void>,
 ): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const done: Promise<void> = new Promise<void>((resolve) => {
@@ -253,8 +254,7 @@ function awaitAbandonedRead(
       resolve();
     }, ABANDONED_READ_WAIT_MS);
     const collected = (): void => {
-      runCollectedHook(session, onCollected);
-      resolve();
+      void runCollectedHook(session, onCollected).then(resolve);
     };
     read.then(collected, collected);
   }).finally(() => {
@@ -265,10 +265,13 @@ function awaitAbandonedRead(
 }
 
 /** Run a caller's `onAbandonedCollected`; the caller is long gone, so only log a throw. */
-function runCollectedHook(session: ActiveSession, hook: (() => void) | undefined): void {
+async function runCollectedHook(
+  session: ActiveSession,
+  hook: (() => Promise<void>) | undefined,
+): Promise<void> {
   if (!hook) return;
   try {
-    hook();
+    await hook();
   } catch (e) {
     logInfo(
       `[Session ${session.id}] Cleanup after a cancelled run failed: ` +

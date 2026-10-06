@@ -28,10 +28,10 @@ function createMockSession(executeFetchData = ''): ActiveSession {
 
 describe('browserQueries', () => {
   describe('compileMethod', () => {
-    it('uses pure Smalltalk (no GciTsPerform) via Behavior>>compileMethod:dictionaries:category:environmentId:', () => {
+    it('uses pure Smalltalk (no GciTsPerform) via Behavior>>compileMethod:dictionaries:category:environmentId:', async () => {
       const session = createMockSession('Compiled: Array >> foo');
 
-      queries.compileMethod(session, 'Array', false, 'test', 'foo\n  ^ 42');
+      await queries.compileMethod(session, 'Array', false, 'test', 'foo\n  ^ 42');
 
       const mockPerform = session.gci.GciTsPerform as ReturnType<typeof vi.fn>;
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
@@ -42,9 +42,9 @@ describe('browserQueries', () => {
       expect(code).toContain('dictionaries: System myUserProfile symbolList');
     });
 
-    it('branches on isMeta inside the Smalltalk, not via a GCI perform', () => {
+    it('branches on isMeta inside the Smalltalk, not via a GCI perform', async () => {
       const session = createMockSession('ok');
-      queries.compileMethod(session, 'Array', true, 'test', 'foo');
+      await queries.compileMethod(session, 'Array', true, 'test', 'foo');
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
       expect(code).toContain('target := base class');
@@ -52,12 +52,12 @@ describe('browserQueries', () => {
   });
 
   describe('sendersOf', () => {
-    it('parses tab-separated GsNMethod results', () => {
+    it('parses tab-separated GsNMethod results', async () => {
       const payload =
         'Globals\tArray\t0\tsize\taccessing\nUserGlobals\tMyClass\t1\tprintOn:\tprinting\n';
       const session = createMockSession(payload);
 
-      const results = queries.sendersOf(session, 'size');
+      const results = await queries.sendersOf(session, 'size');
 
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
@@ -78,14 +78,14 @@ describe('browserQueries', () => {
       });
     });
 
-    it('returns empty array for no results', () => {
+    it('returns empty array for no results', async () => {
       const session = createMockSession('');
-      expect(queries.sendersOf(session, 'nonExistent')).toEqual([]);
+      expect(await queries.sendersOf(session, 'nonExistent')).toEqual([]);
     });
 
-    it('passes environmentId to Smalltalk code', () => {
+    it('passes environmentId to Smalltalk code', async () => {
       const session = createMockSession('');
-      queries.sendersOf(session, 'size', 2);
+      await queries.sendersOf(session, 'size', 2);
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -94,11 +94,11 @@ describe('browserQueries', () => {
   });
 
   describe('implementorsOf', () => {
-    it('parses tab-separated GsNMethod results', () => {
+    it('parses tab-separated GsNMethod results', async () => {
       const payload = 'Globals\tArray\t0\tsize\taccessing\n';
       const session = createMockSession(payload);
 
-      const results = queries.implementorsOf(session, 'size');
+      const results = await queries.implementorsOf(session, 'size');
 
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({
@@ -111,14 +111,14 @@ describe('browserQueries', () => {
       });
     });
 
-    it('returns empty array for no results', () => {
+    it('returns empty array for no results', async () => {
       const session = createMockSession('');
-      expect(queries.implementorsOf(session, 'nonExistent')).toEqual([]);
+      expect(await queries.implementorsOf(session, 'nonExistent')).toEqual([]);
     });
 
-    it('uses asArray to handle non-Array collections', () => {
+    it('uses asArray to handle non-Array collections', async () => {
       const session = createMockSession('');
-      queries.implementorsOf(session, 'size');
+      await queries.implementorsOf(session, 'size');
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -127,7 +127,7 @@ describe('browserQueries', () => {
   });
 
   describe('getClassHierarchy', () => {
-    it('parses superclass/self/subclass entries', () => {
+    it('parses superclass/self/subclass entries', async () => {
       const payload =
         'Globals\tObject\tsuperclass\t3\tbound\n' +
         'Globals\tSequenceableCollection\tsuperclass\t3\tbound\n' +
@@ -135,7 +135,7 @@ describe('browserQueries', () => {
         'Globals\tFoo\tsubclass\t3\tbound\n';
       const session = createMockSession(payload);
 
-      const results = queries.getClassHierarchy(session, 'Array');
+      const results = await queries.getClassHierarchy(session, 'Array');
 
       const row = (className: string, kind: string) => ({
         dictName: 'Globals',
@@ -151,25 +151,25 @@ describe('browserQueries', () => {
       expect(results[3]).toEqual(row('Foo', 'subclass'));
     });
 
-    it('returns empty array for no results', () => {
+    it('returns empty array for no results', async () => {
       const session = createMockSession('');
-      expect(queries.getClassHierarchy(session, 'NonExistent')).toEqual([]);
+      expect(await queries.getClassHierarchy(session, 'NonExistent')).toEqual([]);
     });
   });
 
   describe('fileOutClass', () => {
-    it('returns Topaz file-out string for a class', () => {
+    it('returns Topaz file-out string for a class', async () => {
       const topazSource = "! Class definition\nObject subclass: 'MyClass'\n";
       const session = createMockSession(topazSource);
 
-      const result = queries.fileOutClass(session, 'MyClass');
+      const result = await queries.fileOutClass(session, 'MyClass');
 
       expect(result).toBe(topazSource);
     });
 
-    it('defaults to global objectNamed: lookup when no dict is given', () => {
+    it('defaults to global objectNamed: lookup when no dict is given', async () => {
       const session = createMockSession('');
-      queries.fileOutClass(session, 'MyClass');
+      await queries.fileOutClass(session, 'MyClass');
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -177,9 +177,9 @@ describe('browserQueries', () => {
       expect(code).toContain('fileOutClass');
     });
 
-    it('scopes to a dictionary by 1-based index when given a number', () => {
+    it('scopes to a dictionary by 1-based index when given a number', async () => {
       const session = createMockSession('');
-      queries.fileOutClass(session, 'MyClass', 3);
+      await queries.fileOutClass(session, 'MyClass', 3);
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -187,9 +187,9 @@ describe('browserQueries', () => {
       expect(code).toContain("#'MyClass' ifAbsent: [nil]");
     });
 
-    it('escapes single quotes in class names', () => {
+    it('escapes single quotes in class names', async () => {
       const session = createMockSession('');
-      queries.fileOutClass(session, "Class'Name");
+      await queries.fileOutClass(session, "Class'Name");
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -198,19 +198,19 @@ describe('browserQueries', () => {
   });
 
   describe('getDictionaryClassFileOutOrder', () => {
-    it('returns class names ordered by inheritance depth then name', () => {
+    it('returns class names ordered by inheritance depth then name', async () => {
       const session = createMockSession('2\tAnimal\n1\tObject\n3\tDog\n');
 
-      expect(queries.getDictionaryClassFileOutOrder(session, 1)).toEqual([
+      expect(await queries.getDictionaryClassFileOutOrder(session, 1)).toEqual([
         'Object',
         'Animal',
         'Dog',
       ]);
     });
 
-    it('scopes to a dictionary by 1-based index', () => {
+    it('scopes to a dictionary by 1-based index', async () => {
       const session = createMockSession('');
-      queries.getDictionaryClassFileOutOrder(session, 5);
+      await queries.getDictionaryClassFileOutOrder(session, 5);
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -219,12 +219,12 @@ describe('browserQueries', () => {
   });
 
   describe('getGlobalsForDictionary', () => {
-    it('parses tab-separated globals results', () => {
+    it('parses tab-separated globals results', async () => {
       const payload =
         '_remoteNil\tUndefinedObject\tremoteNil\nAllUsers\tUserProfileSet\tanUserProfileSet(...)\n';
       const session = createMockSession(payload);
 
-      const results = queries.getGlobalsForDictionary(session, 1);
+      const results = await queries.getGlobalsForDictionary(session, 1);
 
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
@@ -239,31 +239,31 @@ describe('browserQueries', () => {
       });
     });
 
-    it('returns empty array for empty result', () => {
+    it('returns empty array for empty result', async () => {
       const session = createMockSession('');
-      expect(queries.getGlobalsForDictionary(session, 1)).toEqual([]);
+      expect(await queries.getGlobalsForDictionary(session, 1)).toEqual([]);
     });
 
-    it('skips lines without two tabs', () => {
+    it('skips lines without two tabs', async () => {
       const payload = 'noTabs\noneTab\tonly\n_remoteNil\tUndefinedObject\tremoteNil\n';
       const session = createMockSession(payload);
 
-      const results = queries.getGlobalsForDictionary(session, 1);
+      const results = await queries.getGlobalsForDictionary(session, 1);
       expect(results).toHaveLength(1);
       expect(results[0].name).toBe('_remoteNil');
     });
 
-    it('preserves tabs within the value field', () => {
+    it('preserves tabs within the value field', async () => {
       const payload = 'SomeGlobal\tArray\tvalue\twith\ttabs\n';
       const session = createMockSession(payload);
 
-      const results = queries.getGlobalsForDictionary(session, 1);
+      const results = await queries.getGlobalsForDictionary(session, 1);
       expect(results[0].value).toBe('value\twith\ttabs');
     });
 
-    it('embeds the dictIndex in the Smalltalk code', () => {
+    it('embeds the dictIndex in the Smalltalk code', async () => {
       const session = createMockSession('');
-      queries.getGlobalsForDictionary(session, 3);
+      await queries.getGlobalsForDictionary(session, 3);
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -272,11 +272,11 @@ describe('browserQueries', () => {
   });
 
   describe('searchMethodSource', () => {
-    it('parses tab-separated method results', () => {
+    it('parses tab-separated method results', async () => {
       const payload = 'Globals\tString\t0\tsubarray\taccessing\n';
       const session = createMockSession(payload);
 
-      const results = queries.searchMethodSource(session, 'subarray', true);
+      const results = await queries.searchMethodSource(session, 'subarray', true);
 
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({
@@ -291,11 +291,11 @@ describe('browserQueries', () => {
   });
 
   describe('getMethodList', () => {
-    it('parses instance and class methods with categories', () => {
+    it('parses instance and class methods with categories', async () => {
       const payload = '0\taccessing\tname\n0\taccessing\tname:\n1\tinstance creation\tnew\n';
       const session = createMockSession(payload);
 
-      const results = queries.getMethodList(session, 'Array');
+      const results = await queries.getMethodList(session, 'Array');
 
       expect(results).toHaveLength(3);
       expect(results[0]).toEqual({ isMeta: false, category: 'accessing', selector: 'name' });
@@ -303,23 +303,23 @@ describe('browserQueries', () => {
       expect(results[2]).toEqual({ isMeta: true, category: 'instance creation', selector: 'new' });
     });
 
-    it('returns empty array for no results', () => {
+    it('returns empty array for no results', async () => {
       const session = createMockSession('');
-      expect(queries.getMethodList(session, 'EmptyClass')).toEqual([]);
+      expect(await queries.getMethodList(session, 'EmptyClass')).toEqual([]);
     });
 
-    it('skips lines with fewer than 3 tab-separated fields', () => {
+    it('skips lines with fewer than 3 tab-separated fields', async () => {
       const payload = 'incomplete\tonly\n0\taccessing\tsize\n';
       const session = createMockSession(payload);
 
-      const results = queries.getMethodList(session, 'Array');
+      const results = await queries.getMethodList(session, 'Array');
       expect(results).toHaveLength(1);
       expect(results[0].selector).toBe('size');
     });
 
-    it('embeds the class name in the Smalltalk code', () => {
+    it('embeds the class name in the Smalltalk code', async () => {
       const session = createMockSession('');
-      queries.getMethodList(session, 'MyClass');
+      await queries.getMethodList(session, 'MyClass');
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       const code = mockExec.mock.calls[0][1] as string;
@@ -328,36 +328,36 @@ describe('browserQueries', () => {
   });
 
   describe('sessionNeedsCommit', () => {
-    it('reports pending work when the image says a commit is needed', () => {
+    it('reports pending work when the image says a commit is needed', async () => {
       const session = createMockSession('true');
-      expect(queries.sessionNeedsCommit(session)).toBe(true);
+      expect(await queries.sessionNeedsCommit(session)).toBe(true);
     });
 
-    it('reports a clean transaction when the image says no commit is needed', () => {
+    it('reports a clean transaction when the image says no commit is needed', async () => {
       const session = createMockSession('false');
-      expect(queries.sessionNeedsCommit(session)).toBe(false);
+      expect(await queries.sessionNeedsCommit(session)).toBe(false);
     });
 
-    it('tolerates surrounding whitespace in the reply', () => {
+    it('tolerates surrounding whitespace in the reply', async () => {
       const session = createMockSession('  true\n');
-      expect(queries.sessionNeedsCommit(session)).toBe(true);
+      expect(await queries.sessionNeedsCommit(session)).toBe(true);
     });
 
-    it('cannot tell when the reply is unrecognized', () => {
+    it('cannot tell when the reply is unrecognized', async () => {
       const session = createMockSession('nil');
-      expect(queries.sessionNeedsCommit(session)).toBeUndefined();
+      expect(await queries.sessionNeedsCommit(session)).toBeUndefined();
     });
 
-    it('cannot tell when the session is busy with another operation', () => {
+    it('cannot tell when the session is busy with another operation', async () => {
       const session = createMockSession('true');
       (session.gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({ result: 1 });
-      expect(queries.sessionNeedsCommit(session)).toBeUndefined();
+      expect(await queries.sessionNeedsCommit(session)).toBeUndefined();
     });
 
-    it('asks the image via System needsCommit', () => {
+    it('asks the image via System needsCommit', async () => {
       const session = createMockSession('false');
 
-      queries.sessionNeedsCommit(session);
+      await queries.sessionNeedsCommit(session);
 
       const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
       expect(mockExec.mock.calls[0][1]).toContain('System needsCommit');

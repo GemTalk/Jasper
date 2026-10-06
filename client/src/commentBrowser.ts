@@ -68,9 +68,9 @@ export class CommentBrowser {
           "Don't Save",
         );
         if (choice === undefined) return; // Cancel — keep editing the current class
-        if (choice === 'Save') existing.save(existing.currentText);
+        if (choice === 'Save') await existing.save(existing.currentText);
       }
-      existing.loadClass(dictName, dictIndex, className);
+      await existing.loadClass(dictName, dictIndex, className);
       return;
     }
 
@@ -87,7 +87,7 @@ export class CommentBrowser {
 
     const browser = new CommentBrowser(panel, session, exportManager);
     CommentBrowser.panels.set(session.id, browser);
-    browser.loadClass(dictName, dictIndex, className);
+    await browser.loadClass(dictName, dictIndex, className);
   }
 
   static disposeForSession(sessionId: number): void {
@@ -106,7 +106,7 @@ export class CommentBrowser {
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
     this.panel.webview.onDidReceiveMessage(
-      (message) => {
+      async (message) => {
         if (message.command === 'ready') {
           this.isReady = true;
           this.flush();
@@ -114,7 +114,7 @@ export class CommentBrowser {
           this.dirty = true;
           this.currentText = message.text as string;
         } else if (message.command === 'save') {
-          this.save(message.text as string);
+          await this.save(message.text as string);
         }
       },
       null,
@@ -123,21 +123,21 @@ export class CommentBrowser {
   }
 
   /** Fetch the class's comment and writability and (re)fill the panel with it. */
-  private loadClass(dictName: string, dictIndex: number, className: string): void {
+  private async loadClass(dictName: string, dictIndex: number, className: string): Promise<void> {
     this.dictName = dictName;
     this.dictIndex = dictIndex;
     this.className = className;
-    const canWrite = this.computeCanWrite(className);
-    const text = queries.getClassComment(this.session, className, this.dictIndex);
+    const canWrite = await this.computeCanWrite(className);
+    const text = await queries.getClassComment(this.session, className, this.dictIndex);
     this.panel.title = `Comment: ${className}`;
     this.dirty = false;
     this.currentText = text;
     this.send(className, text, canWrite);
   }
 
-  private computeCanWrite(className: string): boolean {
+  private async computeCanWrite(className: string): Promise<boolean> {
     try {
-      return queries.canClassBeWritten(this.session, className, this.dictIndex);
+      return await queries.canClassBeWritten(this.session, className, this.dictIndex);
     } catch {
       // If the check fails (e.g. session busy), assume writable — a failed save
       // will surface the real error rather than blocking editing pre-emptively.
@@ -157,15 +157,20 @@ export class CommentBrowser {
     }
   }
 
-  private save(text: string): void {
+  private async save(text: string): Promise<void> {
     try {
       // Read the old comment BEFORE overwriting it — this is the one moment it still
       // exists (#434).
-      const recording = beginClassCommentEdit(this.session, {
+      const recording = await beginClassCommentEdit(this.session, {
         dict: this.dictIndex,
         className: this.className,
       });
-      const result = queries.setClassComment(this.session, this.className, text, this.dictIndex);
+      const result = await queries.setClassComment(
+        this.session,
+        this.className,
+        text,
+        this.dictIndex,
+      );
       // setClassComment reports a class it cannot resolve by RETURNING a status string
       // rather than throwing, so "Comment updated" used to appear over a save that wrote
       // nothing — and an undo entry for it would offer to put back a comment nobody

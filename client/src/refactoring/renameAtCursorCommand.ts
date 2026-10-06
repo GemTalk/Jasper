@@ -121,7 +121,7 @@ export async function renameAtCursorCommand(
   //      `undefined` = that probe could not run.
   let ivarNames: string[] | undefined;
   try {
-    ivarNames = queries.getInstVarNames(session, parsed.className, dict);
+    ivarNames = await queries.getInstVarNames(session, parsed.className, dict);
   } catch (e: unknown) {
     logInfo(
       `[rename] instance-variable probe failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -133,7 +133,7 @@ export async function renameAtCursorCommand(
   }
   let classVarNames: string[] | undefined;
   try {
-    classVarNames = queries.getVisibleClassVarNames(session, parsed.className, dict);
+    classVarNames = await queries.getVisibleClassVarNames(session, parsed.className, dict);
   } catch (e: unknown) {
     logInfo(`[rename] class-variable probe failed: ${e instanceof Error ? e.message : String(e)}`);
   }

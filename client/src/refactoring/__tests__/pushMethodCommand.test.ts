@@ -250,8 +250,10 @@ describe('push method command', () => {
     const outcome = await pushMethod(req({ direction: 'up' }));
 
     expect(outcome?.revealClass).toBe('Super');
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Pushed #foo up'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Pushed #foo up'),
+      ),
     );
   });
 

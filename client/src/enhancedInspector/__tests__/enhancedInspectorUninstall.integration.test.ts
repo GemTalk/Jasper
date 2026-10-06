@@ -32,7 +32,7 @@ describe('enhanced inspector uninstall (integration)', () => {
     handle = testContext.session;
   });
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   // Remove GsEnhancedInspector from THIS user's symbol list — the per-user step the
   // uninstall performs for every user.
@@ -44,25 +44,27 @@ idx := (1 to: list size) detect: [:i | (list at: i) name == #GsEnhancedInspector
 idx notNil ifTrue: [ prof removeDictionaryAt: idx ].
 'ok'`;
 
-  it('files the payload classes into the dedicated GsEnhancedInspector dictionary', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+  it('files the payload classes into the dedicated GsEnhancedInspector dictionary', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
-    const dict = exec(
-      '(System myUserProfile symbolList dictionaryAndSymbolOf: ' +
-        "(System myUserProfile symbolList objectNamed: 'GtRemotePhlowViewedObject')) " +
-        "ifNil: ['none'] ifNotNil: [:da | (da at: 1) name]",
+    const dict = (
+      await exec(
+        '(System myUserProfile symbolList dictionaryAndSymbolOf: ' +
+          "(System myUserProfile symbolList objectNamed: 'GtRemotePhlowViewedObject')) " +
+          "ifNil: ['none'] ifNotNil: [:da | (da at: 1) name]",
+      )
     ).trim();
 
     expect(dict).toBe('GsEnhancedInspector');
   });
 
-  it('flips the availability probe to false when GsEnhancedInspector leaves the symbol list', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
-    expect(q.checkEnhancedInspectorAvailable(session())).toBe(true);
+  it('flips the availability probe to false when GsEnhancedInspector leaves the symbol list', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
+    expect(await q.checkEnhancedInspectorAvailable(session())).toBe(true);
 
-    exec(detachGsEnhancedInspector);
+    await exec(detachGsEnhancedInspector);
 
-    expect(q.checkEnhancedInspectorAvailable(session())).toBe(false);
+    expect(await q.checkEnhancedInspectorAvailable(session())).toBe(false);
     // Never committed — the harness aborts, restoring the support for later tests.
   });
 });

@@ -40,23 +40,25 @@ const CLASS = 'Foo';
 // reads the side rows are built from, and the per-dictionary COUNT reads the class
 // row's chevron is gated on. Feeding them from the same two lists is the point —
 // a controller whose counts disagreed with its names could not catch a divergence.
-function makeController(ivars: string[], classVars: string[]) {
-  vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(ivars);
-  vi.mocked(queries.getDefinedClassVarNames).mockReturnValue(classVars);
-  vi.mocked(queries.getDefinedInstVarCounts).mockReturnValue(new Map([[CLASS, ivars.length]]));
-  vi.mocked(queries.getDefinedClassVarCounts).mockReturnValue(new Map([[CLASS, classVars.length]]));
+async function makeController(ivars: string[], classVars: string[]) {
+  vi.mocked(queries.getDefinedInstVarNames).mockResolvedValue(ivars);
+  vi.mocked(queries.getDefinedClassVarNames).mockResolvedValue(classVars);
+  vi.mocked(queries.getDefinedInstVarCounts).mockResolvedValue(new Map([[CLASS, ivars.length]]));
+  vi.mocked(queries.getDefinedClassVarCounts).mockResolvedValue(
+    new Map([[CLASS, classVars.length]]),
+  );
   const sessionManager = {
     getSelectedSession: () => ({}) as ActiveSession,
   } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
   // Go in through selectDict so the counts are loaded the way a real dictionary
   // selection loads them, rather than by writing controller state directly.
-  ctl.selectDict({ dictName: 'UserGlobals', dictIndex: 1 });
+  await ctl.selectDict({ dictName: 'UserGlobals', dictIndex: 1 });
   return ctl;
 }
 
-function sidesOf(ctl: ExplorerController): VarSideItem[] {
-  return ctl.classProvider.getChildren(new ClassItem(CLASS, true)) as VarSideItem[];
+async function sidesOf(ctl: ExplorerController): Promise<VarSideItem[]> {
+  return (await ctl.classProvider.getChildren(new ClassItem(CLASS, true))) as VarSideItem[];
 }
 
 beforeEach(() => {
@@ -64,16 +66,16 @@ beforeEach(() => {
 });
 
 describe('variable-side rows under a class', () => {
-  it('shows both sides when the class has variables of only one kind', () => {
-    const sides = sidesOf(makeController(['count'], []));
+  it('shows both sides when the class has variables of only one kind', async () => {
+    const sides = await sidesOf(await makeController(['count'], []));
 
     expect(sides.map((s) => s.label)).toEqual(['instance variables', 'class variables']);
   });
 
-  it('keeps the "+" reachable on an empty side by reusing its contextValue', () => {
+  it('keeps the "+" reachable on an empty side by reusing its contextValue', async () => {
     // The inline "+" menu clauses match these tokens exactly (package.json), so an
     // empty row must not carry a distinct one or the button disappears with it.
-    const sides = sidesOf(makeController(['count'], []));
+    const sides = await sidesOf(await makeController(['count'], []));
 
     expect(sides.map((s) => s.contextValue)).toEqual([
       'explorerVarSide.instance',
@@ -81,15 +83,15 @@ describe('variable-side rows under a class', () => {
     ]);
   });
 
-  it('renders the empty side with no expansion chevron and a dimmed "(none)"', () => {
-    const sides = sidesOf(makeController(['count'], []));
+  it('renders the empty side with no expansion chevron and a dimmed "(none)"', async () => {
+    const sides = await sidesOf(await makeController(['count'], []));
 
     expect(sides[1].collapsibleState).toBe(vscode.TreeItemCollapsibleState.None);
     expect(sides[1].description).toBe('(none)');
   });
 
-  it('leaves a populated side expanded and undecorated', () => {
-    const sides = sidesOf(makeController(['count'], ['Registry']));
+  it('leaves a populated side expanded and undecorated', async () => {
+    const sides = await sidesOf(await makeController(['count'], ['Registry']));
 
     for (const side of sides) {
       expect(side.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
@@ -97,8 +99,8 @@ describe('variable-side rows under a class', () => {
     }
   });
 
-  it('marks only the side that is actually empty', () => {
-    const sides = sidesOf(makeController([], ['Registry']));
+  it('marks only the side that is actually empty', async () => {
+    const sides = await sidesOf(await makeController([], ['Registry']));
 
     expect(sides[0].description).toBe('(none)');
     expect(sides[0].collapsibleState).toBe(vscode.TreeItemCollapsibleState.None);
@@ -106,14 +108,14 @@ describe('variable-side rows under a class', () => {
     expect(sides[1].collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
   });
 
-  it('says in the tooltip that an empty side has nothing in it', () => {
-    const sides = sidesOf(makeController(['count'], []));
+  it('says in the tooltip that an empty side has nothing in it', async () => {
+    const sides = await sidesOf(await makeController(['count'], []));
 
     expect(sides[1].tooltip).toBe('No class variables defined in Foo');
   });
 
-  it('shows no side rows at all for a class with no variables', () => {
-    expect(sidesOf(makeController([], []))).toEqual([]);
+  it('shows no side rows at all for a class with no variables', async () => {
+    expect(await sidesOf(await makeController([], []))).toEqual([]);
   });
 
   it('gives a class an expansion chevron only when it has variables to reveal', () => {
@@ -158,20 +160,20 @@ describe('variable-side rows under a class', () => {
     [[], ['Registry']],
     [['count'], ['Registry']],
   ])('with ivars %j and class vars %j', (ivars, classVars) => {
-    it('gates the chevron on exactly what decides whether there are rows', () => {
-      const ctl = makeController(ivars, classVars);
+    it('gates the chevron on exactly what decides whether there are rows', async () => {
+      const ctl = await makeController(ivars, classVars);
 
       expect(ctl.classHasDefinedVars(CLASS)).toBe(variableSides(ivars, classVars).length > 0);
     });
 
-    it('never draws a chevron the children cannot fill, or hides children behind none', () => {
+    it('never draws a chevron the children cannot fill, or hides children behind none', async () => {
       // The same agreement, read off the rendered tree rather than the predicates:
       // a collapsible class row must have side rows under it, and a flat one none.
-      const ctl = makeController(ivars, classVars);
+      const ctl = await makeController(ivars, classVars);
       const row = new ClassItem(CLASS, ctl.classHasDefinedVars(CLASS));
 
       const collapsible = row.collapsibleState !== vscode.TreeItemCollapsibleState.None;
-      expect(collapsible).toBe(sidesOf(ctl).length > 0);
+      expect(collapsible).toBe((await sidesOf(ctl)).length > 0);
     });
   });
 

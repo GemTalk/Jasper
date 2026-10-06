@@ -55,7 +55,7 @@ export async function reverseClassEdit(
 
   let now;
   try {
-    now = captureClassSlots(execute, entry.slots);
+    now = await captureClassSlots(execute, entry.slots);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Revert failed: could not read the current state of ${entry.label} ` +
@@ -88,7 +88,7 @@ export async function reverseClassEdit(
 
   let results;
   try {
-    results = applyClassSlotOps(execute, ops);
+    results = await applyClassSlotOps(execute, ops);
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Revert failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -110,7 +110,7 @@ export async function reverseClassEdit(
         'gemstone.explorer.findClass',
         landOn.slot.className,
         undefined,
-        dictionaryNameFor(session, landOn.slot.dict),
+        await dictionaryNameFor(session, landOn.slot.dict),
       );
     } catch {
       /* the Explorer may not be active */

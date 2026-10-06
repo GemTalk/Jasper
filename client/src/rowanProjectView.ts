@@ -52,7 +52,7 @@ export class RowanDependencyGroupItem extends vscode.TreeItem {
  * the same as "loaded nothing", and must not read as it.
  */
 export interface LoadedProjectSource {
-  loadedProjectNames(): Set<string> | undefined;
+  loadedProjectNames(): Promise<Set<string> | undefined>;
 }
 
 /** One project this project depends on, by git URL or by directory. */
@@ -123,12 +123,12 @@ export class RowanProjectTreeProvider implements vscode.TreeDataProvider<RowanPr
     return element;
   }
 
-  getChildren(element?: RowanProjectNode): RowanProjectNode[] {
+  async getChildren(element?: RowanProjectNode): Promise<RowanProjectNode[]> {
     const proj = this.query();
     if (!proj) return [];
 
     if (element instanceof RowanDependencyGroupItem) {
-      const loaded = this.loadedProjects?.loadedProjectNames();
+      const loaded = await this.loadedProjects?.loadedProjectNames();
       return element.dependencies.map(
         (dep) =>
           new RowanDependencyItem(

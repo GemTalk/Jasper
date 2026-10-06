@@ -23,12 +23,12 @@ export interface DefiningClass {
  *  SymbolList index binding it. Answers undefined when no class in the chain
  *  declares `ivarName` (the name is not a visible instance variable at all, or the
  *  starting class could not be resolved through `dict`). */
-export function getDefiningClassOfInstVar(
+export async function getDefiningClassOfInstVar(
   execute: QueryExecutor,
   className: string,
   ivarName: string,
   dict?: number | string,
-): DefiningClass | undefined {
+): Promise<DefiningClass | undefined> {
   // `instVarNames` answers the class's OWN instance-variable names as SYMBOLS.
   // Match by interning the sought name and comparing symbols by IDENTITY — a
   // `String =` (via `includes:` or `asString =`) raises "Unicode argument
@@ -46,7 +46,7 @@ target isNil
   ifTrue: ['']
   ifFalse: [
     target name asString, (String with: Character lf), ${symbolListIndexOfClassExpr('target')} printString ]`;
-  const lines = splitLines(execute(code));
+  const lines = splitLines(await execute(code));
   if (lines.length === 0) return undefined;
   const dictIndex = lines.length > 1 ? Number(lines[1]) : 0;
   return { className: lines[0], dictIndex: Number.isFinite(dictIndex) ? dictIndex : 0 };

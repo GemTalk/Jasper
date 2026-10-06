@@ -127,7 +127,7 @@ export class FunctionBreakpointResolver {
 
     let candidates: MethodSearchResult[];
     try {
-      candidates = this.findCandidates(session, parsed);
+      candidates = await this.findCandidates(session, parsed);
     } catch (e) {
       this.reject(bp, `Could not look up ${bp.functionName}: ${message(e)}`);
       return;
@@ -170,7 +170,7 @@ export class FunctionBreakpointResolver {
       return;
     }
 
-    const entry = this.entryPosition(session, target);
+    const entry = await this.entryPosition(session, target);
     if (!entry) {
       this.reject(bp, `${describeMethodResult(target)} has no step points to break at.`);
       return;
@@ -224,7 +224,10 @@ export class FunctionBreakpointResolver {
    * developer who wrote `Account>>balance` does not want a list — while a bare
    * selector is looked up across the image.
    */
-  private findCandidates(session: ActiveSession, parsed: ParsedFunctionName): MethodSearchResult[] {
+  private async findCandidates(
+    session: ActiveSession,
+    parsed: ParsedFunctionName,
+  ): Promise<MethodSearchResult[]> {
     // Sweep environments 0..maxEnvironment rather than searching the maximum
     // alone. `gemstone.maxEnvironment` is a ceiling, not a selection — querying
     // only that number skips environment 0, where practically every method
@@ -234,7 +237,7 @@ export class FunctionBreakpointResolver {
     const seen = new Set<string>();
 
     for (let environmentId = 0; environmentId <= maxEnv; environmentId++) {
-      for (const m of queries.implementorsOf(session, parsed.selector, environmentId)) {
+      for (const m of await queries.implementorsOf(session, parsed.selector, environmentId)) {
         if (m.selector !== parsed.selector) continue;
         // Confirm a named class really implements it, rather than trusting the
         // typing and setting a breakpoint that silently never fires.
@@ -284,15 +287,15 @@ export class FunctionBreakpointResolver {
    * column. Computed against the *stone's* source, which is the only copy
    * available for a method whose editor was never opened.
    */
-  private entryPosition(
+  private async entryPosition(
     session: ActiveSession,
     target: MethodSearchResult,
-  ): { line: number; character: number; environmentId: number } | null {
+  ): Promise<{ line: number; character: number; environmentId: number } | null> {
     // The environment the method was actually found in — not the configured
     // ceiling, which is very likely a different one.
     const environmentId = target.environmentId;
     try {
-      const offsets = queries.getSourceOffsets(
+      const offsets = await queries.getSourceOffsets(
         session,
         target.className,
         target.isMeta,
@@ -301,7 +304,7 @@ export class FunctionBreakpointResolver {
       );
       if (offsets.length === 0) return null;
 
-      const source = queries.getMethodSource(
+      const source = await queries.getMethodSource(
         session,
         target.className,
         target.isMeta,

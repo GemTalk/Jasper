@@ -1587,7 +1587,7 @@ export class DebuggerPanel {
     session: ActiveSession,
     gsProcess: bigint,
     errorMessage: string,
-    onComplete?: (resultOop: bigint) => void,
+    onComplete?: (resultOop: bigint) => Promise<void>,
   ): void {
     // Placement is decided here, once, rather than assembled from focus-dependent
     // steps: open into a brand-new group at the END of the grid (an explicit
@@ -1649,7 +1649,7 @@ export class DebuggerPanel {
     private readonly gsProcess: bigint,
     // Mutable: resume-into-another-error updates it; step/restart clear it.
     private errorMessage: string,
-    private readonly onComplete?: (resultOop: bigint) => void,
+    private readonly onComplete?: (resultOop: bigint) => Promise<void>,
   ) {
     this.panel = panel;
     this.sessionId = session.id;
@@ -1725,11 +1725,11 @@ export class DebuggerPanel {
     void this.editInlineValue(this.inlineHoverLevel, edit.kind, edit.index, word);
   }
 
-  private handleMessage(msg: DebuggerInbound): void {
+  private async handleMessage(msg: DebuggerInbound): Promise<void> {
     switch (msg.command) {
       case 'ready': {
-        this.frames = this.fetchStack();
-        this.dnuInfo = this.detectDnu();
+        this.frames = await this.fetchStack();
+        this.dnuInfo = await this.detectDnu();
         this.subclassRespInfo = this.detectSubclassResp();
         this.postInit();
         return;
@@ -1737,7 +1737,7 @@ export class DebuggerPanel {
       case 'copyStack': {
         // Copy Stack copies the FULL (detailed) stack — short stack on top, then
         // each frame's variable values — the same text Dump Stack writes to file.
-        void vscode.env.clipboard.writeText(this.buildDetailedStackText(new Date()));
+        void vscode.env.clipboard.writeText(await this.buildDetailedStackText(new Date()));
         return;
       }
       case 'dumpStackToFile': {
@@ -1764,7 +1764,7 @@ export class DebuggerPanel {
         if (frame) {
           this.selectedServerLevel = frame.serverLevel;
           void this.revealFrameSource(frame.serverLevel);
-          this.postVariables(frame.serverLevel);
+          await this.postVariables(frame.serverLevel);
         }
         return;
       }
@@ -1778,11 +1778,11 @@ export class DebuggerPanel {
         return;
       }
       case 'resume': {
-        this.resume();
+        await this.resume();
         return;
       }
       case 'runToCursor': {
-        this.runToCursor(msg.level);
+        await this.runToCursor(msg.level);
         return;
       }
       case 'terminate': {
@@ -1818,12 +1818,12 @@ export class DebuggerPanel {
       }
       case 'setVariable': {
         const frame = this.frames.find((f) => f.level === msg.level);
-        this.setVariable(frame?.serverLevel, msg.kind, msg.index, msg.expr);
+        await this.setVariable(frame?.serverLevel, msg.kind, msg.index, msg.expr);
         return;
       }
       case 'revertVariable': {
         const frame = this.frames.find((f) => f.level === msg.level);
-        this.revertVariable(frame?.serverLevel, msg.kind, msg.index);
+        await this.revertVariable(frame?.serverLevel, msg.kind, msg.index);
         return;
       }
       case 'inspectVariable': {
@@ -1896,10 +1896,10 @@ export class DebuggerPanel {
   }
 
   /** Re-walk the (advanced) stack and re-render — used after a step / restart / resume-with-error. */
-  private refresh(): void {
+  private async refresh(): Promise<void> {
     this.invalidateVariablesCache(); // the stack moved — cached values are stale
-    this.frames = this.fetchStack();
-    this.dnuInfo = this.detectDnu();
+    this.frames = await this.fetchStack();
+    this.dnuInfo = await this.detectDnu();
     this.subclassRespInfo = this.detectSubclassResp();
     this.postInit();
   }
@@ -1909,14 +1909,14 @@ export class DebuggerPanel {
    * what method the user could create. Best-effort: any failure → undefined (the
    * Create button just doesn't appear).
    */
-  private detectDnu(): debug.DnuInfo | undefined {
+  private async detectDnu(): Promise<debug.DnuInfo | undefined> {
     // Suppress the Create button while a create is being edited (pendingDnuMethodUri)
     // or after one is resolved for this parked DNU (dnuSuppressed) — the method now
     // exists, but the suspended process still has the doesNotUnderstand: frame, so
     // re-detecting it would wrongly re-offer "Create".
     if (this.pendingDnuMethodUri !== undefined || this.dnuSuppressed) return undefined;
     try {
-      return debug.getDoesNotUnderstandInfo(this.session, this.gsProcess);
+      return await debug.getDoesNotUnderstandInfo(this.session, this.gsProcess);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       return undefined;
@@ -2070,7 +2070,7 @@ export class DebuggerPanel {
 
     let selfOop: bigint;
     try {
-      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
+      selfOop = (await debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel)).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
@@ -2082,7 +2082,7 @@ export class DebuggerPanel {
     // superclass along the lookup chain (the metaclass chain for a class
     // receiver, which crosses into instance-side `Class` and above): each a place
     // the selector could be implemented, flagged with whether it already is.
-    const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
+    const chain = await debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
       this.postInit();
@@ -2125,14 +2125,14 @@ export class DebuggerPanel {
 
     let selfOop: bigint;
     try {
-      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
+      selfOop = (await debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel)).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.browseDeclined(`Could not resolve the receiver of ${frame.label}.`);
       return;
     }
 
-    const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
+    const target = await debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
       this.browseDeclined(`Could not locate #${raw.selector} to browse it.`);
       return;
@@ -2202,14 +2202,15 @@ export class DebuggerPanel {
     if (!info) return;
     let selfOop: bigint;
     try {
-      selfOop = debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel).selfOop;
+      selfOop = (await debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel))
+        .selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of #${info.selector}.`;
       this.postInit();
       return;
     }
-    let chain = debug.getReceiverClassChain(this.session, selfOop, info.selector);
+    let chain = await debug.getReceiverClassChain(this.session, selfOop, info.selector);
     // Bound the chain at the abstract method's defining class (inclusive).
     const boundIdx = chain.findIndex((c) => c.className === info.definingClassName);
     if (boundIdx >= 0) chain = chain.slice(0, boundIdx + 1);
@@ -2388,8 +2389,8 @@ export class DebuggerPanel {
         // Workspace/"Executed Code" (or top) caller — can't be re-entered in place
         // (the kernel trim sends compiledMethodAt: to its nil class), so don't trim.
         this.srSuppressed = true; // the method exists now; don't re-offer Implement
-        this.frames = this.fetchStack();
-        this.dnuInfo = this.detectDnu();
+        this.frames = await this.fetchStack();
+        this.dnuInfo = await this.detectDnu();
         this.subclassRespInfo = this.detectSubclassResp();
         this.errorMessage =
           `Saved ${sel}${inTarget} — re-run the expression to dispatch into the new ` +
@@ -2405,8 +2406,8 @@ export class DebuggerPanel {
         this.staleTopActivation = false; // the trim rebuilt the stack from a fresh activation
         this.uncontinuable = false;
         this.srSuppressed = false; // fresh stack — a new abstract stop may legitimately appear
-        this.frames = this.fetchStack();
-        this.dnuInfo = this.detectDnu();
+        this.frames = await this.fetchStack();
+        this.dnuInfo = await this.detectDnu();
         this.subclassRespInfo = this.detectSubclassResp();
         this.errorMessage =
           `Saved ${sel}${inTarget} — re-entered the caller. Press Resume (▶) to ` +
@@ -2417,8 +2418,8 @@ export class DebuggerPanel {
     }
 
     this.dnuSuppressed = false;
-    this.frames = this.fetchStack(); // labels/source may have shifted; no trim
-    this.dnuInfo = this.detectDnu();
+    this.frames = await this.fetchStack(); // labels/source may have shifted; no trim
+    this.dnuInfo = await this.detectDnu();
     this.subclassRespInfo = this.detectSubclassResp();
     this.errorMessage =
       `Saved ${sel}${inTarget} — used on the next ${sel} send. Resume (▶) to continue ` +
@@ -2508,8 +2509,8 @@ export class DebuggerPanel {
       this.staleTopActivation = false; // the trim rebuilt the stack from a fresh activation
       this.uncontinuable = false;
       this.dnuSuppressed = false; // fresh stack — a new DNU may legitimately appear
-      this.frames = this.fetchStack();
-      this.dnuInfo = this.detectDnu();
+      this.frames = await this.fetchStack();
+      this.dnuInfo = await this.detectDnu();
       this.errorMessage =
         `Created ${sel} — re-entered the frame where it was sent. ` +
         'Press Resume (▶) to run the new method, or step into it.';
@@ -2518,10 +2519,10 @@ export class DebuggerPanel {
   }
 
   /** Fetch the selected frame's grouped variables and post them. */
-  private postVariables(serverLevel: number): void {
+  private async postVariables(serverLevel: number): Promise<void> {
     let groups: VarGroup[] = [];
     try {
-      groups = this.variablesForFrame(serverLevel);
+      groups = await this.variablesForFrame(serverLevel);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
     }
@@ -2535,9 +2536,9 @@ export class DebuggerPanel {
    * is invalidated by `invalidateVariablesCache()` when the stack moves or a value
    * is edited.
    */
-  private variablesForFrame(serverLevel: number): VarGroup[] {
+  private async variablesForFrame(serverLevel: number): Promise<VarGroup[]> {
     if (this.varGroupsCache?.level === serverLevel) return this.varGroupsCache.groups;
-    const groups = this.fetchVariables(serverLevel);
+    const groups = await this.fetchVariables(serverLevel);
     this.varGroupsCache = { level: serverLevel, groups };
     return groups;
   }
@@ -2561,8 +2562,8 @@ export class DebuggerPanel {
    * and classifies `.tN` stack temps; the edit-index + grouping rules below match
    * the previous per-call build exactly.
    */
-  private fetchVariables(serverLevel: number): VarGroup[] {
-    const rows = debug.fetchFrameVariables(this.session, this.gsProcess, serverLevel);
+  private async fetchVariables(serverLevel: number): Promise<VarGroup[]> {
+    const rows = await debug.fetchFrameVariables(this.session, this.gsProcess, serverLevel);
 
     const toRow = (r: debug.FrameVarRow, edit?: VarRow['edit']): VarRow => {
       // Stamp `revertible` only when this slot has been edited away from its
@@ -2639,10 +2640,10 @@ export class DebuggerPanel {
    * rows contiguously in group order, so a row simply extends the current group
    * or starts a new one.
    */
-  private collectStackDetail(): DetailedStackFrame[] {
+  private async collectStackDetail(): Promise<DetailedStackFrame[]> {
     let rows: debug.StackDumpRow[] = [];
     try {
-      rows = debug.fetchStackDump(this.session, this.gsProcess);
+      rows = await debug.fetchStackDump(this.session, this.gsProcess);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
     }
@@ -2669,13 +2670,13 @@ export class DebuggerPanel {
   }
 
   /** The full detailed-stack text (header + short stack + per-frame variables). */
-  private buildDetailedStackText(now: Date): string {
+  private async buildDetailedStackText(now: Date): Promise<string> {
     const subtitle = this.sessionSubtitle();
     const when =
       `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ` +
       `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
     const header = ['GemStone Debugger stack dump', subtitle, when].filter(Boolean).join(' — ');
-    return formatDetailedStack(this.errorMessage, this.collectStackDetail(), header);
+    return formatDetailedStack(this.errorMessage, await this.collectStackDetail(), header);
   }
 
   /**
@@ -2688,7 +2689,7 @@ export class DebuggerPanel {
   private async dumpStackToFile(): Promise<void> {
     try {
       const now = new Date();
-      const text = this.buildDetailedStackText(now);
+      const text = await this.buildDetailedStackText(now);
       const fileName = stackDumpFileName(this.frames[0]?.label ?? 'stack', now);
       const dir = extensionPathFrom('stacks');
       const filePath = path.join(dir, fileName);
@@ -2747,7 +2748,7 @@ export class DebuggerPanel {
   ): Promise<void> {
     if (serverLevel == null) return;
     if (mode === 'inspect') {
-      this.inspectInFrame(serverLevel, expr);
+      await this.inspectInFrame(serverLevel, expr);
       return;
     }
     if (this.nbBusy) {
@@ -2800,13 +2801,13 @@ export class DebuggerPanel {
   /** Inspect It: evaluate in the frame for the answer's OOP and open it through the shared router
    *  (the Enhanced Inspector where the session has it, the basic one otherwise), exactly as the
    *  variables pane's own Inspect does — so it opens beside the debugger and closes with it. */
-  private inspectInFrame(serverLevel: number, expr: string): void {
+  private async inspectInFrame(serverLevel: number, expr: string): Promise<void> {
     if (this.nbBusy) {
       this.notifyBusy('Inspect It');
       return;
     }
     try {
-      const oop = debug.evaluateInFrameToOop(this.session, this.gsProcess, expr, serverLevel);
+      const oop = await debug.evaluateInFrameToOop(this.session, this.gsProcess, expr, serverLevel);
       const inspector = routeInspect(this.session, BigInt(oop), expr);
       this.openedInspectors.add(inspector);
       if (!this.disposed) {
@@ -2851,12 +2852,12 @@ export class DebuggerPanel {
    * error nothing is written and the error is sent back so the webview keeps the
    * editor open.
    */
-  private setVariable(
+  private async setVariable(
     serverLevel: number | undefined,
     kind: 'instvar' | 'temp',
     index: number,
     expr: string,
-  ): void {
+  ): Promise<void> {
     if (serverLevel == null) return;
     // Writing is a blocking GCI perform; refuse while a non-blocking step/trim
     // owns the session's single in-flight call.
@@ -2869,7 +2870,7 @@ export class DebuggerPanel {
       });
       return;
     }
-    const result = this.writeVariableInFrame(serverLevel, kind, index, expr);
+    const result = await this.writeVariableInFrame(serverLevel, kind, index, expr);
     // Success → the host's `postVariables` (inside the write) already re-rendered
     // the pane, which removes the open editor; this ok just confirms it. Failure →
     // keep the editor open and flag the error on it so the expression can be fixed.
@@ -2889,15 +2890,20 @@ export class DebuggerPanel {
    * no webview). On failure nothing is written and the pane is NOT re-rendered (so
    * the pane's editor stays open). Callers must guard `nbBusy` first.
    */
-  private writeVariableInFrame(
+  private async writeVariableInFrame(
     serverLevel: number,
     kind: 'instvar' | 'temp',
     index: number,
     expr: string,
-  ): { ok: boolean; error?: string } {
+  ): Promise<{ ok: boolean; error?: string }> {
     try {
-      const valueOop = debug.evaluateInFrameToOop(this.session, this.gsProcess, expr, serverLevel);
-      const info = debug.getFrameInfo(this.session, this.gsProcess, serverLevel);
+      const valueOop = await debug.evaluateInFrameToOop(
+        this.session,
+        this.gsProcess,
+        expr,
+        serverLevel,
+      );
+      const info = await debug.getFrameInfo(this.session, this.gsProcess, serverLevel);
       // Capture + pin the slot's pre-edit value BEFORE overwriting it (first edit
       // only), so revert can restore the exact original object.
       this.captureUndoOriginal(serverLevel, kind, index, info);
@@ -2908,10 +2914,10 @@ export class DebuggerPanel {
       }
       this.undoDirty.add(this.undoKey(serverLevel, kind, index));
       this.invalidateVariablesCache(); // the slot points at a new object — re-fetch
-      this.postVariables(serverLevel);
+      await this.postVariables(serverLevel);
       // The slot now points at a new object — refresh the inline overlay so its
       // value (and hover) track, just like the Variables pane.
-      if (this.sourceEditor) this.updateInlineValues(this.sourceEditor, serverLevel);
+      if (this.sourceEditor) await this.updateInlineValues(this.sourceEditor, serverLevel);
       return { ok: true };
     } catch (e: unknown) {
       const error = e instanceof Error ? e.message : String(e);
@@ -2945,7 +2951,7 @@ export class DebuggerPanel {
       let prefill = '';
       try {
         prefill =
-          this.inlineVarsForFrame(serverLevel).find(
+          (await this.inlineVarsForFrame(serverLevel)).find(
             (v) => v.name === name && v.edit?.kind === kind && v.edit?.index === index,
           )?.full ?? '';
       } catch (e: unknown) {
@@ -2966,7 +2972,7 @@ export class DebuggerPanel {
         this.notifyBusy('Set variable');
         return;
       }
-      const result = this.writeVariableInFrame(serverLevel, kind, index, trimmed);
+      const result = await this.writeVariableInFrame(serverLevel, kind, index, trimmed);
       if (!result.ok) {
         void vscode.window.showErrorMessage(`Could not set ${name}: ${result.error}`);
       }
@@ -3016,11 +3022,11 @@ export class DebuggerPanel {
    * NOT released here (the slot re-references the object anyway); pins are freed
    * en masse by clearUndoState(). No-op if the slot has no stored original.
    */
-  private revertVariable(
+  private async revertVariable(
     serverLevel: number | undefined,
     kind: 'instvar' | 'temp',
     index: number,
-  ): void {
+  ): Promise<void> {
     if (serverLevel == null) return;
     const key = this.undoKey(serverLevel, kind, index);
     const originalOop = this.undoOriginals.get(key);
@@ -3032,16 +3038,17 @@ export class DebuggerPanel {
     }
     try {
       if (kind === 'instvar') {
-        const selfOop = debug.getFrameInfo(this.session, this.gsProcess, serverLevel).selfOop;
+        const selfOop = (await debug.getFrameInfo(this.session, this.gsProcess, serverLevel))
+          .selfOop;
         debug.setInstVar(this.session, selfOop, index, originalOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
       this.undoDirty.delete(key);
       this.invalidateVariablesCache(); // slot restored to its original object
-      this.postVariables(serverLevel);
+      await this.postVariables(serverLevel);
       // Keep the inline overlay in step with the reverted value.
-      if (this.sourceEditor) this.updateInlineValues(this.sourceEditor, serverLevel);
+      if (this.sourceEditor) await this.updateInlineValues(this.sourceEditor, serverLevel);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
     }
@@ -3070,7 +3077,7 @@ export class DebuggerPanel {
   }
 
   /** Resume execution: closes the panel if the process completes, else refreshes on the new error. */
-  private resume(): void {
+  private async resume(): Promise<void> {
     if (this.guardStaleTopActivation('Resume')) return;
     if (this.guardUncontinuable()) return;
     // Don't issue a blocking continue while a non-blocking step/trim is in flight
@@ -3084,7 +3091,7 @@ export class DebuggerPanel {
     // Leaving this halt: drop revert state + release pinned originals.
     this.clearUndoState();
     const result = debug.continueExecution(this.session, this.gsProcess);
-    this.handleContinueResult(result);
+    await this.handleContinueResult(result);
   }
 
   /**
@@ -3093,12 +3100,12 @@ export class DebuggerPanel {
    * now uncontinuable (6011), else refresh on the new stop. Shared so Run to Cursor
    * lands a hit exactly like a Resume that re-halted.
    */
-  private handleContinueResult(result: debug.StepResult): void {
+  private async handleContinueResult(result: debug.StepResult): Promise<void> {
     // Transcript writes buffered during the resumed run are shown now (the
     // completion path drains in onCompleted).
-    if (!result.completed) appendTranscriptOutput(drainTranscript(this.session));
+    if (!result.completed) appendTranscriptOutput(await drainTranscript(this.session));
     if (result.completed) {
-      this.onCompleted(result);
+      await this.onCompleted(result);
     } else if (result.errorNumber === GS_ERR_UNCONTINUABLE) {
       // The process is dead-ended; don't refresh (that would surface the
       // uncontinuable machinery wall) — show the fixed Terminate-only banner.
@@ -3107,7 +3114,7 @@ export class DebuggerPanel {
       this.postInit();
     } else {
       this.errorMessage = result.errorMessage || 'GemStone error';
-      this.refresh();
+      await this.refresh();
     }
   }
 
@@ -3131,7 +3138,7 @@ export class DebuggerPanel {
    * cursor maps to a real step point too. Falls back to a plain Resume (with a
    * brief flash) when there's no usable target.
    */
-  private runToCursor(displayLevel: number): void {
+  private async runToCursor(displayLevel: number): Promise<void> {
     if (this.guardStaleTopActivation('Run to Cursor')) return;
     if (this.guardUncontinuable()) return;
     if (this.nbBusy) {
@@ -3139,12 +3146,12 @@ export class DebuggerPanel {
       return;
     }
 
-    const target = this.resolveRunToTarget(displayLevel);
+    const target = await this.resolveRunToTarget(displayLevel);
     if (!target) {
       this.flash(
         'Run to Cursor: place the cursor on a code line in the source pane — resuming instead.',
       );
-      this.resume();
+      await this.resume();
       return;
     }
 
@@ -3153,9 +3160,9 @@ export class DebuggerPanel {
     const userOwns = target.byName
       ? this.userBreakAt(target.byName.uri, target.byName.actualLine)
       : false;
-    const setBreak = (): void => {
+    const setBreak = async (): Promise<void> => {
       if (target.byName) {
-        queries.setBreakAtStepPoint(
+        await queries.setBreakAtStepPoint(
           this.session,
           target.byName.className,
           target.byName.isMeta,
@@ -3166,9 +3173,9 @@ export class DebuggerPanel {
         debug.setBreakAtStepPointByOop(this.session, target.homeMethodOop, target.stepPoint);
       }
     };
-    const clearBreak = (): void => {
+    const clearBreak = async (): Promise<void> => {
       if (target.byName) {
-        queries.clearBreakAtStepPoint(
+        await queries.clearBreakAtStepPoint(
           this.session,
           target.byName.className,
           target.byName.isMeta,
@@ -3181,11 +3188,11 @@ export class DebuggerPanel {
     };
 
     try {
-      setBreak();
+      await setBreak();
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.flash('Run to Cursor: could not set a temporary breakpoint — resuming instead.');
-      this.resume();
+      await this.resume();
       return;
     }
 
@@ -3197,13 +3204,13 @@ export class DebuggerPanel {
     } finally {
       if (!userOwns) {
         try {
-          clearBreak();
+          await clearBreak();
         } catch (e: unknown) {
           logError(this.sessionId, e instanceof Error ? e.message : String(e));
         }
       }
     }
-    this.handleContinueResult(result);
+    await this.handleContinueResult(result);
   }
 
   /**
@@ -3219,7 +3226,7 @@ export class DebuggerPanel {
    * `byName` is present only for an editable method (break by class>>selector with
    * the user-break guard); absent for a doit (break by the home method's OOP).
    */
-  private resolveRunToTarget(displayLevel: number):
+  private async resolveRunToTarget(displayLevel: number): Promise<
     | {
         homeMethodOop: bigint;
         stepPoint: number;
@@ -3231,7 +3238,8 @@ export class DebuggerPanel {
           actualLine: number;
         };
       }
-    | undefined {
+    | undefined
+  > {
     const frame = this.frames.find((f) => f.level === displayLevel);
     if (!frame) return undefined;
     const editor = this.sourceEditor;
@@ -3246,7 +3254,7 @@ export class DebuggerPanel {
 
     const raw = this.rawFrames.find((r) => r.serverLevel === frame.serverLevel);
     if (!raw || raw.homeMethodOop === 0n) return undefined; // an unresolvable <frame N>
-    const home = this.resolveHomeMethod(raw.homeMethodOop);
+    const home = await this.resolveHomeMethod(raw.homeMethodOop);
 
     let rawSource: string;
     let offsets: number[];
@@ -3371,11 +3379,11 @@ export class DebuggerPanel {
    * the workspace) — BEFORE dispose, while the result oop is still fetchable —
    * then close the panel.
    */
-  private onCompleted(result: debug.StepResult): void {
+  private async onCompleted(result: debug.StepResult): Promise<void> {
     // Show Transcript output the completing run buffered (harmlessly empty if
     // an onComplete callback drains again).
-    appendTranscriptOutput(drainTranscript(this.session));
-    if (result.resultOop != null) this.onComplete?.(result.resultOop);
+    appendTranscriptOutput(await drainTranscript(this.session));
+    if (result.resultOop != null) await this.onComplete?.(result.resultOop);
     this.panel.dispose();
   }
 
@@ -3435,10 +3443,10 @@ export class DebuggerPanel {
       // The sink buffers Transcript writes while debugging (stepping runs
       // outside clientForwarder mode, whose 2336 would swallow the step) —
       // show whatever this step produced.
-      appendTranscriptOutput(drainTranscript(this.session));
+      appendTranscriptOutput(await drainTranscript(this.session));
       if (this.disposed) return; // panel closed while the step ran
       if (result.completed) {
-        this.onCompleted(result);
+        await this.onCompleted(result);
         return;
       }
       if (result.errorNumber === GS_ERR_UNCONTINUABLE) {
@@ -3459,7 +3467,7 @@ export class DebuggerPanel {
         return;
       }
       this.errorMessage = ''; // stepped to a new point — clear the original halt banner
-      this.refresh();
+      await this.refresh();
     });
   }
 
@@ -3468,7 +3476,7 @@ export class DebuggerPanel {
    * does nothing if the panel was disposed mid-flight). A user cancel (hard
    * break) is surfaced as "<action> cancelled", anything else as a failure.
    */
-  private handleNbError(action: string, e: unknown): void {
+  private async handleNbError(action: string, e: unknown): Promise<void> {
     if (this.disposed) return;
     if (e instanceof NbCancelledError) {
       this.errorMessage = `${action} cancelled.`;
@@ -3476,7 +3484,7 @@ export class DebuggerPanel {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `${action} failed: ${e instanceof Error ? e.message : String(e)}`;
     }
-    this.refresh();
+    await this.refresh();
   }
 
   /**
@@ -3511,7 +3519,7 @@ export class DebuggerPanel {
     try {
       await op(opts);
     } catch (e: unknown) {
-      this.handleNbError(action, e);
+      await this.handleNbError(action, e);
     } finally {
       this.activeNbCancel = undefined;
       this.setCancellable(false);
@@ -3576,7 +3584,7 @@ export class DebuggerPanel {
       this.staleTopActivation = false; // the trim discarded any stale top activation
       this.uncontinuable = false; // …and a fresh activation is continuable again
       this.errorMessage = '';
-      this.refresh();
+      await this.refresh();
     });
   }
 
@@ -3672,7 +3680,7 @@ export class DebuggerPanel {
       this.staleTopActivation = false; // the trim rebuilt the stack from a fresh activation
       this.uncontinuable = false; // …which is continuable again
       this.errorMessage = '';
-      this.refresh();
+      await this.refresh();
     });
   }
 
@@ -3694,14 +3702,14 @@ export class DebuggerPanel {
    */
   private async revealFrameSource(level: number): Promise<void> {
     try {
-      const info = debug.getFrameInfo(this.session, this.gsProcess, level);
+      const info = await debug.getFrameInfo(this.session, this.gsProcess, level);
       // Block frames share their home method's source; resolve from the home
       // method (blocks aren't dictionary entries) but keep the frame's own
       // method+ip for the position (matches buildFrame's naming/position split).
       const { homeMethodOop } = debug.getMethodBlockInfo(this.session, info.methodOop);
       // Same classification as buildFrame's label (C3): a frame the stack list
       // shows as a method must never open as "Executed Code", and vice-versa.
-      const home = this.resolveHomeMethod(homeMethodOop);
+      const home = await this.resolveHomeMethod(homeMethodOop);
 
       let uri: vscode.Uri;
       let methodForOffsets: { className: string; isMeta: boolean; selector: string } | undefined;
@@ -3763,7 +3771,7 @@ export class DebuggerPanel {
       let highlightInfo = info;
       if (highlightLevel !== level) {
         try {
-          highlightInfo = debug.getFrameInfo(this.session, this.gsProcess, highlightLevel);
+          highlightInfo = await debug.getFrameInfo(this.session, this.gsProcess, highlightLevel);
         } catch {
           /* keep the displayed frame's info for the line fallback */
         }
@@ -3772,9 +3780,14 @@ export class DebuggerPanel {
       // Highlight the current step point: from class>>selector offsets for an
       // editable method, or from the method OOP for a read-only doit.
       const range = methodForOffsets
-        ? this.stepPointRange(editor.document, highlightInfo, highlightLevel, methodForOffsets)
+        ? await this.stepPointRange(
+            editor.document,
+            highlightInfo,
+            highlightLevel,
+            methodForOffsets,
+          )
         : readOnlyOffsetMethodOop !== undefined
-          ? this.stepPointRange(
+          ? await this.stepPointRange(
               editor.document,
               highlightInfo,
               highlightLevel,
@@ -3795,7 +3808,7 @@ export class DebuggerPanel {
       this.decoratedEditor = editor;
       // Refresh the inline-value overlay for the frame now shown (#5). No-op
       // when the user hasn't toggled it on.
-      this.updateInlineValues(editor, level);
+      await this.updateInlineValues(editor, level);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
     }
@@ -3810,7 +3823,7 @@ export class DebuggerPanel {
    * Off → just clears any existing overlay. Best-effort: a failed fetch leaves
    * the source clean rather than throwing on the hot path.
    */
-  private updateInlineValues(editor: vscode.TextEditor, serverLevel: number): void {
+  private async updateInlineValues(editor: vscode.TextEditor, serverLevel: number): Promise<void> {
     if (this.inlineDecoratedEditor && this.inlineDecoratedEditor !== editor) {
       this.inlineDecoratedEditor.setDecorations(DebuggerPanel.inlineValueDecoration, []);
       this.inlineDecoratedEditor = undefined;
@@ -3823,7 +3836,7 @@ export class DebuggerPanel {
       return;
     }
     try {
-      const vars = this.inlineVarsForFrame(serverLevel);
+      const vars = await this.inlineVarsForFrame(serverLevel);
       const lines = editor.document.getText().split('\n');
       const overlay = computeInlineValueLines(lines, vars, {
         perLine: this.inlineValuesPerLine,
@@ -3889,9 +3902,9 @@ export class DebuggerPanel {
    * source pane shows the ENCLOSING method's source, so without them the overlay
    * had nothing to say about names plainly visible on those lines.
    */
-  private inlineVarsForFrame(serverLevel: number): InlineVar[] {
+  private async inlineVarsForFrame(serverLevel: number): Promise<InlineVar[]> {
     const vars: InlineVar[] = [];
-    for (const group of this.variablesForFrame(serverLevel)) {
+    for (const group of await this.variablesForFrame(serverLevel)) {
       if (group.kind === 'stacktemps') continue;
       for (const v of group.vars) {
         vars.push({
@@ -3910,11 +3923,11 @@ export class DebuggerPanel {
    * window-wide, and re-render the current source pane. Driven by the
    * `gemstone.toggleInlineValues` editor-title button.
    */
-  toggleInlineValues(): void {
+  async toggleInlineValues(): Promise<void> {
     this.inlineValuesEnabled = !this.inlineValuesEnabled;
     DebuggerPanel.savedInlineValuesEnabled = this.inlineValuesEnabled;
     if (this.sourceEditor && this.selectedServerLevel !== undefined) {
-      this.updateInlineValues(this.sourceEditor, this.selectedServerLevel);
+      await this.updateInlineValues(this.sourceEditor, this.selectedServerLevel);
     }
     // Flip the source-pane CodeLens label (on/off) to match — and reveal/hide the
     // companion "every line" lens, which only shows while the overlay is on.
@@ -3926,11 +3939,11 @@ export class DebuggerPanel {
    * panel, remember it window-wide, and re-render. Driven by the second
    * source-pane CodeLens, shown only while the overlay is on.
    */
-  toggleInlineValuesPerLine(): void {
+  async toggleInlineValuesPerLine(): Promise<void> {
     this.inlineValuesPerLine = !this.inlineValuesPerLine;
     DebuggerPanel.savedInlineValuesPerLine = this.inlineValuesPerLine;
     if (this.inlineValuesEnabled && this.sourceEditor && this.selectedServerLevel !== undefined) {
-      this.updateInlineValues(this.sourceEditor, this.selectedServerLevel);
+      await this.updateInlineValues(this.sourceEditor, this.selectedServerLevel);
     }
     DebuggerPanel.refreshSourceCodeLenses();
   }
@@ -3940,17 +3953,17 @@ export class DebuggerPanel {
    * CodeLens, which passes the document URI) to the owning panel. Falls back to
    * the active editor's URI when called without one.
    */
-  static toggleInlineValuesForUri(uriStr?: string): void {
+  static async toggleInlineValuesForUri(uriStr?: string): Promise<void> {
     const uri = uriStr ?? vscode.window.activeTextEditor?.document.uri.toString();
     const dbg = uri ? DebuggerPanel.panelForSourceUri(uri) : undefined;
-    if (dbg) dbg.toggleInlineValues();
+    if (dbg) await dbg.toggleInlineValues();
   }
 
   /** As `toggleInlineValuesForUri`, but for the every-line MODE (second lens). */
-  static toggleInlineValuesPerLineForUri(uriStr?: string): void {
+  static async toggleInlineValuesPerLineForUri(uriStr?: string): Promise<void> {
     const uri = uriStr ?? vscode.window.activeTextEditor?.document.uri.toString();
     const dbg = uri ? DebuggerPanel.panelForSourceUri(uri) : undefined;
-    if (dbg) dbg.toggleInlineValuesPerLine();
+    if (dbg) await dbg.toggleInlineValuesPerLine();
   }
 
   /** The live panel currently showing `uriStr` in its companion source pane, if any. */
@@ -4333,13 +4346,13 @@ export class DebuggerPanel {
    * back to the start of the IP's source line when offsets aren't available
    * (e.g. executed-code frames). Returns undefined when there's nothing to mark.
    */
-  private stepPointRange(
+  private async stepPointRange(
     doc: vscode.TextDocument,
     info: debug.FrameInfo,
     level: number,
     method: { className: string; isMeta: boolean; selector: string } | undefined,
     readOnlyMethodOop?: bigint,
-  ): vscode.Range | undefined {
+  ): Promise<vscode.Range | undefined> {
     let pos: vscode.Position | undefined;
 
     // Exact step-point offset → the precise sub-expression start. The offsets
@@ -4354,7 +4367,7 @@ export class DebuggerPanel {
           // 1-BASED (see getStepPointSelectorRanges.ts). doc.positionAt is
           // 0-based, so convert — otherwise the highlight sits one char too far.
           const offsets = method
-            ? queries.getSourceOffsets(
+            ? await queries.getSourceOffsets(
                 this.session,
                 method.className,
                 method.isMeta,
@@ -4396,12 +4409,12 @@ export class DebuggerPanel {
    * and Debug Call Stack frame-for-frame. Proves the `debugQueries` pipe works
    * from this second consumer before Stage 1 builds the real layout on top.
    */
-  private fetchStack(): DisplayFrame[] {
+  private async fetchStack(): Promise<DisplayFrame[]> {
     const raws: RawFrame[] = [];
     try {
       const depth = debug.getStackDepth(this.session, this.gsProcess);
       for (let level = 1; level <= depth; level++) {
-        raws.push(this.buildFrame(level));
+        raws.push(await this.buildFrame(level));
       }
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
@@ -4453,10 +4466,10 @@ export class DebuggerPanel {
    * frame with no introspectable method (a doit / executed-code or its blocks)
    * is `Executed Code`. Step point / line are best-effort.
    */
-  private buildFrame(level: number): RawFrame {
+  private async buildFrame(level: number): Promise<RawFrame> {
     let info: debug.FrameInfo;
     try {
-      info = debug.getFrameInfo(this.session, this.gsProcess, level);
+      info = await debug.getFrameInfo(this.session, this.gsProcess, level);
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       return {
@@ -4485,7 +4498,7 @@ export class DebuggerPanel {
 
     // Resolve the home method's identity (the single source of truth for
     // "is this executed code?", shared with revealFrameSource — see C3).
-    const home = this.resolveHomeMethod(homeMethodOop);
+    const home = await this.resolveHomeMethod(homeMethodOop);
 
     let label: string;
     let receiverClass: string | undefined;
@@ -4567,18 +4580,20 @@ export class DebuggerPanel {
    *    real method, NOT executed code;
    *  - no resolvable class at all (a doit) → isExecutedCode true.
    */
-  private resolveHomeMethod(homeMethodOop: bigint): {
-    uriInfo: debug.MethodUriInfo | undefined;
-    definingClassName: string;
-    selector: string;
-    isMeta: boolean;
-  } & { isExecutedCode: boolean } {
+  private async resolveHomeMethod(homeMethodOop: bigint): Promise<
+    {
+      uriInfo: debug.MethodUriInfo | undefined;
+      definingClassName: string;
+      selector: string;
+      isMeta: boolean;
+    } & { isExecutedCode: boolean }
+  > {
     let uriInfo: debug.MethodUriInfo | undefined;
     let definingClassName = '';
     let selector = '';
     let isMeta = false;
     try {
-      uriInfo = debug.getMethodUriInfo(this.session, homeMethodOop);
+      uriInfo = await debug.getMethodUriInfo(this.session, homeMethodOop);
       if (uriInfo && uriInfo.dictName) {
         definingClassName = uriInfo.className;
         selector = uriInfo.selector;

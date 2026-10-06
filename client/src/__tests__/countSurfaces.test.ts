@@ -91,7 +91,7 @@ describe('senders/implementors count surfaces', () => {
       expect(vi.mocked(sendersOf).mock.calls.map((c) => c[2])).toEqual([0, 1, 2]);
     });
 
-    it('the CodeLens, which still owns them in a Topaz file', () => {
+    it('the CodeLens, which still owns them in a Topaz file', async () => {
       vi.useFakeTimers();
       try {
         const sessionManager = new SessionManager();
@@ -109,7 +109,7 @@ describe('senders/implementors count surfaces', () => {
           .provideCodeLenses(document)
           .filter((l: CodeLens) => l.command?.command !== 'gemstone.fileInFile');
         provider.resolveCodeLens(lenses[0]); // schedules the deferred lookup
-        vi.runAllTimers();
+        await vi.runAllTimersAsync();
 
         expect(vi.mocked(sendersOf).mock.calls.map((c) => c[2])).toEqual([0, 1, 2]);
         provider.dispose();

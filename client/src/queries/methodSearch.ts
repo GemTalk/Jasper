@@ -249,12 +249,12 @@ export function effectiveScanMode(term: string, mode: SourceScanMode): SourceSca
   return mode === 'fuzzyToken' && !IDENTIFIER_ONLY.test(term) ? 'substring' : mode;
 }
 
-export function searchMethodSource(
+export async function searchMethodSource(
   execute: QueryExecutor,
   term: string,
   ignoreCase: boolean,
   requestedMode: SourceScanMode = 'substring',
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const mode = effectiveScanMode(term, requestedMode);
   const needsNeedle = mode !== 'substring';
   const engineScan = `results := ${classOrganizerExpr(0)}
@@ -271,33 +271,33 @@ methods := results at: 1.`;
 ${scan}
 ${methodSerialization(0)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
-export function sendersOf(
+export async function sendersOf(
   execute: QueryExecutor,
   selector: string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| methods stream limit classDict sl |
 methods := (${classOrganizerExpr(environmentId)}
   sendersOf: #'${escapeString(selector)}') at: 1.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
-export function implementorsOf(
+export async function implementorsOf(
   execute: QueryExecutor,
   selector: string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| methods stream limit classDict sl |
 methods := (${classOrganizerExpr(environmentId)}
   implementorsOf: #'${escapeString(selector)}') asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
 // Implementations of `selector` in a class's hierarchy: the full superclass
@@ -316,7 +316,7 @@ ${methodSerialization(environmentId)}`;
 // only pin the spelling of that send, so the engine's half of it is guarded on a live
 // stone by `methodSearch.integration.test.ts`, which implements one selector across
 // three environments in a four-deep chain and walks it in both directions.
-export function hierarchyImplementorsOf(
+export async function hierarchyImplementorsOf(
   execute: QueryExecutor,
   dictIndex: number,
   className: string,
@@ -324,7 +324,7 @@ export function hierarchyImplementorsOf(
   isMeta: boolean,
   direction: 'up' | 'down',
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const sel = escapeString(selector);
   const target = isMeta ? 'class class' : 'class';
   const collect =
@@ -345,7 +345,7 @@ ${collect}
 methods := methods asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
 // Every method that references the class bound to `className` in `dict` — resolved by
@@ -360,12 +360,12 @@ ${methodSerialization(environmentId)}`;
 // and a safe delete would then report that nothing referenced it. Verified on a live
 // stone: with the same method compiled into environments 0 and 1, the bare organizer
 // answers only the environment-0 one and `environmentId: 1` answers only the other.
-export function referencesToClassInDict(
+export async function referencesToClassInDict(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| cls methods stream limit classDict sl |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
@@ -373,7 +373,7 @@ methods := (${classOrganizerExpr(environmentId)}
   referencesToObject: cls) asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
 // The environment goes on the ORGANIZER, not just on the serialization: an
@@ -399,18 +399,18 @@ ${methodSerialization(environmentId)}`;
 // name answers nil, and `referencesToObject: nil` is a real question with a useless
 // answer; the MCP find_references_to tool takes its name from a model, where an
 // invented global is entirely likely.
-export function referencesToObject(
+export async function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const code = `| obj methods stream limit classDict sl |
 obj := System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}'.
 obj isNil ifTrue: [^ ''].
 methods := (${classOrganizerExpr(environmentId)} referencesToObject: obj) asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
 // Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` finds
@@ -437,11 +437,11 @@ ${methodSerialization(environmentId)}`;
 // methodSerialization stamped every row with the environment that was asked for. Verified on a live
 // 3.7.5 stone: a method compiled into environment 1 whose source holds `#sym` and `'text'` is found
 // by both queries at `environmentId: 1` and by neither at 0.
-export function literalSymbolReferences(
+export async function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const needle = escapeString(symbolExpr);
   const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
@@ -450,7 +450,7 @@ candidates := (${classOrganizerExpr(environmentId)} substringSearch: '${needle}'
 methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }
 
 // Methods that contain the text as an actual STRING LITERAL (not merely somewhere in source — a
@@ -459,12 +459,12 @@ ${methodSerialization(environmentId)}`;
 // content (already unquoted by the caller).
 //
 // The organizer takes `environmentId` for the reason given on literalSymbolReferences.
-export function stringLiteralReferences(
+export async function stringLiteralReferences(
   execute: QueryExecutor,
   text: string,
   ignoreCase: boolean,
   environmentId: number = 0,
-): MethodSearchResult[] {
+): Promise<MethodSearchResult[]> {
   const esc = escapeString(text);
   // substringSearch is only a fast candidate pre-filter (methods whose source text contains the
   // characters); the literal-frame test is EXACT so `'name'` finds methods that use the literal
@@ -481,5 +481,5 @@ methods := candidates select: [:m |
     ifNone: [nil]) notNil].
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(code));
+  return parseMethodSearchResults(await execute(code));
 }

@@ -3,22 +3,22 @@ import { getDefinedClassVarNames } from '../queries/getDefinedClassVarNames';
 import { getDefinedClassVarCounts } from '../queries/getDefinedClassVarCounts';
 
 describe('getDefinedClassVarNames', () => {
-  it('splits the newline-separated names the stone returns', () => {
+  it('splits the newline-separated names the stone returns', async () => {
     const execute = vi.fn().mockReturnValue('Alpha\nBeta\n');
 
-    expect(getDefinedClassVarNames(execute, 'Account')).toEqual(['Alpha', 'Beta']);
+    expect(await getDefinedClassVarNames(execute, 'Account')).toEqual(['Alpha', 'Beta']);
   });
 
-  it('returns an empty list when the class defines none', () => {
+  it('returns an empty list when the class defines none', async () => {
     const execute = vi.fn().mockReturnValue('');
 
-    expect(getDefinedClassVarNames(execute, 'Account')).toEqual([]);
+    expect(await getDefinedClassVarNames(execute, 'Account')).toEqual([]);
   });
 
-  it('resolves the class scoped to a 1-based dictionary index (and guards nil)', () => {
+  it('resolves the class scoped to a 1-based dictionary index (and guards nil)', async () => {
     const execute = vi.fn().mockReturnValue('');
 
-    getDefinedClassVarNames(execute, 'Account', 5);
+    await getDefinedClassVarNames(execute, 'Account', 5);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 5');
@@ -26,48 +26,48 @@ describe('getDefinedClassVarNames', () => {
     expect(code).toContain('classVarNames');
   });
 
-  it('resolves unscoped by name when no dictionary is given, quoting the class name', () => {
+  it('resolves unscoped by name when no dictionary is given, quoting the class name', async () => {
     const execute = vi.fn().mockReturnValue('');
 
-    getDefinedClassVarNames(execute, 'Account');
+    await getDefinedClassVarNames(execute, 'Account');
 
     expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Account'");
   });
 });
 
 describe('getDefinedClassVarCounts', () => {
-  it('builds a class→count map from tab-separated lines', () => {
+  it('builds a class→count map from tab-separated lines', async () => {
     const execute = vi.fn().mockReturnValue('Account\t2\nSavings\t0\n');
 
-    const counts = getDefinedClassVarCounts(execute, 3);
+    const counts = await getDefinedClassVarCounts(execute, 3);
 
     expect(counts.get('Account')).toBe(2);
     expect(counts.get('Savings')).toBe(0);
   });
 
-  it('skips malformed lines and coerces a non-numeric count to 0', () => {
+  it('skips malformed lines and coerces a non-numeric count to 0', async () => {
     const execute = vi.fn().mockReturnValue('Account\t2\nnoTabHere\nFoo\tx\n');
 
-    const counts = getDefinedClassVarCounts(execute, 3);
+    const counts = await getDefinedClassVarCounts(execute, 3);
 
     expect(counts.get('Account')).toBe(2);
     expect(counts.has('noTabHere')).toBe(false);
     expect(counts.get('Foo')).toBe(0);
   });
 
-  it('returns an empty map for a nil dictionary (empty result)', () => {
+  it('returns an empty map for a nil dictionary (empty result)', async () => {
     const execute = vi.fn().mockReturnValue('');
 
-    expect(getDefinedClassVarCounts(execute, 3).size).toBe(0);
+    expect((await getDefinedClassVarCounts(execute, 3)).size).toBe(0);
   });
 
-  it('scopes by index or by name in the generated query', () => {
+  it('scopes by index or by name in the generated query', async () => {
     const byIndex = vi.fn().mockReturnValue('');
-    getDefinedClassVarCounts(byIndex, 4);
+    await getDefinedClassVarCounts(byIndex, 4);
     expect(byIndex.mock.calls[0][0]).toContain('symbolList at: 4');
 
     const byName = vi.fn().mockReturnValue('');
-    getDefinedClassVarCounts(byName, 'MyDict');
+    await getDefinedClassVarCounts(byName, 'MyDict');
     expect(byName.mock.calls[0][0]).toContain("objectNamed: #'MyDict'");
   });
 });

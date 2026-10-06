@@ -32,13 +32,13 @@ export interface InstVarPanelHandlers {
   ) => Promise<ApplyResult>;
   /** Abort the session transaction — discards the stranded partial reshape (and any other
    *  uncommitted work). Invoked from the panel's in-place Abort button. Throws on failure. */
-  abort: () => void;
+  abort: () => Promise<void>;
   /** LIVE probe of `System needsCommit`, used at commit-confirmation time. The preview's
    *  `sessionHasUncommittedChanges` is a snapshot from when it was built; a paginated preview can
    *  sit open while the user picks up other uncommitted work, so re-probe here rather than warn (or
    *  fail to warn) off a stale value. `undefined` = couldn't tell; the caller falls back to the
    *  snapshot. Optional so unit tests that don't exercise the committing path can omit it. */
-  sessionNeedsCommit?: () => boolean | undefined;
+  sessionNeedsCommit?: () => Promise<boolean | undefined>;
   /** Drop the preview session (called exactly once when the panel closes). */
   cleanup: () => void;
 }
@@ -138,7 +138,7 @@ export function showInstVarRefactorPanel(
               // preview's flag is a SNAPSHOT from when it was built and the panel may have sat open
               // for a while, so re-probe live; only fall back to the snapshot if the probe can't
               // tell. (A stale `true` merely over-warns; it's the stale `false` that would bite.)
-              const live = handlers.sessionNeedsCommit?.();
+              const live = await handlers.sessionNeedsCommit?.();
               const dirty = live ?? start.outOfScope.sessionHasUncommittedChanges;
               const collateral = dirty
                 ? ' You have OTHER uncommitted changes in this session — they will be committed too.'
@@ -174,7 +174,7 @@ export function showInstVarRefactorPanel(
           } else if (message?.command === 'abort') {
             // Direct abort — no second confirmation; the banner already stated the cost.
             try {
-              handlers.abort();
+              await handlers.abort();
               void panel.webview.postMessage({ command: 'aborted' });
             } catch (e: unknown) {
               void panel.webview.postMessage({

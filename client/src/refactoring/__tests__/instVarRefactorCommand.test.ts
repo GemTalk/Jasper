@@ -201,7 +201,7 @@ describe('add / remove instance variable command', () => {
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
 
     await runInstVarRefactor(req());
-    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
+    await vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
 
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
   });
@@ -210,12 +210,12 @@ describe('add / remove instance variable command', () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
-    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(true);
+    vi.mocked(queries.sessionNeedsCommit).mockResolvedValue(true);
 
     await runInstVarRefactor(req());
     const probe = vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].sessionNeedsCommit;
 
-    expect(probe?.()).toBe(true);
+    expect(await probe?.()).toBe(true);
     expect(queries.sessionNeedsCommit).toHaveBeenCalled();
   });
 
@@ -228,8 +228,10 @@ describe('add / remove instance variable command', () => {
 
     expect(outcome).toEqual({ applied: 2, committed: false, dropped: [], autoApplied: false });
     expect(vi.mocked(showInstVarRefactorPanel).mock.calls[0][0]).toBe('Add bar to Foo');
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Add bar to Foo'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Add bar to Foo'),
+      ),
     );
   });
 
@@ -258,8 +260,10 @@ describe('add / remove instance variable command', () => {
     const outcome = await runInstVarRefactor(req({ op: 'remove' }));
 
     expect(outcome?.dropped).toHaveLength(2);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('2 methods did not recompile and were dropped'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('2 methods did not recompile and were dropped'),
+      ),
     );
   });
 
@@ -272,8 +276,10 @@ describe('add / remove instance variable command', () => {
 
     await runInstVarRefactor(req({ op: 'remove' }));
 
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('1 method did not recompile and was dropped'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('1 method did not recompile and was dropped'),
+      ),
     );
   });
 
@@ -285,8 +291,10 @@ describe('add / remove instance variable command', () => {
     const outcome = await runInstVarRefactor(req());
 
     expect(outcome?.committed).toBe(true);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Committed.'),
+    await vi.waitFor(() =>
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Committed.'),
+      ),
     );
   });
 

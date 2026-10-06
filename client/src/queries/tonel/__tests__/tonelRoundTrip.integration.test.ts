@@ -57,18 +57,18 @@ describe('tonel round trip (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const rowan3 = useRowan3Stone(() => exec);
 
   /** A class with both sides, several protocols, and variables of every kind. */
-  const defineSource = (): void => {
-    q.compileClassDefinition(
+  const defineSource = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${SOURCE}' instVarNames: #('size' 'colour') ` +
         `classVars: #('Registry') classInstVars: #('Count') poolDictionaries: #() ` +
         `inDictionary: UserGlobals`,
     );
-    q.setClassComment(session(), SOURCE, 'A round-trip probe.\nSecond line.');
+    await q.setClassComment(session(), SOURCE, 'A round-trip probe.\nSecond line.');
     for (const [category, source] of [
       ['accessing', 'colour\n\t^colour'],
       ['accessing', 'size\n\t^size'],
@@ -76,18 +76,18 @@ describe('tonel round trip (integration)', () => {
       ['printing', "printOn: aStream\n\taStream nextPutAll: 'probe'"],
       ['private', '_reset\n\tsize := nil'],
     ] as const) {
-      q.compileMethod(session(), SOURCE, false, category, source);
+      await q.compileMethod(session(), SOURCE, false, category, source);
     }
     for (const [category, source] of [
       ['instance creation', 'make\n\t^self new'],
       ['accessing', 'registry\n\t^Registry'],
     ] as const) {
-      q.compileMethod(session(), SOURCE, true, category, source);
+      await q.compileMethod(session(), SOURCE, true, category, source);
     }
   };
 
-  const fileOut = (className: string): string => {
-    const tonel = fileOutClassTonel(exec, className);
+  const fileOut = async (className: string): Promise<string> => {
+    const tonel = await fileOutClassTonel(exec, className);
     expect(isTonelFileOutError(tonel), `file out failed: ${tonel}`).toBe(false);
     // Checked on EVERY file-out in this suite, not as a separate case. A doubled
     // method is invisible to every other comparison here — both the fixpoint and
@@ -100,79 +100,79 @@ describe('tonel round trip (integration)', () => {
   /** Rename the class throughout the Tonel text — header and every declaration. */
   const renamed = (tonel: string): string => tonel.split(SOURCE).join(COPY);
 
-  const fileIn = (tonel: string, dictionary = 'UserGlobals') => {
-    const read = readTonelClass(exec, tonel);
+  const fileIn = async (tonel: string, dictionary = 'UserGlobals') => {
+    const read = await readTonelClass(exec, tonel);
     expect(read.ok, `parse failed: ${read.ok ? '' : read.error}`).toBe(true);
     if (!read.ok) throw new Error(read.error);
-    return applyTonelClass(session(), read.tonelClass, dictionary);
+    return await applyTonelClass(session(), read.tonelClass, dictionary);
   };
 
-  it('is a fixpoint: out, in, out again yields the same text', (ctx) => {
+  it('is a fixpoint: out, in, out again yields the same text', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    defineSource();
-    const t1 = renamed(fileOut(SOURCE));
+    await defineSource();
+    const t1 = renamed(await fileOut(SOURCE));
 
-    const outcome = fileIn(t1);
+    const outcome = await fileIn(t1);
     expect(outcome.errors).toEqual([]);
     expect(outcome.compiled).toBe(7);
 
-    expect(fileOut(COPY)).toBe(t1);
+    expect(await fileOut(COPY)).toBe(t1);
   });
 
-  it('carries every method across, on the right side', (ctx) => {
+  it('carries every method across, on the right side', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    defineSource();
-    fileIn(renamed(fileOut(SOURCE)));
-    expect(declarationSequenceOf(fileOut(COPY))).toEqual(
-      declarationSequenceOf(renamed(fileOut(SOURCE))),
+    await defineSource();
+    await fileIn(renamed(await fileOut(SOURCE)));
+    expect(declarationSequenceOf(await fileOut(COPY))).toEqual(
+      declarationSequenceOf(renamed(await fileOut(SOURCE))),
     );
   });
 
-  it('REPLACES: a method the file does not carry is removed', (ctx) => {
+  it('REPLACES: a method the file does not carry is removed', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // The decisive case for the replace-not-merge decision.
-    defineSource();
-    const tonel = fileOut(SOURCE);
-    q.compileMethod(session(), SOURCE, false, 'accessing', 'addedLater\n\t^42');
-    expect(fileOut(SOURCE)).toContain('addedLater');
+    await defineSource();
+    const tonel = await fileOut(SOURCE);
+    await q.compileMethod(session(), SOURCE, false, 'accessing', 'addedLater\n\t^42');
+    expect(await fileOut(SOURCE)).toContain('addedLater');
 
-    const outcome = fileIn(tonel, 'UserGlobals');
+    const outcome = await fileIn(tonel, 'UserGlobals');
     expect(outcome.errors).toEqual([]);
-    expect(fileOut(SOURCE)).not.toContain('addedLater');
+    expect(await fileOut(SOURCE)).not.toContain('addedLater');
   });
 
-  it('reports an unresolvable superclass and creates nothing', (ctx) => {
+  it('reports an unresolvable superclass and creates nothing', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
-    defineSource();
-    const orphaned = renamed(fileOut(SOURCE)).replace(
+    await defineSource();
+    const orphaned = renamed(await fileOut(SOURCE)).replace(
       "#superclass : 'Object'",
       "#superclass : 'JasperNoSuchSuperclass'",
     );
-    const read = readTonelClass(exec, orphaned);
+    const read = await readTonelClass(exec, orphaned);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
 
-    const outcome = applyTonelClass(session(), read.tonelClass, 'UserGlobals');
+    const outcome = await applyTonelClass(session(), read.tonelClass, 'UserGlobals');
     expect(outcome.errors).toHaveLength(1);
     expect(outcome.errors[0].message).toContain('JasperNoSuchSuperclass');
-    expect(q.dictionariesContainingClass(session(), COPY)).toEqual([]);
+    expect(await q.dictionariesContainingClass(session(), COPY)).toEqual([]);
   });
 
-  it('files into the dictionary it is told to, not the one the file names', (ctx) => {
+  it('files into the dictionary it is told to, not the one the file names', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // Tonel's #category is a PACKAGE, never a SymbolDictionary — the target is a
     // caller's choice, and this proves the file's own category does not leak into it.
-    defineSource();
-    fileIn(renamed(fileOut(SOURCE)), 'UserGlobals');
-    expect(q.dictionariesContainingClass(session(), COPY)).toEqual(['UserGlobals']);
+    await defineSource();
+    await fileIn(renamed(await fileOut(SOURCE)), 'UserGlobals');
+    expect(await q.dictionariesContainingClass(session(), COPY)).toEqual(['UserGlobals']);
   });
 
-  it('leaves the session dirty rather than committing', (ctx) => {
+  it('leaves the session dirty rather than committing', async (ctx) => {
     rowan3.skipUnlessAvailable(ctx);
     // The harness aborts every test, and would fail the run if this committed —
     // its commit guard is the real assertion. This states the intent explicitly.
-    defineSource();
-    fileIn(renamed(fileOut(SOURCE)));
-    expect(exec('System needsCommit printString').trim()).toBe('true');
+    await defineSource();
+    await fileIn(renamed(await fileOut(SOURCE)));
+    expect((await exec('System needsCommit printString')).trim()).toBe('true');
   });
 });

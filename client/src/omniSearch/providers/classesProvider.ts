@@ -21,26 +21,26 @@ import { rankAndLimit } from '../rank';
 
 export function createClassesProvider(
   sessionId: number,
-  loadEntries: () => ClassNameEntry[],
+  loadEntries: () => Promise<ClassNameEntry[]>,
   /** Fetch just the entries for one class name (all its dictionary aliases). Enables the granular
    *  applyChange; when omitted (e.g. in a test that doesn't exercise it) applyChange is a no-op. */
-  lookupClassEntries?: (className: string) => ClassNameEntry[],
+  lookupClassEntries?: (className: string) => Promise<ClassNameEntry[]>,
 ): OmniProvider {
   let entries: readonly ClassNameEntry[] = [];
   return {
     category: CATEGORY_BY_ID.classes,
-    prime() {
-      entries = loadEntries();
+    async prime() {
+      entries = await loadEntries();
     },
-    reprime() {
-      entries = loadEntries();
+    async reprime() {
+      entries = await loadEntries();
     },
-    applyChange(change: OmniCorpusChange): boolean {
+    async applyChange(change: OmniCorpusChange): Promise<boolean> {
       if (change.kind !== 'class' || !lookupClassEntries) return false;
       // Replace every entry for this class name with a fresh lookup (a class can be registered under
       // more than one dictionary/key, so there may be several). A pure redefine leaves the set of
       // names unchanged; a create/remove changes the count — that's what tells the caller to redraw.
-      const fresh = lookupClassEntries(change.className);
+      const fresh = await lookupClassEntries(change.className);
       const others = entries.filter((e) => e.className !== change.className);
       const next = [...others, ...fresh];
       const changed = next.length !== entries.length;

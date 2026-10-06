@@ -55,7 +55,7 @@ export interface GemStoneBreakpoint {
  * name, so a class name shadowed in two dictionaries resolves to the one
  * actually holding this class.
  */
-export function getAllBreakpoints(execute: QueryExecutor): GemStoneBreakpoint[] {
+export async function getAllBreakpoints(execute: QueryExecutor): Promise<GemStoneBreakpoint[]> {
   const code = `| ws sl dictOf isCurrent |
 ws := WriteStream on: String new.
 sl := System myUserProfile symbolList.
@@ -96,7 +96,7 @@ isCurrent := [:meth :cls :sel |
          ifFalse: [(cls categoryOfSelector: sel) ifNil: [''] ifNotNil: [:c | c asString]]); lf]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: GemStoneBreakpoint[] = [];
   for (const line of raw.split('\n')) {

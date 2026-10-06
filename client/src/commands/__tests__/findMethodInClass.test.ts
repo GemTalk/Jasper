@@ -125,7 +125,7 @@ function expectNavigatedTo(sessionId: number, dictName: string, className: strin
 describe('findMethodInClass', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(SystemBrowser, 'navigateTo').mockReturnValue(true);
+    vi.spyOn(SystemBrowser, 'navigateTo').mockResolvedValue(true);
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
       label: 'foo',
       description: 'printing',
@@ -224,7 +224,7 @@ describe('findMethodInClass', () => {
     });
 
     it('opens the method directly when no System Browser is open for the session', async () => {
-      vi.mocked(SystemBrowser.navigateTo).mockReturnValue(false);
+      vi.mocked(SystemBrowser.navigateTo).mockResolvedValue(false);
       const { qp, done } = await openClassPicker();
 
       await acceptClass(qp, done, 'Array');

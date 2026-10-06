@@ -68,37 +68,37 @@ beforeEach(() => {
 });
 
 describe('resolveReferencesUsing sweeps every method environment', () => {
-  it('queries only environment 0 when maxEnvironment is 0 (the default)', () => {
-    sendersOfMock.mockReturnValue([row('CallerA')]);
+  it('queries only environment 0 when maxEnvironment is 0 (the default)', async () => {
+    sendersOfMock.mockResolvedValue([row('CallerA')]);
 
-    const view = resolveReferencesUsing(SESSION)(methodResult);
+    const view = await resolveReferencesUsing(SESSION)(methodResult);
 
     expect(sendersOfMock).toHaveBeenCalledTimes(1);
     expect(sendersOfMock).toHaveBeenCalledWith(SESSION, 'foo', 0);
     expect(view?.results).toHaveLength(1);
   });
 
-  it('queries 0..maxEnvironment and keeps hits found only in a non-zero environment', () => {
+  it('queries 0..maxEnvironment and keeps hits found only in a non-zero environment', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
     // env 0 → CallerA, env 1 → nothing, env 2 → CallerC.
-    sendersOfMock.mockImplementation((_s, _sel, env) =>
+    sendersOfMock.mockImplementation(async (_s, _sel, env) =>
       env === 0 ? [row('CallerA')] : env === 2 ? [row('CallerC')] : [],
     );
 
-    const view = resolveReferencesUsing(SESSION)(methodResult);
+    const view = await resolveReferencesUsing(SESSION)(methodResult);
 
     expect(sendersOfMock.mock.calls.map((c) => c[2])).toEqual([0, 1, 2]); // swept every env
     const labels = view?.results.map((r) => r.label);
     expect(labels).toEqual(['CallerA>>foo', 'CallerC>>foo']); // env-0 and env-2 hits both survive
   });
 
-  it('tags each surviving row with the environment it was found in, so it opens there', () => {
+  it('tags each surviving row with the environment it was found in, so it opens there', async () => {
     __setConfig('gemstone', 'maxEnvironment', 1);
-    sendersOfMock.mockImplementation((_s, _sel, env) =>
+    sendersOfMock.mockImplementation(async (_s, _sel, env) =>
       env === 0 ? [row('CallerA')] : [row('CallerC')],
     );
 
-    const view = resolveReferencesUsing(SESSION)(methodResult);
+    const view = await resolveReferencesUsing(SESSION)(methodResult);
 
     const envById = Object.fromEntries(
       (view?.results ?? []).map((r) => [
@@ -110,18 +110,18 @@ describe('resolveReferencesUsing sweeps every method environment', () => {
     expect(envById['CallerC>>foo']).toBe(1); // NOT 0 — it opens in the env it was found in
   });
 
-  it('shows a method that appears in several environments once, keeping the lowest-env copy', () => {
+  it('shows a method that appears in several environments once, keeping the lowest-env copy', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
-    sendersOfMock.mockReturnValue([row('CallerA')]); // same hit in every env
+    sendersOfMock.mockResolvedValue([row('CallerA')]); // same hit in every env
 
-    const view = resolveReferencesUsing(SESSION)(methodResult);
+    const view = await resolveReferencesUsing(SESSION)(methodResult);
 
     expect(view?.results).toHaveLength(1); // deduped by class/selector
     const only = view?.results[0];
     expect(only?.action.kind === 'openMethod' && only.action.environmentId).toBe(0); // lowest env kept
   });
 
-  it('returns null for a non-referenceable result and never queries', () => {
+  it('returns null for a non-referenceable result and never queries', async () => {
     const dictResult: OmniResult = {
       categoryId: 'dictionaries',
       label: 'UserGlobals',
@@ -130,7 +130,7 @@ describe('resolveReferencesUsing sweeps every method environment', () => {
       action: { kind: 'revealDictionary', sessionId: 5, dictName: 'UserGlobals' },
     };
 
-    expect(resolveReferencesUsing(SESSION)(dictResult)).toBeNull();
+    expect(await resolveReferencesUsing(SESSION)(dictResult)).toBeNull();
     expect(sendersOfMock).not.toHaveBeenCalled();
     expect(vi.mocked(referencesToObject)).not.toHaveBeenCalled();
   });

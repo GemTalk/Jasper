@@ -8,18 +8,18 @@ import {
   compilePython as sharedCompilePython,
 } from './queries/python';
 
-export function evalPython(session: ActiveSession, source: string) {
-  return sharedEvalPython(defaultQueryExecutorUsing(session), source);
+export async function evalPython(session: ActiveSession, source: string) {
+  return await sharedEvalPython(defaultQueryExecutorUsing(session), source);
 }
 
-export function evalPythonInScope(session: ActiveSession, source: string, scopeId: string) {
-  return sharedEvalPythonInScope(defaultQueryExecutorUsing(session), source, scopeId);
+export async function evalPythonInScope(session: ActiveSession, source: string, scopeId: string) {
+  return await sharedEvalPythonInScope(defaultQueryExecutorUsing(session), source, scopeId);
 }
 
-export function resetPythonScope(session: ActiveSession, scopeId: string) {
-  return sharedResetPythonScope(defaultQueryExecutorUsing(session), scopeId);
+export async function resetPythonScope(session: ActiveSession, scopeId: string) {
+  return await sharedResetPythonScope(defaultQueryExecutorUsing(session), scopeId);
 }
 
-export function compilePython(session: ActiveSession, source: string) {
-  return sharedCompilePython(defaultQueryExecutorUsing(session), source);
+export async function compilePython(session: ActiveSession, source: string) {
+  return await sharedCompilePython(defaultQueryExecutorUsing(session), source);
 }

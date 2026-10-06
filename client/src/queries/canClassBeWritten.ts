@@ -7,11 +7,11 @@ import { classLookupExpr } from './util';
 // (a 1-based SymbolList index, or a name) scopes the lookup to a specific
 // dictionary so the same key registered in two dictionaries resolves to the
 // intended class; a missing class is treated as not writable.
-export function canClassBeWritten(
+export async function canClassBeWritten(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): boolean {
+): Promise<boolean> {
   const code =
     dict === undefined
       ? `${className} canBeWritten printString`
@@ -19,6 +19,6 @@ export function canClassBeWritten(
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'false'].
 cls canBeWritten printString`;
-  const result = execute(code);
+  const result = await execute(code);
   return result.trim() === 'true';
 }

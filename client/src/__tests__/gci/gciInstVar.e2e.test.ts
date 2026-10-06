@@ -32,12 +32,12 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
   // NB: `executeFetchString` sends #encodeAsUTF8 to whatever the code evaluates to, so every
   // `exec` here must end in a String. `System commitTransaction` answers the System class,
   // which does not understand it — hence the trailing `. 'ok'` on the mutating calls below.
-  const exec = (code: string): string => q.executeFetchString(session, code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session, code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const userIndex = (): number =>
+  const userIndex = async (): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
@@ -45,12 +45,12 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
       10,
     );
 
-  const hasIvar = (cls: string, name: string): boolean =>
-    exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
-  const includesSelector = (cls: string, sel: string): boolean =>
-    exec(`(${cls} includesSelector: #${sel}) printString`).trim() === 'true';
+  const hasIvar = async (cls: string, name: string): Promise<boolean> =>
+    (await exec(`(${cls} instVarNames includes: #${name}) printString`)).trim() === 'true';
+  const includesSelector = async (cls: string, sel: string): Promise<boolean> =>
+    (await exec(`(${cls} includesSelector: #${sel}) printString`)).trim() === 'true';
 
-  beforeAll(() => {
+  beforeAll(async () => {
     gci = new GciLibrary(GCI_LIBRARY_PATH);
     const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
     expect(login.session).not.toBeNull();
@@ -62,8 +62,10 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
       stoneVersion: '3.7.5',
     };
     enginePresent =
-      exec(
-        '(System myUserProfile symbolList objectNamed: #GsInstVarRefactoring) notNil printString',
+      (
+        await exec(
+          '(System myUserProfile symbolList objectNamed: #GsInstVarRefactoring) notNil printString',
+        )
       ).trim() === 'true';
   });
 
@@ -81,13 +83,13 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
 
     const CLS = 'GciIvMig';
     try {
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session,
         `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
       // A persisted instance of the old version, so migrateInstancesTo: has something on disk to move.
-      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
+      await exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
 
       parseStartPreview(
         await startInstVarPreview(
@@ -97,7 +99,7 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
           'y',
           'gci-iv-migrate',
           PREVIEW_PAGE_BYTES,
-          userIndex(),
+          await userIndex(),
         ),
       );
       const result = parseApplyResult(
@@ -106,18 +108,20 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
 
       expect(result.failed).toEqual([]);
       expect(result.committed).toBe(true);
-      expect(hasIvar(CLS, 'y')).toBe(true);
+      expect(await hasIvar(CLS, 'y')).toBe(true);
       // The same persisted object is now an instance of the new version and carries the new ivar.
-      expect(exec(`((UserGlobals at: #GciIvMigInst) class == ${CLS}) printString`).trim()).toBe(
-        'true',
-      );
       expect(
-        exec(
-          `((UserGlobals at: #GciIvMigInst) class instVarNames includes: #y) printString`,
+        (await exec(`((UserGlobals at: #GciIvMigInst) class == ${CLS}) printString`)).trim(),
+      ).toBe('true');
+      expect(
+        (
+          await exec(
+            `((UserGlobals at: #GciIvMigInst) class instVarNames includes: #y) printString`,
+          )
         ).trim(),
       ).toBe('true');
     } finally {
-      exec(
+      await exec(
         `UserGlobals removeKey: #GciIvMigInst ifAbsent: []. ` +
           `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );
@@ -133,13 +137,15 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
 
     const CLS = 'GciIvAccMig';
     try {
-      q.compileClassDefinition(
+      await q.compileClassDefinition(
         session,
         `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
       // A persisted instance so migrate has something to move (and the migrate path commits).
-      exec(`UserGlobals at: #GciIvAccMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
+      await exec(
+        `UserGlobals at: #GciIvAccMigInst put: ${CLS} new. System commitTransaction. 'ok'`,
+      );
 
       parseStartPreview(
         await startInstVarPreview(
@@ -149,7 +155,7 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
           'y',
           'gci-iv-acc-mig',
           PREVIEW_PAGE_BYTES,
-          userIndex(),
+          await userIndex(),
         ),
       );
       const result = parseApplyResult(
@@ -161,19 +167,19 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
 
       expect(result.failed).toEqual([]);
       expect(result.committed).toBe(true);
-      expect(hasIvar(CLS, 'y')).toBe(true);
-      expect(includesSelector(CLS, 'y')).toBe(true);
-      expect(includesSelector(CLS, 'y:')).toBe(true);
+      expect(await hasIvar(CLS, 'y')).toBe(true);
+      expect(await includesSelector(CLS, 'y')).toBe(true);
+      expect(await includesSelector(CLS, 'y:')).toBe(true);
 
       // The fix's guarantee: because the accessors committed WITH the reshape, an abort at a later
       // transaction boundary cannot drop them.
-      exec("System abortTransaction. 'ok'");
+      await exec("System abortTransaction. 'ok'");
 
-      expect(hasIvar(CLS, 'y')).toBe(true);
-      expect(includesSelector(CLS, 'y')).toBe(true); // getter survived the abort
-      expect(includesSelector(CLS, 'y:')).toBe(true); // setter survived the abort
+      expect(await hasIvar(CLS, 'y')).toBe(true);
+      expect(await includesSelector(CLS, 'y')).toBe(true); // getter survived the abort
+      expect(await includesSelector(CLS, 'y:')).toBe(true); // setter survived the abort
     } finally {
-      exec(
+      await exec(
         `UserGlobals removeKey: #GciIvAccMigInst ifAbsent: []. ` +
           `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );

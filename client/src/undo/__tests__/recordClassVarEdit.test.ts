@@ -46,20 +46,20 @@ beforeEach(() => {
 });
 
 describe('beginClassVarAdd', () => {
-  it('records the declaration and the accessors the add created', () => {
+  it('records the declaration and the accessors the add created', async () => {
     vi.mocked(captureClassVar)
-      .mockReturnValueOnce({ defined: false })
-      .mockReturnValueOnce({ defined: true });
+      .mockResolvedValueOnce({ defined: false })
+      .mockResolvedValueOnce({ defined: true });
     vi.mocked(captureMethodSlots)
-      .mockReturnValueOnce([absent, absent])
-      .mockReturnValueOnce([
+      .mockResolvedValueOnce([absent, absent])
+      .mockResolvedValueOnce([
         present('registry\n\t^Registry'),
         present('registry: v\n\tRegistry := v'),
       ]);
 
-    const entry = beginClassVarAdd(session, slot, accessors)?.commit(
-      'Add class variable Registry to Account',
-    );
+    const entry = await (
+      await beginClassVarAdd(session, slot, accessors)
+    )?.commit('Add class variable Registry to Account');
 
     expect(entry).toMatchObject({
       kind: 'classVarEdit',
@@ -71,65 +71,71 @@ describe('beginClassVarAdd', () => {
     expect(peekUndoEntry(session.id)).toBe(entry);
   });
 
-  it('keeps the pre-add state of an accessor that already existed, so undo leaves it alone', () => {
+  it('keeps the pre-add state of an accessor that already existed, so undo leaves it alone', async () => {
     const handWritten = present('registry\n\t^self hand written');
     vi.mocked(captureClassVar)
-      .mockReturnValueOnce({ defined: false })
-      .mockReturnValueOnce({ defined: true });
+      .mockResolvedValueOnce({ defined: false })
+      .mockResolvedValueOnce({ defined: true });
     vi.mocked(captureMethodSlots)
-      .mockReturnValueOnce([handWritten, absent])
-      .mockReturnValueOnce([handWritten, present('registry: v\n\tRegistry := v')]);
+      .mockResolvedValueOnce([handWritten, absent])
+      .mockResolvedValueOnce([handWritten, present('registry: v\n\tRegistry := v')]);
 
-    const entry = beginClassVarAdd(session, slot, accessors)?.commit('Add class variable');
+    const entry = await (
+      await beginClassVarAdd(session, slot, accessors)
+    )?.commit('Add class variable');
 
     expect(entry?.kind === 'classVarEdit' && entry.accessorBefore[0]).toEqual(handWritten);
     expect(entry?.kind === 'classVarEdit' && entry.accessorAfter[0]).toEqual(handWritten);
   });
 
-  it('records the add on its own when no accessors were asked for', () => {
+  it('records the add on its own when no accessors were asked for', async () => {
     vi.mocked(captureClassVar)
-      .mockReturnValueOnce({ defined: false })
-      .mockReturnValueOnce({ defined: true });
-    vi.mocked(captureMethodSlots).mockReturnValue([]);
+      .mockResolvedValueOnce({ defined: false })
+      .mockResolvedValueOnce({ defined: true });
+    vi.mocked(captureMethodSlots).mockResolvedValue([]);
 
-    const entry = beginClassVarAdd(session, slot, [])?.commit('Add class variable');
+    const entry = await (await beginClassVarAdd(session, slot, []))?.commit('Add class variable');
 
     expect(entry?.kind === 'classVarEdit' && entry.accessorSlots).toEqual([]);
   });
 
-  it('records nothing when the add changed nothing', () => {
-    vi.mocked(captureClassVar).mockReturnValue({ defined: true });
-    vi.mocked(captureMethodSlots).mockReturnValue([]);
+  it('records nothing when the add changed nothing', async () => {
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: true });
+    vi.mocked(captureMethodSlots).mockResolvedValue([]);
 
-    expect(beginClassVarAdd(session, slot, [])?.commit('Add class variable')).toBeUndefined();
+    expect(
+      await (await beginClassVarAdd(session, slot, []))?.commit('Add class variable'),
+    ).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing — and does not throw — when the capture fails', () => {
-    vi.mocked(captureClassVar).mockImplementation(() => {
+  it('records nothing — and does not throw — when the capture fails', async () => {
+    vi.mocked(captureClassVar).mockImplementation(async () => {
       throw new Error('session busy');
     });
 
-    expect(beginClassVarAdd(session, slot, [])).toBeUndefined();
+    expect(await beginClassVarAdd(session, slot, [])).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
-  it('records nothing when the accessor capture answers the wrong number of states', () => {
-    vi.mocked(captureClassVar).mockReturnValue({ defined: false });
-    vi.mocked(captureMethodSlots).mockReturnValue([absent]);
+  it('records nothing when the accessor capture answers the wrong number of states', async () => {
+    vi.mocked(captureClassVar).mockResolvedValue({ defined: false });
+    vi.mocked(captureMethodSlots).mockResolvedValue([absent]);
 
-    expect(beginClassVarAdd(session, slot, accessors)).toBeUndefined();
+    expect(await beginClassVarAdd(session, slot, accessors)).toBeUndefined();
   });
 
-  it('records nothing when the result cannot be read back', () => {
+  it('records nothing when the result cannot be read back', async () => {
     vi.mocked(captureClassVar)
-      .mockReturnValueOnce({ defined: false })
+      .mockResolvedValueOnce({ defined: false })
       .mockImplementationOnce(() => {
         throw new Error('session busy');
       });
-    vi.mocked(captureMethodSlots).mockReturnValue([]);
+    vi.mocked(captureMethodSlots).mockResolvedValue([]);
 
-    expect(beginClassVarAdd(session, slot, [])?.commit('Add class variable')).toBeUndefined();
+    expect(
+      await (await beginClassVarAdd(session, slot, []))?.commit('Add class variable'),
+    ).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 });

@@ -31,7 +31,7 @@ describe('refactoring engine uninstall (integration)', () => {
     handle = testContext.session;
   });
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   // Remove GsRefactoring from THIS user's symbol list — the per-user step the uninstall
   // performs for every user. ASCII-only for 3.6.x.
@@ -43,25 +43,27 @@ idx := (1 to: list size) detect: [:i | (list at: i) name == #GsRefactoring] ifNo
 idx notNil ifTrue: [ prof removeDictionaryAt: idx ].
 'ok'`;
 
-  it('isolates the engine classes in the dedicated GsRefactoring dictionary', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('isolates the engine classes in the dedicated GsRefactoring dictionary', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    const dict = exec(
-      '(System myUserProfile symbolList dictionaryAndSymbolOf: ' +
-        "(System myUserProfile symbolList objectNamed: 'GsRenameInstanceVariableRefactoring')) " +
-        "ifNil: ['none'] ifNotNil: [:da | (da at: 1) name]",
+    const dict = (
+      await exec(
+        '(System myUserProfile symbolList dictionaryAndSymbolOf: ' +
+          "(System myUserProfile symbolList objectNamed: 'GsRenameInstanceVariableRefactoring')) " +
+          "ifNil: ['none'] ifNotNil: [:da | (da at: 1) name]",
+      )
     ).trim();
 
     expect(dict).toBe('GsRefactoring');
   });
 
-  it('flips the availability probe to false when GsRefactoring leaves the symbol list', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-    expect(q.checkRefactoringSupportAvailable(session())).toBe(true);
+  it('flips the availability probe to false when GsRefactoring leaves the symbol list', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    expect(await q.checkRefactoringSupportAvailable(session())).toBe(true);
 
-    exec(detachGsRefactoring);
+    await exec(detachGsRefactoring);
 
-    expect(q.checkRefactoringSupportAvailable(session())).toBe(false);
+    expect(await q.checkRefactoringSupportAvailable(session())).toBe(false);
     // Never committed — the harness aborts, restoring the engine for later tests.
   });
 });

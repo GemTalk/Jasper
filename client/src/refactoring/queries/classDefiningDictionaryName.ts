@@ -14,13 +14,13 @@ import { classLookupExpr, homeDictionaryNameExpr } from '../../queries/util';
  * or a hierarchy node whose class lives elsewhere. Compared as identity (`==`), so
  * a name shadowed across dictionaries resolves to the one holding THIS class.
  */
-export function classDefiningDictionaryName(
+export async function classDefiningDictionaryName(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [''] ifFalse: [${homeDictionaryNameExpr('cls')}]`;
-  return execute(code).trim();
+  return (await execute(code)).trim();
 }

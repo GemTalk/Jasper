@@ -76,11 +76,11 @@ import {
  * name), as the other class queries do; without it the name resolves as a
  * global, first match in the symbol list.
  */
-export function fileOutClassTonel(
+export async function fileOutClassTonel(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const code = `| rwLookup writerCls mdefCls cls defn visitor ws dictName |
 ${ROWAN_LOOKUP_PRELUDE}
 writerCls := ${rowanLookupExpr('RwModificationTonelWriterVisitorV2')}.
@@ -152,5 +152,5 @@ cls ifNil: [^'${TONEL_ERROR_PREFIX}Class not found: ${escapeString(className)}']
   visitor _writeInstanceSideMethodDefinitions: defn on: ws.
   ws contents asString ]
   on: Error do: [:e | ^'${TONEL_ERROR_PREFIX}' , e messageText]`;
-  return execute(code);
+  return await execute(code);
 }

@@ -15,7 +15,7 @@ export interface GlobalNameEntry {
  * dictionary/key yields one entry per registration. Each row also carries `v class name` so picking a
  * global can jump to the class of its value.
  */
-export function getAllGlobalNames(execute: QueryExecutor): GlobalNameEntry[] {
+export async function getAllGlobalNames(execute: QueryExecutor): Promise<GlobalNameEntry[]> {
   const code = `| ws sl |
 ws := WriteStream on: Unicode7 new.
 sl := System myUserProfile symbolList.
@@ -28,7 +28,7 @@ sl := System myUserProfile symbolList.
          nextPutAll: k asString; tab; nextPutAll: v class name; lf]]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: GlobalNameEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

@@ -14,7 +14,7 @@ import * as bi from '../queries/basicInspectorQueries';
 
 /** A QueryExecutor that answers one canned payload and records what it was sent. */
 function executorAnswering(payload: string) {
-  return vi.fn((_code: string) => payload);
+  return vi.fn(async (_code: string) => payload);
 }
 
 const HEADER = ['Account', 'Object', '3', '0', '0', 'false', '0', 'false', 'an Account', ''].join(
@@ -139,10 +139,10 @@ describe('object header', () => {
     expect(header!.byteSize).toBe(1200);
   });
 
-  it('asks the stone for the byte count with the send the Bytes tab pages by', () => {
+  it('asks the stone for the byte count with the send the Bytes tab pages by', async () => {
     const execute = executorAnswering(HEADER);
 
-    bi.fetchObjectHeader(execute, 42n);
+    await bi.fetchObjectHeader(execute, 42n);
 
     // `_basicSize` guarded by the same `isBytes` test that decides whether the
     // Bytes tab exists at all — anything else and the total could not agree with
@@ -169,12 +169,12 @@ describe('object header', () => {
     expect(bi.parseObjectHeader(odd.join('\t'))!.sizeUnit).toBe('');
   });
 
-  it('degrades to no header when the stone refuses the query', () => {
+  it('degrades to no header when the stone refuses the query', async () => {
     const failing = vi.fn(() => {
       throw new Error('stone said no');
     });
 
-    expect(bi.fetchObjectHeader(failing, 100n)).toBeNull();
+    expect(await bi.fetchObjectHeader(failing, 100n)).toBeNull();
   });
 });
 
@@ -245,39 +245,39 @@ describe('row payloads', () => {
 });
 
 describe('paged fetches', () => {
-  it('never asks the stone for a page that starts before the first row', () => {
+  it('never asks the stone for a page that starts before the first row', async () => {
     const execute = executorAnswering('');
 
-    expect(bi.fetchItems(execute, 100n, 0, 10)).toEqual([]);
-    expect(bi.fetchEntries(execute, 100n, -1, 10)).toEqual([]);
-    expect(bi.fetchBytes(execute, 100n, 0, 10)).toEqual([]);
+    expect(await bi.fetchItems(execute, 100n, 0, 10)).toEqual([]);
+    expect(await bi.fetchEntries(execute, 100n, -1, 10)).toEqual([]);
+    expect(await bi.fetchBytes(execute, 100n, 0, 10)).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('never asks the stone for an empty or fractional page', () => {
+  it('never asks the stone for an empty or fractional page', async () => {
     const execute = executorAnswering('');
 
-    expect(bi.fetchItems(execute, 100n, 1, 0)).toEqual([]);
-    expect(bi.fetchEntries(execute, 100n, 1, 1.5)).toEqual([]);
-    expect(bi.fetchBytes(execute, 100n, 1, -3)).toEqual([]);
+    expect(await bi.fetchItems(execute, 100n, 1, 0)).toEqual([]);
+    expect(await bi.fetchEntries(execute, 100n, 1, 1.5)).toEqual([]);
+    expect(await bi.fetchBytes(execute, 100n, 1, -3)).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('reads bytes as numbers, one per line', () => {
-    expect(bi.fetchBytes(executorAnswering('104\n101\n108\n'), 100n, 1, 16)).toEqual([
+  it('reads bytes as numbers, one per line', async () => {
+    expect(await bi.fetchBytes(executorAnswering('104\n101\n108\n'), 100n, 1, 16)).toEqual([
       104, 101, 108,
     ]);
   });
 
-  it('shows an empty tab, not an error, when the stone refuses a page', () => {
+  it('shows an empty tab, not an error, when the stone refuses a page', async () => {
     const failing = vi.fn(() => {
       throw new Error('stone said no');
     });
 
-    expect(bi.fetchItems(failing, 100n, 1, 10)).toEqual([]);
-    expect(bi.fetchEntries(failing, 100n, 1, 10)).toEqual([]);
-    expect(bi.fetchSlots(failing, 100n)).toEqual([]);
-    expect(bi.fetchBytes(failing, 100n, 1, 10)).toEqual([]);
+    expect(await bi.fetchItems(failing, 100n, 1, 10)).toEqual([]);
+    expect(await bi.fetchEntries(failing, 100n, 1, 10)).toEqual([]);
+    expect(await bi.fetchSlots(failing, 100n)).toEqual([]);
+    expect(await bi.fetchBytes(failing, 100n, 1, 10)).toEqual([]);
   });
 });
 
@@ -294,10 +294,10 @@ describe('class metadata', () => {
     '',
   ].join('\n');
 
-  it('reads the class metadata for an object in one round trip', () => {
+  it('reads the class metadata for an object in one round trip', async () => {
     const execute = executorAnswering(META);
 
-    const meta = bi.fetchObjectMeta(execute, 100n);
+    const meta = await bi.fetchObjectMeta(execute, 100n);
 
     expect(meta).toMatchObject({
       className: 'Account',
@@ -308,12 +308,12 @@ describe('class metadata', () => {
     expect(execute.mock.calls[0][0]).toContain('Object _objectForOop: 100');
   });
 
-  it('degrades to no metadata when the stone refuses the query', () => {
+  it('degrades to no metadata when the stone refuses the query', async () => {
     const failing = vi.fn(() => {
       throw new Error('stone said no');
     });
 
-    expect(bi.fetchObjectMeta(failing, 100n)).toBeNull();
+    expect(await bi.fetchObjectMeta(failing, 100n)).toBeNull();
   });
 
   it('collects the class facts and both selector lists', () => {
@@ -345,32 +345,32 @@ describe('class metadata', () => {
 });
 
 describe('method source', () => {
-  it('refuses a selector that is not one, without reaching the stone', () => {
+  it('refuses a selector that is not one, without reaching the stone', async () => {
     const execute = executorAnswering('irrelevant');
 
-    expect(bi.fetchMethodSource(execute, 100n, "foo'; System exit", false)).toBeNull();
+    expect(await bi.fetchMethodSource(execute, 100n, "foo'; System exit", false)).toBeNull();
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('asks the class side for a class-side selector', () => {
+  it('asks the class side for a class-side selector', async () => {
     const execute = executorAnswering('new ^super new init');
 
-    bi.fetchMethodSource(execute, 100n, 'new', true);
+    await bi.fetchMethodSource(execute, 100n, 'new', true);
 
     expect(execute.mock.calls[0][0]).toContain('theNonMetaClass class');
   });
 });
 
 describe('browse location', () => {
-  it('reads the dictionary and class a value can be browsed in', () => {
-    const location = bi.fetchBrowseLocation(executorAnswering('UserGlobals\tAccount'), 100n);
+  it('reads the dictionary and class a value can be browsed in', async () => {
+    const location = await bi.fetchBrowseLocation(executorAnswering('UserGlobals\tAccount'), 100n);
 
     expect(location).toEqual({ dictName: 'UserGlobals', className: 'Account' });
   });
 
-  it('reports nowhere to browse when the class cannot be named', () => {
-    expect(bi.fetchBrowseLocation(executorAnswering('\t'), 100n)).toBeNull();
-    expect(bi.fetchBrowseLocation(executorAnswering(''), 100n)).toBeNull();
+  it('reports nowhere to browse when the class cannot be named', async () => {
+    expect(await bi.fetchBrowseLocation(executorAnswering('\t'), 100n)).toBeNull();
+    expect(await bi.fetchBrowseLocation(executorAnswering(''), 100n)).toBeNull();
   });
 
   /**
@@ -380,10 +380,10 @@ describe('browse location', () => {
    * bindings too, so its first pair can name a dictionary that merely references
    * the class.
    */
-  it('resolves the owning dictionary through the shared symbol-list rule', () => {
+  it('resolves the owning dictionary through the shared symbol-list rule', async () => {
     const execute = executorAnswering('UserGlobals\tAccount');
 
-    bi.fetchBrowseLocation(execute, 100n);
+    await bi.fetchBrowseLocation(execute, 100n);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('cls name asSymbol ifAbsent: [nil]) == cls');
@@ -397,10 +397,10 @@ describe('paging by a memoized snapshot', () => {
    * both were rebuilt from scratch for every page, fifty times over for one
    * "Load all".
    */
-  it('pages an unordered collection through a snapshot of its do: order', () => {
+  it('pages an unordered collection through a snapshot of its do: order', async () => {
     const execute = executorAnswering('');
 
-    bi.fetchItems(execute, 100n, 101, 100);
+    await bi.fetchItems(execute, 100n, 101, 100);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('SessionTemps current at: key ifAbsent: [nil]');
@@ -408,10 +408,10 @@ describe('paging by a memoized snapshot', () => {
     expect(code).toContain('obj asArray');
   });
 
-  it('sorts a dictionary’s keys into a snapshot rather than once per page', () => {
+  it('sorts a dictionary’s keys into a snapshot rather than once per page', async () => {
     const execute = executorAnswering('');
 
-    bi.fetchEntries(execute, 100n, 101, 100);
+    await bi.fetchEntries(execute, 100n, 101, 100);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain("value: #'JasperInspectorKeys'");
@@ -419,10 +419,10 @@ describe('paging by a memoized snapshot', () => {
   });
 
   /** A snapshot must never outlive the state it was taken from. */
-  it('discards a snapshot taken for a different object, or a changed size', () => {
+  it('discards a snapshot taken for a different object, or a changed size', async () => {
     const execute = executorAnswering('');
 
-    bi.fetchEntries(execute, 100n, 101, 100);
+    await bi.fetchEntries(execute, 100n, 101, 100);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('(memo at: 1) == obj2');
@@ -434,20 +434,20 @@ describe('paging by a memoized snapshot', () => {
    * not a cache of the object between reads, so re-opening a tab reads the
    * object as it is now.
    */
-  it('rebuilds the ordering whenever a read starts at the first page', () => {
+  it('rebuilds the ordering whenever a read starts at the first page', async () => {
     const execute = executorAnswering('');
 
-    bi.fetchEntries(execute, 100n, 1, 100);
-    bi.fetchEntries(execute, 100n, 101, 100);
+    await bi.fetchEntries(execute, 100n, 1, 100);
+    await bi.fetchEntries(execute, 100n, 101, 100);
 
     expect(execute.mock.calls[0][0]).toContain('value: true\n  value: [[obj keys');
     expect(execute.mock.calls[1][0]).toContain('value: false\n  value: [[obj keys');
   });
 
-  it('leaves a sequenceable collection reading straight through at:', () => {
+  it('leaves a sequenceable collection reading straight through at:', async () => {
     const execute = executorAnswering('');
 
-    bi.fetchItems(execute, 100n, 1, 100);
+    await bi.fetchItems(execute, 100n, 1, 100);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('(obj isKindOf: SequenceableCollection)');

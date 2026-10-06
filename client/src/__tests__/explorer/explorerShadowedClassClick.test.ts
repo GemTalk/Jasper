@@ -30,23 +30,23 @@ beforeEach(() => {
 // handleClassClick (fired on every click) must re-select the class so the hierarchy
 // reloads for the newly-selected dictionary.
 describe('handleClassClick re-selects a shadowed class after a dictionary switch', () => {
-  it('selects the class when the controller has no class selected (stale highlight)', () => {
+  it('selects the class when the controller has no class selected (stale highlight)', async () => {
     const ctl = makeController();
     ctl.state.className = undefined; // as left by selectDict
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
+    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(async () => {});
 
-    ctl.handleClassClick('Issue328Shadow');
+    await ctl.handleClassClick('Issue328Shadow');
 
     expect(selectClass).toHaveBeenCalledTimes(1);
     expect(selectClass.mock.calls[0][0].className).toBe('Issue328Shadow');
   });
 
-  it('does not re-select when the class is already the selected one (no double reload)', () => {
+  it('does not re-select when the class is already the selected one (no double reload)', async () => {
     const ctl = makeController();
     ctl.state.className = 'Issue328Shadow';
-    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(() => {});
+    const selectClass = vi.spyOn(ctl, 'selectClass').mockImplementation(async () => {});
 
-    ctl.handleClassClick('Issue328Shadow');
+    await ctl.handleClassClick('Issue328Shadow');
 
     expect(selectClass).not.toHaveBeenCalled();
   });

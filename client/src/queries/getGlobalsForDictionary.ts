@@ -6,7 +6,10 @@ export interface GlobalEntry {
   value: string;
 }
 
-export function getGlobalsForDictionary(execute: QueryExecutor, dictIndex: number): GlobalEntry[] {
+export async function getGlobalsForDictionary(
+  execute: QueryExecutor,
+  dictIndex: number,
+): Promise<GlobalEntry[]> {
   const code = `| ws dict |
 dict := System myUserProfile symbolList at: ${dictIndex}.
 ws := WriteStream on: Unicode7 new.
@@ -20,7 +23,7 @@ dict keysAndValuesDo: [:k :v |
        nextPutAll: ps; lf]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: GlobalEntry[] = [];
   for (const line of raw.split('\n')) {

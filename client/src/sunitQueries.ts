@@ -29,25 +29,34 @@ export type { TestRunResult } from './queries/runTestMethod';
 // reference it in mocks.
 export const SunitQueryError = BrowserQueryError;
 
-export function discoverTestClasses(session: ActiveSession) {
-  return sharedDiscoverTestClasses(defaultQueryExecutorUsing(session));
+export async function discoverTestClasses(session: ActiveSession) {
+  return await sharedDiscoverTestClasses(defaultQueryExecutorUsing(session));
 }
 
-export function discoverTestMethods(session: ActiveSession, className: string, dictName?: string) {
-  return sharedDiscoverTestMethods(defaultQueryExecutorUsing(session), className, dictName);
+export async function discoverTestMethods(
+  session: ActiveSession,
+  className: string,
+  dictName?: string,
+) {
+  return await sharedDiscoverTestMethods(defaultQueryExecutorUsing(session), className, dictName);
 }
 
-export function runTestMethod(
+export async function runTestMethod(
   session: ActiveSession,
   className: string,
   selector: string,
   dictName?: string,
 ) {
-  return sharedRunTestMethod(defaultQueryExecutorUsing(session), className, selector, dictName);
+  return await sharedRunTestMethod(
+    defaultQueryExecutorUsing(session),
+    className,
+    selector,
+    dictName,
+  );
 }
 
-export function runTestClass(session: ActiveSession, className: string, dictName?: string) {
-  return sharedRunTestClass(defaultQueryExecutorUsing(session), className, dictName);
+export async function runTestClass(session: ActiveSession, className: string, dictName?: string) {
+  return await sharedRunTestClass(defaultQueryExecutorUsing(session), className, dictName);
 }
 
 /**
@@ -90,14 +99,22 @@ export function runTestMethodNb(
   ).then((data) => parseTestMethodResult(data, className, selector));
 }
 
-export function runFailingTests(
+export async function runFailingTests(
   session: ActiveSession,
   classNames?: string[],
   classNamePattern?: string,
 ) {
-  return sharedRunFailingTests(defaultQueryExecutorUsing(session), classNames, classNamePattern);
+  return await sharedRunFailingTests(
+    defaultQueryExecutorUsing(session),
+    classNames,
+    classNamePattern,
+  );
 }
 
-export function describeTestFailure(session: ActiveSession, className: string, selector: string) {
-  return sharedDescribeTestFailure(defaultQueryExecutorUsing(session), className, selector);
+export async function describeTestFailure(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+) {
+  return await sharedDescribeTestFailure(defaultQueryExecutorUsing(session), className, selector);
 }

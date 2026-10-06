@@ -111,21 +111,21 @@ function noResultsMessage(label: string, environmentId: number | undefined): str
 // feedback workflow: Python-heavy projects keep most user code in env 1 and
 // the env-0 default left agents staring at "No implementors found" when
 // the method existed all along.
-function searchWithEnvFallback<T>(
+async function searchWithEnvFallback<T>(
   environmentId: number | undefined,
-  search: (envId: number) => T[],
-): T[] {
-  if (environmentId !== undefined) return search(environmentId);
-  const env0 = search(0);
+  search: (envId: number) => Promise<T[]>,
+): Promise<T[]> {
+  if (environmentId !== undefined) return await search(environmentId);
+  const env0 = await search(0);
   if (env0.length > 0) return env0;
-  return search(1);
+  return await search(1);
 }
 
 // Refresh the session's view of committed state if it's safe to do so — when,
 // and why, is VIEW_REFRESH_CODE's doc-comment.
-function refreshIfClean(session: McpSession): void {
+async function refreshIfClean(session: McpSession): Promise<void> {
   try {
-    session.executeFetchString(VIEW_REFRESH_CODE);
+    await session.executeFetchString(VIEW_REFRESH_CODE);
   } catch {
     // Best-effort. If the refresh fails (e.g. session disconnected), the
     // primary tool call below will report the real error.
@@ -150,7 +150,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     {},
     async () => {
       try {
-        const text = abortTransaction(exec);
+        const text = await abortTransaction(exec);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -168,7 +168,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { dictionaryName: z.string().describe('Name of the new dictionary') },
     async ({ dictionaryName }) => {
       try {
-        const text = addDictionary(exec, dictionaryName);
+        const text = await addDictionary(exec, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -185,7 +185,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     {},
     async () => {
       try {
-        const text = commitTransaction(exec);
+        const text = await commitTransaction(exec);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -210,7 +210,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ source }) => {
       try {
-        const text = compileClassDefinition(exec, source);
+        const text = await compileClassDefinition(exec, source);
         return { content: [{ type: 'text' as const, text: `Class: ${text}` }] };
       } catch (err) {
         return {
@@ -240,7 +240,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, isMeta, category, source, environmentId, dictionaryName }) => {
       try {
-        const text = compileMethod(
+        const text = await compileMethod(
           exec,
           className,
           isMeta,
@@ -271,7 +271,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ source }) => {
       try {
-        const text = compilePython(exec, source);
+        const text = await compilePython(exec, source);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -293,7 +293,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, dictionaryName }) => {
       try {
-        const text = deleteClass(exec, dictionaryName, className);
+        const text = await deleteClass(exec, dictionaryName, className);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -319,7 +319,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, isMeta, selector, dictionaryName }) => {
       try {
-        const text = deleteMethod(exec, className, isMeta, selector, dictionaryName);
+        const text = await deleteMethod(exec, className, isMeta, selector, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -348,7 +348,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, dictionaryName }) => {
       try {
-        const text = describeClass(exec, className, dictionaryName);
+        const text = await describeClass(exec, className, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -372,8 +372,8 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, selector }) => {
       try {
-        refreshIfClean(session);
-        const details = describeTestFailure(exec, className, selector);
+        await refreshIfClean(session);
+        const details = await describeTestFailure(exec, className, selector);
         return { content: [{ type: 'text' as const, text: formatTestFailureDetails(details) }] };
       } catch (err) {
         return {
@@ -397,7 +397,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ source }) => {
       try {
-        const text = evalPython(exec, source);
+        const text = await evalPython(exec, source);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -423,7 +423,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         // a runaway block returns a clean error instead of taking the gem
         // down. See queries/executeCode.ts.
         const wrapped = wrapExecuteCode(code);
-        const result = session.executeFetchString(wrapped);
+        const result = await session.executeFetchString(wrapped);
         return { content: [{ type: 'text' as const, text: result }] };
       } catch (err) {
         return {
@@ -449,7 +449,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, dictionaryName }) => {
       try {
-        const text = fileOutClass(exec, className, dictionaryName);
+        const text = await fileOutClass(exec, className, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -476,7 +476,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ selector, environmentId }) => {
       try {
-        const results = searchWithEnvFallback(environmentId, (envId) =>
+        const results = await searchWithEnvFallback(environmentId, (envId) =>
           implementorsOf(exec, selector, envId),
         );
         return {
@@ -511,7 +511,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ objectName, environmentId }) => {
       try {
-        const results = searchWithEnvFallback(environmentId, (envId) =>
+        const results = await searchWithEnvFallback(environmentId, (envId) =>
           referencesToObject(exec, objectName, envId),
         );
         return {
@@ -545,7 +545,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ selector, environmentId }) => {
       try {
-        const results = searchWithEnvFallback(environmentId, (envId) =>
+        const results = await searchWithEnvFallback(environmentId, (envId) =>
           sendersOf(exec, selector, envId),
         );
         return {
@@ -571,7 +571,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { className: z.string().describe('Class name, e.g. "Array"') },
     async ({ className }) => {
       try {
-        const result = getClassDefinition(exec, className);
+        const result = await getClassDefinition(exec, className);
         return { content: [{ type: 'text' as const, text: result }] };
       } catch (err) {
         return {
@@ -588,7 +588,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { className: z.string().describe('Class name') },
     async ({ className }) => {
       try {
-        const entries = getClassHierarchy(exec, className);
+        const entries = await getClassHierarchy(exec, className);
         const text = entries.map((e) => `${e.dictName}\t${e.className}\t${e.kind}`).join('\n');
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
@@ -611,7 +611,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, isMeta, selector, environmentId }) => {
       try {
-        const result = getMethodSource(exec, className, isMeta, selector, environmentId ?? 0);
+        const result = await getMethodSource(exec, className, isMeta, selector, environmentId ?? 0);
         // '' means there was no such method to read — the query answers it for a
         // class that will not resolve and for a selector the class does not
         // implement, because the EDITOR wants an empty buffer rather than a
@@ -648,7 +648,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     {},
     async () => {
       try {
-        const entries = getAllClassNames(exec);
+        const entries = await getAllClassNames(exec);
         const text = entries.map((e) => `${e.dictIndex}\t${e.dictName}\t${e.className}`).join('\n');
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
@@ -666,7 +666,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { dictionaryName: z.string().describe('Dictionary name, e.g. "Globals"') },
     async ({ dictionaryName }) => {
       try {
-        const names = getClassNames(exec, dictionaryName);
+        const names = await getClassNames(exec, dictionaryName);
         if (names.length === 0) {
           return {
             content: [
@@ -690,7 +690,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     {},
     async () => {
       try {
-        const names = getDictionaryNames(exec);
+        const names = await getDictionaryNames(exec);
         return { content: [{ type: 'text' as const, text: names.join('\n') }] };
       } catch (err) {
         return {
@@ -709,7 +709,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { dictionaryName: z.string().describe('Dictionary name, e.g. "Globals"') },
     async ({ dictionaryName }) => {
       try {
-        const entries = getDictionaryEntries(exec, dictionaryName);
+        const entries = await getDictionaryEntries(exec, dictionaryName);
         if (entries.length === 0) {
           return {
             content: [
@@ -761,8 +761,8 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ classNames, classNamePattern }) => {
       try {
-        refreshIfClean(session);
-        const results = runFailingTests(exec, classNames, classNamePattern);
+        await refreshIfClean(session);
+        const results = await runFailingTests(exec, classNames, classNamePattern);
         if (results.length === 0) {
           return { content: [{ type: 'text' as const, text: 'All tests passed.' }] };
         }
@@ -788,7 +788,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { className: z.string().describe('Class name') },
     async ({ className }) => {
       try {
-        const methods = getMethodList(exec, className);
+        const methods = await getMethodList(exec, className);
         if (methods.length === 0) {
           return { content: [{ type: 'text' as const, text: 'No methods found.' }] };
         }
@@ -813,7 +813,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     {},
     async () => {
       try {
-        const classes = discoverTestClasses(exec);
+        const classes = await discoverTestClasses(exec);
         if (classes.length === 0) {
           return { content: [{ type: 'text' as const, text: 'No TestCase subclasses found.' }] };
         }
@@ -830,7 +830,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
 
   server.tool('refresh', REFRESH_TOOL_DESCRIPTION, {}, async () => {
     try {
-      const result = session.executeFetchString(VIEW_REFRESH_CODE);
+      const result = await session.executeFetchString(VIEW_REFRESH_CODE);
       return { content: [{ type: 'text' as const, text: result }] };
     } catch (err) {
       return {
@@ -847,7 +847,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     { dictionaryName: z.string().describe('Name of the dictionary to remove') },
     async ({ dictionaryName }) => {
       try {
-        const text = removeDictionary(exec, dictionaryName);
+        const text = await removeDictionary(exec, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -868,8 +868,8 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className }) => {
       try {
-        refreshIfClean(session);
-        const results = runTestClass(exec, className);
+        await refreshIfClean(session);
+        const results = await runTestClass(exec, className);
         const text = formatTestResults(results);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
@@ -892,8 +892,8 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, selector }) => {
       try {
-        refreshIfClean(session);
-        const r = runTestMethod(exec, className, selector);
+        await refreshIfClean(session);
+        const r = await runTestMethod(exec, className, selector);
         const text = formatTestResult(r);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
@@ -914,7 +914,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ term, ignoreCase }) => {
       try {
-        const results = searchMethodSource(exec, term, ignoreCase !== false);
+        const results = await searchMethodSource(exec, term, ignoreCase !== false);
         return {
           content: [
             { type: 'text' as const, text: formatMethodResults(results, 'No matches found.') },
@@ -943,7 +943,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
     },
     async ({ className, comment, dictionaryName }) => {
       try {
-        const text = setClassComment(exec, className, comment, dictionaryName);
+        const text = await setClassComment(exec, className, comment, dictionaryName);
         return { content: [{ type: 'text' as const, text }] };
       } catch (err) {
         return {
@@ -974,7 +974,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         // session) sees committed state landed by other processes. See
         // VIEW_REFRESH_CODE.
         const code = SESSION_STATUS_CODE;
-        const result = session.executeFetchString(code);
+        const result = await session.executeFetchString(code);
         return { content: [{ type: 'text' as const, text: result }] };
       } catch (err) {
         return {

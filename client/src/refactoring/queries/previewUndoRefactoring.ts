@@ -32,8 +32,8 @@ const UNDO_CLASS = `(System myUserProfile symbolList objectNamed: #GsRefactoring
  *  answer the identical envelope, which made an engine installed before the undo work look
  *  exactly like an idle session: refactorings applied, no Undo was ever offered, and nothing
  *  said why. */
-export function refactoringUndoStatus(execute: QueryExecutor): string {
-  return execute(
+export async function refactoringUndoStatus(execute: QueryExecutor): Promise<string> {
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['{"available":false,"supported":false}'] ifFalse: [c statusJson]`,
@@ -89,8 +89,11 @@ c isNil
 
 /** Drop a finished undo preview. The recorded ENTRY survives — closing the preview
  *  must not throw the undo away. */
-export function clearUndoRefactoringPreview(execute: QueryExecutor, token: string): string {
-  return execute(
+export async function clearUndoRefactoringPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['ok'] ifFalse: [c clearToken: '${escapeString(token)}']`,
@@ -119,7 +122,7 @@ export type ReverseRenameKind =
  * can record an undo", and one reading as the other is what made a stale engine look like a
  * broken undo (review of #507).
  */
-export function recordReverseRename(
+export async function recordReverseRename(
   execute: QueryExecutor,
   kind: ReverseRenameKind,
   className: string,
@@ -133,11 +136,11 @@ export function recordReverseRename(
   // name and re-applies the opposite operation to whichever same-named class the symbol list
   // reaches first (#396).
   classDict?: number | string,
-): string {
+): Promise<string> {
   const scopeKind = scope ? `#${scope.kind}` : 'nil';
   const scopeDict = scope?.dictName ? `'${escapeString(scope.dictName)}'` : 'nil';
   const classDictArg = dictionaryArgExpr(classDict);
-  return execute(
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['no-undo-support'] ifFalse: [
@@ -162,16 +165,16 @@ c isNil ifTrue: ['no-undo-support'] ifFalse: [
  * Must be called BEFORE the apply. Answers `'ok'`, `'not a class'`, or `'ok'` as a no-op on a
  * stone whose engine predates undo.
  */
-export function captureClassHistory(
+export async function captureClassHistory(
   execute: QueryExecutor,
   rootClassName: string,
   // The root class's dictionary -- a 1-based SymbolList index or a name. Without it the capture
   // is taken from, and the reversal applied to, whichever same-named class the symbol list
   // reaches first (#396).
   dict?: number | string,
-): string {
+): Promise<string> {
   const dictArg = dictionaryArgExpr(dict);
-  return execute(
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['ok'] ifFalse: [
@@ -180,8 +183,8 @@ c isNil ifTrue: ['ok'] ifFalse: [
 }
 
 /** Throw away a pending capture whose apply did not land. */
-export function discardPendingCapture(execute: QueryExecutor): string {
-  return execute(
+export async function discardPendingCapture(execute: QueryExecutor): Promise<string> {
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['ok'] ifFalse: [c discardPendingCapture]`,
@@ -194,14 +197,14 @@ c isNil ifTrue: ['ok'] ifFalse: [c discardPendingCapture]`,
  * superclass, an extracted component); they have no earlier version to revert to and are
  * unbound by the reversal instead.
  */
-export function commitHistoryRevert(
+export async function commitHistoryRevert(
   execute: QueryExecutor,
   label: string,
   engineClassName: string,
   createdClassNames: string[] = [],
-): string {
+): Promise<string> {
   const created = createdClassNames.map((n) => `'${escapeString(n)}'`).join(' ');
-  return execute(
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['ok'] ifFalse: [
@@ -213,8 +216,8 @@ c isNil ifTrue: ['ok'] ifFalse: [
 }
 
 /** Forget the recorded undo entirely (there is nothing to undo any more). */
-export function clearRefactoringUndo(execute: QueryExecutor): string {
-  return execute(
+export async function clearRefactoringUndo(execute: QueryExecutor): Promise<string> {
+  return await execute(
     `| c |
 c := ${UNDO_CLASS}.
 c isNil ifTrue: ['ok'] ifFalse: [c clear]`,

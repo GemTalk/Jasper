@@ -9,7 +9,10 @@ export interface DictEntry {
 
 // Accepts a dictionary by 1-based index (Jasper's IDE) or by name (MCP
 // clients). With a name, returns [] if no dict by that name exists.
-export function getDictionaryEntries(execute: QueryExecutor, dict: number | string): DictEntry[] {
+export async function getDictionaryEntries(
+  execute: QueryExecutor,
+  dict: number | string,
+): Promise<DictEntry[]> {
   const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
@@ -21,7 +24,7 @@ dict keysAndValuesDo: [:k :v |
     ifFalse: [ws nextPutAll: '0'; tab; tab; nextPutAll: k asString; lf]].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const results: DictEntry[] = [];
   for (const line of raw.split('\n')) {

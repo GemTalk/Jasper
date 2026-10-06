@@ -1,5 +1,6 @@
 import type { ActiveSession } from '../sessionManager';
 import { logError, logInfo } from '../gciLog';
+import { fetchString } from '../stringFetch';
 
 /**
  * Server-side per-method history helper, installed the way the Jade-style
@@ -382,9 +383,9 @@ tmps at: #JasperMethodHistory put: cls.
  * Idempotent and non-fatal on failure — a session that cannot compile it simply
  * records no history (capture is soft-guarded), exactly as a bare session behaves.
  */
-export function installMethodHistory(session: ActiveSession): boolean {
+export async function installMethodHistory(session: ActiveSession): Promise<boolean> {
   try {
-    const result = session.gci.executeAndFetchString(session.handle, METHOD_HISTORY_INSTALL_CODE);
+    const result = await fetchString(session, METHOD_HISTORY_INSTALL_CODE);
     logInfo(`[Session ${session.id}] Method history helper ${result}`);
     return true;
   } catch (e) {

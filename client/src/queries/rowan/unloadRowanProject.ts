@@ -13,7 +13,10 @@ export interface RowanUnloadResult {
 // projects depend on (a base project like Cypress) raises, and that message is
 // surfaced. Must run on a SystemUser session: unloading mutates Rowan's
 // system-owned registry, which DataCurator cannot write.
-export function unloadRowanProject(execute: QueryExecutor, projectName: string): RowanUnloadResult {
+export async function unloadRowanProject(
+  execute: QueryExecutor,
+  projectName: string,
+): Promise<RowanUnloadResult> {
   const esc = escapeString(projectName);
   const code = `| r sep |
 sep := String with: Character tab.
@@ -24,7 +27,7 @@ r isNil ifTrue: [^'ERR' , sep , 'Rowan is not installed in this image'].
   on: Error do: [:e | System abortTransaction. ^'ERR' , sep , e messageText].
 'OK' , sep , '${esc}'`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   const tab = raw.indexOf('\t');
   const status = tab === -1 ? raw.trim() : raw.slice(0, tab);
   const detail = tab === -1 ? '' : raw.slice(tab + 1).trim();

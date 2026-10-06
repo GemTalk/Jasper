@@ -19,38 +19,40 @@ import * as queries from '../browserQueries';
  * Answers undefined rather than guessing: a label with no dictionary is merely less specific,
  * while a label naming the wrong one is worse than saying nothing.
  */
-export function dictionaryNameFor(
+export async function dictionaryNameFor(
   session: ActiveSession,
   dict: number | string | undefined,
-): string | undefined {
+): Promise<string | undefined> {
   if (typeof dict === 'string') return dict.length > 0 ? dict : undefined;
   if (dict === undefined) return undefined;
   try {
-    return queries.getDictionaryNames(session)[dict - 1];
+    return (await queries.getDictionaryNames(session))[dict - 1];
   } catch {
     return undefined;
   }
 }
 
 /**
- * `dictionaryNameFor` for many references at once: the symbol list is read on the first index
- * asked about and reused after that. For labelling a list of rows, where one round trip per row
- * costs a GCI call per class before anything is shown.
+ * `dictionaryNameFor` for many references at once: the symbol list is read once, up front, and
+ * every index is resolved against that one read. For labelling a list of rows, where one round
+ * trip per row costs a GCI call per class before anything is shown.
+ *
+ * Up front rather than on the first index asked about: the lookup is called from inside a
+ * synchronous row builder, which cannot wait on a read, so the read has to be over before the
+ * first row is built. That spends the read even on a list that names every dictionary by name.
  */
-export function dictionaryNameLookup(
+export async function dictionaryNameLookup(
   session: ActiveSession,
-): (dict: number | string | undefined) => string | undefined {
-  let names: string[] | undefined;
+): Promise<(dict: number | string | undefined) => string | undefined> {
+  let names: string[];
+  try {
+    names = await queries.getDictionaryNames(session);
+  } catch {
+    names = [];
+  }
   return (dict) => {
     if (typeof dict === 'string') return dict.length > 0 ? dict : undefined;
     if (dict === undefined) return undefined;
-    if (names === undefined) {
-      try {
-        names = queries.getDictionaryNames(session);
-      } catch {
-        names = [];
-      }
-    }
     return names[dict - 1];
   };
 }

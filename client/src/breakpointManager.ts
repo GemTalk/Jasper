@@ -133,11 +133,11 @@ export class BreakpointManager {
       this._onDidApply,
       vscode.debug.onDidChangeBreakpoints((e) => this.onBreakpointsChanged(e)),
       vscode.workspace.onDidChangeTextDocument((e) => this.thawIfClean(e.document)),
-      vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor) this.refreshDecorations(editor);
+      vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+        if (editor) await this.refreshDecorations(editor);
       }),
-      vscode.window.onDidChangeVisibleTextEditors((editors) => {
-        for (const editor of editors) this.refreshDecorations(editor);
+      vscode.window.onDidChangeVisibleTextEditors(async (editors) => {
+        for (const editor of editors) await this.refreshDecorations(editor);
       }),
     );
   }
@@ -178,11 +178,11 @@ export class BreakpointManager {
    * unsaved edits, when a position in VS Code's list and an offset in the
    * compiled method no longer describe the same code — see `holdWhileDirty`.
    */
-  applyToUri(
+  async applyToUri(
     session: ActiveSession,
     uri: vscode.Uri,
     requests?: { line: number; character?: number; enabled: boolean }[],
-  ): VerifiedBreakpoint[] {
+  ): Promise<VerifiedBreakpoint[]> {
     // The one statement of "a breakpoint can be armed here" (see
     // client/src/languageIds.ts), shared with the rule that decides which
     // documents are given the language the gutter is offered for — so the offer
@@ -203,7 +203,7 @@ export class BreakpointManager {
     // leaving stale ones behind would be the worse failure, since a breakpoint
     // the developer removed would keep stopping execution.
     try {
-      queries.clearAllBreaks(
+      await queries.clearAllBreaks(
         session,
         method.className,
         method.isMeta,
@@ -216,12 +216,12 @@ export class BreakpointManager {
 
     if (wanted.length === 0) {
       this.applied.delete(uri.toString());
-      this.refreshEditorsFor(uri);
+      await this.refreshEditorsFor(uri);
       this._onDidApply.fire();
       return [];
     }
 
-    const info = this.stepPoints.fetch(session, uri, method);
+    const info = await this.stepPoints.fetch(session, uri, method);
     if (!info) {
       // `clearAllBreaks` above has already emptied the method, so anything this
       // manager still remembers for it is a lie: left in place it keeps drawing
@@ -233,7 +233,7 @@ export class BreakpointManager {
         `The breakpoints in ${describeMethodResult(method)} were cleared: its step points ` +
         `could not be read. Reopen the method to set them again.`;
       this.applied.delete(uri.toString());
-      this.refreshEditorsFor(uri);
+      await this.refreshEditorsFor(uri);
       this._onDidApply.fire();
       vscode.window.showWarningMessage(reason);
       return wanted.map((r) => ({
@@ -292,7 +292,7 @@ export class BreakpointManager {
 
     for (const bp of byStepPoint.values()) {
       try {
-        queries.setBreakAtStepPoint(
+        await queries.setBreakAtStepPoint(
           session,
           method.className,
           method.isMeta,
@@ -319,7 +319,7 @@ export class BreakpointManager {
       // marker reading "disabled" over a break that still stops execution is the
       // worst state this code can produce, so take the break back out.
       try {
-        queries.disableBreakAtStepPoint(
+        await queries.disableBreakAtStepPoint(
           session,
           method.className,
           method.isMeta,
@@ -330,7 +330,7 @@ export class BreakpointManager {
       } catch (e) {
         let stillArmed = ' It is still armed in the gem and will stop execution.';
         try {
-          queries.clearBreakAtStepPoint(
+          await queries.clearBreakAtStepPoint(
             session,
             method.className,
             method.isMeta,
@@ -363,7 +363,7 @@ export class BreakpointManager {
     if (applied.length > 0) this.applied.set(uri.toString(), applied);
     else this.applied.delete(uri.toString());
 
-    this.refreshEditorsFor(uri);
+    await this.refreshEditorsFor(uri);
     this._onDidApply.fire();
     return results;
   }
@@ -372,19 +372,19 @@ export class BreakpointManager {
    * The debug adapter's entry point: apply breakpoints given as lines (and
    * optional columns), which is all the Debug Adapter Protocol carries.
    */
-  setBreakpointsForSource(
+  async setBreakpointsForSource(
     session: ActiveSession,
     uri: vscode.Uri,
     lines: number[],
     columns?: (number | undefined)[],
-  ): VerifiedBreakpoint[] {
+  ): Promise<VerifiedBreakpoint[]> {
     // Held still while the editor has unsaved edits — see `holdWhileDirty`.
     // Report what the gem already holds instead of arming anything: a
     // breakpoint set before the edits is still armed and still verified, and a
     // new one is refused with the reason.
-    if (isDirty(uri)) return this.frozenResults(uri, lines, columns);
+    if (isDirty(uri)) return await this.frozenResults(uri, lines, columns);
 
-    return this.applyToUri(
+    return await this.applyToUri(
       session,
       uri,
       lines.map((line, i) => ({
@@ -458,17 +458,17 @@ export class BreakpointManager {
    * The gem's state for a method being held still, phrased as breakpoint
    * results — verified for what is actually armed, refused for anything else.
    */
-  private frozenResults(
+  private async frozenResults(
     uri: vscode.Uri,
     lines: number[],
     columns?: (number | undefined)[],
-  ): VerifiedBreakpoint[] {
+  ): Promise<VerifiedBreakpoint[]> {
     this.frozen.add(uri.toString());
 
     const method = parseMethodUri(uri);
     const session = this.sessionForUri(uri);
     const applied = this.applied.get(uri.toString()) ?? [];
-    const info = method && session ? this.stepPoints.fetch(session, uri, method) : null;
+    const info = method && session ? await this.stepPoints.fetch(session, uri, method) : null;
 
     return lines.map((line, i) => {
       const column = columns?.[i];
@@ -497,13 +497,13 @@ export class BreakpointManager {
    * route entirely — the recompile drops the method's breakpoints
    * (`invalidateForUri`).
    */
-  private thawIfClean(document: vscode.TextDocument): void {
+  private async thawIfClean(document: vscode.TextDocument): Promise<void> {
     const uriStr = document.uri.toString();
     if (!this.frozen.has(uriStr) || document.isDirty) return;
     this.frozen.delete(uriStr);
 
     const session = this.sessionForUri(document.uri);
-    if (session) this.applyToUri(session, document.uri);
+    if (session) await this.applyToUri(session, document.uri);
   }
 
   /**
@@ -539,8 +539,8 @@ export class BreakpointManager {
    * is the step point's own offset, which is what makes it an inline breakpoint
    * VS Code will hand back to us with a column.
    */
-  toggleAtCursor(editor: vscode.TextEditor): void {
-    const found = this.stepPointAtCursor(editor);
+  async toggleAtCursor(editor: vscode.TextEditor): Promise<void> {
+    const found = await this.stepPointAtCursor(editor);
     if (!found) return;
     const { info, resolved } = found;
 
@@ -564,8 +564,8 @@ export class BreakpointManager {
    * condition and log message across so an enable/disable round trip doesn't
    * quietly discard them.
    */
-  setEnabledAtCursor(editor: vscode.TextEditor, enabled: boolean): void {
-    const found = this.stepPointAtCursor(editor);
+  async setEnabledAtCursor(editor: vscode.TextEditor, enabled: boolean): Promise<void> {
+    const found = await this.stepPointAtCursor(editor);
     if (!found) return;
     const { info, resolved } = found;
 
@@ -588,8 +588,8 @@ export class BreakpointManager {
    * the caret — what a click on an inlay hint number or a hover link does. The
    * developer pointed at a specific step point, so there is nothing to resolve.
    */
-  toggleAtStepPoint(uri: vscode.Uri, stepPoint: number): void {
-    const ctx = this.contextFor(uri);
+  async toggleAtStepPoint(uri: vscode.Uri, stepPoint: number): Promise<void> {
+    const ctx = await this.contextFor(uri);
     if (!ctx) return;
     const existing = this.vsCodeBreakpointFor(uri, ctx.info, stepPoint);
     if (existing) {
@@ -604,20 +604,20 @@ export class BreakpointManager {
   }
 
   /** Enable or disable the breakpoint at a named step point. */
-  setEnabledAtStepPoint(uri: vscode.Uri, stepPoint: number, enabled: boolean): void {
-    const ctx = this.contextFor(uri);
+  async setEnabledAtStepPoint(uri: vscode.Uri, stepPoint: number, enabled: boolean): Promise<void> {
+    const ctx = await this.contextFor(uri);
     if (!ctx) return;
     const existing = this.vsCodeBreakpointFor(uri, ctx.info, stepPoint);
     if (!existing) {
-      if (enabled) this.toggleAtStepPoint(uri, stepPoint);
+      if (enabled) await this.toggleAtStepPoint(uri, stepPoint);
       return;
     }
     if (existing.enabled !== enabled) replaceEnabled([existing], enabled);
   }
 
   /** Clear the breakpoint at a named step point. */
-  clearAtStepPoint(uri: vscode.Uri, stepPoint: number): void {
-    const ctx = this.contextFor(uri);
+  async clearAtStepPoint(uri: vscode.Uri, stepPoint: number): Promise<void> {
+    const ctx = await this.contextFor(uri);
     if (!ctx) return;
     const existing = this.vsCodeBreakpointFor(uri, ctx.info, stepPoint);
     if (existing) vscode.debug.removeBreakpoints([existing]);
@@ -628,13 +628,13 @@ export class BreakpointManager {
    * will do — these entry points are all driven by a click in one, and the
    * document is what turns a step point offset back into a position.
    */
-  private contextFor(
+  private async contextFor(
     uri: vscode.Uri,
-  ): { document: vscode.TextDocument; info: StepPointInfo } | null {
+  ): Promise<{ document: vscode.TextDocument; info: StepPointInfo } | null> {
     const uriStr = uri.toString();
     const document = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uriStr);
     if (!document) return null;
-    const info = this.stepPoints.get(document);
+    const info = await this.stepPoints.get(document);
     if (!info) return null;
     return { document, info };
   }
@@ -649,14 +649,15 @@ export class BreakpointManager {
   }
 
   /** The step point under the caret, with the method's step point info. */
-  stepPointAtCursor(
-    editor: vscode.TextEditor,
-  ): { info: StepPointInfo; resolved: NonNullable<ReturnType<typeof stepPointAtOffset>> } | null {
+  async stepPointAtCursor(editor: vscode.TextEditor): Promise<{
+    info: StepPointInfo;
+    resolved: NonNullable<ReturnType<typeof stepPointAtOffset>>;
+  } | null> {
     // Every failure here says so. These commands are invoked deliberately — from
     // a keystroke, a menu, or the palette — and a silent no-op is unreadable:
     // "nothing happened" looks exactly like a broken keybinding, so the developer
     // has no way to tell an unsaved buffer from a command that never fired.
-    const result = this.stepPoints.explain(editor.document);
+    const result = await this.stepPoints.explain(editor.document);
     if ('problem' in result) {
       vscode.window.showWarningMessage(result.problem);
       return null;
@@ -683,7 +684,7 @@ export class BreakpointManager {
    * sweeps the gem, which also catches breakpoints Jasper never set (from topaz,
    * another tool, or a `halt` in the code). "All" has to mean all of them.
    */
-  setAllEnabled(enabled: boolean): void {
+  async setAllEnabled(enabled: boolean): Promise<void> {
     const mine = gemstoneBreakpoints().filter((bp) => bp.enabled !== enabled);
     if (mine.length > 0) replaceEnabled(mine, enabled);
 
@@ -691,8 +692,10 @@ export class BreakpointManager {
     // are one list spanning all of them, so sweeping a single gem would leave
     // another session's breaks armed behind rows that read "disabled" — the
     // gutter would say one thing and execution would do another.
-    const failures = this.sweepEveryGem((session) =>
-      enabled ? queries.enableAllBreakpoints(session) : queries.disableAllBreakpoints(session),
+    const failures = await this.sweepEveryGem(async (session) =>
+      enabled
+        ? await queries.enableAllBreakpoints(session)
+        : await queries.disableAllBreakpoints(session),
     );
     if (failures.length > 0) {
       vscode.window.showErrorMessage(
@@ -703,19 +706,19 @@ export class BreakpointManager {
   }
 
   /** Remove every GemStone breakpoint, in VS Code's model and in the gem. */
-  removeAll(): void {
+  async removeAll(): Promise<void> {
     const mine = gemstoneBreakpoints();
     if (mine.length > 0) vscode.debug.removeBreakpoints(mine);
 
     // Every live gem, for the same reason as `setAllEnabled`: the rows removed
     // above span all of them, and a gem left un-swept would keep stopping
     // execution at a breakpoint with no marker left anywhere to explain it.
-    const failures = this.sweepEveryGem((session) => queries.removeAllBreakpoints(session));
+    const failures = await this.sweepEveryGem((session) => queries.removeAllBreakpoints(session));
     if (failures.length > 0) {
       vscode.window.showErrorMessage(`Could not remove breakpoints in ${failures.join('; ')}`);
     }
     this.applied.clear();
-    for (const editor of vscode.window.visibleTextEditors) this.refreshDecorations(editor);
+    for (const editor of vscode.window.visibleTextEditors) await this.refreshDecorations(editor);
     this._onDidApply.fire();
   }
 
@@ -728,11 +731,13 @@ export class BreakpointManager {
    * rows that say otherwise, which is the very state the caller is trying to
    * avoid.
    */
-  private sweepEveryGem(operation: (session: ActiveSession) => void): string[] {
+  private async sweepEveryGem(
+    operation: (session: ActiveSession) => Promise<unknown>,
+  ): Promise<string[]> {
     const failures: string[] = [];
     for (const session of this.sessionManager.getSessions()) {
       try {
-        operation(session);
+        await operation(session);
       } catch (e) {
         failures.push(`session ${session.id}: ${messageOf(e)}`);
       }
@@ -751,23 +756,23 @@ export class BreakpointManager {
    * set has no VS Code counterpart, so it is flipped in the gem by OOP — which
    * also means it reverts at logout, as any gem-only breakpoint does.
    */
-  setEnabledForStoneBreakpoint(bp: GemStoneBreakpoint, enabled: boolean): void {
-    const owned = this.ownedBreakpoint(bp);
+  async setEnabledForStoneBreakpoint(bp: GemStoneBreakpoint, enabled: boolean): Promise<void> {
+    const owned = await this.ownedBreakpoint(bp);
     if (owned) {
       if (owned.enabled !== enabled) replaceEnabled([owned], enabled);
       return;
     }
-    this.byOop(bp, enabled ? 'setBreakAtStepPoint:' : 'disableBreakAtStepPoint:');
+    await this.byOop(bp, enabled ? 'setBreakAtStepPoint:' : 'disableBreakAtStepPoint:');
   }
 
   /** Remove a breakpoint the gem reported — from VS Code's list when it's ours. */
-  removeStoneBreakpoint(bp: GemStoneBreakpoint): void {
-    const owned = this.ownedBreakpoint(bp);
+  async removeStoneBreakpoint(bp: GemStoneBreakpoint): Promise<void> {
+    const owned = await this.ownedBreakpoint(bp);
     if (owned) {
       vscode.debug.removeBreakpoints([owned]);
       return;
     }
-    this.byOop(bp, 'clearBreakAtStepPoint:');
+    await this.byOop(bp, 'clearBreakAtStepPoint:');
   }
 
   /**
@@ -776,7 +781,9 @@ export class BreakpointManager {
    * point, rather than on the gem's dictionary/category strings, so it still
    * matches when the same class name is bound in more than one dictionary.
    */
-  private ownedBreakpoint(bp: GemStoneBreakpoint): vscode.SourceBreakpoint | undefined {
+  private async ownedBreakpoint(
+    bp: GemStoneBreakpoint,
+  ): Promise<vscode.SourceBreakpoint | undefined> {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return undefined;
     // The rows this is matching against were read out of the selected session's
@@ -801,21 +808,21 @@ export class BreakpointManager {
       ) {
         continue;
       }
-      const info = this.stepPoints.fetch(session, uri, method);
+      const info = await this.stepPoints.fetch(session, uri, method);
       if (!info) continue;
       return this.vsCodeBreakpointFor(uri, info, bp.stepPoint);
     }
     return undefined;
   }
 
-  private byOop(
+  private async byOop(
     bp: GemStoneBreakpoint,
     op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
-  ): void {
+  ): Promise<void> {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return;
     try {
-      queries.breakpointByOop(session, bp.methodOop, op, bp.stepPoint);
+      await queries.breakpointByOop(session, bp.methodOop, op, bp.stepPoint);
     } catch (e) {
       vscode.window.showErrorMessage(`Breakpoint operation failed: ${messageOf(e)}`);
       return;
@@ -837,7 +844,7 @@ export class BreakpointManager {
    * panel and the GemStone Breakpoints view all agree, which is the same rule
    * that applies when a session logs out.
    */
-  invalidateForUri(uri: vscode.Uri): void {
+  async invalidateForUri(uri: vscode.Uri): Promise<void> {
     this.stepPoints.invalidate(uri);
     this.applied.delete(uri.toString());
     // Saving is the ordinary way out of a dirty editor, and it arrives here
@@ -854,7 +861,7 @@ export class BreakpointManager {
     );
     if (stale.length > 0) vscode.debug.removeBreakpoints(stale);
 
-    this.refreshEditorsFor(uri);
+    await this.refreshEditorsFor(uri);
     this._onDidApply.fire();
   }
 
@@ -894,7 +901,7 @@ export class BreakpointManager {
    * "this line has a breakpoint"; a Smalltalk line routinely holds several step
    * points, so the token marker is what says *which one*.
    */
-  refreshDecorations(editor: vscode.TextEditor): void {
+  async refreshDecorations(editor: vscode.TextEditor): Promise<void> {
     if (editor.document.uri.scheme !== 'gemstone') return;
 
     const applied = this.applied.get(editor.document.uri.toString());
@@ -904,7 +911,7 @@ export class BreakpointManager {
       return;
     }
 
-    const info = this.stepPoints.get(editor.document);
+    const info = await this.stepPoints.get(editor.document);
     if (!info) return;
 
     const on: vscode.Range[] = [];
@@ -956,7 +963,7 @@ export class BreakpointManager {
     return undefined;
   }
 
-  private onBreakpointsChanged(event: vscode.BreakpointsChangeEvent): void {
+  private async onBreakpointsChanged(event: vscode.BreakpointsChangeEvent): Promise<void> {
     // Catches a startup restore that lands after activation, and a gutter click
     // in a stale editor from a session that has since logged out. Pruning is
     // idempotent, and the removal it triggers re-enters here with nothing left
@@ -996,7 +1003,7 @@ export class BreakpointManager {
         this.holdWhileDirty(uri, event.added);
         continue;
       }
-      this.applyToUri(session, uri);
+      await this.applyToUri(session, uri);
     }
   }
 
@@ -1028,10 +1035,10 @@ export class BreakpointManager {
     );
   }
 
-  private refreshEditorsFor(uri: vscode.Uri): void {
+  private async refreshEditorsFor(uri: vscode.Uri): Promise<void> {
     const uriStr = uri.toString();
     for (const editor of vscode.window.visibleTextEditors) {
-      if (editor.document.uri.toString() === uriStr) this.refreshDecorations(editor);
+      if (editor.document.uri.toString() === uriStr) await this.refreshDecorations(editor);
     }
   }
 }

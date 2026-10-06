@@ -527,7 +527,7 @@ describe('after a hard break', () => {
       const session = makeSession([{ result: 0 }]);
       const poll = session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
       poll.mockReturnValue({ result: 0, err: noErr });
-      const collected = vi.fn(() => {
+      const collected = vi.fn(async () => {
         expect(session.gci.GciTsNbResult).toHaveBeenCalled();
       });
       let cancel: (() => void) | undefined;
@@ -568,7 +568,7 @@ describe('after a hard break', () => {
         result: 0,
         err: noErr,
       });
-      const collected = vi.fn();
+      const collected = vi.fn(async () => {});
       let cancel: (() => void) | undefined;
       const p = runNbCall(
         session,
@@ -661,7 +661,7 @@ describe('a hard break while the result is being read', () => {
     (session.gci as unknown as Record<string, ReturnType<typeof vi.fn>>)[name].mock.calls.length;
 
   /** A run whose onReady is still working when both cancels land. */
-  async function hardBreakDuringOnReady(onAbandonedCollected?: () => void) {
+  async function hardBreakDuringOnReady(onAbandonedCollected?: () => Promise<void>) {
     const session = makeSession([{ result: 1 }]);
     let finishOnReady: () => void = () => {};
     let signal: AbortSignal | undefined;
@@ -718,7 +718,7 @@ describe('a hard break while the result is being read', () => {
   it('runs onAbandonedCollected once the read finishes, not before', async () => {
     vi.useFakeTimers();
     try {
-      const collected = vi.fn();
+      const collected = vi.fn(async () => {});
       const { run, finishOnReady } = await hardBreakDuringOnReady(collected);
       await expect(run).rejects.toBeInstanceOf(NbCancelledError);
       await vi.advanceTimersByTimeAsync(100);

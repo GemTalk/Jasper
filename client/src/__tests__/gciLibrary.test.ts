@@ -1002,18 +1002,18 @@ describe('GciLibrary', () => {
       expectUtf8OopToResolveViaSymbolLookup(session, gciLibrary);
     });
 
-    it("a new session doesn't have another session's cached Utf8 oop", () => {
+    it("a new session doesn't have another session's cached Utf8 oop", async () => {
       gciLibrary.utf8ClassOop(session);
 
-      testContext.withTransientSession((transientSession) => {
+      await testContext.withTransientSession((transientSession) => {
         expectUtf8OopToResolveViaSymbolLookup(transientSession, gciLibrary);
       });
     });
 
-    it("logging out a session does not clear another session's cached Utf8 oop", () => {
+    it("logging out a session does not clear another session's cached Utf8 oop", async () => {
       gciLibrary.utf8ClassOop(session);
 
-      testContext.withTransientSession(() => {
+      await testContext.withTransientSession(() => {
         // Intentionally empty: withTransientSession logs it out as soon as this callback returns,
         // which is all this test needs -- it exercises the logout cache-cleanup
         // path for a session other than `session`, so the assertion below can

@@ -13,30 +13,30 @@ const row = (className: string, selector: string): string =>
   `UserGlobals\t${className}\t0\t${selector}\taccessing\n`;
 
 describe('instance-variable reference scan', () => {
-  it('scans the declaring class and every subclass', () => {
+  it('scans the declaring class and every subclass', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingInstVar(exec, 'Account', 'balance', 3);
+    await methodsAccessingInstVar(exec, 'Account', 'balance', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('symbolList at: 3');
     expect(code).toContain('allSubclasses');
   });
 
-  it('decides by bytecode reflection rather than by source text', () => {
+  it('decides by bytecode reflection rather than by source text', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingInstVar(exec, 'Account', 'balance', 3);
+    await methodsAccessingInstVar(exec, 'Account', 'balance', 3);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('instVarsAccessed');
     expect(code).not.toContain('substringSearch:');
   });
 
-  it('reads the reported methods into browsable results', () => {
+  it('reads the reported methods into browsable results', async () => {
     const exec = vi.fn().mockReturnValue(row('Account', 'balance') + row('Savings', 'accrue'));
 
-    const results = methodsAccessingInstVar(exec, 'Account', 'balance', 3);
+    const results = await methodsAccessingInstVar(exec, 'Account', 'balance', 3);
 
     expect(results).toEqual([
       {
@@ -58,36 +58,36 @@ describe('instance-variable reference scan', () => {
     ]);
   });
 
-  it('enumerates the selectors of the environment it was asked about', () => {
+  it('enumerates the selectors of the environment it was asked about', async () => {
     // `selectors` lists environment 0 only, so a method that exists solely in another
     // environment was never offered to the accessed-variables test and the variable looked
     // unused — a delete would then go through without asking.
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingInstVar(exec, 'Account', 'balance', 3, 2);
+    await methodsAccessingInstVar(exec, 'Account', 'balance', 3, 2);
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('selectorsForEnvironment: 2');
     expect(code).not.toMatch(/\bselectors do:/);
   });
 
-  it('reports nothing when no method touches the variable', () => {
+  it('reports nothing when no method touches the variable', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    expect(methodsAccessingInstVar(exec, 'Account', 'balance', 3)).toEqual([]);
+    expect(await methodsAccessingInstVar(exec, 'Account', 'balance', 3)).toEqual([]);
   });
 
-  it('reports nothing when the class cannot be resolved', () => {
+  it('reports nothing when the class cannot be resolved', async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    expect(methodsAccessingInstVar(exec, 'Missing', 'balance')).toEqual([]);
+    expect(await methodsAccessingInstVar(exec, 'Missing', 'balance')).toEqual([]);
     expect(exec.mock.calls[0][0]).toContain('isNil ifTrue:');
   });
 
-  it("escapes a quote in the variable name so the statement can't be broken out of", () => {
+  it("escapes a quote in the variable name so the statement can't be broken out of", async () => {
     const exec = vi.fn().mockReturnValue('');
 
-    methodsAccessingInstVar(exec, 'Account', "b'r", 3);
+    await methodsAccessingInstVar(exec, 'Account', "b'r", 3);
 
     expect(exec.mock.calls[0][0]).toContain("'b''r'");
   });

@@ -6,7 +6,7 @@ import { classLookupExpr, escapeString } from './util';
 // Behavior>>compileMethod:dictionaries:category:environmentId:; on a CompileError
 // the executor surfaces the thrown Error. Not committed automatically.
 // `dict` is optional; when given, disambiguates shadowed class names.
-export function copyMethodToClass(
+export async function copyMethodToClass(
   execute: QueryExecutor,
   sourceClass: string,
   targetClass: string,
@@ -14,7 +14,7 @@ export function copyMethodToClass(
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const sel = escapeString(selector);
   const side = isMeta ? ' class' : '';
   const at =
@@ -37,5 +37,5 @@ tgtRecv
   category: (category ifNil: ['as yet unclassified']) asString
   environmentId: ${environmentId}.
 'Copied: ' , tgtRecv name , ' >> ${sel}'`;
-  return execute(code);
+  return await execute(code);
 }

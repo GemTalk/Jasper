@@ -176,7 +176,7 @@ describe('saveFileOut', () => {
       title: 'File Out Animal',
       defaultFileName: 'Animal.gs',
       label: 'Animal',
-      build: () => 'the source',
+      build: async () => 'the source',
       store: memento,
     });
 
@@ -197,7 +197,7 @@ describe('saveFileOut', () => {
       title: 't',
       defaultFileName: 'Animal.gs',
       label: 'a',
-      build: () => '',
+      build: async () => '',
       store: memento,
     });
 
@@ -214,7 +214,7 @@ describe('saveFileOut', () => {
       title: 't',
       defaultFileName: 'Animal.gs',
       label: 'a',
-      build: () => '',
+      build: async () => '',
       store: memento,
     });
 
@@ -226,7 +226,12 @@ describe('saveFileOut', () => {
     (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = undefined;
     vi.mocked(vscode.window.showSaveDialog).mockResolvedValue(undefined);
 
-    await saveFileOut({ title: 't', defaultFileName: 'Animal.gs', label: 'a', build: () => '' });
+    await saveFileOut({
+      title: 't',
+      defaultFileName: 'Animal.gs',
+      label: 'a',
+      build: async () => '',
+    });
 
     const options = vi.mocked(vscode.window.showSaveDialog).mock.calls[0][0];
     expect(options?.defaultUri?.fsPath).toBe(at(path.join(os.homedir(), 'Animal.gs')));
@@ -264,7 +269,7 @@ describe('saveFileOut', () => {
       title: 't',
       defaultFileName: 'A.gs',
       label: 'A',
-      build: () => 'text',
+      build: async () => 'text',
       store: memento,
     });
 
@@ -281,7 +286,7 @@ describe('saveFileOut', () => {
       title: 't',
       defaultFileName: 'A.gs',
       label: 'Animal',
-      build: () => 'text',
+      build: async () => 'text',
       store: memento,
     });
     // The notification is deliberately not awaited by saveFileOut, so let it settle.

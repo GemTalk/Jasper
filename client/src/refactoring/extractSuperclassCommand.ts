@@ -88,10 +88,13 @@ async function flushDirtyMethodBuffers(): Promise<boolean> {
  *  always available. Relaxing it would be safe (`subclass: … inDictionary:` only rebinds in the
  *  destination), so this is a UX decision rather than a constraint. Runs as the input box's live
  *  validator, so the collision surfaces inline while the user is still typing. */
-function validateNewSuperclassName(session: ActiveSession, name: string): string | undefined {
+async function validateNewSuperclassName(
+  session: ActiveSession,
+  name: string,
+): Promise<string | undefined> {
   const fmt = validateClassName(name);
   if (fmt) return fmt;
-  if (queries.globalNameInUse(session, name.trim())) {
+  if (await queries.globalNameInUse(session, name.trim())) {
     return `The name ${name.trim()} is already in use. Choose another.`;
   }
   return undefined;
@@ -193,9 +196,9 @@ async function runExtractSuperclass(
   }
 
   const token = `esup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearExtractSuperclassPreview(session, token);
+      await queries.clearExtractSuperclassPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -219,18 +222,18 @@ async function runExtractSuperclass(
     void vscode.window.showErrorMessage(
       `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return undefined;
   }
   if (start.total === 0) {
     refuse('Nothing to change.');
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
@@ -238,9 +241,9 @@ async function runExtractSuperclass(
   // PENDING and only becomes an undo entry once the apply is known to have landed, so every path
   // that does not get there drops it -- a partial reshape leaves the stone in a state the capture
   // does not describe, and must never have an undo offered against it.
-  const discardCapture = (): void => {
+  const discardCapture = async (): Promise<void> => {
     try {
-      queries.discardPendingCapture(session);
+      await queries.discardPendingCapture(session);
     } catch {
       /* best-effort */
     }
@@ -248,7 +251,7 @@ async function runExtractSuperclass(
   try {
     // Scoped to the class's own dictionary: an unscoped capture snapshots, and later reverts,
     // whichever same-named class the symbol list reaches first (#396).
-    queries.captureClassHistory(session, className, dict);
+    await queries.captureClassHistory(session, className, dict);
   } catch {
     /* best-effort: a reshape must not fail because its undo bookkeeping did */
   }
@@ -258,21 +261,21 @@ async function runExtractSuperclass(
         await queries.pageExtractSuperclassPreview(session, token, off, PREVIEW_PAGE_BYTES),
       ),
     apply: async () => parseApplyResult(await queries.applyExtractSuperclass(session, token)),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
-    discardCapture();
+    await discardCapture();
     return undefined;
   }
 
   if (result.error) {
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return undefined;
   }
   if (result.failed.length > 0) {
     const first = result.failed[0];
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -282,7 +285,7 @@ async function runExtractSuperclass(
   // zero changes applied without an error/failure is an impossible-in-practice state — but do not
   // claim success for it (the "no false success" rule).
   if (result.applied === 0) {
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(`${heading} applied no changes.`);
     return undefined;
   }
@@ -292,7 +295,9 @@ async function runExtractSuperclass(
   // The reversal also has to UNBIND the class this created: it is brand new, so there is no
   // earlier version to revert it to.
   try {
-    queries.commitHistoryRevert(session, heading, 'GsExtractSuperclassRefactoring', [newName]);
+    await queries.commitHistoryRevert(session, heading, 'GsExtractSuperclassRefactoring', [
+      newName,
+    ]);
   } catch {
     /* best-effort: the reshape landed either way */
   }
@@ -318,7 +323,7 @@ export async function insertSuperclassCommand(
 
   return await runExtractSuperclass(
     ctx,
-    `Insert superclass '${newName}' above ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}`,
+    `Insert superclass '${newName}' above ${qualifiedClassName(ctx.className, await dictionaryNameFor(ctx.session, ctx.dict))}`,
     newName,
     [],
     { methods: [], instVars: [] },
@@ -334,7 +339,7 @@ export async function extractSuperclassCommand(
 
   // 1. Which siblings to pull up too? (opt-in — none pre-picked). Skip if the anchor is an only child.
   let siblings: string[] = [];
-  const siblingNames = queries.getSiblingClassNames(ctx.session, ctx.className, ctx.dict);
+  const siblingNames = await queries.getSiblingClassNames(ctx.session, ctx.className, ctx.dict);
   if (siblingNames.length > 0) {
     const picked = await vscode.window.showQuickPick(siblingNames, {
       title: `Extract superclass — also pull up siblings of ${ctx.className}?`,
@@ -391,7 +396,7 @@ export async function extractSuperclassCommand(
   const where = siblings.length > 0 ? ` (with ${siblings.join(', ')})` : '';
   return await runExtractSuperclass(
     ctx,
-    `Extract superclass '${newName}' from ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}${where}`,
+    `Extract superclass '${newName}' from ${qualifiedClassName(ctx.className, await dictionaryNameFor(ctx.session, ctx.dict))}${where}`,
     newName,
     siblings,
     hoist,

@@ -88,9 +88,9 @@ export async function inlineMethodCommand(
   }
 
   const token = `iln_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearInlineMethodPreview(session, token);
+      await queries.clearInlineMethodPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -114,20 +114,20 @@ export async function inlineMethodCommand(
     void vscode.window.showErrorMessage(
       `Inline preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
   if (start.total === 0) {
     refuse('Nothing to inline at the cursor.');
-    safeClear();
+    await safeClear();
     focusEditor();
     return;
   }
@@ -140,7 +140,7 @@ export async function inlineMethodCommand(
       parseApplyResult(
         await queries.applyInlineMethod(session, token, deselected, `Inline ${targetLabel}`),
       ),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
     focusEditor();

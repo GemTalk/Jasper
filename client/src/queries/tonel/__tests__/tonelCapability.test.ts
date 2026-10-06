@@ -16,9 +16,9 @@ const exec = (missing: string[] = []) => vi.fn().mockReturnValue(missing.join('\
 const codeOf = (fn: ReturnType<typeof exec>): string => fn.mock.calls[0][0] as string;
 
 describe('tonelCapability', () => {
-  it('probes every selector the feature actually sends', () => {
+  it('probes every selector the feature actually sends', async () => {
     const e = exec();
-    tonelCapability(e);
+    await tonelCapability(e);
     const code = codeOf(e);
     // Each of these is driven directly by the file-out or file-in glue. Probing
     // the exact selectors we send is what makes the gate survive Rowan changing
@@ -42,31 +42,31 @@ describe('tonelCapability', () => {
     }
   });
 
-  it('is available when nothing is missing', () => {
-    const result = tonelCapability(exec());
+  it('is available when nothing is missing', async () => {
+    const result = await tonelCapability(exec());
     expect(result.available).toBe(true);
     expect(result.missing).toEqual([]);
   });
 
   // One case per capability rather than a single "something missing" test: when a
   // future Rowan drops one, the failure names it instead of saying the gate broke.
-  it.each(TONEL_CAPABILITIES)('is unavailable when %s is missing', (capability) => {
-    const result = tonelCapability(exec([capability]));
+  it.each(TONEL_CAPABILITIES)('is unavailable when %s is missing', async (capability) => {
+    const result = await tonelCapability(exec([capability]));
     expect(result.available).toBe(false);
     expect(result.missing).toEqual([capability]);
   });
 
-  it('is unavailable when Rowan does not resolve at all', () => {
-    const result = tonelCapability(exec([...TONEL_CAPABILITIES]));
+  it('is unavailable when Rowan does not resolve at all', async () => {
+    const result = await tonelCapability(exec([...TONEL_CAPABILITIES]));
     expect(result.available).toBe(false);
     expect(result.missing).toEqual([...TONEL_CAPABILITIES]);
   });
 
-  it('asks no version question', () => {
+  it('asks no version question', async () => {
     const code = codeOf(
-      (() => {
+      await (async () => {
         const e = exec();
-        tonelCapability(e);
+        await tonelCapability(e);
         return e;
       })(),
     );
@@ -78,33 +78,33 @@ describe('tonelCapability', () => {
     expect(code).not.toMatch(/3\.7|3\.6/);
   });
 
-  it('resolves the classes through the shared Rowan reach-through', () => {
+  it('resolves the classes through the shared Rowan reach-through', async () => {
     // Not `symbolList objectNamed:` on its own: on a rowan3 stone the Rowan
     // dictionaries are in SystemUser's symbol list only, so a DataCurator
     // session would find nothing and the feature would hide itself on a stone
     // that supports it. DataCurator is meant to see these commands.
     const e = exec();
-    tonelCapability(e);
+    await tonelCapability(e);
     const code = codeOf(e);
     expect(code).toContain('rwLookup :=');
     expect(code).toContain("AllUsers userWithId: 'SystemUser'");
     expect(code).toContain('rwLookup value: #');
   });
 
-  it('tolerates whitespace and blank lines in the answer', () => {
+  it('tolerates whitespace and blank lines in the answer', async () => {
     // GCI string answers pick up trailing newlines; a blank line must not become
     // a phantom missing capability that hides the feature on a good stone.
     const e = vi.fn().mockReturnValue('\n');
-    expect(tonelCapability(e).available).toBe(true);
+    expect((await tonelCapability(e)).available).toBe(true);
   });
 
-  it('sends only ASCII to the stone', () => {
+  it('sends only ASCII to the stone', async () => {
     // Generated Smalltalk must stay ASCII: 3.6.2's compiler mangles wide characters
     // (build them with `Character codePoint:` instead), and the probe runs on EVERY stone, including 3.6.2.
     // An em dash in a Smalltalk COMMENT is the easy way to break this -- it reads as
     // harmless prose in the editor and is invisible in review.
     const e = exec();
-    tonelCapability(e);
+    await tonelCapability(e);
     const code = codeOf(e);
     const wide = [...code].filter((c) => c.charCodeAt(0) > 127);
     expect(wide).toEqual([]);

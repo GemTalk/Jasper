@@ -235,7 +235,7 @@ export class GemStoneNotebookKernel {
       // Show Transcript output the cell buffered server-side (kernels running
       // on the blocking path — e.g. Grail Python — can't stream it live; for
       // the live Smalltalk path this is an empty no-op drain).
-      appendTranscriptOutput(drainTranscript(session));
+      appendTranscriptOutput(await drainTranscript(session));
     }
 
     if (result.success) {

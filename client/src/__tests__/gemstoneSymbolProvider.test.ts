@@ -38,12 +38,12 @@ describe('GemStoneWorkspaceSymbolProvider', () => {
       provider = new GemStoneWorkspaceSymbolProvider(makeSessionManager(true));
     });
 
-    it('returns empty for empty query', () => {
-      expect(provider.provideWorkspaceSymbols('')).toEqual([]);
+    it('returns empty for empty query', async () => {
+      expect(await provider.provideWorkspaceSymbols('')).toEqual([]);
     });
 
-    it('returns matching classes for query', () => {
-      const results = provider.provideWorkspaceSymbols('Array');
+    it('returns matching classes for query', async () => {
+      const results = await provider.provideWorkspaceSymbols('Array');
       expect(results).toHaveLength(3);
       const names = results.map((r) => r.name);
       expect(names).toContain('Array');
@@ -51,26 +51,26 @@ describe('GemStoneWorkspaceSymbolProvider', () => {
       expect(names).toContain('MyArray');
     });
 
-    it('search is case-insensitive', () => {
-      const results = provider.provideWorkspaceSymbols('array');
+    it('search is case-insensitive', async () => {
+      const results = await provider.provideWorkspaceSymbols('array');
       expect(results).toHaveLength(3);
     });
 
-    it('returns SymbolKind.Class for all results', () => {
-      const results = provider.provideWorkspaceSymbols('My');
+    it('returns SymbolKind.Class for all results', async () => {
+      const results = await provider.provideWorkspaceSymbols('My');
       for (const r of results) {
         expect(r.kind).toBe(SymbolKind.Class);
       }
     });
 
-    it('includes dictionary name as container', () => {
-      const results = provider.provideWorkspaceSymbols('MyClass');
+    it('includes dictionary name as container', async () => {
+      const results = await provider.provideWorkspaceSymbols('MyClass');
       expect(results).toHaveLength(1);
       expect(results[0].containerName).toBe('UserGlobals');
     });
 
-    it('builds definition URI for each symbol', () => {
-      const results = provider.provideWorkspaceSymbols('String');
+    it('builds definition URI for each symbol', async () => {
+      const results = await provider.provideWorkspaceSymbols('String');
       expect(results).toHaveLength(1);
       const uri = results[0].location.uri;
       expect(uri.scheme).toBe('gemstone');
@@ -78,26 +78,26 @@ describe('GemStoneWorkspaceSymbolProvider', () => {
       expect(uri.path).toContain('/String/definition');
     });
 
-    it('caches results across calls', () => {
+    it('caches results across calls', async () => {
       mockGetAllClassNames.mockClear();
-      provider.provideWorkspaceSymbols('Array');
-      provider.provideWorkspaceSymbols('String');
+      await provider.provideWorkspaceSymbols('Array');
+      await provider.provideWorkspaceSymbols('String');
       expect(mockGetAllClassNames).toHaveBeenCalledTimes(1);
     });
 
-    it('invalidateCache forces re-fetch', () => {
+    it('invalidateCache forces re-fetch', async () => {
       mockGetAllClassNames.mockClear();
-      provider.provideWorkspaceSymbols('Array');
+      await provider.provideWorkspaceSymbols('Array');
       provider.invalidateCache();
-      provider.provideWorkspaceSymbols('Array');
+      await provider.provideWorkspaceSymbols('Array');
       expect(mockGetAllClassNames).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('without active session', () => {
-    it('returns empty when no session', () => {
+    it('returns empty when no session', async () => {
       const provider = new GemStoneWorkspaceSymbolProvider(makeSessionManager(false));
-      expect(provider.provideWorkspaceSymbols('Array')).toEqual([]);
+      expect(await provider.provideWorkspaceSymbols('Array')).toEqual([]);
     });
   });
 });

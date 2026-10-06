@@ -19,11 +19,11 @@ const boom = () => {
 };
 
 describe('literalsProvider surfaces real runner failures via onError', () => {
-  it('reports a throwing symbol runner (well-formed #symbol) and returns []', () => {
+  it('reports a throwing symbol runner (well-formed #symbol) and returns []', async () => {
     const onError = vi.fn();
     const p = createLiteralsProvider(1, boom, vi.fn(), onError);
 
-    const results = p.search('#at:put:', cfg(), NEVER_CANCELLED);
+    const results = await p.search('#at:put:', cfg(), NEVER_CANCELLED);
 
     expect(results).toEqual([]);
     expect(onError).toHaveBeenCalledTimes(1);
@@ -32,32 +32,31 @@ describe('literalsProvider surfaces real runner failures via onError', () => {
     expect(msg).toContain('GCI connection dropped');
   });
 
-  it('reports a throwing string runner (well-formed string literal) and returns []', () => {
+  it('reports a throwing string runner (well-formed string literal) and returns []', async () => {
     const onError = vi.fn();
     const p = createLiteralsProvider(1, vi.fn(), boom, onError);
 
-    const results = p.search("'oops'", cfg(), NEVER_CANCELLED);
+    const results = await p.search("'oops'", cfg(), NEVER_CANCELLED);
 
     expect(results).toEqual([]);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(String(onError.mock.calls[0][0])).toContain('GCI connection dropped');
   });
 
-  it('does NOT report the "still typing / not a literal" cases (they never hit the server)', () => {
+  it('does NOT report the "still typing / not a literal" cases (they never hit the server)', async () => {
     const onError = vi.fn();
     // A runner that would throw if it were ever called — proves these terms bail out before the try.
     const p = createLiteralsProvider(1, boom, boom, onError);
 
     for (const term of ['#', '#foo. System abortTransaction', '42', '$a', "'unterminated", '   ']) {
-      expect(p.search(term, cfg(), NEVER_CANCELLED)).toEqual([]);
+      expect(await p.search(term, cfg(), NEVER_CANCELLED)).toEqual([]);
     }
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('does not throw when no error sink is wired (onError is optional)', () => {
+  it('does not throw when no error sink is wired (onError is optional)', async () => {
     const p = createLiteralsProvider(1, boom, vi.fn()); // no onError
 
-    expect(() => p.search('#at:put:', cfg(), NEVER_CANCELLED)).not.toThrow();
-    expect(p.search('#at:put:', cfg(), NEVER_CANCELLED)).toEqual([]);
+    await expect(p.search('#at:put:', cfg(), NEVER_CANCELLED)).resolves.toEqual([]);
   });
 });

@@ -23,7 +23,7 @@ const BACKUP_DIR = '/root/db-1/backups';
 
 function makeDeps(overrides?: Partial<LogicalBackupDeps>): LogicalBackupDeps {
   return {
-    execute: vi.fn((code: string) => {
+    execute: vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'false';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
@@ -71,7 +71,7 @@ describe('runLogicalBackup', () => {
 
   it('stops with an explanatory error when the stone cannot report its backups directory', async () => {
     const deps = makeDeps({
-      execute: vi.fn((code: string) => {
+      execute: vi.fn(async (code: string) => {
         if (code.includes('FileControl')) return 'true';
         if (code.includes('needsCommit')) return 'false';
         if (code.includes('SystemRepository fileNames')) return '';
@@ -92,7 +92,7 @@ describe('runLogicalBackup', () => {
 
   it('stops with an explanatory error when asking the stone for its backups directory fails', async () => {
     const deps = makeDeps({
-      execute: vi.fn((code: string) => {
+      execute: vi.fn(async (code: string) => {
         if (code.includes('FileControl')) return 'true';
         if (code.includes('needsCommit')) return 'false';
         if (code.includes('SystemRepository fileNames')) throw new Error('gci down');
@@ -176,7 +176,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('warns before overwriting a backup that already exists at the destination', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'false';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
@@ -200,7 +200,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('does not back up when the user declines to overwrite an existing backup', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'false';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
@@ -217,7 +217,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('reports a pre-flight failure when checking for an existing backup errors', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'false';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
@@ -322,7 +322,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('reports a pre-flight failure when the uncommitted-changes check errors', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
       throw new Error('gci down');
@@ -339,7 +339,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('reports a failure when aborting the uncommitted changes errors', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;
       if (code.includes('needsCommit')) return 'true';
@@ -360,7 +360,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('stops with an explanatory error when the user lacks FileControl', async () => {
-    const deps = makeDeps({ execute: vi.fn(() => 'false') });
+    const deps = makeDeps({ execute: vi.fn(async () => 'false') });
 
     const ok = await runLogicalBackup(deps);
 
@@ -373,7 +373,7 @@ describe('runLogicalBackup', () => {
 
   it('does not back up when the user declines to discard uncommitted changes', async () => {
     const deps = makeDeps({
-      execute: vi.fn((code: string) => (code.includes('needsCommit') ? 'true' : 'true')),
+      execute: vi.fn(async (code: string) => (code.includes('needsCommit') ? 'true' : 'true')),
     });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
@@ -384,7 +384,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('aborts the session then backs up when the user agrees to discard changes', async () => {
-    const execute = vi.fn((code: string) => {
+    const execute = vi.fn(async (code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'true';
       if (code.includes('SystemRepository fileNames')) return `${EXTENT}\n`;

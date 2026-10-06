@@ -33,7 +33,7 @@ export class McpSession {
     this.handle = result.session;
   }
 
-  executeFetchString(code: string): string {
+  async executeFetchString(code: string): Promise<string> {
     return this.gci.executeAndFetchString(this.handle, code);
   }
 

@@ -80,10 +80,12 @@ async function openResultDocument(
  *  open so the Spotter can open beside itself; omitted → the classic active-group open. */
 export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHandlers {
   return {
-    openClass(a) {
+    async openClass(a) {
       // Another surface may take the result and show it itself; the Explorer is then not
       // where the user is looking, so its container is left alone.
-      if (!SystemBrowser.navigateToClass(a.sessionId, a.dictName, a.className, a.dictIndex)) {
+      if (
+        !(await SystemBrowser.navigateToClass(a.sessionId, a.dictName, a.className, a.dictIndex))
+      ) {
         const uri = vscode.Uri.parse(
           `gemstone://${a.sessionId}` +
             `/${encodeURIComponent(a.dictName)}` +
@@ -146,8 +148,8 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
  *  class. Returns null for a non-referenceable result (e.g. a dictionary). */
 export function resolveReferencesUsing(
   session: ActiveSession,
-): (result: OmniResult) => ReferenceView | null {
-  return (result) => {
+): (result: OmniResult) => Promise<ReferenceView | null> {
+  return async (result) => {
     const req = referenceRequestFor(result);
     if (!req) return null;
     // Senders and references can live in ANY method environment, so sweep 0..maxEnvironment the same
@@ -162,8 +164,8 @@ export function resolveReferencesUsing(
     for (let env = 0; env <= maxEnv; env++) {
       const rows =
         req.kind === 'senders'
-          ? sendersOf(session, req.selector, env)
-          : referencesToObject(session, req.className, env);
+          ? await sendersOf(session, req.selector, env)
+          : await referencesToObject(session, req.className, env);
       for (const r of methodRowsToResults(rows, session.id, 'methods', env)) {
         const a = r.action;
         const key = a.kind === 'openMethod' ? `${a.className}|${a.isMeta}|${a.selector}` : r.label;
@@ -209,12 +211,14 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
 
 /** Source text to preview for a result in the preview pane: a method's source, a class (or global's
  *  class) definition. Reveal-only actions (dictionary / category) have no source → ''. Runs
- *  synchronously against the session; the host wraps the call so a failure just shows no preview. */
-export function buildPreviewSource(session: ActiveSession): (result: OmniResult) => string {
-  return (result) => {
+ *  against the session; the host wraps the call so a failure just shows no preview. */
+export function buildPreviewSource(
+  session: ActiveSession,
+): (result: OmniResult) => Promise<string> {
+  return async (result) => {
     const a = result.action;
     if (a.kind === 'openMethod') {
-      return getMethodSource(
+      return await getMethodSource(
         session,
         a.className,
         a.isMeta,
@@ -224,11 +228,11 @@ export function buildPreviewSource(session: ActiveSession): (result: OmniResult)
       );
     }
     if (a.kind === 'openClass') {
-      return getClassDefinition(session, a.className, a.dictIndex);
+      return await getClassDefinition(session, a.className, a.dictIndex);
     }
     if (a.kind === 'revealGlobal') {
       // Preview the class of the global's value (e.g. Transcript → its stream class definition).
-      return getClassDefinition(session, a.className);
+      return await getClassDefinition(session, a.className);
     }
     return '';
   };
@@ -471,7 +475,7 @@ export function registerOmniSearch(
       const session = currentSession(sessionManager);
       if (session) {
         try {
-          defaultQueryExecutorUsing(session)(clearClassOrganizerCode());
+          await defaultQueryExecutorUsing(session)(clearClassOrganizerCode());
         } catch (e: unknown) {
           // A refresh that cannot reach the stone still redraws from what it has.
           logWarning(

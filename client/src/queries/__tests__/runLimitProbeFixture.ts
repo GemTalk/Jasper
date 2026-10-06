@@ -37,9 +37,12 @@ function runLimitProbeClassNames(count: number): string[] {
  * The names are generated once here and interpolated into the doit, so the
  * classes created in the stone and the names returned cannot drift apart.
  */
-export function installRunLimitProbeClasses(exec: QueryExecutor, count: number): string[] {
+export async function installRunLimitProbeClasses(
+  exec: QueryExecutor,
+  count: number,
+): Promise<string[]> {
   const names = runLimitProbeClassNames(count);
-  exec(`[| c sl |
+  await exec(`[| c sl |
 sl := System myUserProfile symbolList.
 UserGlobals removeKey: ${PROBE_RAN_MARKER_KEY} ifAbsent: [nil].
 #(${names.map((n) => `'${n}'`).join(' ')}) do: [:name |

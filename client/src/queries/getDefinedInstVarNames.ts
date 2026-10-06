@@ -11,16 +11,16 @@ import { classLookupExpr, splitLines } from './util';
 // dictionaries resolves to the SAME object the count/rename queries use — and the
 // name is quoted/escaped there. A class the dictionary does not bind yields an
 // empty list rather than a compile/runtime error.
-export function getDefinedInstVarNames(
+export async function getDefinedInstVarNames(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): string[] {
+): Promise<string[]> {
   const code = `| ws cls |
 cls := ${classLookupExpr(className, dict)}.
 ws := WriteStream on: String new.
 (cls ifNil: [#()] ifNotNil: [:c | c instVarNames]) do: [:each |
   ws nextPutAll: each asString; lf].
 ws contents`;
-  return splitLines(execute(code));
+  return splitLines(await execute(code));
 }

@@ -147,7 +147,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
 
     // A refactoring's record lives in the stone, so the client entry is only a pointer.
     // Verify it still points at something before opening a preview over nothing.
-    const status = checkRefactoringUndoAvailable(session);
+    const status = await checkRefactoringUndoAvailable(session);
     if (!status.available || status.sequence !== entry.sequence) {
       logInfo(`[undo] #${entry.id} no longer held by the stone; dropping it`);
       dropUndoEntry(session.id, entry.id);
@@ -157,7 +157,7 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
     await undoLastRefactoringCommand(sessions);
     // The panel can be cancelled, and a partial undo leaves the record in place, so ask
     // the stone what actually happened rather than assume the entry is spent.
-    const after = checkRefactoringUndoAvailable(session);
+    const after = await checkRefactoringUndoAvailable(session);
     // By id, for the same reason as above: the refactoring panel is not modal either, so the
     // top of the stack may have moved on while it was open.
     if (!after.available || after.sequence !== entry.sequence) dropUndoEntry(session.id, entry.id);
@@ -192,7 +192,7 @@ async function confirmUndo(entry: UndoEntry, session: ActiveSession): Promise<bo
   // in: a slot records a SymbolList index as often as a name, and an index means nothing to a
   // reader -- least of all when the point is telling two same-named classes apart (#396). One
   // lookup for the whole plan, so the symbol list is read once rather than once per row.
-  const plan = planUndo(entry, dictionaryNameLookup(session));
+  const plan = planUndo(entry, await dictionaryNameLookup(session));
   // planUndo answers undefined only for a refactoring, and the caller has already sent those
   // down their own path -- their reversal is paged from the stone, not derived here. So this is
   // not a "no plan, go ahead": it is a kind that should never have reached this function.

@@ -26,11 +26,11 @@ export interface DescendantClass {
 // symbol-list scan mapping every class object to the first dictionary that binds it — so a
 // descendant whose name is shadowed elsewhere still reports its own dictionary, not the global
 // first match. A class the dictionary does not bind yields an empty list rather than an error.
-export function getClassDescendantNames(
+export async function getClassDescendantNames(
   execute: QueryExecutor,
   className: string,
   dict?: number | string,
-): DescendantClass[] {
+): Promise<DescendantClass[]> {
   const code = `| organizer cls frontier seen out sl classDict |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
@@ -59,7 +59,7 @@ out := WriteStream on: String new.
       nextPutAll: (idx = 0 ifTrue: [''] ifFalse: [(sl at: idx) name asString]); lf.
     frontier addAll: ((organizer subclassesOf: c) asSortedCollection: [:a :b | a name <= b name])]].
 out contents`;
-  const raw = execute(code);
+  const raw = await execute(code);
   const results: DescendantClass[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

@@ -91,7 +91,7 @@ describe('tools', () => {
 
   describe('execute_code', () => {
     it('executes Smalltalk code and returns result', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('7');
+      vi.mocked(session.executeFetchString).mockResolvedValue('7');
       const tool = server.getTool('execute_code')!;
       const result = await tool.handler({ code: '3 + 4' });
 
@@ -108,7 +108,7 @@ describe('tools', () => {
     // "expected start of a statement". Wrapping as a block (`[<code>] value`)
     // accepts both single expressions and statement sequences.
     it('block-wraps the code so multi-statement and temp-var bodies parse', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('43');
+      vi.mocked(session.executeFetchString).mockResolvedValue('43');
       const tool = server.getTool('execute_code')!;
       const result = await tool.handler({ code: '| x | x := 42. x + 1' });
 
@@ -122,7 +122,7 @@ describe('tools', () => {
     // before the hard overflow with ~30 frames of headroom; we catch it
     // with a minimal handler so the result is a clean string.
     it('wraps user code in an AlmostOutOfStack handler', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('ok');
+      vi.mocked(session.executeFetchString).mockResolvedValue('ok');
       const tool = server.getTool('execute_code')!;
       await tool.handler({ code: '3 + 4' });
 
@@ -134,7 +134,7 @@ describe('tools', () => {
     // Non-stack errors (DNU, ZeroDivide, etc.) still need to come back as a
     // diagnostic string rather than crashing the call.
     it('wraps user code in an AbstractException handler too', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('ok');
+      vi.mocked(session.executeFetchString).mockResolvedValue('ok');
       const tool = server.getTool('execute_code')!;
       await tool.handler({ code: '3 + 4' });
 
@@ -143,7 +143,7 @@ describe('tools', () => {
     });
 
     it('returns error on GCI failure', async () => {
-      vi.mocked(session.executeFetchString).mockImplementation(() => {
+      vi.mocked(session.executeFetchString).mockImplementation(async () => {
         throw new Error('MessageNotUnderstood');
       });
       const tool = server.getTool('execute_code')!;
@@ -156,7 +156,7 @@ describe('tools', () => {
 
   describe('get_class_definition', () => {
     it('fetches class definition using className definition', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Array subclass: ...');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Array subclass: ...');
       const tool = server.getTool('get_class_definition')!;
       const result = await tool.handler({ className: 'Array' });
 
@@ -167,7 +167,7 @@ describe('tools', () => {
 
   describe('get_method_source', () => {
     it('fetches instance-side method source', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('printOn: aStream ...');
+      vi.mocked(session.executeFetchString).mockResolvedValue('printOn: aStream ...');
       const tool = server.getTool('get_method_source')!;
       const result = await tool.handler({
         className: 'Array',
@@ -189,7 +189,7 @@ describe('tools', () => {
     });
 
     it('fetches class-side method source', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('new ...');
+      vi.mocked(session.executeFetchString).mockResolvedValue('new ...');
       const tool = server.getTool('get_method_source')!;
       await tool.handler({
         className: 'Array',
@@ -203,7 +203,7 @@ describe('tools', () => {
     });
 
     it('includes environmentId when specified', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('source');
+      vi.mocked(session.executeFetchString).mockResolvedValue('source');
       const tool = server.getTool('get_method_source')!;
       await tool.handler({
         className: 'Array',
@@ -224,7 +224,7 @@ describe('tools', () => {
      * source is empty", which GemStone cannot hold.
      */
     it('reports a method that does not exist rather than answering empty', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('get_method_source')!;
 
       const result = await tool.handler({
@@ -239,7 +239,7 @@ describe('tools', () => {
     });
 
     it('says which side it looked on', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('get_method_source')!;
 
       const result = await tool.handler({ className: 'Ghost', isMeta: true, selector: 'new' });
@@ -250,7 +250,9 @@ describe('tools', () => {
 
   describe('find_implementors', () => {
     it('calls ClassOrganizer implementorsOf:', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Globals\tArray\t0\tsize\taccessing\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue(
+        'Globals\tArray\t0\tsize\taccessing\n',
+      );
       const tool = server.getTool('find_implementors')!;
       const result = await tool.handler({ selector: 'size' });
 
@@ -265,7 +267,7 @@ describe('tools', () => {
     // or 1" message and we observe both environmentIds in the executed
     // queries.
     it('auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('find_implementors')!;
       const result = await tool.handler({ selector: 'nonexistent' });
 
@@ -276,7 +278,7 @@ describe('tools', () => {
     });
 
     it('returns plain empty message when an explicit non-zero env is empty', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('find_implementors')!;
       const result = await tool.handler({ selector: 'nonexistent', environmentId: 1 });
 
@@ -288,7 +290,7 @@ describe('tools', () => {
 
   describe('find_senders', () => {
     it('calls ClassOrganizer sendersOf:', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
+      vi.mocked(session.executeFetchString).mockResolvedValue(
         'Globals\tString\t0\tprintString\tprinting\n',
       );
       const tool = server.getTool('find_senders')!;
@@ -303,7 +305,7 @@ describe('tools', () => {
     // searchWithEnvFallback helper, so a refactor that breaks one would
     // silently break this without a guard.
     it('auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('find_senders')!;
       const result = await tool.handler({ selector: 'nonexistent' });
 
@@ -318,7 +320,7 @@ describe('tools', () => {
     it('fetches superclasses and subclasses', async () => {
       const hierarchyResult =
         'Globals\tObject\tsuperclass\nGlobals\tCollection\tself\nGlobals\tBag\tsubclass\n';
-      vi.mocked(session.executeFetchString).mockReturnValue(hierarchyResult);
+      vi.mocked(session.executeFetchString).mockResolvedValue(hierarchyResult);
       const tool = server.getTool('get_class_hierarchy')!;
       const result = await tool.handler({ className: 'Collection' });
 
@@ -331,7 +333,7 @@ describe('tools', () => {
 
   describe('list_dictionaries', () => {
     it('returns dictionary names', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Globals\nUserGlobals\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Globals\nUserGlobals\n');
       const tool = server.getTool('list_dictionaries')!;
       const result = await tool.handler({});
 
@@ -341,7 +343,7 @@ describe('tools', () => {
 
   describe('add_dictionary', () => {
     it('creates a new SymbolDictionary and returns confirmation', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Added dictionary: MyDict');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Added dictionary: MyDict');
       const result = await server.getTool('add_dictionary')!.handler({ dictionaryName: 'MyDict' });
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
@@ -353,7 +355,7 @@ describe('tools', () => {
 
   describe('remove_dictionary', () => {
     it('removes by name and returns confirmation', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Removed dictionary: MyDict');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Removed dictionary: MyDict');
       const result = await server
         .getTool('remove_dictionary')!
         .handler({ dictionaryName: 'MyDict' });
@@ -366,7 +368,7 @@ describe('tools', () => {
 
   describe('compile_class_definition', () => {
     it('evaluates the source and returns "Class: <name>"', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Foo');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Foo');
       const result = await server.getTool('compile_class_definition')!.handler({
         source: "Object subclass: 'Foo' inDictionary: 'Globals'",
       });
@@ -379,7 +381,7 @@ describe('tools', () => {
 
   describe('delete_class', () => {
     it('scopes to the named dictionary', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Deleted class: Foo');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Deleted class: Foo');
       const result = await server.getTool('delete_class')!.handler({
         className: 'Foo',
         dictionaryName: 'UserGlobals',
@@ -394,7 +396,7 @@ describe('tools', () => {
 
   describe('delete_method', () => {
     it('removes the selector and returns confirmation', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Deleted: Array >> size');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Deleted: Array >> size');
       const result = await server.getTool('delete_method')!.handler({
         className: 'Array',
         isMeta: false,
@@ -407,7 +409,7 @@ describe('tools', () => {
     });
 
     it('scopes to a dictionary when dictionaryName is given', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       await server.getTool('delete_method')!.handler({
         className: 'Foo',
         isMeta: false,
@@ -421,7 +423,7 @@ describe('tools', () => {
 
   describe('set_class_comment', () => {
     it('sets the comment via the shared query', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Comment set: Foo');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Comment set: Foo');
       const result = await server.getTool('set_class_comment')!.handler({
         className: 'Foo',
         comment: 'hi',
@@ -435,7 +437,7 @@ describe('tools', () => {
 
   describe('describe_class', () => {
     it('defaults to first-match objectNamed: lookup', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
+      vi.mocked(session.executeFetchString).mockResolvedValue(
         '=== Definition ===\nObject subclass: #Foo\n',
       );
       const tool = server.getTool('describe_class')!;
@@ -448,7 +450,7 @@ describe('tools', () => {
     });
 
     it('scopes to a specific dictionary when dictionaryName is given', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('describe_class')!;
       await tool.handler({ className: 'Customer', dictionaryName: 'UserGlobals' });
 
@@ -460,7 +462,7 @@ describe('tools', () => {
 
   describe('export_class_source', () => {
     it('defaults to first-match objectNamed: lookup', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue("! Class\nObject subclass: 'Foo'\n");
+      vi.mocked(session.executeFetchString).mockResolvedValue("! Class\nObject subclass: 'Foo'\n");
       const tool = server.getTool('export_class_source')!;
       const result = await tool.handler({ className: 'Foo' });
 
@@ -471,7 +473,7 @@ describe('tools', () => {
     });
 
     it('scopes to a specific dictionary when dictionaryName is given', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('export_class_source')!;
       await tool.handler({ className: 'Customer', dictionaryName: 'UserGlobals' });
 
@@ -483,7 +485,7 @@ describe('tools', () => {
 
   describe('find_references_to', () => {
     it('calls ClassOrganizer referencesToObject: with objectNamed: lookup', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Globals\tFoo\t0\tuse\tclient\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Globals\tFoo\t0\tuse\tclient\n');
       const tool = server.getTool('find_references_to')!;
       const result = await tool.handler({ objectName: 'AllUsers' });
 
@@ -494,7 +496,7 @@ describe('tools', () => {
     });
 
     it('auto-falls-back to env 1 when env 0 returns empty', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('find_references_to')!;
       const result = await tool.handler({ objectName: 'Unused' });
 
@@ -507,7 +509,7 @@ describe('tools', () => {
 
   describe('list_all_classes', () => {
     it('emits dictIndex, dictName, className rows', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
+      vi.mocked(session.executeFetchString).mockResolvedValue(
         '1\tGlobals\tArray\n2\tUserGlobals\tMyClass\n',
       );
       const tool = server.getTool('list_all_classes')!;
@@ -519,7 +521,7 @@ describe('tools', () => {
 
   describe('list_dictionary_entries', () => {
     it('emits kind, category, name rows for classes and globals', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('1\taccessing\tArray\n0\t\tMyVar\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('1\taccessing\tArray\n0\t\tMyVar\n');
       const tool = server.getTool('list_dictionary_entries')!;
       const result = await tool.handler({ dictionaryName: 'Globals' });
 
@@ -529,7 +531,7 @@ describe('tools', () => {
     });
 
     it('reports empty/missing dictionary with a friendly message', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_dictionary_entries')!;
       const result = await tool.handler({ dictionaryName: 'NoSuchDict' });
 
@@ -539,7 +541,7 @@ describe('tools', () => {
 
   describe('list_classes', () => {
     it('lists classes in a dictionary by name', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Array\nString\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Array\nString\n');
       const tool = server.getTool('list_classes')!;
       const result = await tool.handler({ dictionaryName: 'Globals' });
 
@@ -549,7 +551,7 @@ describe('tools', () => {
     });
 
     it('escapes single quotes in dictionary name', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_classes')!;
       await tool.handler({ dictionaryName: "it's" });
 
@@ -558,7 +560,7 @@ describe('tools', () => {
     });
 
     it('reports empty/missing dictionary with a friendly message', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_classes')!;
       const result = await tool.handler({ dictionaryName: 'NoSuchDict' });
 
@@ -569,7 +571,7 @@ describe('tools', () => {
   describe('list_methods', () => {
     it('lists methods grouped by side and category', async () => {
       const methodList = 'instance\taccessing\tsize\nclass\tcreation\tnew\n';
-      vi.mocked(session.executeFetchString).mockReturnValue(methodList);
+      vi.mocked(session.executeFetchString).mockResolvedValue(methodList);
       const tool = server.getTool('list_methods')!;
       const result = await tool.handler({ className: 'Array' });
 
@@ -583,7 +585,9 @@ describe('tools', () => {
 
   describe('compile_method', () => {
     it('compiles an instance-side method', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Compiled successfully: Array >> size');
+      vi.mocked(session.executeFetchString).mockResolvedValue(
+        'Compiled successfully: Array >> size',
+      );
       const tool = server.getTool('compile_method')!;
       const result = await tool.handler({
         className: 'Array',
@@ -601,7 +605,7 @@ describe('tools', () => {
     });
 
     it('compiles a class-side method (target := base class in the shared Smalltalk)', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Compiled');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Compiled');
       const tool = server.getTool('compile_method')!;
       await tool.handler({
         className: 'Array',
@@ -615,7 +619,7 @@ describe('tools', () => {
     });
 
     it('escapes single quotes in source', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Compiled');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Compiled');
       const tool = server.getTool('compile_method')!;
       await tool.handler({
         className: 'MyClass',
@@ -629,7 +633,7 @@ describe('tools', () => {
     });
 
     it('returns error on compile failure', async () => {
-      vi.mocked(session.executeFetchString).mockImplementation(() => {
+      vi.mocked(session.executeFetchString).mockImplementation(async () => {
         throw new Error('Compile error: undefined variable x');
       });
       const tool = server.getTool('compile_method')!;
@@ -647,7 +651,7 @@ describe('tools', () => {
 
   describe('abort', () => {
     it('aborts the transaction', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('Transaction aborted');
+      vi.mocked(session.executeFetchString).mockResolvedValue('Transaction aborted');
       const tool = server.getTool('abort')!;
       const result = await tool.handler({});
 
@@ -659,7 +663,7 @@ describe('tools', () => {
 
   describe('commit', () => {
     it('commits the transaction', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('committed');
+      vi.mocked(session.executeFetchString).mockResolvedValue('committed');
       const tool = server.getTool('commit')!;
       const result = await tool.handler({});
 
@@ -673,8 +677,8 @@ describe('tools', () => {
     // read in a second round trip.
     it('names the conflict when the stone refuses the commit', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('refused')
-        .mockReturnValueOnce(WRITE_WRITE_ANSWER);
+        .mockResolvedValueOnce('refused')
+        .mockResolvedValueOnce(WRITE_WRITE_ANSWER);
       const tool = server.getTool('commit')!;
       const result = await tool.handler({});
 
@@ -685,7 +689,7 @@ describe('tools', () => {
 
   describe('search_method_source', () => {
     it('searches method source for a substring', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
+      vi.mocked(session.executeFetchString).mockResolvedValue(
         'Globals\tArray\t0\tprintOn:\tprinting\n',
       );
       const tool = server.getTool('search_method_source')!;
@@ -698,7 +702,7 @@ describe('tools', () => {
     });
 
     it('supports case-sensitive search', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('search_method_source')!;
       await tool.handler({ term: 'Foo', ignoreCase: false });
 
@@ -707,7 +711,7 @@ describe('tools', () => {
     });
 
     it('returns fallback when no matches found', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('search_method_source')!;
       const result = await tool.handler({ term: 'xyznonexistent' });
 
@@ -718,7 +722,7 @@ describe('tools', () => {
   describe('run_test_method', () => {
     it('runs a passing test and formats the result', async () => {
       // Shared query parses structured tab-separated output from Smalltalk
-      vi.mocked(session.executeFetchString).mockReturnValue('passed\t\t12');
+      vi.mocked(session.executeFetchString).mockResolvedValue('passed\t\t12');
       const tool = server.getTool('run_test_method')!;
       const result = await tool.handler({ className: 'ArrayTest', selector: 'testSize' });
 
@@ -731,7 +735,7 @@ describe('tools', () => {
     });
 
     it('returns failure details', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('failed\texpected 3 got 4\t5');
+      vi.mocked(session.executeFetchString).mockResolvedValue('failed\texpected 3 got 4\t5');
       const tool = server.getTool('run_test_method')!;
       const result = await tool.handler({ className: 'ArrayTest', selector: 'testBad' });
 
@@ -744,7 +748,7 @@ describe('tools', () => {
     // install.sh) is invisible until this session aborts. Auto-refresh-if-clean
     // closes the gap silently when there's no uncommitted work to lose.
     it('issues an auto-refresh-if-clean before running the test', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('passed\t\t1');
+      vi.mocked(session.executeFetchString).mockResolvedValue('passed\t\t1');
       const tool = server.getTool('run_test_method')!;
       await tool.handler({ className: 'ArrayTest', selector: 'testSize' });
 
@@ -757,7 +761,7 @@ describe('tools', () => {
     it('runs all tests in a class and returns formatted results', async () => {
       const output =
         'ArrayTest\ttestSize\tpassed\t\nArrayTest\ttestAt\tpassed\t\nArrayTest\ttestAdd\tpassed\t\n';
-      vi.mocked(session.executeFetchString).mockReturnValue(output);
+      vi.mocked(session.executeFetchString).mockResolvedValue(output);
       const tool = server.getTool('run_test_class')!;
       const result = await tool.handler({ className: 'ArrayTest' });
 
@@ -770,7 +774,7 @@ describe('tools', () => {
 
     it('reports failures and errors', async () => {
       const output = 'MyTest\ttestGood\tpassed\t\nMyTest\ttestBad\tfailed\texpected 1 got 2\n';
-      vi.mocked(session.executeFetchString).mockReturnValue(output);
+      vi.mocked(session.executeFetchString).mockResolvedValue(output);
       const tool = server.getTool('run_test_class')!;
       const result = await tool.handler({ className: 'MyTest' });
 
@@ -779,7 +783,7 @@ describe('tools', () => {
     });
 
     it('issues an auto-refresh-if-clean before running the suite', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('run_test_class')!;
       await tool.handler({ className: 'ArrayTest' });
 
@@ -790,7 +794,7 @@ describe('tools', () => {
 
   describe('eval_python', () => {
     it('runs the Grail eval pipeline via objectNamed: ModuleAst', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('3');
+      vi.mocked(session.executeFetchString).mockResolvedValue('3');
       const result = await server.getTool('eval_python')!.handler({ source: '1 + 2' });
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
@@ -806,7 +810,7 @@ describe('tools', () => {
       const hint =
         'Grail (GemStone-Python) not detected: class ModuleAst not found in symbolList. ' +
         'Install Grail or activate it in this session before using the python tools.';
-      vi.mocked(session.executeFetchString).mockReturnValue(hint);
+      vi.mocked(session.executeFetchString).mockResolvedValue(hint);
       const result = await server.getTool('eval_python')!.handler({ source: 'x = 1' });
 
       expect(result.content[0].text).toContain('Grail (GemStone-Python) not detected');
@@ -816,7 +820,7 @@ describe('tools', () => {
 
   describe('compile_python', () => {
     it('runs the Grail transpile pipeline (parseSource + smalltalkSource)', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('x := 1');
+      vi.mocked(session.executeFetchString).mockResolvedValue('x := 1');
       const result = await server.getTool('compile_python')!.handler({ source: 'x = 1' });
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
@@ -833,8 +837,8 @@ describe('tools', () => {
     // old runTestMethod tool returned).
     it('formats TestFailure output with exceptionClass + messageText', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('ok') // refreshIfClean
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce('ok') // refreshIfClean
+        .mockResolvedValueOnce(
           'status: failed\n' +
             'exceptionClass: TestFailure\n' +
             'errorNumber: 2751\n' +
@@ -854,8 +858,8 @@ describe('tools', () => {
     // the highest-signal fields for diagnosing "missing method" errors.
     it('includes mnuReceiver and mnuSelector on MessageNotUnderstood', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('ok')
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce('ok')
+        .mockResolvedValueOnce(
           'status: error\n' +
             'exceptionClass: MessageNotUnderstood\n' +
             'errorNumber: 2010\n' +
@@ -874,8 +878,8 @@ describe('tools', () => {
 
     it('returns "PASSED" when the test re-run actually passed', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('ok')
-        .mockReturnValueOnce('status: passed\n');
+        .mockResolvedValueOnce('ok')
+        .mockResolvedValueOnce('status: passed\n');
       const tool = server.getTool('describe_test_failure')!;
       const result = await tool.handler({ className: 'ArrayTest', selector: 'testGood' });
 
@@ -888,8 +892,8 @@ describe('tools', () => {
     // must survive the round-trip.
     it('formats stackReport as a verbatim multi-line block under a header', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('ok')
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce('ok')
+        .mockResolvedValueOnce(
           'status: failed\n' +
             'exceptionClass: TestFailure\n' +
             'errorNumber: 2751\n' +
@@ -911,7 +915,7 @@ describe('tools', () => {
     });
 
     it('issues the gem-config toggle that enables stack capture', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('status: passed\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('status: passed\n');
       const tool = server.getTool('describe_test_failure')!;
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
@@ -926,7 +930,7 @@ describe('tools', () => {
     // pinned to old committed state would let an agent debug a failure
     // that's already been fixed in the running stone.
     it('issues an auto-refresh-if-clean before re-running the test', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('status: passed\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('status: passed\n');
       const tool = server.getTool('describe_test_failure')!;
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
@@ -940,7 +944,7 @@ describe('tools', () => {
     // this in so a future "simplification" doesn't regress to Exception
     // and silently swallow MNUs.
     it('catches AbstractException, not Exception (so MNUs do not escape)', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('status: passed\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('status: passed\n');
       const tool = server.getTool('describe_test_failure')!;
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
@@ -953,7 +957,7 @@ describe('tools', () => {
     // The query must run setUp/perform/tearDown manually rather than
     // calling tc>>run.
     it('bypasses TestCase>>run by invoking setUp / perform / tearDown directly', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('status: passed\n');
+      vi.mocked(session.executeFetchString).mockResolvedValue('status: passed\n');
       const tool = server.getTool('describe_test_failure')!;
       await tool.handler({ className: 'ArrayTest', selector: 'testAny' });
 
@@ -970,7 +974,7 @@ describe('tools', () => {
     // one GCI call, not N. Auto-refresh-if-clean ensures results reflect
     // committed state.
     it('returns "All tests passed." when nothing failed', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_failing_tests')!;
       const result = await tool.handler({});
 
@@ -979,8 +983,8 @@ describe('tools', () => {
 
     it('formats failures as STATUS\\tclass\\tselector\\tmessage', async () => {
       vi.mocked(session.executeFetchString)
-        .mockReturnValueOnce('ok') // refreshIfClean response
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce('ok') // refreshIfClean response
+        .mockResolvedValueOnce(
           'MyTest\ttestBad\tfailed\texpected 1 got 2\nOther\ttestBoom\terror\tdivision by zero\n',
         );
       const tool = server.getTool('list_failing_tests')!;
@@ -991,7 +995,7 @@ describe('tools', () => {
     });
 
     it('passes explicit classNames to the underlying query', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_failing_tests')!;
       await tool.handler({ classNames: ['ArrayTest', 'StringTest'] });
 
@@ -1002,7 +1006,7 @@ describe('tools', () => {
     });
 
     it('issues an auto-refresh-if-clean before the suite runs', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_failing_tests')!;
       await tool.handler({});
 
@@ -1013,7 +1017,7 @@ describe('tools', () => {
 
   describe('list_test_classes', () => {
     it('returns dictName\\tclassName rows', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue(
+      vi.mocked(session.executeFetchString).mockResolvedValue(
         'UserGlobals\tArrayTest\nUserGlobals\tStringTest\n',
       );
       const tool = server.getTool('list_test_classes')!;
@@ -1023,7 +1027,7 @@ describe('tools', () => {
     });
 
     it('returns a friendly message when no TestCase subclasses are found', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('');
+      vi.mocked(session.executeFetchString).mockResolvedValue('');
       const tool = server.getTool('list_test_classes')!;
       const result = await tool.handler({});
 
@@ -1033,7 +1037,7 @@ describe('tools', () => {
 
   describe('refresh', () => {
     it('refreshes the session view when no uncommitted changes are pending', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('refreshed');
+      vi.mocked(session.executeFetchString).mockResolvedValue('refreshed');
       const tool = server.getTool('refresh')!;
       const result = await tool.handler({});
 
@@ -1042,7 +1046,9 @@ describe('tools', () => {
     });
 
     it('skips when there are uncommitted changes, reporting back', async () => {
-      vi.mocked(session.executeFetchString).mockReturnValue('skipped: uncommitted changes present');
+      vi.mocked(session.executeFetchString).mockResolvedValue(
+        'skipped: uncommitted changes present',
+      );
       const tool = server.getTool('refresh')!;
       const result = await tool.handler({});
 
@@ -1058,7 +1064,7 @@ describe('tools', () => {
     it('sends SESSION_STATUS_CODE and returns what it answered', async () => {
       const statusOutput =
         'User: DataCurator\nStone: gs64stone\nSession ID: 1\nTransaction: active\nUncommitted changes: no\nView: refreshed\n';
-      vi.mocked(session.executeFetchString).mockReturnValue(statusOutput);
+      vi.mocked(session.executeFetchString).mockResolvedValue(statusOutput);
       const result = await server.getTool('status')!.handler({});
 
       expect(vi.mocked(session.executeFetchString).mock.calls[0][0]).toBe(SESSION_STATUS_CODE);

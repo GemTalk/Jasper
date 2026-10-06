@@ -33,7 +33,10 @@ function targetExpr(slot: MethodSlot): string {
  * A class that will not resolve, or a selector it does not implement, reads as
  * `exists: false` — the planner treats "not there" the same however it got that way.
  */
-export function captureMethodSlots(execute: QueryExecutor, slots: MethodSlot[]): MethodSlotState[] {
+export async function captureMethodSlots(
+  execute: QueryExecutor,
+  slots: MethodSlot[],
+): Promise<MethodSlotState[]> {
   if (slots.length === 0) return [];
   const captures = slots
     .map((slot) => {
@@ -62,7 +65,7 @@ ${SMALLTALK_ESCAPER}
 ${captures}
 ws contents`;
 
-  return parseCapture(execute(code), slots.length);
+  return parseCapture(await execute(code), slots.length);
 }
 
 /** Decode one capture result. Exported for the codec's own tests. */
@@ -101,10 +104,10 @@ export interface MethodSlotOpResult {
  *
  * Nothing commits — the same rule the refactoring undo and every Jasper edit follow.
  */
-export function applyMethodSlotOps(
+export async function applyMethodSlotOps(
   execute: QueryExecutor,
   ops: MethodSlotOp[],
-): MethodSlotOpResult[] {
+): Promise<MethodSlotOpResult[]> {
   if (ops.length === 0) return [];
   const bodies = ops
     .map((op) => {
@@ -138,7 +141,7 @@ ${SMALLTALK_ESCAPER}
 ${bodies}
 ws contents`;
 
-  return parseApply(execute(code), ops);
+  return parseApply(await execute(code), ops);
 }
 
 /** Decode one apply result. Exported for tests. */

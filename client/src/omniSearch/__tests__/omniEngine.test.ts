@@ -512,7 +512,7 @@ describe('createOmniEngine', () => {
       it('asks the stone for exactly maxServerScan and reports it as the ceiling', async () => {
         const SCAN = 400;
         // Far more matches than the ceiling, so the scan is genuinely cut off.
-        const runSearch = vi.fn((_t: string, limit: number) => selectorRows(limit));
+        const runSearch = vi.fn(async (_t: string, limit: number) => selectorRows(limit));
         const engine = createOmniEngine({
           providers: [createMethodsProvider(1, runSearch)],
           config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: SCAN }),
@@ -542,7 +542,7 @@ describe('createOmniEngine', () => {
       });
 
       it('reports NO truncation from Load All when the term fits under the ceiling', async () => {
-        const runSearch = vi.fn(() => selectorRows(12)); // fewer matches than any limit asked for
+        const runSearch = vi.fn(async () => selectorRows(12)); // fewer matches than any limit asked for
         const engine = createOmniEngine({
           providers: [createMethodsProvider(1, runSearch)],
           config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: 400 }),

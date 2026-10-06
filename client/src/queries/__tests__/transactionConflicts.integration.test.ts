@@ -36,35 +36,37 @@ describe('transaction conflicts on a live stone', () => {
   useIntegrationTest(({ gciLibrary, session: s }) => {
     gci = gciLibrary;
     session = s;
-    execute = (code) => gci.executeAndFetchString(session, code);
+    execute = async (code) => gci.executeAndFetchString(session, code);
   });
 
   // §9.2: the dictionary "contains an Association whose key is #commitResult".
   // If a release stops answering one, or spells it differently, the parser goes
   // quiet rather than wrong — so pin it here.
-  it('answers a #commitResult that GemStone documents', () => {
-    const { commitResult } = transactionConflicts(execute);
+  it('answers a #commitResult that GemStone documents', async () => {
+    const { commitResult } = await transactionConflicts(execute);
 
     expect(describeCommitResult(commitResult)).toBeDefined();
   });
 
   // A clean transaction has no conflicts: "If there are no conflicts for the
   // transaction, the returned symbol dictionary has no additional Associations."
-  it('names no conflicts for a transaction that has had none', () => {
-    expect(transactionConflicts(execute).categories).toEqual([]);
+  it('names no conflicts for a transaction that has had none', async () => {
+    expect((await transactionConflicts(execute)).categories).toEqual([]);
   });
 
   // No conflict this suite can provoke answers a text value or an empty kind,
   // so the doit is fed a dictionary of its own shape: a String (a Collection in
   // GemStone) must come back as one T record, not a Character per object, and
   // an empty kind — 3.7.5's #RcReadSet on a clean transaction — not at all.
-  it('renders text as text, a collection as its objects, and skips an empty kind', () => {
+  it('renders text as text, a collection as its objects, and skips an empty kind', async () => {
     const source =
       'SymbolKeyValueDictionary new at: #commitResult put: #failure; ' +
       "at: #'Synchronized-Commit' put: 'peer timed out'; " +
       "at: #'Write-Write' put: (Array with: #jasperProbe); " +
       'at: #RcReadSet put: #(); yourself';
-    const { commitResult, categories } = parseTransactionConflicts(execute(conflictsCode(source)));
+    const { commitResult, categories } = parseTransactionConflicts(
+      await execute(conflictsCode(source)),
+    );
 
     expect(commitResult).toBe('failure');
     expect(categories).toHaveLength(2);
@@ -81,9 +83,9 @@ describe('transaction conflicts on a live stone', () => {
     });
   });
 
-  it('can be read twice without the first read disturbing the second', () => {
-    const first = transactionConflicts(execute);
-    expect(transactionConflicts(execute)).toEqual(first);
+  it('can be read twice without the first read disturbing the second', async () => {
+    const first = await transactionConflicts(execute);
+    expect(await transactionConflicts(execute)).toEqual(first);
   });
 
   // The other half of the refused/errored split. The harness's commit guard
@@ -112,7 +114,7 @@ describe('transaction conflicts on a live stone', () => {
   // `System commitTransaction` raises here rather than answering false, because
   // the guard is an error and not a conflict. The query must let that through as
   // an error rather than dressing it up as a refusal nobody caused.
-  it('lets an errored commit out of commitTransaction rather than calling it a refusal', () => {
-    expect(() => commitTransaction(execute)).toThrow();
+  it('lets an errored commit out of commitTransaction rather than calling it a refusal', async () => {
+    await expect(commitTransaction(execute)).rejects.toThrow();
   });
 });

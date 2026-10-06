@@ -107,7 +107,7 @@ describe('Jasper file out matches Rowan project export for the same class', () =
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
   let runnable = false;
   let whyNot = '';
@@ -117,15 +117,15 @@ describe('Jasper file out matches Rowan project export for the same class', () =
   // DataCurator may not do — the export fixpoint suite next door swaps the same
   // way and for the same reason. The Tonel feature itself does NOT need
   // SystemUser; that is covered as DataCurator elsewhere.
-  beforeAll(() => {
+  beforeAll(async () => {
     logout();
     login({ user: 'SystemUser' });
 
-    if (!listRowanProjects(exec).available) {
+    if (!(await listRowanProjects(exec)).available) {
       whyNot = 'this image has no Rowan';
       return;
     }
-    const capability = tonelCapability(exec);
+    const capability = await tonelCapability(exec);
     if (!capability.available) {
       whyNot = `Tonel machinery absent: ${capability.missing.join(', ')}`;
       return;
@@ -138,7 +138,7 @@ describe('Jasper file out matches Rowan project export for the same class', () =
   });
 
   /** Create the project, package and class, with every method above. */
-  const createProbe = (projectsHome: string): void => {
+  const createProbe = async (projectsHome: string): Promise<void> => {
     const instance = METHODS.map(
       ([protocol, source]) =>
         `(cls compileMethod: '${source.replace(/'/g, "''")}' ` +
@@ -171,12 +171,12 @@ cls isNil ifTrue: [^'ERR class not created'].
 ${instance}
 ${meta}
 'ok'`;
-    expect(exec(code).trim()).toBe('ok');
+    expect((await exec(code)).trim()).toBe('ok');
   };
 
   it(
     'produces byte-identical text for a class with no extension methods',
-    (ctx) => {
+    async (ctx) => {
       if (!runnable) {
         // A skip is a NON-RESULT, not a pass — see useRowan3Stone.ts. Under
         // JASPER_REQUIRE_ROWAN3 it is an outright failure, so a green verification
@@ -191,9 +191,9 @@ ${meta}
       const target = mkTmp('jasper-tonel-oracle-out-');
       tmpDirs.push(home, target);
 
-      createProbe(home);
+      await createProbe(home);
 
-      const exported = exportRowanProject(exec, PROJECT, path.join(target, PROJECT));
+      const exported = await exportRowanProject(exec, PROJECT, path.join(target, PROJECT));
       expect(exported.success, exported.detail).toBe(true);
 
       const rowanFile = findFile(path.join(target, PROJECT), `${CLASS}.class.st`);
@@ -208,7 +208,7 @@ ${meta}
         undefined,
       );
 
-      const jasperText = fileOutClassTonel(exec, CLASS);
+      const jasperText = await fileOutClassTonel(exec, CLASS);
       expect(isTonelFileOutError(jasperText), jasperText).toBe(false);
 
       expect(jasperText).toBe(rowanText);

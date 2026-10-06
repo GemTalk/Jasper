@@ -33,12 +33,12 @@ export interface ShadowingHolder {
   name: string;
 }
 
-export function dictionariesShadowedByRename(
+export async function dictionariesShadowedByRename(
   execute: QueryExecutor,
   newName: string,
   oldName: string,
   dict?: number | string,
-): ShadowingHolder[] {
+): Promise<ShadowingHolder[]> {
   const code = `| cls home ws sl |
 cls := ${classLookupExpr(oldName, dict)}.
 home := cls isNil ifTrue: [0] ifFalse: [${symbolListIndexOfClassExpr('cls')}].
@@ -53,7 +53,7 @@ ws := WriteStream on: String new.
         nextPutAll: (d name ifNil: ['(unnamed)'] ifNotNil: [:n | n asString]); lf]].
 ws contents`;
   const holders: ShadowingHolder[] = [];
-  for (const line of splitLines(execute(code))) {
+  for (const line of splitLines(await execute(code))) {
     const parts = line.trim().split('\t');
     if (parts.length < 2) continue;
     const position = parseInt(parts[0], 10);

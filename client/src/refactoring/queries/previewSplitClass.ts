@@ -95,6 +95,9 @@ export function applySplitClass(execute: AsyncQueryExecutor, token: string): Pro
 }
 
 /** Drop a finished preview from SessionTemps. */
-export function clearSplitClassPreview(execute: QueryExecutor, token: string): string {
-  return execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
+export async function clearSplitClassPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`${ENGINE} clearToken: '${escapeString(token)}'`);
 }

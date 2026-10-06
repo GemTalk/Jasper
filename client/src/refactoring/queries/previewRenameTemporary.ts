@@ -104,6 +104,9 @@ export function applyRenameTemporary(
 }
 
 // Drop a finished preview from SessionTemps.
-export function clearRenameTemporaryPreview(execute: QueryExecutor, token: string): string {
-  return execute(`GsRenameTemporaryRefactoring clearToken: '${escapeString(token)}'`);
+export async function clearRenameTemporaryPreview(
+  execute: QueryExecutor,
+  token: string,
+): Promise<string> {
+  return await execute(`GsRenameTemporaryRefactoring clearToken: '${escapeString(token)}'`);
 }

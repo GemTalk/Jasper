@@ -69,14 +69,14 @@ export function parseTestMethodResult(
   };
 }
 
-export function runTestMethod(
+export async function runTestMethod(
   execute: QueryExecutor,
   className: string,
   selector: string,
   dictName?: string,
-): TestRunResult {
+): Promise<TestRunResult> {
   return parseTestMethodResult(
-    execute(runTestMethodCode(className, selector, dictName)),
+    await execute(runTestMethodCode(className, selector, dictName)),
     className,
     selector,
   );

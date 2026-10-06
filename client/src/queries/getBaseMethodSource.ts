@@ -6,14 +6,14 @@ import { escapeString, receiver } from './util';
 // session view (compiledMethodAt:, which would return the override itself).
 // Returns a placeholder when there is no persistent implementation (i.e. the
 // selector is a session-only extension, not an override).
-export function getBaseMethodSource(
+export async function getBaseMethodSource(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   selector: string,
   environmentId: number = 0,
   dict?: number | string,
-): string {
+): Promise<string> {
   const recv = receiver(className, isMeta, dict);
   const sel = escapeString(selector);
   // Single expression, ASCII-only literal: on 3.6.x the compiler miscomputes
@@ -24,5 +24,5 @@ export function getBaseMethodSource(
     `ifNotNil: [:d | d at: #'${sel}' otherwise: nil]) ` +
     `ifNil: ['"(no base method: this selector has no persistent implementation on this class)"'] ` +
     `ifNotNil: [:m | m sourceString]`;
-  return execute(code);
+  return await execute(code);
 }

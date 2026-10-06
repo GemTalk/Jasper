@@ -37,7 +37,7 @@ export interface OmniPanelDeps extends OmniEngineDeps {
     opts: { beside: boolean; preserveFocus: boolean },
   ) => void | Promise<void>;
   /** Source text to preview for a result (method source / class definition); '' for none. */
-  previewSource: (result: OmniResult) => string;
+  previewSource: (result: OmniResult) => Promise<string>;
   onError?: (message: string) => void;
 }
 
@@ -335,7 +335,7 @@ export class OmniSearchPanel {
           if (!result) return;
           let source = '';
           try {
-            source = this.deps.previewSource(result);
+            source = await this.deps.previewSource(result);
           } catch {
             source = ''; // a failed preview is non-fatal — just show nothing
           }
@@ -368,7 +368,7 @@ export class OmniSearchPanel {
           let source = '';
           if (result) {
             try {
-              source = this.deps.previewSource(result);
+              source = await this.deps.previewSource(result);
             } catch {
               source = '';
             }

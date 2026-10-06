@@ -64,16 +64,16 @@ export async function renameClassVarAtCursorCommand(
   // not just an empty preview.
   let inherited: DefiningClass | undefined;
   try {
-    const defined = queries.getDefinedClassVarNames(session, parsed.className, dict);
+    const defined = await queries.getDefinedClassVarNames(session, parsed.className, dict);
     if (!defined.includes(name)) {
-      const visible = queries.getVisibleClassVarNames(session, parsed.className, dict);
+      const visible = await queries.getVisibleClassVarNames(session, parsed.className, dict);
       if (!visible.includes(name)) {
         refuse(
           `'${name}' is not a class variable of ${parsed.className}. For an instance variable or a temporary/argument, use those renames.`,
         );
         return;
       }
-      inherited = queries.getDefiningClassOfClassVar(session, parsed.className, name, dict);
+      inherited = await queries.getDefiningClassOfClassVar(session, parsed.className, name, dict);
       if (!inherited) {
         refuse(
           `'${name}' is inherited by ${parsed.className}, but its defining class could not be resolved — rename it from that class's class-variable row in the Explorer.`,

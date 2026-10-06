@@ -107,32 +107,32 @@ describe('transcriptSink', () => {
   });
 
   describe('installTranscriptSink', () => {
-    it('reports success when the install doit runs cleanly', () => {
+    it('reports success when the install doit runs cleanly', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => 'installed'),
       });
 
-      expect(installTranscriptSink(makeSession(gci))).toBe(true);
+      expect(await installTranscriptSink(makeSession(gci))).toBe(true);
     });
 
-    it('is non-fatal when the server rejects the install', () => {
+    it('is non-fatal when the server rejects the install', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => {
           throw GciLibraryError.withMessage('nope');
         }),
       });
 
-      expect(installTranscriptSink(makeSession(gci))).toBe(false);
+      expect(await installTranscriptSink(makeSession(gci))).toBe(false);
     });
 
-    it('is non-fatal when the GCI call throws', () => {
+    it('is non-fatal when the GCI call throws', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => {
           throw new Error('socket closed');
         }),
       });
 
-      expect(installTranscriptSink(makeSession(gci))).toBe(false);
+      expect(await installTranscriptSink(makeSession(gci))).toBe(false);
     });
   });
 
@@ -140,28 +140,28 @@ describe('transcriptSink', () => {
     const sentCode = (gci: ReturnType<typeof makeGci>, call = 0): string =>
       (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[call][1] as string;
 
-    it('returns the text drained when the mode starts', () => {
+    it('returns the text drained when the mode starts', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => 'buffered output'),
       });
 
-      expect(startClientForwarderMode(makeSession(gci), '3 + 4')).toBe('buffered output');
+      expect(await startClientForwarderMode(makeSession(gci), '3 + 4')).toBe('buffered output');
     });
 
-    it('hands the sink the exact source, quotes doubled, so it can recognise the process', () => {
+    it('hands the sink the exact source, quotes doubled, so it can recognise the process', async () => {
       const gci = makeGci();
 
-      startClientForwarderMode(makeSession(gci), "Transcript show: 'it''s'. 42");
+      await startClientForwarderMode(makeSession(gci), "Transcript show: 'it''s'. 42");
 
       expect(sentCode(gci)).toContain(
         "jasperStartClientForwarderModeFor: 'Transcript show: ''it''''s''. 42'",
       );
     });
 
-    it('sends non-ASCII source as UTF-8 hex, keeping the doit ASCII for the 3.6.x compiler', () => {
+    it('sends non-ASCII source as UTF-8 hex, keeping the doit ASCII for the 3.6.x compiler', async () => {
       const gci = makeGci();
 
-      startClientForwarderMode(makeSession(gci), "'caf\u00e9'");
+      await startClientForwarderMode(makeSession(gci), "'caf\u00e9'");
 
       expect(sentCode(gci)).toContain(
         "jasperStartClientForwarderModeFor: ((ByteArray fromHexString: '27636166c3a927') decodeFromUTF8)",
@@ -169,45 +169,45 @@ describe('transcriptSink', () => {
       expect(sentCode(gci)).toMatch(/^\p{ASCII}*$/u);
     });
 
-    it('drops the Transcript mutex when the mode starts, not when it ends', () => {
+    it('drops the Transcript mutex when the mode starts, not when it ends', async () => {
       const gci = makeGci();
       const session = makeSession(gci);
 
-      startClientForwarderMode(session, 'nil');
-      endClientForwarderMode(session);
+      await startClientForwarderMode(session, 'nil');
+      await endClientForwarderMode(session);
 
       expect(sentCode(gci, 0)).toContain('removeKey: #TranscriptStream_SessionMutex');
       expect(sentCode(gci, 1)).toContain('jasperEndClientForwarderMode');
       expect(sentCode(gci, 1)).not.toContain('TranscriptStream_SessionMutex');
     });
 
-    it('returns empty (not an exception) when the end is refused', () => {
+    it('returns empty (not an exception) when the end is refused', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => {
           throw new Error('session has a GciTsNb operation in progress');
         }),
       });
 
-      expect(endClientForwarderMode(makeSession(gci))).toBe('');
+      expect(await endClientForwarderMode(makeSession(gci))).toBe('');
     });
 
-    it('drains via the sink and returns empty when nothing is buffered', () => {
+    it('drains via the sink and returns empty when nothing is buffered', async () => {
       const gci = makeGci();
 
-      expect(drainTranscript(makeSession(gci))).toBe('');
+      expect(await drainTranscript(makeSession(gci))).toBe('');
       const code = (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock
         .calls[0][1] as string;
       expect(code).toContain('jasperDrain');
     });
 
-    it('returns empty (not an exception) when the sink call fails', () => {
+    it('returns empty (not an exception) when the sink call fails', async () => {
       const gci = makeGci({
         executeAndFetchString: vi.fn(() => {
           throw GciLibraryError.withMessage('busy');
         }),
       });
 
-      expect(drainTranscript(makeSession(gci))).toBe('');
+      expect(await drainTranscript(makeSession(gci))).toBe('');
     });
   });
 

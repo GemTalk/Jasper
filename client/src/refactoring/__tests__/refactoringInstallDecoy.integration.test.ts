@@ -43,7 +43,8 @@ describe('refactoring engine install beside a dictionary that already binds RBSc
     { allowedCommits: 1 },
   );
   const session = (): ActiveSession => testActiveSession(gci, handle);
-  const exec = (code: string): string => q.executeFetchString(session(), code).trim();
+  const exec = async (code: string): Promise<string> =>
+    (await q.executeFetchString(session(), code)).trim();
 
   const DECOY = 'JasperTestDecoyRB';
   const payloadDir = path.resolve(__dirname, '..', '..', '..', '..', 'resources', 'refactoring');
@@ -65,21 +66,21 @@ cls := d ifNotNil: [d at: #RBScanner ifAbsent: [nil]].
 cls isNil ifTrue: ['none'] ifFalse: [(cls selectors size + cls class selectors size) printString]`;
 
   it('binds the engine classes in GsRefactoring and leaves the decoy empty', async (ctx) => {
-    requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session());
     ctx.skip(
       !pluginFeatures.refactoring.isApplicable(gci.GciTsVersion().version),
       'the refactoring engine does not support this stone version',
     );
     login({ user: 'SystemUser' });
-    expect(exec('System myUserProfile userId')).toBe('SystemUser');
+    expect(await exec('System myUserProfile userId')).toBe('SystemUser');
 
-    expect(exec(plantDecoy)).toBe('ok');
-    expect(exec(rbScannerSelectorsIn(DECOY))).toBe('0');
+    expect(await exec(plantDecoy)).toBe('ok');
+    expect(await exec(rbScannerSelectorsIn(DECOY))).toBe('0');
 
     const result = await installRefactoringSupport(session(), payloadDir);
 
     expect(result.success, result.report).toBe(true);
-    expect(Number(exec(rbScannerSelectorsIn('GsRefactoring')))).toBeGreaterThan(0);
-    expect(exec(rbScannerSelectorsIn(DECOY))).toBe('0');
+    expect(Number(await exec(rbScannerSelectorsIn('GsRefactoring')))).toBeGreaterThan(0);
+    expect(await exec(rbScannerSelectorsIn(DECOY))).toBe('0');
   }, 180_000);
 });

@@ -49,8 +49,8 @@ describe('GemStone breakpoint semantics (integration)', () => {
    * A method with several step points on purpose — `^a` at the end plus the
    * assignments and the send — so a test can tell one step point from another.
    */
-  const fixture = (): void => {
-    const defined = queries.compileClassDefinition(
+  const fixture = async (): Promise<void> => {
+    const defined = await queries.compileClassDefinition(
       session(),
       `Object subclass: '${TEST_CLASS}'
   instVarNames: #()
@@ -62,21 +62,21 @@ describe('GemStone breakpoint semantics (integration)', () => {
     );
     expect(defined).toBe(TEST_CLASS);
 
-    queries.compileMethod(
+    await queries.compileMethod(
       session(),
       TEST_CLASS,
       false,
       'test-vscode-extension',
       `${TEST_SELECTOR}\n  | a |\n  a := 1.\n  a := a + 2.\n  ^ a printString`,
     );
-    expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(TEST_SELECTOR);
+    expect(await queries.getAllSelectors(session(), TEST_CLASS)).toContain(TEST_SELECTOR);
   };
 
   /** Breakpoints on the fixture method only, so a shared stone can't confuse us. */
-  const onFixture = () =>
-    queries
-      .getAllBreakpoints(session())
-      .filter((b) => b.className === TEST_CLASS && b.selector === TEST_SELECTOR);
+  const onFixture = async () =>
+    (await queries.getAllBreakpoints(session())).filter(
+      (b) => b.className === TEST_CLASS && b.selector === TEST_SELECTOR,
+    );
 
   const setBreak = (stepPoint: number) =>
     queries.setBreakAtStepPoint(session(), TEST_CLASS, false, TEST_SELECTOR, stepPoint);
@@ -85,14 +85,14 @@ describe('GemStone breakpoint semantics (integration)', () => {
   const clearBreak = (stepPoint: number) =>
     queries.clearBreakAtStepPoint(session(), TEST_CLASS, false, TEST_SELECTOR, stepPoint);
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Sweep the whole gem, not just this method. Breakpoints are gem state, so
     // they survive the harness's per-test transaction abort — while the fixture
     // class is rolled back and rebuilt as a *new* class object each test. A
     // per-method clear would therefore miss the previous test's breakpoints,
     // which are still reported under the same class name and selector.
-    queries.removeAllBreakpoints(session());
-    fixture();
+    await queries.removeAllBreakpoints(session());
+    await fixture();
   });
 
   /**
@@ -119,36 +119,36 @@ describe('GemStone breakpoint semantics (integration)', () => {
      * The format is line-framed and length-counted precisely so source text
      * cannot be mistaken for a header — this is what proves it.
      */
-    const framingFixture = (): void => {
-      queries.compileMethod(
+    const framingFixture = async (): Promise<void> => {
+      await queries.compileMethod(
         session(),
         TEST_CLASS,
         false,
         'test-vscode-extension',
         `${FRAMING_SELECTOR}\n\t"tab-indented comment"\n\n  | a b |\n  a := '1,2,3'.\n  b := '4\t5\t6'.\n\n  ^ a size + b size`,
       );
-      expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(FRAMING_SELECTOR);
+      expect(await queries.getAllSelectors(session(), TEST_CLASS)).toContain(FRAMING_SELECTOR);
     };
 
-    it('answers exactly what the three separate queries answer', () => {
-      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
+    it('answers exactly what the three separate queries answer', async () => {
+      const bundle = await queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
 
       expect(bundle.source).toBe(
-        queries.getMethodSource(session(), TEST_CLASS, false, TEST_SELECTOR),
+        await queries.getMethodSource(session(), TEST_CLASS, false, TEST_SELECTOR),
       );
       expect(bundle.offsets).toEqual(
-        queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR),
+        await queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR),
       );
       expect(bundle.selectors).toEqual(
-        queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, TEST_SELECTOR),
+        await queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, TEST_SELECTOR),
       );
     });
 
-    it('answers a usable bundle at all, not an empty one', () => {
+    it('answers a usable bundle at all, not an empty one', async () => {
       // A doit that fails to parse, or a stone that answers something
       // unexpected, would parse into empty parts rather than throw — so equality
       // with the other queries is not enough on its own.
-      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
+      const bundle = await queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
 
       expect(bundle.source).toContain(TEST_SELECTOR);
       expect(bundle.offsets.length).toBeGreaterThan(2);
@@ -165,35 +165,40 @@ describe('GemStone breakpoint semantics (integration)', () => {
       ).toBe('printString');
     });
 
-    it('carries source containing tabs, blank lines and header-shaped text verbatim', () => {
-      framingFixture();
+    it('carries source containing tabs, blank lines and header-shaped text verbatim', async () => {
+      await framingFixture();
 
-      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, FRAMING_SELECTOR);
-      const source = queries.getMethodSource(session(), TEST_CLASS, false, FRAMING_SELECTOR);
+      const bundle = await queries.getStepPointBundle(
+        session(),
+        TEST_CLASS,
+        false,
+        FRAMING_SELECTOR,
+      );
+      const source = await queries.getMethodSource(session(), TEST_CLASS, false, FRAMING_SELECTOR);
 
       expect(bundle.source).toBe(source);
       expect(bundle.source).toContain('\t"tab-indented comment"');
       expect(bundle.source).toContain("'1,2,3'");
       expect(bundle.source).toContain('\n\n');
       expect(bundle.offsets).toEqual(
-        queries.getSourceOffsets(session(), TEST_CLASS, false, FRAMING_SELECTOR),
+        await queries.getSourceOffsets(session(), TEST_CLASS, false, FRAMING_SELECTOR),
       );
       expect(bundle.selectors).toEqual(
-        queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, FRAMING_SELECTOR),
+        await queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, FRAMING_SELECTOR),
       );
     });
   });
 
-  it('the fixture method has step points to break at', () => {
-    const offsets = queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR);
+  it('the fixture method has step points to break at', async () => {
+    const offsets = await queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR);
     expect(offsets.length).toBeGreaterThan(2);
     // _sourceOffsets is 1-based — the whole model converts on the way in.
     expect(Math.min(...offsets)).toBeGreaterThanOrEqual(1);
   });
 
-  it('reports a breakpoint it just set, resolved back to the step point', () => {
-    setBreak(1);
-    const found = onFixture();
+  it('reports a breakpoint it just set, resolved back to the step point', async () => {
+    await setBreak(1);
+    const found = await onFixture();
     expect(found).toHaveLength(1);
     expect(found[0].stepPoint).toBe(1);
     expect(found[0].disabled).toBe(false);
@@ -201,118 +206,118 @@ describe('GemStone breakpoint semantics (integration)', () => {
     expect(found[0].dictName).toBe('UserGlobals');
   });
 
-  it('disableBreakAtStepPoint: does nothing when no breakpoint is set there', () => {
+  it('disableBreakAtStepPoint: does nothing when no breakpoint is set there', async () => {
     // The reason a disabled breakpoint must be applied as set-then-disable.
-    disableBreak(2);
-    expect(onFixture()).toHaveLength(0);
+    await disableBreak(2);
+    expect(await onFixture()).toHaveLength(0);
   });
 
-  it('set-then-disable leaves a breakpoint that is present but disabled', () => {
-    setBreak(2);
-    disableBreak(2);
-    const found = onFixture();
+  it('set-then-disable leaves a breakpoint that is present but disabled', async () => {
+    await setBreak(2);
+    await disableBreak(2);
+    const found = await onFixture();
     expect(found).toHaveLength(1);
     expect(found[0].stepPoint).toBe(2);
     expect(found[0].disabled).toBe(true);
   });
 
-  it('setBreakAtStepPoint: re-enables a disabled breakpoint', () => {
-    setBreak(2);
-    disableBreak(2);
-    expect(onFixture()[0].disabled).toBe(true);
+  it('setBreakAtStepPoint: re-enables a disabled breakpoint', async () => {
+    await setBreak(2);
+    await disableBreak(2);
+    expect((await onFixture())[0].disabled).toBe(true);
 
-    setBreak(2);
-    const found = onFixture();
+    await setBreak(2);
+    const found = await onFixture();
     expect(found).toHaveLength(1);
     expect(found[0].disabled).toBe(false);
   });
 
-  it('clearBreakAtStepPoint: removes it outright', () => {
-    setBreak(1);
-    clearBreak(1);
-    expect(onFixture()).toHaveLength(0);
+  it('clearBreakAtStepPoint: removes it outright', async () => {
+    await setBreak(1);
+    await clearBreak(1);
+    expect(await onFixture()).toHaveLength(0);
   });
 
-  it('clearAllBreaks drops every breakpoint on the method', () => {
-    setBreak(1);
-    setBreak(2);
-    expect(onFixture()).toHaveLength(2);
+  it('clearAllBreaks drops every breakpoint on the method', async () => {
+    await setBreak(1);
+    await setBreak(2);
+    expect(await onFixture()).toHaveLength(2);
 
-    queries.clearAllBreaks(session(), TEST_CLASS, false, TEST_SELECTOR);
-    expect(onFixture()).toHaveLength(0);
+    await queries.clearAllBreaks(session(), TEST_CLASS, false, TEST_SELECTOR);
+    expect(await onFixture()).toHaveLength(0);
   });
 
-  it('silently ignores an out-of-range step point', () => {
+  it('silently ignores an out-of-range step point', async () => {
     // No error is raised, so nothing downstream can notice — which is why step
     // points are resolved against _sourceOffsets before they are ever sent.
-    const offsets = queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR);
-    setBreak(offsets.length + 500);
-    expect(onFixture()).toHaveLength(0);
+    const offsets = await queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR);
+    await setBreak(offsets.length + 500);
+    expect(await onFixture()).toHaveLength(0);
   });
 
-  it('reports several breakpoints on one method separately', () => {
-    setBreak(1);
-    setBreak(2);
-    const found = onFixture().sort((a, b) => a.stepPoint - b.stepPoint);
+  it('reports several breakpoints on one method separately', async () => {
+    await setBreak(1);
+    await setBreak(2);
+    const found = (await onFixture()).sort((a, b) => a.stepPoint - b.stepPoint);
     expect(found.map((b) => b.stepPoint)).toEqual([1, 2]);
   });
 
-  it('session-wide disable turns off a breakpoint without removing it', () => {
-    setBreak(1);
-    queries.disableAllBreakpoints(session());
-    const found = onFixture();
+  it('session-wide disable turns off a breakpoint without removing it', async () => {
+    await setBreak(1);
+    await queries.disableAllBreakpoints(session());
+    const found = await onFixture();
     expect(found).toHaveLength(1);
     expect(found[0].disabled).toBe(true);
   });
 
-  it('session-wide enable turns a disabled breakpoint back on', () => {
-    setBreak(1);
-    queries.disableAllBreakpoints(session());
-    queries.enableAllBreakpoints(session());
-    expect(onFixture()[0].disabled).toBe(false);
+  it('session-wide enable turns a disabled breakpoint back on', async () => {
+    await setBreak(1);
+    await queries.disableAllBreakpoints(session());
+    await queries.enableAllBreakpoints(session());
+    expect((await onFixture())[0].disabled).toBe(false);
   });
 
-  it('session-wide remove clears the gem', () => {
-    setBreak(1);
-    setBreak(2);
-    queries.removeAllBreakpoints(session());
-    expect(onFixture()).toHaveLength(0);
-    expect(queries.hasBreakpoints(session())).toBe(false);
+  it('session-wide remove clears the gem', async () => {
+    await setBreak(1);
+    await setBreak(2);
+    await queries.removeAllBreakpoints(session());
+    expect(await onFixture()).toHaveLength(0);
+    expect(await queries.hasBreakpoints(session())).toBe(false);
   });
 
-  it('hasBreakpoints tracks whether the gem holds any', () => {
-    queries.removeAllBreakpoints(session());
-    expect(queries.hasBreakpoints(session())).toBe(false);
+  it('hasBreakpoints tracks whether the gem holds any', async () => {
+    await queries.removeAllBreakpoints(session());
+    expect(await queries.hasBreakpoints(session())).toBe(false);
 
-    setBreak(1);
-    expect(queries.hasBreakpoints(session())).toBe(true);
+    await setBreak(1);
+    expect(await queries.hasBreakpoints(session())).toBe(true);
   });
 
-  it('reaches a breakpoint by method OOP, the way a doit has to be reached', () => {
-    setBreak(1);
-    const oop = onFixture()[0].methodOop;
+  it('reaches a breakpoint by method OOP, the way a doit has to be reached', async () => {
+    await setBreak(1);
+    const oop = (await onFixture())[0].methodOop;
     expect(oop).toMatch(/^\d+$/);
 
-    queries.breakpointByOop(session(), oop, 'disableBreakAtStepPoint:', 1);
-    expect(onFixture()[0].disabled).toBe(true);
+    await queries.breakpointByOop(session(), oop, 'disableBreakAtStepPoint:', 1);
+    expect((await onFixture())[0].disabled).toBe(true);
 
-    queries.breakpointByOop(session(), oop, 'clearBreakAtStepPoint:', 1);
-    expect(onFixture()).toHaveLength(0);
+    await queries.breakpointByOop(session(), oop, 'clearBreakAtStepPoint:', 1);
+    expect(await onFixture()).toHaveLength(0);
   });
 
-  it('reports a class-side breakpoint as isMeta with the base class name', () => {
-    queries.compileMethod(
+  it('reports a class-side breakpoint as isMeta with the base class name', async () => {
+    await queries.compileMethod(
       session(),
       TEST_CLASS,
       true,
       'test-vscode-extension',
       'vsCodeBreakpointClassSide\n  ^ 3 + 4',
     );
-    queries.setBreakAtStepPoint(session(), TEST_CLASS, true, 'vsCodeBreakpointClassSide', 1);
+    await queries.setBreakAtStepPoint(session(), TEST_CLASS, true, 'vsCodeBreakpointClassSide', 1);
 
-    const found = queries
-      .getAllBreakpoints(session())
-      .filter((b) => b.className === TEST_CLASS && b.selector === 'vsCodeBreakpointClassSide');
+    const found = (await queries.getAllBreakpoints(session())).filter(
+      (b) => b.className === TEST_CLASS && b.selector === 'vsCodeBreakpointClassSide',
+    );
     expect(found).toHaveLength(1);
     expect(found[0].isMeta).toBe(true);
     // The base name, not 'VsCodeBreakpointTest class' — the manager matches it

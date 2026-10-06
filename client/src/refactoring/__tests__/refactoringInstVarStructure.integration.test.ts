@@ -45,44 +45,52 @@ describe('instance-variable structure (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
   const BASE = 'VsItBase';
   const MID = 'VsItMid';
   const LEAF = 'VsItLeaf';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #('shared') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${MID}' instVarNames: #('mid' 'pushable') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileClassDefinition(
+    await q.compileClassDefinition(
       session(),
       `${MID} subclass: '${LEAF}' instVarNames: #('leaf') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'accessing', 'baseM\n\t^shared');
-    q.compileMethod(session(), BASE, false, 'accessing', 'compute\n\t| t |\n\tt := shared.\n\t^t');
-    q.compileMethod(session(), MID, false, 'accessing', 'midM\n\t^mid');
-    q.compileMethod(session(), LEAF, false, 'accessing', 'leafM\n\t^leaf');
+    await q.compileMethod(session(), BASE, false, 'accessing', 'baseM\n\t^shared');
+    await q.compileMethod(
+      session(),
+      BASE,
+      false,
+      'accessing',
+      'compute\n\t| t |\n\tt := shared.\n\t^t',
+    );
+    await q.compileMethod(session(), MID, false, 'accessing', 'midM\n\t^mid');
+    await q.compileMethod(session(), LEAF, false, 'accessing', 'leafM\n\t^leaf');
   };
 
-  const ownIvars = (cls: string): string => ownIvarsProbe(exec, cls);
+  const ownIvars = async (cls: string): Promise<string> => await ownIvarsProbe(exec, cls);
 
-  const definesSelector = (cls: string, selector: string): boolean =>
-    definesSelectorProbe(exec, cls, selector);
+  const definesSelector = async (cls: string, selector: string): Promise<boolean> =>
+    await definesSelectorProbe(exec, cls, selector);
 
   const runToApply = async (
     op: 'convertTemp' | 'pushUp' | 'pushDown' | 'move',
@@ -127,63 +135,63 @@ describe('instance-variable structure (integration)', () => {
     expect(result.committed).toBe(false);
   };
 
-  it('reports engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the instance-variable structure GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the instance-variable structure GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('converts a method temporary into an instance variable', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     await runToApply('convertTemp', BASE, 't', 'vs-ct', {
       selector: 'compute',
       isMeta: false,
       varName: 't',
     });
 
-    expect(ownIvars(BASE)).toContain("'t'");
-    expect(definesSelector(BASE, 'baseM')).toBe(true);
-    expect(definesSelector(LEAF, 'leafM')).toBe(true);
+    expect(await ownIvars(BASE)).toContain("'t'");
+    expect(await definesSelector(BASE, 'baseM')).toBe(true);
+    expect(await definesSelector(LEAF, 'leafM')).toBe(true);
   });
 
   it('pushes an instance variable up to the superclass', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     await runToApply('pushUp', LEAF, 'leaf', 'vs-up');
 
-    expect(ownIvars(MID)).toContain("'leaf'");
-    expect(ownIvars(LEAF)).not.toContain("'leaf'");
-    expect(definesSelector(LEAF, 'leafM')).toBe(true);
-    expect(definesSelector(MID, 'midM')).toBe(true);
+    expect(await ownIvars(MID)).toContain("'leaf'");
+    expect(await ownIvars(LEAF)).not.toContain("'leaf'");
+    expect(await definesSelector(LEAF, 'leafM')).toBe(true);
+    expect(await definesSelector(MID, 'midM')).toBe(true);
   });
 
   it('pushes an instance variable down into the subclasses', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     await runToApply('pushDown', MID, 'pushable', 'vs-down');
 
-    expect(ownIvars(MID)).not.toContain("'pushable'");
-    expect(ownIvars(LEAF)).toContain("'pushable'");
-    expect(definesSelector(MID, 'midM')).toBe(true);
+    expect(await ownIvars(MID)).not.toContain("'pushable'");
+    expect(await ownIvars(LEAF)).toContain("'pushable'");
+    expect(await definesSelector(MID, 'midM')).toBe(true);
   });
 
   it('declines pushing down an instance variable the class still uses', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeInstVarStructure(asyncExec, 'pushDown', MID, 'mid'),
@@ -194,57 +202,57 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
   });
 
   it('moves a simple accessor up with the instance variable when moving accessors', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     // midM (`^mid`) is a simple getter of `mid`, so it travels up with the declaration.
     await runToApply('pushUp', MID, 'mid', 'vs-up-acc', undefined, true);
 
-    expect(ownIvars(BASE)).toContain("'mid'");
-    expect(ownIvars(MID)).not.toContain("'mid'");
-    expect(definesSelector(BASE, 'midM')).toBe(true);
-    expect(definesSelector(MID, 'midM')).toBe(false);
+    expect(await ownIvars(BASE)).toContain("'mid'");
+    expect(await ownIvars(MID)).not.toContain("'mid'");
+    expect(await definesSelector(BASE, 'midM')).toBe(true);
+    expect(await definesSelector(MID, 'midM')).toBe(false);
   });
 
   it('pushes down when the only own-user is a simple accessor and moves it too', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     // Without moving accessors this declines (see above); with it, midM moves into the subclass.
     await runToApply('pushDown', MID, 'mid', 'vs-down-acc', undefined, true);
 
-    expect(ownIvars(MID)).not.toContain("'mid'");
-    expect(ownIvars(LEAF)).toContain("'mid'");
-    expect(definesSelector(MID, 'midM')).toBe(false);
-    expect(definesSelector(LEAF, 'midM')).toBe(true);
+    expect(await ownIvars(MID)).not.toContain("'mid'");
+    expect(await ownIvars(LEAF)).toContain("'mid'");
+    expect(await definesSelector(MID, 'midM')).toBe(false);
+    expect(await definesSelector(LEAF, 'midM')).toBe(true);
   });
 
   it('moves an instance variable up to a chosen non-immediate ancestor', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     // leaf lives on Leaf; move it up two levels to Base. Leaf keeps it by inheritance.
     await runToApply('move', LEAF, 'leaf', 'vs-move-up', undefined, false, {
       targets: [BASE],
       direction: 'up',
     });
 
-    expect(ownIvars(BASE)).toContain("'leaf'");
-    expect(ownIvars(LEAF)).not.toContain("'leaf'");
-    expect(definesSelector(LEAF, 'leafM')).toBe(true);
+    expect(await ownIvars(BASE)).toContain("'leaf'");
+    expect(await ownIvars(LEAF)).not.toContain("'leaf'");
+    expect(await definesSelector(LEAF, 'leafM')).toBe(true);
   });
 
   it('moves an instance variable down to a chosen subclass', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     await runToApply('move', MID, 'pushable', 'vs-move-down', undefined, false, {
       targets: [LEAF],
       direction: 'down',
     });
 
-    expect(ownIvars(MID)).not.toContain("'pushable'");
-    expect(ownIvars(LEAF)).toContain("'pushable'");
-    expect(definesSelector(MID, 'midM')).toBe(true);
+    expect(await ownIvars(MID)).not.toContain("'pushable'");
+    expect(await ownIvars(LEAF)).toContain("'pushable'");
+    expect(await definesSelector(MID, 'midM')).toBe(true);
   });
 });

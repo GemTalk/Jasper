@@ -12,7 +12,7 @@ export interface RowanClassLocation {
 // Every class *defined* by a loaded Rowan package, with where it lives — the
 // index behind cross-package class search. Extensions are excluded: they add
 // methods to classes owned elsewhere, so they aren't "a class" to jump to.
-export function listAllRowanClasses(execute: QueryExecutor): RowanClassLocation[] {
+export async function listAllRowanClasses(execute: QueryExecutor): Promise<RowanClassLocation[]> {
   const code = `| r img ws |
 r := System myUserProfile symbolList objectNamed: #'Rowan'.
 r isNil ifTrue: [^''].
@@ -28,7 +28,7 @@ ws := WriteStream on: Unicode7 new.
   on: Error do: [:e | nil].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
 
   const classes: RowanClassLocation[] = [];
   for (const line of raw.split('\n')) {

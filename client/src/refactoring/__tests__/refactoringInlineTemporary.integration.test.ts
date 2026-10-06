@@ -41,63 +41,71 @@ describe('inline temporary (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
-  const enginePresent = (): boolean =>
-    exec(
-      '(System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring) notNil printString',
+  const enginePresent = async (): Promise<boolean> =>
+    (
+      await exec(
+        '(System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring) notNil printString',
+      )
     ).trim() === 'true';
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const BASE = 'XITItBase';
 
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), BASE, false, 'printing', 'report\n\t| t | t := self hash. ^ t');
+    await q.compileMethod(
+      session(),
+      BASE,
+      false,
+      'printing',
+      'report\n\t| t | t := self hash. ^ t',
+    );
   };
 
   // 1-based offset of a substring in the stored method source.
-  const offsetOf = (selector: string, text: string): number => {
-    const src = exec(
+  const offsetOf = async (selector: string, text: string): Promise<number> => {
+    const src = await exec(
       `(${BASE} compiledMethodAt: #${selector} environmentId: 0 otherwise: nil) sourceString`,
     );
     return src.indexOf(text) + 1;
   };
 
-  it('reports inline-temporary engine availability matching the shared refactoring probe', () => {
-    expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
+  it('reports inline-temporary engine availability matching the shared refactoring probe', async () => {
+    expect(await enginePresent()).toBe(await q.checkRefactoringSupportAvailable(session()));
   });
 
-  it('runs the inline-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  it('runs the inline-temporary GS SUnit suite in-stone with zero failures', async (ctx) => {
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
-    expect(exec(code).trim()).toBe('0');
+    expect((await exec(code)).trim()).toBe('0');
   }, 60_000);
 
   it('pre-flights a temporary, resolving its name', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
 
     const analysis = parseAnalysis(
       await analyzeInlineTemporary(
@@ -105,8 +113,8 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
         BASE,
         'report',
         false,
-        offsetOf('report', 't :='),
-        userIndex(),
+        await offsetOf('report', 't :='),
+        await userIndex(),
       ),
     );
 
@@ -115,9 +123,9 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
   });
 
   it('applies the inline, folding the value in and removing the declaration', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    await requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    defineFixture();
+    await defineFixture();
     const token = `imtit-${BASE}`;
 
     const start = parseStartPreview(
@@ -126,10 +134,10 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
         BASE,
         'report',
         false,
-        offsetOf('report', 't :='),
+        await offsetOf('report', 't :='),
         token,
         PREVIEW_PAGE_BYTES,
-        userIndex(),
+        await userIndex(),
       ),
     );
     expect(start.total).toBe(1);
@@ -139,7 +147,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
     expect(result.applied).toBe(1);
     expect(result.failed).toEqual([]);
 
-    const rewritten = exec(
+    const rewritten = await exec(
       `(${BASE} compiledMethodAt: #report environmentId: 0 otherwise: nil) sourceString`,
     );
     // The temporary's value was folded in and the declaration/assignment removed.

@@ -27,12 +27,12 @@ export interface DefiningClass {
  *  `classVarNames` answers Symbols, so the name is interned and compared by IDENTITY
  *  — a `String =` (via `includes:`) raises "Unicode argument disallowed in String
  *  comparison" (error 2718) on 3.6.x when the strings differ in encoding. */
-export function getDefiningClassOfClassVar(
+export async function getDefiningClassOfClassVar(
   execute: QueryExecutor,
   className: string,
   classVarName: string,
   dict?: number | string,
-): DefiningClass | undefined {
+): Promise<DefiningClass | undefined> {
   const code = `| cls target want |
 want := '${escapeString(classVarName)}' asSymbol.
 cls := ${classLookupExpr(className, dict)}.
@@ -44,7 +44,7 @@ target isNil
   ifTrue: ['']
   ifFalse: [
     target name asString, (String with: Character lf), ${symbolListIndexOfClassExpr('target')} printString ]`;
-  const lines = splitLines(execute(code));
+  const lines = splitLines(await execute(code));
   if (lines.length === 0) return undefined;
   const dictIndex = lines.length > 1 ? Number(lines[1]) : 0;
   return { className: lines[0], dictIndex: Number.isFinite(dictIndex) ? dictIndex : 0 };

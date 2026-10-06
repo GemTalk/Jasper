@@ -18,13 +18,13 @@ import { escapeString, receiver } from './util';
  * compared as such: `each asString = '…'` raises "Unicode argument disallowed in String
  * comparison" on a stone in legacy string mode.
  */
-export function removeMethodCategory(
+export async function removeMethodCategory(
   execute: QueryExecutor,
   className: string,
   isMeta: boolean,
   category: string,
   dict?: number | string,
-): string {
+): Promise<string> {
   const recv = receiver(className, isMeta, dict);
   const name = escapeString(category);
   const code = `| target held |
@@ -34,5 +34,5 @@ held := target selectorsIn: '${name}'.
 held isEmpty ifFalse: [^ 'holds:', held size printString].
 target removeCategory: '${name}'.
 'ok'`;
-  return execute(code);
+  return await execute(code);
 }

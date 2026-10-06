@@ -24,17 +24,17 @@ const stoneVersionOf = (session: ActiveSession): string => session.gci.GciTsVers
  * version can't support the feature at all, or when it is supported but not
  * currently installed.
  */
-export function requireServerPluginFeature(
+export async function requireServerPluginFeature(
   feature: PluginFeatureRef,
   ctx: TestContext,
   session: ActiveSession,
-): void {
+): Promise<void> {
   ctx.skip(
     !feature.isApplicable(stoneVersionOf(session)),
     `skipping: ${feature.label} is not supported by this stone version, so this test does not apply to the current scenario`,
   );
   ctx.skip(
-    !feature.probe(session),
+    !(await feature.probe(session)),
     `skipping: ${feature.label} is not installed in this stone; this test only applies when the feature is present`,
   );
 }
@@ -44,12 +44,12 @@ export function requireServerPluginFeature(
  * ABSENT — the tests asserting graceful degradation / fallback behavior. Skips
  * when the feature is actually present, since that behavior no longer applies.
  */
-export function requireServerPluginFeatureAbsent(
+export async function requireServerPluginFeatureAbsent(
   feature: PluginFeatureRef,
   ctx: TestContext,
   session: ActiveSession,
-): void {
-  const present = feature.isApplicable(stoneVersionOf(session)) && feature.probe(session);
+): Promise<void> {
+  const present = feature.isApplicable(stoneVersionOf(session)) && (await feature.probe(session));
   ctx.skip(
     present,
     `skipping: ${feature.label} is installed; this test only applies to the absent/degraded scenario, which does not match the current context`,

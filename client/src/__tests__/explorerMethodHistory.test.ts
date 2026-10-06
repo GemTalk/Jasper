@@ -105,6 +105,7 @@ describe('live refresh after a refactoring', () => {
     await ctl.openMethodHistory(SESSION, 'Other', 'size', false, 1);
 
     ctl.refreshAllMethodHistoryPanels(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(2);
   });
@@ -116,6 +117,7 @@ describe('live refresh after a refactoring', () => {
     await ctl.openMethodHistory(SESSION, 'SomeUnrelatedSender', 'callsIt', false, 1);
 
     ctl.refreshAllMethodHistoryPanels(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(1);
   });
@@ -145,7 +147,7 @@ describe('live refresh of an open method-history panel', () => {
     // panel refresh runs first and is independent of the current selection.
     ctl.state.className = 'Other';
 
-    ctl.onExternalMethodCompiled(1, 'Array');
+    await ctl.onExternalMethodCompiled(1, 'Array');
 
     expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(1);
   });
@@ -155,7 +157,7 @@ describe('live refresh of an open method-history panel', () => {
     await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
     ctl.state.className = 'Other';
 
-    ctl.onExternalMethodCompiled(1, 'Widget');
+    await ctl.onExternalMethodCompiled(1, 'Widget');
 
     expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
   });
@@ -165,7 +167,7 @@ describe('live refresh of an open method-history panel', () => {
     await ctl.openMethodHistory(SESSION, 'Array', 'at:', false, 1);
     ctl.state.className = 'Other';
 
-    ctl.onExternalMethodCompiled(2, 'Array');
+    await ctl.onExternalMethodCompiled(2, 'Array');
 
     expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
   });
@@ -237,7 +239,7 @@ describe('selector-targeted refresh', () => {
     await ctl.openMethodHistory(SESSION, 'Array', 'size', false, 1);
     ctl.state.className = 'Other';
 
-    ctl.onExternalMethodCompiled(1, 'Array', 'at:');
+    await ctl.onExternalMethodCompiled(1, 'Array', 'at:');
 
     expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(1);
   });
@@ -248,7 +250,7 @@ describe('selector-targeted refresh', () => {
     await ctl.openMethodHistory(SESSION, 'Array', 'size', false, 1);
     ctl.state.className = 'Other';
 
-    ctl.onExternalMethodCompiled(1, 'Array');
+    await ctl.onExternalMethodCompiled(1, 'Array');
 
     expect(refreshMethodHistoryPanel).toHaveBeenCalledTimes(2);
   });

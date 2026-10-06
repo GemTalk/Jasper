@@ -232,10 +232,10 @@ describe('instance-variable structure query builders', () => {
       expect(code).toContain('removeOldFromHistory: true');
     });
 
-    it('clears the preview session by token', () => {
+    it('clears the preview session by token', async () => {
       const exec = vi.fn().mockReturnValue('ok');
 
-      const out = clearInstVarStructurePreview(exec, 'tok4');
+      const out = await clearInstVarStructurePreview(exec, 'tok4');
 
       expect(out).toBe('ok');
       expect(exec).toHaveBeenCalledWith(

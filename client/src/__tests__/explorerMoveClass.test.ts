@@ -71,7 +71,7 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
     )
     .mockImplementation(async (_d: string, i: number) => {
       (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries =
-        queries.getClassesWithCategory({} as ActiveSession, i);
+        await queries.getClassesWithCategory({} as ActiveSession, i);
     });
   return { ctl, reveal, categoryReveal };
 }
@@ -79,14 +79,14 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
-  vi.mocked(queries.moveClass).mockReturnValue('Moved class: Account');
-  vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Account');
-  vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
-  vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Reports', 'Globals']);
+  vi.mocked(queries.moveClass).mockResolvedValue('Moved class: Account');
+  vi.mocked(queries.recategorizeClass).mockResolvedValue('Recategorized: Account');
+  vi.mocked(queries.canClassBeWritten).mockResolvedValue(true);
+  vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals', 'Reports', 'Globals']);
   // mockReset, not clearAllMocks: clearing keeps IMPLEMENTATIONS, so the throwing stub in the
   // "read fails" test below would leak into a shuffled neighbour and fail it with 'session busy'.
   vi.mocked(queries.getClassesWithCategory).mockReset();
-  vi.mocked(queries.getClassesWithCategory).mockReturnValue([]);
+  vi.mocked(queries.getClassesWithCategory).mockResolvedValue([]);
   vi.mocked(captureClassSlots).mockReset();
 });
 
@@ -110,7 +110,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
       index: 2,
     } as never);
     let capture = 0;
-    vi.mocked(captureClassSlots).mockImplementation((_e, slots) => {
+    vi.mocked(captureClassSlots).mockImplementation(async (_e, slots) => {
       capture += 1;
       return slots.map((s) =>
         capture === 1
@@ -173,7 +173,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
 
   it('refuses a class the repository will not let you write', async () => {
     const { ctl } = makeController();
-    vi.mocked(queries.canClassBeWritten).mockReturnValue(false);
+    vi.mocked(queries.canClassBeWritten).mockResolvedValue(false);
 
     await ctl.moveClassToDictionary();
 
@@ -187,7 +187,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
       label: 'Reports',
       index: 2,
     } as never);
-    vi.mocked(queries.moveClass).mockReturnValue('Class not found in source dictionary: Account');
+    vi.mocked(queries.moveClass).mockResolvedValue('Class not found in source dictionary: Account');
 
     await ctl.moveClassToDictionary();
 
@@ -199,7 +199,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
 
   it('says so when there is nowhere else to move it', async () => {
     const { ctl } = makeController();
-    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals']);
+    vi.mocked(queries.getDictionaryNames).mockResolvedValue(['UserGlobals']);
 
     await ctl.moveClassToDictionary();
 
@@ -226,8 +226,8 @@ describe('ExplorerController.moveClassToCategory', () => {
     ];
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce([entry('Account', 'Banking')])
-      .mockReturnValue([entry('Account', 'Printing')]);
+      .mockResolvedValueOnce([entry('Account', 'Banking')])
+      .mockResolvedValue([entry('Account', 'Printing')]);
 
     await ctl.moveClassToCategory();
 
@@ -265,8 +265,8 @@ describe('ExplorerController.moveClassToCategory', () => {
     ];
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce([entry('Account', 'Banking')])
-      .mockReturnValue([entry('Account', 'Printing')]);
+      .mockResolvedValueOnce([entry('Account', 'Banking')])
+      .mockResolvedValue([entry('Account', 'Printing')]);
 
     await ctl.moveClassToCategory();
 
@@ -284,8 +284,8 @@ describe('ExplorerController.moveClassToCategory', () => {
     ];
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce([entry('Account', 'Banking')])
-      .mockReturnValue([entry('Account', 'Printing')]);
+      .mockResolvedValueOnce([entry('Account', 'Banking')])
+      .mockResolvedValue([entry('Account', 'Printing')]);
 
     await ctl.moveClassToCategory();
 
@@ -299,8 +299,8 @@ describe('ExplorerController.moveClassToCategory', () => {
     ];
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Reports-Monthly' as never);
     vi.mocked(queries.getClassesWithCategory)
-      .mockReturnValueOnce([entry('Account', 'Banking')])
-      .mockReturnValue([entry('Account', 'Reports-Monthly')]);
+      .mockResolvedValueOnce([entry('Account', 'Banking')])
+      .mockResolvedValue([entry('Account', 'Reports-Monthly')]);
 
     await ctl.moveClassToCategory();
 
@@ -329,7 +329,7 @@ describe('ExplorerController.moveClassToCategory', () => {
       entry('Account', 'Banking'),
     ];
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
-    vi.mocked(queries.recategorizeClass).mockReturnValue('Class not found: Account');
+    vi.mocked(queries.recategorizeClass).mockResolvedValue('Class not found: Account');
 
     await ctl.moveClassToCategory();
 
@@ -355,7 +355,7 @@ describe('ExplorerController.classCategoriesChanged — putting the pane back af
   it('follows the named class to whatever it is filed under now', async () => {
     const { ctl, categoryReveal } = makeController();
     ctl.state.classCategory = 'Printing'; // where the forward move had left the filter
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue([entry('Account', 'Banking')]);
 
     await ctl.classCategoriesChanged('Account');
 
@@ -371,7 +371,7 @@ describe('ExplorerController.classCategoriesChanged — putting the pane back af
     // filtered to a category the selected class has left would hide it.
     const { ctl } = makeController();
     ctl.state.classCategory = 'Printing';
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue([entry('Account', 'Banking')]);
 
     await ctl.classCategoriesChanged();
 
@@ -381,7 +381,7 @@ describe('ExplorerController.classCategoriesChanged — putting the pane back af
   it('keeps a filter the selected class is still inside', async () => {
     const { ctl } = makeController();
     ctl.state.classCategory = 'Banking';
-    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+    vi.mocked(queries.getClassesWithCategory).mockResolvedValue([entry('Account', 'Banking')]);
 
     await ctl.classCategoriesChanged();
 
@@ -392,7 +392,7 @@ describe('ExplorerController.classCategoriesChanged — putting the pane back af
     const { ctl } = makeController();
     const before = [entry('Account', 'Banking')];
     (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = before;
-    vi.mocked(queries.getClassesWithCategory).mockImplementation(() => {
+    vi.mocked(queries.getClassesWithCategory).mockImplementation(async () => {
       throw new Error('session busy');
     });
 

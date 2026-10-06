@@ -31,43 +31,43 @@ describe('file out queries (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const exec = async (code: string): Promise<string> => await q.executeFetchString(session(), code);
 
-  const dictIndexOf = (name: string): number =>
+  const dictIndexOf = async (name: string): Promise<number> =>
     parseInt(
-      exec(
+      await exec(
         `| sl d | sl := System myUserProfile symbolList. ` +
           `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
           `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
       ),
       10,
     );
-  const userIndex = (): number => dictIndexOf('UserGlobals');
+  const userIndex = async (): Promise<number> => await dictIndexOf('UserGlobals');
 
   const WIDGET = 'JasperFileOutWidget';
 
   // A throwaway class in UserGlobals (writable by any user) with one instance
   // method and one class method, in known categories.
-  const defineWidget = (): void => {
-    q.compileClassDefinition(
+  const defineWidget = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${WIDGET}' instVarNames: #('size') classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^size');
-    q.compileMethod(session(), WIDGET, false, 'accessing', 'size: aValue size := aValue');
-    q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+    await q.compileMethod(session(), WIDGET, false, 'accessing', 'size ^size');
+    await q.compileMethod(session(), WIDGET, false, 'accessing', 'size: aValue size := aValue');
+    await q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
   };
 
   describe('fileOutHeader', () => {
-    it('opens with the fileformat directive Topaz needs to read the file back', () => {
-      const header = q.fileOutHeader(session());
+    it('opens with the fileformat directive Topaz needs to read the file back', async () => {
+      const header = await q.fileOutHeader(session());
 
       expect(header.split('\n')[0]).toBe('fileformat utf8');
     });
 
-    it('names the image it came out of, as a comment', () => {
-      const header = q.fileOutHeader(session());
+    it('names the image it came out of, as a comment', async () => {
+      const header = await q.fileOutHeader(session());
 
       expect(header).toContain('! From ');
       expect(header).toContain('GemStone');
@@ -81,10 +81,10 @@ describe('file out queries (integration)', () => {
   });
 
   describe('fileOutClass', () => {
-    it('answers a definition and the methods, in Topaz chunk form', () => {
-      defineWidget();
+    it('answers a definition and the methods, in Topaz chunk form', async () => {
+      await defineWidget();
 
-      const source = q.fileOutClass(session(), WIDGET, userIndex());
+      const source = await q.fileOutClass(session(), WIDGET, await userIndex());
 
       expect(source).toContain(`Object subclass: '${WIDGET}'`);
       expect(source).toContain(`method: ${WIDGET}`);
@@ -95,10 +95,10 @@ describe('file out queries (integration)', () => {
   });
 
   describe('fileOutMethod', () => {
-    it('answers one method chunk, with no class definition around it', () => {
-      defineWidget();
+    it('answers one method chunk, with no class definition around it', async () => {
+      await defineWidget();
 
-      const source = q.fileOutMethod(session(), WIDGET, false, 'size', userIndex());
+      const source = await q.fileOutMethod(session(), WIDGET, false, 'size', await userIndex());
 
       expect(source).toContain(`method: ${WIDGET}`);
       expect(source).toContain("category: 'accessing'");
@@ -109,85 +109,97 @@ describe('file out queries (integration)', () => {
       expect(source).not.toContain('size: aValue');
     });
 
-    it('answers the class-side method as a classmethod chunk', () => {
-      defineWidget();
+    it('answers the class-side method as a classmethod chunk', async () => {
+      await defineWidget();
 
-      const source = q.fileOutMethod(session(), WIDGET, true, 'make', userIndex());
+      const source = await q.fileOutMethod(session(), WIDGET, true, 'make', await userIndex());
 
       expect(source).toContain(`classmethod: ${WIDGET}`);
       expect(source).toContain('make ^self new');
     });
 
-    it('fails loudly on a class that does not resolve', () => {
-      expect(() => q.fileOutMethod(session(), 'JasperFileOutNoSuchClass', false, 'x')).toThrow(
-        /Class not found/,
-      );
+    it('fails loudly on a class that does not resolve', async () => {
+      await expect(
+        q.fileOutMethod(session(), 'JasperFileOutNoSuchClass', false, 'x'),
+      ).rejects.toThrow(/Class not found/);
     });
   });
 
   describe('fileOutMethodCategory', () => {
-    it('answers every method in the category and nothing from another one', () => {
-      defineWidget();
+    it('answers every method in the category and nothing from another one', async () => {
+      await defineWidget();
 
-      const source = q.fileOutMethodCategory(session(), WIDGET, false, 'accessing', userIndex());
+      const source = await q.fileOutMethodCategory(
+        session(),
+        WIDGET,
+        false,
+        'accessing',
+        await userIndex(),
+      );
 
       expect(source).toContain('size ^size');
       expect(source).toContain('size: aValue');
       expect(source).not.toContain('make ^self new');
     });
 
-    it('answers the class-side category', () => {
-      defineWidget();
+    it('answers the class-side category', async () => {
+      await defineWidget();
 
-      const source = q.fileOutMethodCategory(
+      const source = await q.fileOutMethodCategory(
         session(),
         WIDGET,
         true,
         'instance creation',
-        userIndex(),
+        await userIndex(),
       );
 
       expect(source).toContain(`classmethod: ${WIDGET}`);
       expect(source).toContain('make ^self new');
     });
 
-    it('fails loudly on a category no symbol exists for', () => {
-      defineWidget();
+    it('fails loudly on a category no symbol exists for', async () => {
+      await defineWidget();
 
-      expect(() =>
-        q.fileOutMethodCategory(session(), WIDGET, false, 'no such category at all', userIndex()),
-      ).toThrow(/Method category not found/);
+      await expect(
+        q.fileOutMethodCategory(
+          session(),
+          WIDGET,
+          false,
+          'no such category at all',
+          await userIndex(),
+        ),
+      ).rejects.toThrow(/Method category not found/);
     });
   });
 
   describe('fileOutDictionary', () => {
-    it('answers the definition and methods of the classes the dictionary binds', () => {
-      defineWidget();
+    it('answers the definition and methods of the classes the dictionary binds', async () => {
+      await defineWidget();
 
-      const source = q.fileOutDictionary(session(), userIndex());
+      const source = await q.fileOutDictionary(session(), await userIndex());
 
       expect(source).toContain(`Object subclass: '${WIDGET}'`);
       expect(source).toContain('size ^size');
       expect(source).toContain('make ^self new');
     });
 
-    it('orders a class after its superclass, so the file reads back in as-is', () => {
-      defineWidget();
-      q.compileClassDefinition(
+    it('orders a class after its superclass, so the file reads back in as-is', async () => {
+      await defineWidget();
+      await q.compileClassDefinition(
         session(),
         `${WIDGET} subclass: 'JasperFileOutSubWidget' instVarNames: #() classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
 
-      const source = q.fileOutDictionary(session(), userIndex());
+      const source = await q.fileOutDictionary(session(), await userIndex());
 
       expect(source.indexOf(`Object subclass: '${WIDGET}'`)).toBeLessThan(
         source.indexOf(`${WIDGET} subclass: 'JasperFileOutSubWidget'`),
       );
     });
 
-    it('fails loudly on a dictionary index that no longer exists', () => {
-      expect(() => q.fileOutDictionary(session(), 9999)).toThrow(/Dictionary not found/);
+    it('fails loudly on a dictionary index that no longer exists', async () => {
+      await expect(q.fileOutDictionary(session(), 9999)).rejects.toThrow(/Dictionary not found/);
     });
   });
 });

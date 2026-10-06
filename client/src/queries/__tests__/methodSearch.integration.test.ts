@@ -41,23 +41,23 @@ describe('literalSymbolReferences (integration)', () => {
 
   // A transient fixture (rolled back by the harness's abort). One method uses `#not` as a genuine
   // DATA literal; the other only SENDS `not`. Selector spellings are unique to the fixture.
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    await q.compileClassDefinition(
       session(),
       `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
-    const m = (src: string): void => {
-      q.compileMethod(session(), CLS, false, 'accessing', src);
+    const m = async (src: string): Promise<void> => {
+      await q.compileMethod(session(), CLS, false, 'accessing', src);
     };
-    m('usesNotAsLiteral\n\t^Array with: #not'); // #not is a data literal — source contains "#not"
-    m('onlySendsNot: aFlag\n\t^aFlag not'); // sends not to a variable — source has "not", never "#not"
+    await m('usesNotAsLiteral\n\t^Array with: #not'); // #not is a data literal — source contains "#not"
+    await m('onlySendsNot: aFlag\n\t^aFlag not'); // sends not to a variable — source has "not", never "#not"
   };
 
-  it('returns methods that use the symbol as a data literal, not ones that merely send it', () => {
-    defineFixture();
+  it('returns methods that use the symbol as a data literal, not ones that merely send it', async () => {
+    await defineFixture();
 
-    const rows = literalSymbolReferences(defaultQueryExecutorUsing(session()), '#not');
+    const rows = await literalSymbolReferences(defaultQueryExecutorUsing(session()), '#not');
     const fixtureRow = (selector: string) =>
       rows.find((r) => r.className === CLS && !r.isMeta && r.selector === selector);
 
@@ -100,43 +100,44 @@ describe('hierarchyImplementorsOf (integration)', () => {
   // 'up' starts at the pivot's SUPERCLASS and 'down' walks allSubclasses, so each pivot's own
   // implementation lies outside its own walk — which is why both ends can carry an environment-0
   // method without either direction's test seeing it.
-  const defineFixture = (): void => {
-    const subclass = (superName: string, name: string): void => {
-      q.compileClassDefinition(
+  const defineFixture = async (): Promise<void> => {
+    const subclass = async (superName: string, name: string): Promise<void> => {
+      await q.compileClassDefinition(
         session(),
         `${superName} subclass: '${name}' instVarNames: #() classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
     };
-    subclass('Object', BASE);
-    subclass(BASE, MIDDLE);
-    subclass(MIDDLE, UPPER);
-    subclass(UPPER, LEAF);
+    await subclass('Object', BASE);
+    await subclass(BASE, MIDDLE);
+    await subclass(MIDDLE, UPPER);
+    await subclass(UPPER, LEAF);
 
-    const m = (cls: string, isMeta: boolean, src: string, env: number): void => {
-      q.compileMethod(session(), cls, isMeta, 'accessing', src, env);
+    const m = async (cls: string, isMeta: boolean, src: string, env: number): Promise<void> => {
+      await q.compileMethod(session(), cls, isMeta, 'accessing', src, env);
     };
-    m(BASE, false, `${SEL}\n\t^'base'`, 0);
-    m(MIDDLE, false, `${SEL}\n\t^'middle'`, 1);
-    m(UPPER, false, `${SEL}\n\t^'upper'`, 2);
-    m(LEAF, false, `${SEL}\n\t^'leaf'`, 0);
+    await m(BASE, false, `${SEL}\n\t^'base'`, 0);
+    await m(MIDDLE, false, `${SEL}\n\t^'middle'`, 1);
+    await m(UPPER, false, `${SEL}\n\t^'upper'`, 2);
+    await m(LEAF, false, `${SEL}\n\t^'leaf'`, 0);
     // Class side, environment 1 only. The walk's `sub class` / `class class` branch is separately
     // generated Smalltalk, so it can carry the same environment bug on its own.
-    m(MIDDLE, true, `${META_SEL}\n\t^'middle class'`, 1);
+    await m(MIDDLE, true, `${META_SEL}\n\t^'middle class'`, 1);
   };
 
-  const dictIndex = (): number => q.getDictionaryNames(session()).indexOf('UserGlobals') + 1;
+  const dictIndex = async (): Promise<number> =>
+    (await q.getDictionaryNames(session())).indexOf('UserGlobals') + 1;
 
-  const implementors = (
+  const implementors = async (
     className: string,
     direction: 'up' | 'down',
     environmentId: number,
     isMeta = false,
     selector = SEL,
   ) =>
-    q.hierarchyImplementorsOf(
+    await q.hierarchyImplementorsOf(
       session(),
-      dictIndex(),
+      await dictIndex(),
       className,
       selector,
       isMeta,
@@ -147,43 +148,43 @@ describe('hierarchyImplementorsOf (integration)', () => {
   // Class names of the implementors found, having first asserted that every row carries the
   // environment it was asked for. That stamp is part of a row's identity for
   // dedupeMethodResults, and is what opens the method that was actually found.
-  const classesFound = (...args: Parameters<typeof implementors>): string[] => {
-    const rows = implementors(...args);
+  const classesFound = async (...args: Parameters<typeof implementors>): Promise<string[]> => {
+    const rows = await implementors(...args);
     for (const r of rows) expect(r.environmentId).toBe(args[2]);
     return rows.map((r) => r.className);
   };
 
-  it('walks up to the implementor compiled in each environment', () => {
-    defineFixture();
+  it('walks up to the implementor compiled in each environment', async () => {
+    await defineFixture();
 
-    expect(classesFound(LEAF, 'up', 0)).toEqual([BASE]);
-    expect(classesFound(LEAF, 'up', 1)).toEqual([MIDDLE]);
-    expect(classesFound(LEAF, 'up', 2)).toEqual([UPPER]);
+    expect(await classesFound(LEAF, 'up', 0)).toEqual([BASE]);
+    expect(await classesFound(LEAF, 'up', 1)).toEqual([MIDDLE]);
+    expect(await classesFound(LEAF, 'up', 2)).toEqual([UPPER]);
   });
 
-  it('walks down to the implementor compiled in each environment', () => {
-    defineFixture();
+  it('walks down to the implementor compiled in each environment', async () => {
+    await defineFixture();
 
-    expect(classesFound(BASE, 'down', 0)).toEqual([LEAF]);
-    expect(classesFound(BASE, 'down', 1)).toEqual([MIDDLE]);
-    expect(classesFound(BASE, 'down', 2)).toEqual([UPPER]);
+    expect(await classesFound(BASE, 'down', 0)).toEqual([LEAF]);
+    expect(await classesFound(BASE, 'down', 1)).toEqual([MIDDLE]);
+    expect(await classesFound(BASE, 'down', 2)).toEqual([UPPER]);
   });
 
-  it('collects class-side implementors in the environment they were compiled into', () => {
-    defineFixture();
+  it('collects class-side implementors in the environment they were compiled into', async () => {
+    await defineFixture();
 
-    expect(classesFound(LEAF, 'up', 1, true, META_SEL)).toEqual([MIDDLE]);
-    expect(classesFound(BASE, 'down', 1, true, META_SEL)).toEqual([MIDDLE]);
+    expect(await classesFound(LEAF, 'up', 1, true, META_SEL)).toEqual([MIDDLE]);
+    expect(await classesFound(BASE, 'down', 1, true, META_SEL)).toEqual([MIDDLE]);
     // Compiled into environment 1 only, so environment 0 must answer nothing rather than
     // falling back to it.
-    expect(classesFound(LEAF, 'up', 0, true, META_SEL)).toEqual([]);
-    expect(classesFound(BASE, 'down', 0, true, META_SEL)).toEqual([]);
+    expect(await classesFound(LEAF, 'up', 0, true, META_SEL)).toEqual([]);
+    expect(await classesFound(BASE, 'down', 0, true, META_SEL)).toEqual([]);
   });
 
-  it('returns a row naming the class, side, category and environment it was found in', () => {
-    defineFixture();
+  it('returns a row naming the class, side, category and environment it was found in', async () => {
+    await defineFixture();
 
-    expect(implementors(LEAF, 'up', 2)).toEqual([
+    expect(await implementors(LEAF, 'up', 2)).toEqual([
       {
         dictName: 'UserGlobals',
         className: UPPER,
@@ -195,19 +196,22 @@ describe('hierarchyImplementorsOf (integration)', () => {
     ]);
   });
 
-  it('answers each implementor exactly once across a 0..maxEnvironment sweep', () => {
-    defineFixture();
+  it('answers each implementor exactly once across a 0..maxEnvironment sweep', async () => {
+    await defineFixture();
 
     // What the gemstone.hierarchyImplementorsOf command does: one query per environment, then
     // dedupe. The old walk made this sweep answer the environment-0 implementor three times,
     // stamped 0, 1 and 2 — three rows dedupeMethodResults could not fold together because it
     // keys on the environment, two of which opened nothing.
-    const sweep = (className: string, direction: 'up' | 'down') =>
-      dedupeMethodResults([0, 1, 2].flatMap((env) => implementors(className, direction, env)))
+    const sweep = async (className: string, direction: 'up' | 'down') => {
+      const rows = [];
+      for (const env of [0, 1, 2]) rows.push(...(await implementors(className, direction, env)));
+      return dedupeMethodResults(rows)
         .map((r) => `${r.className}@${r.environmentId}`)
         .sort();
+    };
 
-    expect(sweep(LEAF, 'up')).toEqual([`${BASE}@0`, `${MIDDLE}@1`, `${UPPER}@2`]);
-    expect(sweep(BASE, 'down')).toEqual([`${LEAF}@0`, `${MIDDLE}@1`, `${UPPER}@2`]);
+    expect(await sweep(LEAF, 'up')).toEqual([`${BASE}@0`, `${MIDDLE}@1`, `${UPPER}@2`]);
+    expect(await sweep(BASE, 'down')).toEqual([`${LEAF}@0`, `${MIDDLE}@1`, `${UPPER}@2`]);
   });
 });

@@ -56,13 +56,13 @@ import { GemStoneLogin } from '../../loginTypes';
 function makeMockPanel() {
   const postMessage = vi.fn();
   let title = '';
-  let messageHandler: ((msg: unknown) => void) | undefined;
+  let messageHandler: ((msg: unknown) => Promise<void>) | undefined;
 
   const panel = {
     webview: {
       set html(_: string) {},
       postMessage,
-      onDidReceiveMessage(cb: (msg: unknown) => void) {
+      onDidReceiveMessage(cb: (msg: unknown) => Promise<void>) {
         messageHandler = cb;
         return { dispose: vi.fn() };
       },
@@ -85,8 +85,8 @@ function makeMockPanel() {
     get title() {
       return title;
     },
-    sendMessage(msg: unknown) {
-      messageHandler!(msg);
+    async sendMessage(msg: unknown) {
+      await messageHandler!(msg);
     },
   };
 }
@@ -120,8 +120,8 @@ beforeEach(() => {
   );
   vi.mocked(debug.fetchPrintString).mockReturnValue({ value: 'an Object', truncated: false });
   vi.mocked(debug.getObjectClassName).mockReturnValue('Object');
-  vi.mocked(queries.getEnhancedInspectorViewSpecs).mockReturnValue([]);
-  vi.mocked(queries.fetchObjectMeta).mockReturnValue('{}');
+  vi.mocked(queries.getEnhancedInspectorViewSpecs).mockResolvedValue([]);
+  vi.mocked(queries.fetchObjectMeta).mockResolvedValue('{}');
 });
 
 afterEach(() => {
@@ -163,29 +163,29 @@ describe('EnhancedInspector', () => {
   });
 
   describe('B — ready: panel title', () => {
-    it('sets title from fetchPrintString when not truncated', () => {
+    it('sets title from fetchPrintString when not truncated', async () => {
       expect.assertions(1);
       vi.mocked(debug.fetchPrintString).mockReturnValue({ value: 'an Array(3)', truncated: false });
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.title).toBe('an Array(3)');
     });
 
-    it('appends ellipsis to title when print string is truncated', () => {
+    it('appends ellipsis to title when print string is truncated', async () => {
       expect.assertions(1);
       vi.mocked(debug.fetchPrintString).mockReturnValue({
         value: 'a very long string',
         truncated: true,
       });
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.title).toBe('a very long string…');
     });
 
-    it('calls fetchPrintString with the inspector oop and a limit of 40', () => {
+    it('calls fetchPrintString with the inspector oop and a limit of 40', async () => {
       expect.assertions(2);
       setup(5555n);
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       const [, oop, limit] = vi.mocked(debug.fetchPrintString).mock.calls[0];
       expect(oop).toBe(5555n);
       expect(limit).toBe(40);
@@ -193,11 +193,11 @@ describe('EnhancedInspector', () => {
   });
 
   describe('C — ready: enhancedInspectorViewSpecs message', () => {
-    it('always includes meta in the enhancedInspectorViewSpecs message', () => {
+    it('always includes meta in the enhancedInspectorViewSpecs message', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchObjectMeta).mockReturnValue('{"className":"Array"}');
+      vi.mocked(queries.fetchObjectMeta).mockResolvedValue('{"className":"Array"}');
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           command: 'enhancedInspectorViewSpecs',
@@ -206,21 +206,21 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('passes specs through in the enhancedInspectorViewSpecs message even when null', () => {
+    it('passes specs through in the enhancedInspectorViewSpecs message even when null', async () => {
       expect.assertions(1);
-      vi.mocked(queries.getEnhancedInspectorViewSpecs).mockReturnValue(null);
+      vi.mocked(queries.getEnhancedInspectorViewSpecs).mockResolvedValue(null);
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'enhancedInspectorViewSpecs', specs: null }),
       );
     });
 
-    it('includes className from getObjectClassName in the enhancedInspectorViewSpecs message', () => {
+    it('includes className from getObjectClassName in the enhancedInspectorViewSpecs message', async () => {
       expect.assertions(1);
       vi.mocked(debug.getObjectClassName).mockReturnValue('OrderedCollection');
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           command: 'enhancedInspectorViewSpecs',
@@ -231,14 +231,14 @@ describe('EnhancedInspector', () => {
   });
 
   describe('D — fetchEnhancedInspectorViewData routing', () => {
-    it('routes gtPrintFor: + text editor view to fetchEnhancedInspectorPrintTabData', () => {
+    it('routes gtPrintFor: + text editor view to fetchEnhancedInspectorPrintTabData', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorPrintTabData).mockReturnValue({
+      vi.mocked(queries.fetchEnhancedInspectorPrintTabData).mockResolvedValue({
         data: '{}',
         truncated: false,
       });
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewData',
         oop: '1000',
         methodSelector: 'gtPrintFor:',
@@ -247,11 +247,11 @@ describe('EnhancedInspector', () => {
       expect(queries.fetchEnhancedInspectorPrintTabData).toHaveBeenCalled();
     });
 
-    it('routes text view to fetchEnhancedInspectorTextData', () => {
+    it('routes text view to fetchEnhancedInspectorTextData', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorTextData).mockReturnValue('{}');
+      vi.mocked(queries.fetchEnhancedInspectorTextData).mockResolvedValue('{}');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewData',
         oop: '1000',
         methodSelector: 'gtTextFor:',
@@ -260,11 +260,11 @@ describe('EnhancedInspector', () => {
       expect(queries.fetchEnhancedInspectorTextData).toHaveBeenCalled();
     });
 
-    it('routes list view to fetchEnhancedInspectorListData', () => {
+    it('routes list view to fetchEnhancedInspectorListData', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorListData).mockReturnValue('[]');
+      vi.mocked(queries.fetchEnhancedInspectorListData).mockResolvedValue('[]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewData',
         oop: '1000',
         methodSelector: 'gtItemsFor:',
@@ -275,11 +275,11 @@ describe('EnhancedInspector', () => {
   });
 
   describe('E — fetchEnhancedInspectorViewTotal routing', () => {
-    it('routes forward view to fetchEnhancedInspectorForwardListTotal', () => {
+    it('routes forward view to fetchEnhancedInspectorForwardListTotal', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchEnhancedInspectorForwardListTotal).mockReturnValue(42);
+      vi.mocked(queries.fetchEnhancedInspectorForwardListTotal).mockResolvedValue(42);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewTotal',
         oop: '1000',
         methodSelector: 'gtForwardFor:',
@@ -291,11 +291,11 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('routes non-forward view to fetchEnhancedInspectorListTotal', () => {
+    it('routes non-forward view to fetchEnhancedInspectorListTotal', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchEnhancedInspectorListTotal).mockReturnValue(10);
+      vi.mocked(queries.fetchEnhancedInspectorListTotal).mockResolvedValue(10);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewTotal',
         oop: '1000',
         methodSelector: 'gtItemsFor:',
@@ -309,12 +309,12 @@ describe('EnhancedInspector', () => {
   });
 
   describe('F — enhancedInspectRow: double-click drills into a new miller column', () => {
-    it('appends a column in the same webview rather than opening a new panel', () => {
+    it('appends a column in the same webview rather than opening a new panel', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockReturnValue(9999n);
+      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockResolvedValue(9999n);
       setup();
       const callsBefore = vi.mocked(vscode.window.createWebviewPanel).mock.calls.length;
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'enhancedInspectRow',
         columnId: 0,
         itemOop: '1000',
@@ -328,11 +328,11 @@ describe('EnhancedInspector', () => {
       expect(vi.mocked(vscode.window.createWebviewPanel).mock.calls.length).toBe(callsBefore);
     });
 
-    it('carries a fresh column id that differs from the source column', () => {
+    it('carries a fresh column id that differs from the source column', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockReturnValue(9999n);
+      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockResolvedValue(9999n);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'enhancedInspectRow',
         columnId: 0,
         itemOop: '1000',
@@ -346,11 +346,11 @@ describe('EnhancedInspector', () => {
       expect(addColumn.columnId).not.toBe(addColumn.sourceColumnId);
     });
 
-    it('uses fetchEnhancedInspectorForwardRowOop for double-click on a forward view row', () => {
+    it('uses fetchEnhancedInspectorForwardRowOop for double-click on a forward view row', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorForwardRowOop).mockReturnValue(8888n);
+      vi.mocked(queries.fetchEnhancedInspectorForwardRowOop).mockResolvedValue(8888n);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'enhancedInspectRow',
         columnId: 0,
         itemOop: '1000',
@@ -361,11 +361,11 @@ describe('EnhancedInspector', () => {
       expect(queries.fetchEnhancedInspectorForwardRowOop).toHaveBeenCalled();
     });
 
-    it('does not append a column when row OOP is null', () => {
+    it('does not append a column when row OOP is null', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockReturnValue(null);
+      vi.mocked(queries.fetchEnhancedInspectorRowOop).mockResolvedValue(null);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'enhancedInspectRow',
         columnId: 0,
         itemOop: '1000',
@@ -380,20 +380,20 @@ describe('EnhancedInspector', () => {
   });
 
   describe('M — column-aware message protocol', () => {
-    it('tags the root view specs message with the root column id', () => {
+    it('tags the root view specs message with the root column id', async () => {
       expect.assertions(1);
       setup();
-      mock.sendMessage({ command: 'ready' });
+      await mock.sendMessage({ command: 'ready' });
       expect(mock.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ command: 'enhancedInspectorViewSpecs', columnId: 0 }),
       );
     });
 
-    it('echoes the requesting column id back on a view-data response', () => {
+    it('echoes the requesting column id back on a view-data response', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorListData).mockReturnValue('[]');
+      vi.mocked(queries.fetchEnhancedInspectorListData).mockResolvedValue('[]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorViewData',
         columnId: 7,
         oop: '1000',
@@ -405,27 +405,27 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('updates the panel title when the focused column changes', () => {
+    it('updates the panel title when the focused column changes', async () => {
       expect.assertions(1);
       setup();
-      mock.sendMessage({ command: 'setTitle', title: 'a Character' });
+      await mock.sendMessage({ command: 'setTitle', title: 'a Character' });
       expect(mock.title).toBe('a Character');
     });
 
-    it('disposes the whole panel when the root column is closed', () => {
+    it('disposes the whole panel when the root column is closed', async () => {
       expect.assertions(1);
       setup();
-      mock.sendMessage({ command: 'closePanel' });
+      await mock.sendMessage({ command: 'closePanel' });
       expect(mock.panel.dispose).toHaveBeenCalled();
     });
   });
 
   describe('H — fetchMoreRows', () => {
-    it('posts enhancedInspectorMoreRows (not enhancedInspectorViewData) with list data', () => {
+    it('posts enhancedInspectorMoreRows (not enhancedInspectorViewData) with list data', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorListData).mockReturnValue('[1,2,3]');
+      vi.mocked(queries.fetchEnhancedInspectorListData).mockResolvedValue('[1,2,3]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchMoreRows',
         oop: '1000',
         methodSelector: 'gtItemsFor:',
@@ -441,11 +441,11 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('passes fromIndex through to the query function', () => {
+    it('passes fromIndex through to the query function', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorListData).mockReturnValue('[]');
+      vi.mocked(queries.fetchEnhancedInspectorListData).mockResolvedValue('[]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchMoreRows',
         oop: '1000',
         methodSelector: 'gtItemsFor:',
@@ -463,11 +463,11 @@ describe('EnhancedInspector', () => {
   });
 
   describe('I — fetchEnhancedInspectorRangeData', () => {
-    it('routes non-forward view to fetchEnhancedInspectorListData and posts enhancedInspectorRangeData with rangeStart', () => {
+    it('routes non-forward view to fetchEnhancedInspectorListData and posts enhancedInspectorRangeData with rangeStart', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchEnhancedInspectorListData).mockReturnValue('[4,5,6]');
+      vi.mocked(queries.fetchEnhancedInspectorListData).mockResolvedValue('[4,5,6]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorRangeData',
         oop: '1000',
         methodSelector: 'gtItemsFor:',
@@ -486,11 +486,11 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('routes forward view to fetchEnhancedInspectorForwardListData', () => {
+    it('routes forward view to fetchEnhancedInspectorForwardListData', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchEnhancedInspectorForwardListData).mockReturnValue('[7,8,9]');
+      vi.mocked(queries.fetchEnhancedInspectorForwardListData).mockResolvedValue('[7,8,9]');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorRangeData',
         oop: '1000',
         methodSelector: 'gtForwardFor:',
@@ -503,11 +503,13 @@ describe('EnhancedInspector', () => {
   });
 
   describe('J — fetchEnhancedInspectorTreeChildren', () => {
-    it('calls fetchEnhancedInspectorTreeChildren and posts enhancedInspectorTreeChildren with path and data', () => {
+    it('calls fetchEnhancedInspectorTreeChildren and posts enhancedInspectorTreeChildren with path and data', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchEnhancedInspectorTreeChildren).mockReturnValue('[{"label":"child"}]');
+      vi.mocked(queries.fetchEnhancedInspectorTreeChildren).mockResolvedValue(
+        '[{"label":"child"}]',
+      );
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchEnhancedInspectorTreeChildren',
         itemOop: '2000',
         methodSelector: 'gtTreeFor:',
@@ -531,11 +533,11 @@ describe('EnhancedInspector', () => {
   });
 
   describe('K — fetchFullPrintString', () => {
-    it('wraps fetchFullPrintString result in JSON with stylerSpecification null and posts fullPrintString', () => {
+    it('wraps fetchFullPrintString result in JSON with stylerSpecification null and posts fullPrintString', async () => {
       expect.assertions(2);
-      vi.mocked(debug.fetchFullPrintString).mockReturnValue('this is the full text');
+      vi.mocked(debug.fetchFullPrintString).mockResolvedValue('this is the full text');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchFullPrintString',
         oop: '1000',
         methodSelector: 'gtPrintFor:',
@@ -552,11 +554,11 @@ describe('EnhancedInspector', () => {
   });
 
   describe('L — fetchMethodSource', () => {
-    it('posts methodSource with source, methodSelector, and isClassSide', () => {
+    it('posts methodSource with source, methodSelector, and isClassSide', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchMethodSource).mockReturnValue('size\n  ^ self basicSize');
+      vi.mocked(queries.fetchMethodSource).mockResolvedValue('size\n  ^ self basicSize');
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'fetchMethodSource',
         oop: '1000',
         methodSelector: 'size',
@@ -574,15 +576,15 @@ describe('EnhancedInspector', () => {
   });
 
   describe('G — browseMethod', () => {
-    it('calls SystemBrowser.navigateBeside when location is found', () => {
+    it('calls SystemBrowser.navigateBeside when location is found', async () => {
       expect.assertions(1);
-      vi.mocked(queries.fetchMethodBrowseLocation).mockReturnValue({
+      vi.mocked(queries.fetchMethodBrowseLocation).mockResolvedValue({
         dictName: 'Globals',
         className: 'Array',
         category: 'accessing',
       });
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'browseMethod',
         oop: '1000',
         methodSelector: 'size',
@@ -594,11 +596,11 @@ describe('EnhancedInspector', () => {
       );
     });
 
-    it('shows a warning and does not navigate when location is null', () => {
+    it('shows a warning and does not navigate when location is null', async () => {
       expect.assertions(2);
-      vi.mocked(queries.fetchMethodBrowseLocation).mockReturnValue(null);
+      vi.mocked(queries.fetchMethodBrowseLocation).mockResolvedValue(null);
       setup();
-      mock.sendMessage({
+      await mock.sendMessage({
         command: 'browseMethod',
         oop: '1000',
         methodSelector: 'size',

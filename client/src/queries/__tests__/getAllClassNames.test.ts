@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { getClassNameEntriesFor } from '../getAllClassNames';
 
 describe('getClassNameEntriesFor', () => {
-  it('parses the tab-separated dictionary/index/name rows the stone returns', () => {
-    const exec = vi.fn((_code: string) => '1\tUserGlobals\tFoo\n42\tPython\tFoo\n');
+  it('parses the tab-separated dictionary/index/name rows the stone returns', async () => {
+    const exec = vi.fn(async (_code: string) => '1\tUserGlobals\tFoo\n42\tPython\tFoo\n');
 
-    const entries = getClassNameEntriesFor(exec, 'Foo');
+    const entries = await getClassNameEntriesFor(exec, 'Foo');
 
     expect(entries).toEqual([
       { dictIndex: 1, dictName: 'UserGlobals', className: 'Foo' },
@@ -13,16 +13,16 @@ describe('getClassNameEntriesFor', () => {
     ]);
   });
 
-  it('returns nothing when the name resolves to no class', () => {
-    const exec = vi.fn((_code: string) => '');
+  it('returns nothing when the name resolves to no class', async () => {
+    const exec = vi.fn(async (_code: string) => '');
 
-    expect(getClassNameEntriesFor(exec, 'Nope')).toEqual([]);
+    expect(await getClassNameEntriesFor(exec, 'Nope')).toEqual([]);
   });
 
-  it('looks the name up as an interned symbol key, not a string compare (Unicode7-safe)', () => {
-    const exec = vi.fn((_code: string) => '');
+  it('looks the name up as an interned symbol key, not a string compare (Unicode7-safe)', async () => {
+    const exec = vi.fn(async (_code: string) => '');
 
-    getClassNameEntriesFor(exec, 'Foo');
+    await getClassNameEntriesFor(exec, 'Foo');
 
     const code = exec.mock.calls[0][0];
     expect(code).toContain("target := #'Foo'.");
@@ -30,10 +30,10 @@ describe('getClassNameEntriesFor', () => {
     expect(code).not.toMatch(/= 'Foo'/);
   });
 
-  it('escapes a quote in the class name', () => {
-    const exec = vi.fn((_code: string) => '');
+  it('escapes a quote in the class name', async () => {
+    const exec = vi.fn(async (_code: string) => '');
 
-    getClassNameEntriesFor(exec, "O'Hara");
+    await getClassNameEntriesFor(exec, "O'Hara");
 
     expect(exec.mock.calls[0][0]).toContain("#'O''Hara'");
   });

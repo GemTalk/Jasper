@@ -623,7 +623,7 @@ export class SunitTestController implements vscode.Disposable {
     if (!session) return;
 
     try {
-      const classes = sunit.discoverTestClasses(session);
+      const classes = await sunit.discoverTestClasses(session);
       const items: vscode.TestItem[] = [];
       // items.replace below drops every existing item, methods included, so the
       // URIs they were reachable at stop being test URIs at the same moment.
@@ -690,7 +690,7 @@ export class SunitTestController implements vscode.Disposable {
     const dictIndex = this.classDictIndex.get(classItem.id);
 
     try {
-      const methods = sunit.discoverTestMethods(session, className, dictName);
+      const methods = await sunit.discoverTestMethods(session, className, dictName);
       const children: vscode.TestItem[] = [];
 
       for (const { selector, category } of methods) {

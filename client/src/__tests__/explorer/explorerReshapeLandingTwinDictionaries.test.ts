@@ -70,7 +70,7 @@ function makeController(selected: { dictName: string; dictIndex: number }): Expl
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(queries.getDictionaryNames).mockReturnValue(SYMBOL_LIST);
+  vi.mocked(queries.getDictionaryNames).mockResolvedValue(SYMBOL_LIST);
   // Both `Shared` dictionaries bind a `Shadowed` once the rename has landed: the renamed class in
   // the third, and an unrelated class of that name in the first.
   vi.mocked(queries.getClassesWithCategory).mockImplementation(((_s: unknown, idx: number) =>

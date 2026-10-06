@@ -153,11 +153,11 @@ export async function splitClassCommand(
   }
 
   // 5. Paginated preview + apply.
-  const heading = `Split ${qualifiedClassName(className, dictionaryNameFor(session, dict))} — extract ${newName}`;
+  const heading = `Split ${qualifiedClassName(className, await dictionaryNameFor(session, dict))} — extract ${newName}`;
   const token = `split_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const safeClear = (): void => {
+  const safeClear = async (): Promise<void> => {
     try {
-      queries.clearSplitClassPreview(session, token);
+      await queries.clearSplitClassPreview(session, token);
     } catch {
       /* best-effort cleanup */
     }
@@ -180,18 +180,18 @@ export async function splitClassCommand(
     void vscode.window.showErrorMessage(
       `Preview failed: ${e instanceof Error ? e.message : String(e)}`,
     );
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
   if (start.outOfScope.decline) {
     refuse(start.outOfScope.decline);
-    safeClear();
+    await safeClear();
     return undefined;
   }
   if (start.total === 0) {
     refuse('Nothing to change.');
-    safeClear();
+    await safeClear();
     return undefined;
   }
 
@@ -199,9 +199,9 @@ export async function splitClassCommand(
   // PENDING and only becomes an undo entry once the apply is known to have landed, so every path
   // that does not get there drops it -- a partial reshape leaves the stone in a state the capture
   // does not describe, and must never have an undo offered against it.
-  const discardCapture = (): void => {
+  const discardCapture = async (): Promise<void> => {
     try {
-      queries.discardPendingCapture(session);
+      await queries.discardPendingCapture(session);
     } catch {
       /* best-effort */
     }
@@ -209,7 +209,7 @@ export async function splitClassCommand(
   try {
     // Scoped to the class's own dictionary: an unscoped capture snapshots, and later reverts,
     // whichever same-named class the symbol list reaches first (#396).
-    queries.captureClassHistory(session, className, dict);
+    await queries.captureClassHistory(session, className, dict);
   } catch {
     /* best-effort: a reshape must not fail because its undo bookkeeping did */
   }
@@ -217,21 +217,21 @@ export async function splitClassCommand(
     loadPage: async (off) =>
       parsePage(await queries.pageSplitClassPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async () => parseApplyResult(await queries.applySplitClass(session, token)),
-    cleanup: safeClear,
+    cleanup: () => void safeClear(),
   });
   if (!result) {
-    discardCapture();
+    await discardCapture();
     return undefined;
   }
 
   if (result.error) {
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return undefined;
   }
   if (result.failed.length > 0) {
     const first = result.failed[0];
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -241,7 +241,7 @@ export async function splitClassCommand(
   // zero changes applied without an error/failure is an impossible-in-practice state — but do not
   // claim success for it (the "no false success" rule).
   if (result.applied === 0) {
-    discardCapture();
+    await discardCapture();
     void vscode.window.showErrorMessage(`${heading} applied no changes.`);
     return undefined;
   }
@@ -251,7 +251,7 @@ export async function splitClassCommand(
   // The reversal also has to UNBIND the class this created: it is brand new, so there is no
   // earlier version to revert it to.
   try {
-    queries.commitHistoryRevert(session, heading, 'GsSplitClassRefactoring', [newName]);
+    await queries.commitHistoryRevert(session, heading, 'GsSplitClassRefactoring', [newName]);
   } catch {
     /* best-effort: the reshape landed either way */
   }

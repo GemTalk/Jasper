@@ -100,7 +100,7 @@ export async function saveFileOut(options: {
   /** What went into the file, for the confirmation message: `2 methods`, `Animals`. */
   label: string;
   /** Produces the file's text. Runs after the destination is chosen; may throw. */
-  build: () => string;
+  build: () => Promise<string>;
   /** Where the last-used directory is remembered, shared with File In (globalState). */
   store?: vscode.Memento;
   /** Save-dialog types; defaults to the chunk set. Tonel passes its own. */
@@ -117,7 +117,7 @@ export async function saveFileOut(options: {
 
   let text: string;
   try {
-    text = options.build();
+    text = await options.build();
   } catch (e) {
     void vscode.window.showErrorMessage(
       `File out failed: ${e instanceof Error ? e.message : String(e)}`,

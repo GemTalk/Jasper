@@ -380,7 +380,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           if (!result) return;
           let source = '';
           try {
-            source = this.deps!.previewSource(result);
+            source = await this.deps!.previewSource(result);
           } catch {
             source = '';
           }
@@ -408,7 +408,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           let source = '';
           if (result) {
             try {
-              source = this.deps!.previewSource(result);
+              source = await this.deps!.previewSource(result);
             } catch {
               source = '';
             }

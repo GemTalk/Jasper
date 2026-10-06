@@ -23,7 +23,7 @@ const NO_ROWAN = '!NO_ROWAN';
 // project names; the dirty flag comes from the loaded project
 // (Rowan image loadedProjectNamed:), which is also the object all the
 // package/class traversal uses.
-export function listRowanProjects(execute: QueryExecutor): RowanProjectList {
+export async function listRowanProjects(execute: QueryExecutor): Promise<RowanProjectList> {
   const code = `| ws rowan img names |
 rowan := System myUserProfile symbolList objectNamed: #'Rowan'.
 rowan isNil ifTrue: [^'${NO_ROWAN}'].
@@ -40,7 +40,7 @@ names do: [:projName | | proj dirty url builtin |
      nextPutAll: builtin printString; lf].
 ws contents`;
 
-  const raw = execute(code);
+  const raw = await execute(code);
   if (raw.trim() === NO_ROWAN) return { available: false, projects: [] };
 
   const projects: RowanProject[] = [];
