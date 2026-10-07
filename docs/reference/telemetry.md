@@ -22,8 +22,11 @@ same. Values are sent as the app reports them. `unknown` means the app reported
 nothing. Events from Jasper versions before these properties were added have no
 value at all.
 
-In a remote window (Dev Container, SSH, WSL), whether these describe the app on
-the user's desktop has not been verified yet.
+In a remote window (Dev Container, SSH, WSL), both describe the app on the
+user's desktop, not the remote machine, so a remote window reports the same
+values as a local one. `common.remotename` says whether the window was remote.
+When the editor runs in a web browser, as on github.dev, they describe that web
+version of the app instead.
 
 VS Code adds its own `common.*` properties too (machine id, OS, VS Code
 version, extension version). [USAGE_DATA.md](../../USAGE_DATA.md) lists them.
