@@ -110,6 +110,29 @@ description = "Jasper's own Application Insights ingestion connection string, wh
 targetRules = ["generic-api-key"]
 regexes = ['''^6065b12b-2a05-4908-8777-f09bb9158ac2$''']
 
+# The telemetry SDK's own minified code, which arrived in the same bundle.
+# `@vscode/extension-telemetry` pulls in Microsoft's 1DS SDK, and esbuild
+# inlines it into `client/out/extension.js` alongside everything else. One
+# line of its minified output builds a config object:
+#
+#     _a4[_DYN_FETCH_CREDENTIALS] = _fetchCredentials, _a4.disableXhr = false
+#
+# `generic-api-key` keys on the word "Credentials" and then captures the run
+# of word characters after it, so the "secret" it reports is the literal text
+# `_a4.disableXhr` — a minifier-generated temporary and a 1DS property name,
+# carrying nothing. This blocked the first 1.14.0 dispatch, which is the job
+# working: it fired on a package that had not been uploaded anywhere.
+#
+# `_a4` is assigned by the minifier and will differ between builds, so the
+# anchor is `disableXhr`, which comes from 1DS's own source. Nothing else is
+# allowed: a sibling property drifting into the capture would fire again and
+# should be read on its own merits rather than pre-emptively allowed here.
+[[allowlists]]
+description = "A minified temporary plus the 1DS SDK's `disableXhr` property, captured by generic-api-key because the preceding identifier contains \"Credentials\""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^_[A-Za-z0-9$_]+\.disableXhr$''']
+
 # What this cannot do, stated plainly so the job is not mistaken for a
 # guarantee: gitleaks matches TEXT, not program semantics. Every rule and
 # every allowlist here is defeated by string concatenation —
