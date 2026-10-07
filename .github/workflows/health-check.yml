@@ -486,6 +486,58 @@ jobs:
       - name: Verify vsce packaging
         run: npm run package
 
+  secret-scan:
+    name: Scan history for secrets
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
+      # a mutable tag like @v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The scan walks the full history, so the clone must have it.
+          fetch-depth: 0
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job
+          persist-credentials: false
+      - name: Run Betterleaks
+        # Scans every commit reachable from the checked-out HEAD: on a PR,
+        # main's history plus the PR's commits; on a push or merge-queue
+        # entry, that ref's history. HEAD rather than --all, because the
+        # clone also holds every other remote branch, and a finding on
+        # someone's unmerged branch would fail unrelated runs.
+        #
+        # Pinned to v1.9.0 by digest. v2 is not a drop-in replacement for
+        # Gitleaks: it rejects `[[allowlists]]` and no longer discovers
+        # config files on its own.
+        #
+        # --config is explicit because v1 would otherwise auto-load
+        # .gitleaks.toml (the release scan's config) from the target.
+        # --verbose prints each finding's file, line and commit; without
+        # it the log shows only a count.
+        #
+        # --diff-merges=remerge: plain `git log -p` shows no diff for merge
+        # commits, so a secret added while merging (in a conflict
+        # resolution, or with `--no-commit`) was never scanned. remerge
+        # diffs each merge against git's own automatic merge of its
+        # parents, which is only what the merge author added. Needs
+        # git >= 2.36.
+        #
+        # On a conflicted file, remerge reports the path as `b/<path>`, so
+        # the `^`-anchored path allowlists don't apply to that hunk. That can
+        # only add findings, never hide one.
+        #
+        # --user: the mounted checkout is owned by the runner user, and git
+        # inside the container (root by default) refuses to read a repo
+        # another user owns ("detected dubious ownership"), failing the scan.
+        run: |
+          docker run --rm -v "$(pwd)":/repo --user "$(id -u):$(id -g)" \
+            ghcr.io/betterleaks/betterleaks@sha256:e3b95b0db6c2735db17165c009b0ad6d9cef34fb4578659232b98f69d7346cac \
+            git /repo \
+            --config /repo/.github/betterleaks.toml \
+            --log-opts="--diff-merges=remerge HEAD" \
+            --redact --verbose --no-banner
+
   # Single stable check for branch protection / the merge queue to require.
   # The matrix job's own check names embed the matrix values, so requiring
   # `test` directly is brittle; this fans them in to one name instead.
@@ -495,7 +547,7 @@ jobs:
   ci-complete:
     name: ci-complete
     if: always()
-    needs: [prepare, lint-workflows, lint, health-check, package-check]
+    needs: [prepare, lint-workflows, lint, health-check, package-check, secret-scan]
     runs-on: ubuntu-22.04
     timeout-minutes: 1
     steps:
@@ -505,12 +557,14 @@ jobs:
             [ "${{ needs.lint-workflows.result }}" != "success" ] ||
             [ "${{ needs.lint.result }}" != "success" ] ||
             [ "${{ needs.health-check.result }}" != "success" ] ||
-            [ "${{ needs.package-check.result }}" != "success" ]; then
+            [ "${{ needs.package-check.result }}" != "success" ] ||
+            [ "${{ needs.secret-scan.result }}" != "success" ]; then
             echo "prepare=${{ needs.prepare.result }}"
             echo "lint-workflows=${{ needs.lint-workflows.result }}"
             echo "lint=${{ needs.lint.result }}"
             echo "health-check=${{ needs.health-check.result }}"
             echo "package-check=${{ needs.package-check.result }}"
+            echo "secret-scan=${{ needs.secret-scan.result }}"
             exit 1
           fi
 

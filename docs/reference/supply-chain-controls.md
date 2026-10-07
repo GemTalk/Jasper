@@ -63,6 +63,8 @@ Four additional checks run in the `lint` job (not `.npmrc` settings, so not enfo
 ## Known gaps
 
 - **`rhysd/actionlint` docker digest** — pinned by SHA256 digest in `health-check.yml`'s `lint-workflows` job, but Dependabot's `github-actions` ecosystem scans `uses:` only, so this digest is a manual bump.
+- **`ghcr.io/betterleaks/betterleaks` docker digest**: pinned by SHA256 digest in `health-check.yml`'s `secret-scan` job, so Dependabot never bumps it either. A stale pin keeps scanning but misses detection rules added upstream. The pin is held at v1 on purpose: v2 rejects the `[[allowlists]]` in `.github/betterleaks.toml` (see the comment at the top of that file).
+- **`gitleaks` binary in `release.yml`'s `.vsix` scan**: pinned by `GITLEAKS_VERSION` and `GITLEAKS_SHA256`, a manual bump for the same reason. It stays Gitleaks, separate from the Betterleaks history scan in CI, because it exists to predict Open VSX's own Gitleaks-based scan; the two scanners keep separate configs (`.gitleaks.toml`, `.github/betterleaks.toml`) and separate upgrade paths.
 - **The exact npm pins in `.github/workflows/health-check.yml` and `acceptance/Dockerfile`** — both install `npm@11.17.0`, the npm bundled by `.nvmrc`'s Node, so CI and the acceptance container match a contributor's toolchain rather than running ahead of it. Dependabot's `github-actions` ecosystem scans `uses:` only, not `run:` strings, so neither bumps automatically, and nothing checks the two literals still agree. Whenever `.nvmrc`'s Node version moves, `grep -rn 'npm@11' .github/workflows/health-check.yml acceptance/Dockerfile` and re-pin **both** — updating one alone leaves the acceptance container silently running a different npm than CI.
 
 ## Sunset conditions
