@@ -9,9 +9,21 @@ sent when a user sets VS Code's `telemetry.telemetryLevel` to `off`.
 
 ## On every event
 
-| Property        | Values                                         | Meaning                                                                  |
-| --------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `extensionMode` | `production`, `development`, `test`, `unknown` | Only `production` is a real user. Filter out the others in every report. |
+| Property        | Values                                                                             | Meaning                                                                  |
+| --------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `extensionMode` | `production`, `development`, `test`, `unknown`                                     | Only `production` is a real user. Filter out the others in every report. |
+| `appUriScheme`  | e.g. `vscode`, `vscode-insiders`, `cursor`, `windsurf`, or `unknown`               | Which editor app Jasper runs in, as a short id.                          |
+| `appName`       | e.g. `Visual Studio Code`, `Visual Studio Code - Insiders`, `Cursor`, or `unknown` | Which editor app Jasper runs in, as the app names itself.                |
+
+`appUriScheme` and `appName` tell VS Code apart from its forks. A fork such as
+Cursor or Windsurf reports the VS Code version it is built on as
+`common.vscodeversion`, so without these an old VS Code and a fork look the
+same. Values are sent as the app reports them. `unknown` means the app reported
+nothing. Events from Jasper versions before these properties were added have no
+value at all.
+
+In a remote window (Dev Container, SSH, WSL), whether these describe the app on
+the user's desktop has not been verified yet.
 
 VS Code adds its own `common.*` properties too (machine id, OS, VS Code
 version, extension version). [USAGE_DATA.md](../../USAGE_DATA.md) lists them.

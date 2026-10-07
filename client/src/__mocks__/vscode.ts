@@ -546,6 +546,8 @@ const FAKE_COMMON_PROPERTIES: Record<string, string> = { 'common.fake': 'yes' };
 
 export const env = {
   machineId: 'fake-machine-id',
+  appName: 'Visual Studio Code',
+  uriScheme: 'vscode',
   clipboard: {
     writeText: vi.fn(async (_text: string) => {}),
     readText: vi.fn(async () => ''),

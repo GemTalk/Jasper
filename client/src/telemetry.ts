@@ -49,8 +49,13 @@ let reporter: TelemetryReporter | undefined;
 
 /**
  * Properties stamped on every event, established once at activation:
- * `extensionMode`. VS Code's own `common.*` properties are mixed in by the
- * extension host and are not repeated here.
+ * `extensionMode`, `appUriScheme` and `appName`. VS Code's own `common.*`
+ * properties are mixed in by the extension host and are not repeated here.
+ *
+ * The app properties exist because forks (Cursor, Windsurf…)
+ * report their *base* VS Code version in `common.vscodeversion`, and no
+ * `common.*` property names the app — without them, users stuck on an old
+ * VS Code and all users of one fork look the same.
  */
 let baseProperties: Record<string, string> = {};
 
@@ -68,6 +73,15 @@ function extensionModeName(mode: vscode.ExtensionMode): string {
   }
 }
 
+/** An `env` string for a telemetry property, or `unknown` if it is empty or unreadable. */
+function envString(read: () => string | undefined): string {
+  try {
+    return read()?.trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 /**
  * Sets up the reporter and this activation's base properties. Must run
  * before any `report*` call; a call before this is a silent no-op (`send`
@@ -78,7 +92,11 @@ function extensionModeName(mode: vscode.ExtensionMode): string {
  * dropped.
  */
 export function initTelemetry(context: vscode.ExtensionContext): void {
-  baseProperties = { extensionMode: extensionModeName(context.extensionMode) };
+  baseProperties = {
+    extensionMode: extensionModeName(context.extensionMode),
+    appUriScheme: envString(() => vscode.env.uriScheme),
+    appName: envString(() => vscode.env.appName),
+  };
   reporter = new TelemetryReporter(CONNECTION_STRING);
   context.subscriptions.push(reporter);
 }
