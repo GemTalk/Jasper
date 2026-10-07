@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
 import { TelemetryReporter } from '@vscode/extension-telemetry';
@@ -67,6 +67,52 @@ describe('telemetry', () => {
     reportActivation(0);
 
     expect(eventsNamed('activated')[0].properties).toMatchObject({ extensionMode: expected });
+  });
+
+  describe('the editor app', () => {
+    // This project doesn't restore spies between tests, and test order is
+    // shuffled, so a stubbed `env` getter left in place would leak into
+    // whichever test runs next.
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('says which app Jasper runs in on every event', () => {
+      initTelemetry(fakeContext());
+
+      reportActivation(0);
+      reportLoginAttempt({ version: '3.7.2', gem_host: 'localhost' }, 'connected');
+
+      for (const name of ['activated', 'loginAttempted']) {
+        expect(eventsNamed(name)[0].properties).toMatchObject({
+          appUriScheme: 'vscode',
+          appName: 'Visual Studio Code',
+        });
+      }
+    });
+
+    it.each([
+      ['uriScheme', 'appUriScheme'],
+      ['appName', 'appName'],
+    ] as const)('sends unknown when the editor reports an empty %s', (envField, property) => {
+      vi.spyOn(vscode.env, envField, 'get').mockReturnValue('  ');
+      initTelemetry(fakeContext());
+
+      reportActivation(0);
+
+      expect(eventsNamed('activated')[0].properties).toMatchObject({ [property]: 'unknown' });
+    });
+
+    it("sends unknown when the editor's app name can't be read", () => {
+      vi.spyOn(vscode.env, 'appName', 'get').mockImplementation(() => {
+        throw new Error('boom');
+      });
+      initTelemetry(fakeContext());
+
+      reportActivation(0);
+
+      expect(eventsNamed('activated')[0].properties).toMatchObject({ appName: 'unknown' });
+    });
   });
 
   describe('timing activation', () => {
@@ -168,6 +214,8 @@ describe('telemetry', () => {
       const { properties } = eventsNamed('loginAttempted')[0];
       const ownNames = Object.keys(properties).filter((name) => !name.startsWith('common.'));
       expect(ownNames.sort()).toEqual([
+        'appName',
+        'appUriScheme',
         'extensionMode',
         'gemstoneVersion',
         'outcome',

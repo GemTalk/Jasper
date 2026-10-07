@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **Usage events now say which editor app Jasper runs in** — VS Code, VS Code Insiders, or a fork such as Cursor. Forks report the VS Code version they are built on, so this is the only way to tell them apart when deciding which VS Code versions Jasper still needs to support. See [USAGE_DATA.md](USAGE_DATA.md).
+
 ## [1.14.0] - 2026-10-06
 
 ### Added

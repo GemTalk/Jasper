@@ -9,7 +9,8 @@ It does not cover any other GemTalk product.
 
 Jasper sends usage events when the extension starts up and when you connect
 to GemStone, so we can count how many installations use it, on which operating
-systems and VS Code versions, and in which regions, and learn which GemStone
+systems and VS Code versions, in which editor app (VS Code, VS Code Insiders,
+or a fork such as Cursor), and in which regions, and learn which GemStone
 version you connect to, whether its server is on this machine, and whether
 connecting works. They carry only extension-level information — never the
 contents of your work (see "What we do not collect" below).
@@ -83,5 +84,5 @@ delete the matching records.
 
 ## Changes
 
-Last updated: 2026-10-06. Changes to this notice will be published in this
+Last updated: 2026-10-07. Changes to this notice will be published in this
 repository.
