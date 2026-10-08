@@ -1,4 +1,5 @@
-# Gitleaks configuration for the release pipeline's scan of the packaged .vsix.
+# Gitleaks configuration for the secret scan of the packaged .vsix, which
+# runs on every PR and before every release.
 #
 # Open VSX runs its own gitleaks-based scan server-side, AFTER accepting an
 # upload, and offers no way to allow a false positive. A hit there leaves the
@@ -7,7 +8,8 @@
 # repo has been bitten twice (1.7.6 and 1.8.3, both GemStone's *public*
 # default password 'swordfish'), each time failing only the Open VSX half
 # after the Marketplace had already published. Scanning the package ourselves,
-# before anything is uploaded, turns that into a re-dispatch instead.
+# before anything is uploaded, turns that into a red PR check, or at worst a
+# re-dispatch.
 #
 # The scan target is the UNZIPPED .vsix, not the working tree: the tree both
 # misses what ships (the esbuild bundles are in the package but not in git)

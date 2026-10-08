@@ -45,16 +45,16 @@ There is no `ref` input: the workflow publishes the tip of the branch it was dis
 ### What runs, and in what order
 
 ```
-validate ──▶ package ──▶ scan ──▶ gate ──▶ release ──┬──▶ publish-vsce ──┐
-                                                     │                   ├──▶ verify
-                                                     └──▶ publish-ovsx ──┘
+validate ──▶ release-notes ──▶ package ──▶ gate ──▶ release ──┬──▶ publish-vsce ──┐
+                                                              │                   ├──▶ verify
+                                                              └──▶ publish-ovsx ──┘
 ```
 
 | Job | What it does |
 | --- | --- |
 | `validate` | Checks nothing out. Over the API: the repository is `GemTalk/Jasper`, the dispatch was from the default branch, `package.json` is at `version`, `CHANGELOG.md` has a dated `[X.Y.Z]` section **and an empty `[Unreleased]`**, no `vX.Y.Z` tag exists, and the newest `ci-complete` on this exact commit concluded `success`. |
-| `package` | `npm ci`, then `npm run package` with `SOURCE_DATE_EPOCH` set from the commit date, so the zip is reproducible. Uploads the one `.vsix` every later job uses. |
-| `scan` | Unzips that `.vsix` and runs `gitleaks` over its **contents** — see [the secret scan](#the-secret-scan). |
+| `release-notes` | Checks out the commit and renders its release notes with `scripts/changelog-section.sh`, so a dated but empty section fails here rather than after the tag. |
+| `package` | Calls `.github/workflows/package-and-scan.yml`. Its `Build` job runs `npm ci`, then `npm run package` with `SOURCE_DATE_EPOCH` set from the commit date, so the zip is reproducible, and uploads the one `.vsix` every later job uses. Its `Secret scan` job then runs `gitleaks` over that `.vsix`'s **contents** (see [the secret scan](#the-secret-scan)). `gate` waits for both. |
 | `gate` | Does nothing at all. Its only content is the `release-approval` environment, which holds the run until a required reviewer approves. |
 | `release` | Creates the annotated tag, then the GitHub Release as a **draft**, attaches the `.vsix`, and publishes it. |
 | `publish-vsce`, `publish-ovsx` | Independent. Each downloads the `.vsix` **from the Release** and publishes that file. Neither waits for the other. |
@@ -70,16 +70,18 @@ Two properties are worth understanding, because they are why the jobs are in thi
 
 Open VSX runs its own gitleaks-based scan **server-side, after accepting the upload**, and offers no way to allow a false positive. A hit leaves the version inactive or rejected — and the version number is already spent. This repo has been rejected that way twice, 1.7.6 and 1.8.3, both times on GemStone's *public* default password and both times failing only the Open VSX half after the Marketplace had already published.
 
-The `scan` job scans the **unzipped `.vsix`**, not the working tree and not git history. That is deliberate in both directions: the tree misses what actually ships (the esbuild bundles are in the package but not in git, and both historical rejections lived in bundled output) and floods on what does not (`.vscodeignore` drops `client/tmp/**`, ~1GB of fixtures including example private keys).
+The scan lives in the reusable workflow `.github/workflows/package-and-scan.yml`, which both the release's `package` job and the Health Check's `package-check` job call, so the PR run and the release take the same path. A leak therefore fails the PR that introduces it, long before a release, and the release still scans the exact bytes it is about to ship. The scan runs in its own job, on a fresh checkout where neither `npm ci` nor the build has run, so nothing the build executes can reach the scanner or its config. The PR itself can, though: the scan reads `.gitleaks.toml` from the PR's own tree, so a PR that widens an allowlist passes its own scan. Review changes to that file as carefully as code.
+
+It scans the **unzipped `.vsix`**, not the working tree and not git history. That is deliberate in both directions: the tree misses what actually ships (the esbuild bundles are in the package but not in git, and both historical rejections lived in bundled output) and floods on what does not (`.vscodeignore` drops `client/tmp/**`, ~1GB of fixtures including example private keys).
 
 Rules live in `.gitleaks.toml`. Two things there need to stay true:
 
 - **The allowlists are narrow, and matched on the secret text.** esbuild inlines every dependency into one `extension.js`, so our code and vendor code cannot be separated by path. The current entries cover two class identifiers from bundled ASN.1/PKCS libraries and PEM *delimiter* literals in PEM-handling code. A real key in the same file is still caught.
-- **`gemstone-password-literal` is a custom rule, and it is not redundant.** gitleaks' default ruleset does **not** flag the password form that Open VSX rejects, so scanning with the defaults alone would sail straight past the exact failure this job exists to prevent. It mirrors `client/src/__tests__/publishSecretScan.test.ts`, which stays: the unit test fails in seconds on every PR, while this covers the whole package.
+- **`gemstone-password-literal` is a custom rule, and it is not redundant.** gitleaks' default ruleset does **not** flag the password form that Open VSX rejects, so scanning with the defaults alone would sail straight past the exact failure this scan exists to prevent. It mirrors `client/src/__tests__/publishSecretScan.test.ts`, which stays: the unit test fails in seconds, while this scan covers the whole package but only after a full build.
 
 - **The delimiter allowlist is scoped to the `private-key` rule, and `gemstone-pem-key-material` is why.** RE2 has no lookahead, so "allow the header but not the contents" cannot be written as one negative regex: an allowlist permissive enough to pass the header also passes a key that follows it. A key split as `"-----BEGIN PRIVATE KEY-----\n" + "MIIEv..."` begins with exactly that prefix. The header and the material are therefore separate rules, and nothing allowlists the material one.
 
-A finding fails the run before anything is published, and the report is uploaded as an artifact. Fix it and re-dispatch; nothing has been spent.
+A finding fails the run before anything is published, and the report is uploaded as an artifact. Fix it and re-dispatch; nothing has been spent. On a PR, the same finding fails `ci-complete`, so a false positive blocks merging too, not just releasing.
 
 **What the scan cannot do.** gitleaks matches text, not program semantics, so string concatenation defeats every rule and every allowlist here — `"-----BEGIN PRIVATE" + " KEY-----"`, or `"sword" + "fish"`, never appear contiguously in the file. Base64 key material with no header is invisible too.
 
@@ -105,7 +107,7 @@ scripts/registry-state.sh marketplace 1.9.1
 
 | Where | What it means | What to do |
 | --- | --- | --- |
-| `validate`, `package`, `scan` | Nothing has been created and nothing published. | Fix and re-dispatch. The version number is untouched. |
+| `validate`, `release-notes`, `package` | Nothing has been created and nothing published. | Fix and re-dispatch. The version number is untouched. |
 | `release` | The tag may exist without a Release, or neither. Nothing has been published. | Delete the tag if it was created, then re-dispatch. |
 | One publish job | That registry does not have it; the other may. The Release and tag exist and are correct. | **"Re-run failed jobs"** — never "Re-run all jobs", which would fail at the artifact upload by design rather than rebuild different bytes. |
 | Both publish jobs | Nothing was accepted by either registry. | Re-run failed jobs. |

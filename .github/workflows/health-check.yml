@@ -455,36 +455,25 @@ jobs:
           path: gci-crash-dumps
           if-no-files-found: ignore
 
+  # Packages and secret-scans exactly as a release does, so a packaging
+  # break or a leaked secret fails the PR that causes it instead of the
+  # release. Neither is visible to npm ci / lint / compile / test; packaging
+  # alone has broken a release twice (see issue #351).
   package-check:
-    name: Verify vsce packaging
-    timeout-minutes: 5
+    name: Package
     needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
-      # a mutable tag like @v6
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # zizmor(artipacked): checkout must not persist the token past
-          # this job
-          persist-credentials: false
-      - name: Setup Node.js
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v6
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      # Runs vsce's full packaging path (esbuild bundle + the production
-      # dependency walk `npm list --production --parseable --depth=99999`).
-      # An `overrides` entry resolved outside its declaring package's range
-      # marks that edge `invalid`, `npm list` exits non-zero, and packaging
-      # aborts — invisible to npm ci / lint / compile / test, and it has
-      # broken a release twice (see issue #351).
-      - name: Verify vsce packaging
-        run: npm run package
+    permissions:
+      contents: read
+    # './...' rather than zizmor's preferred '$/...', which actionlint
+    # rejects (see "Setup GemStone in Windows" above).
+    uses: ./.github/workflows/package-and-scan.yml # zizmor: ignore[self-repository]
+    with:
+      # Nothing here consumes this .vsix, so "Re-run all jobs" should
+      # replace it rather than fail. It is kept 7 days, long enough for a
+      # reviewer to install it while the PR waits for review, rather than
+      # storing a ~14 MB copy per push for the repository default.
+      overwrite-vsix: true
+      vsix-retention-days: 7
 
   # Single stable check for branch protection / the merge queue to require.
   # The matrix job's own check names embed the matrix values, so requiring
