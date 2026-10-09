@@ -16,6 +16,7 @@ See npm's [config reference](https://docs.npmjs.com/cli/v11/using-npm/config) fo
 | `allow-git` | `none` | No-op today (no git deps in the tree) — exists to block one being introduced. Becomes the npm 12 default. |
 | `allow-remote` | `none` | No-op today — exists to block a non-registry dependency spec being introduced. Still permits the *configured* registry hostname, so a scoped `@foo:registry=` override slips through. Becomes the npm 12 default. |
 | `min-release-age` | `7` | Cooldown in days before a freshly published version is installable; see [below](#min-release-age-escape-hatch). `lint:supply-chain` treats this one as a floor rather than an exact value, so a stricter local setting is fine — raising it is safe, lowering or unsetting it is what the check exists to catch. |
+| `engine-strict` | `true` | Refuses to install any package whose `engines.node` excludes the running Node, so a dependency bump that outgrows the Node floor fails `npm ci` on the CI floor leg instead of installing with only a warning. |
 
 ## `allowScripts` (root `package.json`)
 
@@ -56,6 +57,8 @@ Four additional checks run in the `lint` job (not `.npmrc` settings, so not enfo
 | `npm audit signatures` | `npm audit signatures` | Missing or invalid registry signatures/attestations across the full tree, checked against the lockfile's declared `version` for each entry — see npm's [`audit signatures` docs](https://docs.npmjs.com/cli/v11/commands/npm-audit#signatures). |
 | Version-vs-`resolved` drift | `npm run lint:supply-chain` | A lockfile entry whose `version` field disagrees with the version embedded in its `resolved` tarball filename. Neither of the above checks reliably catches this: `lockfile-lint` never looks at `version` at all, and `npm audit signatures` only fails *incidentally*, when the falsely-claimed version happens not to exist in the registry. This check is the only one that looks at whether an entry describes the artifact it points at, regardless of whether a phantom version happens to exist. |
 | `@types` floor pinning | `npm run lint:supply-chain` | An `@types/vscode` or `@types/node` range that no longer matches the runtime floor it is supposed to mirror, or a lockfile that resolves one above it — so the type checker accepts APIs the shipped floor doesn't have. Both must be a tilde on the minor of the matching `engines` value (see [raising the version floor](../how-to/raising-the-version-floor.md), where the two ranges are part of a ~7-edit coordinated set). Nothing else notices: the ranges are hand-maintained, and a partial floor raise or a re-widened caret produces no Dependabot PR and no other CI signal. |
+| Dev Node range floor | `npm run lint:supply-chain` | A `devEngines.runtime` whose lowest bound differs from the `engines.node` floor, down to the patch. Raising the floor moves both by hand, and a raise that misses `devEngines.runtime` leaves CI installing and testing on a Node below the shipped claim with no other signal. |
+| Dev Node range vs `.nvmrc` | `npm run lint:supply-chain` | A `devEngines.runtime` whose newest major starts anywhere but `.nvmrc`'s Node, or a missing or non-exact `.nvmrc`. Bumping `.nvmrc` alone still satisfies the range, so without this the range keeps admitting patches no CI job runs. |
 
 ## Known gaps
 

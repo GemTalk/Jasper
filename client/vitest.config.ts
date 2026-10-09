@@ -90,6 +90,7 @@ export default defineConfig({
             'src/__tests__/vitest.windowSetup.cjs',
             'src/__tests__/vitest.uriSetup.ts',
             'src/__tests__/vitest.customErrorMatchers.ts',
+            'src/__tests__/vitest.telemetrySetup.ts',
           ],
           sequence: {
             shuffle: true,
@@ -101,6 +102,7 @@ export default defineConfig({
         test: {
           name: 'gci',
           include: ['src/__tests__/gci/**/*.test.ts'],
+          setupFiles: ['src/__tests__/vitest.telemetrySetup.ts'],
           maxConcurrency: 5,
           fileParallelism: false,
           sequence: {

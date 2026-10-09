@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Fails if any job in .github/workflows/*.yml has no timeout-minutes —
-# without one, a hang inherits GitHub's 360-minute default instead of
-# failing fast.
+# Fails if any job in .github/workflows/*.yml has no timeout-minutes, except
+# jobs that call a reusable workflow (see the loop below). Without one, a
+# hang inherits GitHub's 360-minute default instead of failing fast.
 #
 # Requires yq (mikefarah, Go): https://github.com/mikefarah/yq. Preinstalled
 # on GitHub-hosted runners, so CI needs no setup step. Running this locally
@@ -30,7 +30,12 @@ for file in .github/workflows/*.yml .github/workflows/*.yaml; do
     # failing. `jobs=$(yq ...)` is a plain assignment, so its exit status
     # is yq's exit status, and set -e (above) aborts the script right here
     # if yq fails.
-    jobs=$(yq eval '.jobs // {} | to_entries | .[] | select(.value["timeout-minutes"] == null) | .key' "$file")
+    #
+    # Jobs that call a reusable workflow (`uses:`) are skipped: GitHub does
+    # not allow timeout-minutes on them, so their timeouts live on the
+    # called workflow's own jobs. This loop checks those only for local
+    # (`./`) workflows; a remote one's jobs are not checked at all.
+    jobs=$(yq eval '.jobs // {} | to_entries | .[] | select(.value["timeout-minutes"] == null and .value.uses == null) | .key' "$file")
 
     # A here-string (`<<<`) always feeds the loop one line, even when
     # $jobs is empty — so without this guard, a file with no missing

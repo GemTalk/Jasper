@@ -60,7 +60,7 @@ async function performUninstall(
         cancellable: false,
       },
       async (progress) =>
-        uninstallRefactoringSupport(sys, (message, increment) =>
+        await uninstallRefactoringSupport(sys, (message, increment) =>
           progress.report({ message, increment }),
         ),
     );

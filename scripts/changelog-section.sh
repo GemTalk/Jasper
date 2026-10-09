@@ -4,17 +4,14 @@
 # version has no *dated* section yet.
 #
 # Run twice by the release workflow, which is the reason it is a script rather
-# than an inline awk: `package` runs it as a guard and throws the output away,
-# and `release` runs it to supply the GitHub Release notes. Both therefore get
+# than an inline awk: once as a guard before the approval gate, throwing the
+# output away, and once to supply the GitHub Release notes. Both therefore get
 # the same answer to "which text belongs to this version" — a changelog that
-# would produce unusable notes fails in the first job, before anything is
-# built, instead of one step after the tag has been created.
+# would produce unusable notes fails before the approval gate, instead of one
+# step after the tag has been created.
 #
-# `validate` has its own, weaker pre-check: it reads CHANGELOG.md over the API
-# and requires a dated heading plus an empty `[Unreleased]`. It deliberately
-# checks nothing out, so it cannot run this, and its grep is satisfied by a
-# bare heading where this also requires a body. That is why the guard in
-# `package` exists: it is the first point where the real test can run.
+# A dated heading is not enough: this also requires the section to have a
+# body.
 #
 # Usage: scripts/changelog-section.sh <version>      # e.g. 1.8.15
 

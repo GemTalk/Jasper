@@ -165,143 +165,56 @@ jobs:
           fi
           echo "CHANGELOG.md has a dated [$VERSION] section and an empty [Unreleased]."
 
-  # Builds the one artifact every later job uses. Nothing here is irreversible,
-  # so it runs before the approval gate: a reviewer should be approving a real
-  # package that has already been built and scanned, not a promise.
-  package:
-    name: Package
+  # `validate` has no checkout, so its changelog check is weaker than the
+  # one that matters: `release` renders the notes with the script below. A
+  # changelog that passes validate but not the script would be approved at
+  # the gate, get tagged, and only then fail, one step after the tag, in the
+  # one place the docs' failure table says needs manual cleanup. Running the
+  # real script here moves that whole class of failure to before anything
+  # irreversible has happened.
+  release-notes:
+    name: Release notes
     needs: validate
-    timeout-minutes: 20
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      VERSION: ${{ inputs.version }}
     steps:
       # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
       # a mutable tag like @v6
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # zizmor(artipacked): checkout must not persist the token past
-          # this job. Nothing here pushes; the Release is made through the API.
+          # this job
           persist-credentials: false
-      # `validate` runs before this and has no checkout, so it can only ask the
-      # API whether a dated heading exists. That is a weaker question than the
-      # one that matters: `release` renders the notes with the script below,
-      # and the script also requires the section to have a body. A dated but
-      # empty section satisfies validate, passes the scan, is approved at the
-      # gate, gets tagged — and only then fails, one step after the tag, in the
-      # one place the docs' failure table says needs manual cleanup. Running
-      # the real script here, in the first job that has a checkout, moves that
-      # whole class of failure to before anything irreversible has happened.
+          sparse-checkout: |
+            scripts/changelog-section.sh
+            CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - name: Require the release notes to render
-        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
-      - name: Setup Node.js
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v6
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.nvmrc'
-      - name: Install dependencies
-        run: npm ci
-      - name: Package
-        run: |
-          # vsce honours SOURCE_DATE_EPOCH when it writes the vsix ("reproducible
-          # zip files" in its writeVsix). Without it every build stamps "now"
-          # into the zip entries, so two builds of the same commit differ
-          # byte-for-byte and comparing the artifact to a rebuild proves nothing.
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
-          export SOURCE_DATE_EPOCH
-          npm run package
-
-          vsix="gemstone-ide-${VERSION}.vsix"
-          if [ ! -f "$vsix" ]; then
-            echo "error: expected $vsix, but packaging produced:" >&2
-            ls -1 ./*.vsix 2>/dev/null || echo "  (no .vsix at all)" >&2
-            exit 1
-          fi
-          echo "Built $vsix ($(du -h "$vsix" | cut -f1))."
-      - name: Upload the .vsix
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v6
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: gemstone-ide-${{ inputs.version }}-vsix
-          path: gemstone-ide-${{ inputs.version }}.vsix
-          if-no-files-found: error
-          # `overwrite` is deliberately left at its default (false), and that
-          # is load-bearing. Artifacts are scoped to the run, not the attempt,
-          # so "Re-run all jobs" finds this name taken and fails here with 409
-          # Conflict — which is what we want, because the alternative is a
-          # re-run silently replacing the artifact with different bytes than
-          # the ones a reviewer approved and a Release may already carry.
-          # Use "Re-run failed jobs", never "Re-run all jobs".
-
-  # Scans the package pre-image, before anything can be uploaded. Open VSX runs
-  # its own gitleaks-based scan server-side AFTER accepting an upload, with no
-  # way to allow a false positive — and by then the version number is spent.
-  # This repo has been rejected that way twice (1.7.6, 1.8.3). Catching it here
-  # costs a re-dispatch; catching it there costs a version.
-  scan:
-    name: Secret scan
-    needs: package
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      # Pinned, with the checksum published alongside that release, because
-      # this is a security control: an unpinned scanner is one supply-chain
-      # step away from being a scanner that finds nothing.
-      GITLEAKS_VERSION: 8.30.1
-      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-    steps:
-      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
-      # a mutable tag like @v6
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Only .gitleaks.toml is needed from the tree; nothing here runs it.
-          persist-credentials: false
-      - name: Download the .vsix
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v6
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: gemstone-ide-${{ inputs.version }}-vsix
-      - name: Install gitleaks
-        run: |
-          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -sSfL -o gitleaks.tar.gz "$url"
-          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
-          tar xzf gitleaks.tar.gz gitleaks
-          ./gitleaks version
-      - name: Scan the packaged .vsix
         env:
           VERSION: ${{ inputs.version }}
-        run: |
-          # The scan target is the UNZIPPED package, not the working tree. The
-          # tree simultaneously misses what ships — the esbuild bundles are in
-          # the .vsix but not in git, and both historical rejections lived in
-          # bundled output — and floods on what does not: .vscodeignore drops
-          # client/tmp/**, ~1GB of fixtures including example private keys.
-          # Scanning git history would be worse on both counts.
-          mkdir -p vsix-contents
-          unzip -q "gemstone-ide-${VERSION}.vsix" -d vsix-contents
-          ./gitleaks dir vsix-contents \
-            --config .gitleaks.toml \
-            --no-banner \
-            --redact \
-            --report-format json \
-            --report-path gitleaks-report.json
-      - name: Upload the scan report
-        if: failure()
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v6
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: gitleaks-report-${{ inputs.version }}
-          path: gitleaks-report.json
-          if-no-files-found: warn
+        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
+
+  # Builds and scans the one artifact every later job uses. Nothing here is
+  # irreversible, so it runs before the approval gate: a reviewer should be
+  # approving a real package that has already been built and scanned, not a
+  # promise.
+  #
+  # `overwrite-vsix` is deliberately left at its default (false), and that is
+  # load-bearing: a re-run must never replace the .vsix with different bytes
+  # than the ones a reviewer approved and a Release may already carry. "Re-run
+  # all jobs" therefore fails here; use "Re-run failed jobs".
+  package:
+    name: Package
+    needs: [validate, release-notes]
+    permissions:
+      contents: read
+    # './...' rather than zizmor's preferred '$/...', which actionlint
+    # rejects as a malformed remote reference.
+    uses: ./.github/workflows/package-and-scan.yml # zizmor: ignore[self-repository]
+    with:
+      version: ${{ inputs.version }}
 
   # Deliberately empty. Its entire purpose is to hold the run at the
   # `release-approval` environment until a required reviewer approves, with a
@@ -316,7 +229,7 @@ jobs:
   # build a credential.
   gate:
     name: Release approval
-    needs: [package, scan]
+    needs: [package, release-notes]
     timeout-minutes: 60
     runs-on: ubuntu-latest
     environment: release-approval
@@ -335,7 +248,7 @@ jobs:
   # published version with no record of it anywhere in the repository.
   release:
     name: Create the GitHub Release
-    needs: gate
+    needs: [gate, package]
     if: ${{ !inputs.dry-run }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -357,7 +270,7 @@ jobs:
         # not a mutable tag like @v6
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: gemstone-ide-${{ inputs.version }}-vsix
+          name: ${{ needs.package.outputs.artifact-name }}
       - name: Tag the release
         run: |
           # Annotated, matching the tags every previous release carries: the
@@ -373,6 +286,8 @@ jobs:
             -f sha="${tag_sha}" > /dev/null
           echo "Tagged v${VERSION} at ${GITHUB_SHA}."
       - name: Publish the Release with the .vsix attached
+        env:
+          VSIX_FILE: ${{ needs.package.outputs.vsix-file }}
         run: |
           # Draft first, attach, then publish. That is GitHub's documented
           # sequence for immutable releases: the assets and the tag are locked
@@ -386,7 +301,7 @@ jobs:
             --title "${VERSION}" \
             --notes-file release-notes.md \
             --verify-tag \
-            "gemstone-ide-${VERSION}.vsix"
+            "$VSIX_FILE"
           gh release edit "v${VERSION}" --draft=false
           echo "Released v${VERSION}."
 
@@ -398,7 +313,7 @@ jobs:
   # its own with "Re-run failed jobs".
   publish-vsce:
     name: Publish to the VS Code Marketplace
-    needs: release
+    needs: [package, release]
     if: ${{ !inputs.dry-run }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -438,11 +353,12 @@ jobs:
         timeout-minutes: 5
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: bash scripts/publish-to-registry.sh marketplace "gemstone-ide-${VERSION}.vsix"
+          VSIX_FILE: ${{ needs.package.outputs.vsix-file }}
+        run: bash scripts/publish-to-registry.sh marketplace "$VSIX_FILE"
 
   publish-ovsx:
     name: Publish to Open VSX
-    needs: release
+    needs: [package, release]
     if: ${{ !inputs.dry-run }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -476,7 +392,8 @@ jobs:
         timeout-minutes: 5
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: bash scripts/publish-to-registry.sh openvsx "gemstone-ide-${VERSION}.vsix"
+          VSIX_FILE: ${{ needs.package.outputs.vsix-file }}
+        run: bash scripts/publish-to-registry.sh openvsx "$VSIX_FILE"
 
   # Reports, and does not gate. By the time this runs the tag, the Release and
   # both uploads already exist, so there is nothing left for a failure here to

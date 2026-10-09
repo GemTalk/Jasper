@@ -66,7 +66,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
             : 'gemstone.runSetSharedMemory',
         );
         await waitForTerminalClose('GemStone: Shared Memory Setup');
-        return runQuickSetup(deps);
+        return await runQuickSetup(deps);
       }
       if (choice !== 'Skip') return; // cancelled
     }

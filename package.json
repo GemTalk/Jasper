@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -26,7 +26,7 @@
     },
     "runtime": {
       "name": "node",
-      "version": ">=22.15.1",
+      "version": "^22.15.1 || ^24.19.0",
       "onFail": "error"
     }
   },
@@ -1086,6 +1086,11 @@
         "title": "Show Transcript",
         "category": "GemStone",
         "icon": "$(output)"
+      },
+      {
+        "command": "gemstone.copyTelemetryId",
+        "title": "Copy Telemetry ID",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.openBrowser",
@@ -3689,19 +3694,20 @@
     "@vscode/vsce": "^4.0.0",
     "cross-env": "^10.1.0",
     "esbuild": "^0.28.2",
-    "eslint": "^10.10.0",
+    "eslint": "^10.11.0",
     "eslint-config-flat-gitignore": "^2.4.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
-    "jsdom": "^30.0.1",
+    "jsdom": "^29.1.1",
     "lefthook": "^2.1.14",
     "lockfile-lint": "^5.0.1",
     "ovsx": "^1.2.0",
     "playwright-bdd": "^9.2.1",
-    "prettier": "^3.9.6",
-    "tsx": "^4.23.13",
+    "prettier": "^3.9.9",
+    "semver": "^7.8.5",
+    "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.70.0",
+    "typescript-eslint": "^8.71.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
@@ -3711,7 +3717,7 @@
     "koffi": "^2.16.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.7",
+    "fast-uri": "^3.1.8",
     "js-yaml": "^4.3.2"
   },
   "allowScripts": {

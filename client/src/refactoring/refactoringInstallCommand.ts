@@ -104,7 +104,7 @@ async function performInstall(
         cancellable: false,
       },
       async (progress) =>
-        installRefactoringSupport(sys, payloadDir, (message, increment) =>
+        await installRefactoringSupport(sys, payloadDir, (message, increment) =>
           progress.report({ message, increment }),
         ),
     );

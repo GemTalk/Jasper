@@ -243,7 +243,7 @@ export async function moveInstVar(
         : `down to ${targets.length} subclasses`;
   const heading = `Move instance variable '${ivarName}' from ${qualifiedClassName(className, dictionaryNameFor(session, dict))} ${where}`;
 
-  return runInstVarStructure({
+  return await runInstVarStructure({
     session,
     op: 'move',
     className,
