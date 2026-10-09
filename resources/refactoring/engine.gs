@@ -10097,6 +10097,7 @@ classNamed: aName inDictionaryNamed: aDictName
 	"The class bound to aName in aDictName, or nil.
 
 	 aDictName is a 1-based SymbolList INDEX (unambiguous, and what the client sends), a
+	 SymbolDictionary itself (what a staged change pins, and the undo's method slots carry), a
 	 dictionary name, or nil.
 
 	 nil falls back to #classNamed:, which is first-match across the symbol list. That one case is
@@ -10114,6 +10115,10 @@ classNamed: aName inDictionaryNamed: aDictName
 	sym := aName asSymbol.
 	"`isKindOf: Integer` rather than `isInteger`, which String does not implement on the
 	 supported releases."
+	(aDictName isKindOf: SymbolDictionary) ifTrue: [
+		^(aDictName at: sym ifAbsent: [nil])
+			ifNil: [nil]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [nil]]].
 	(aDictName isKindOf: Integer) ifTrue: [
 		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^nil].
 		^((symbolList at: aDictName) at: sym ifAbsent: [nil])
@@ -11602,7 +11607,7 @@ category: 'recording'
 classmethod: GsRefactoringUndo
 slotsTouchedIn: aChangeSet deselected: deselectedIds
 	"Every METHOD SLOT the about-to-be-applied changes touch, de-duplicated: an Array of
-	 (dictName, className, isMeta, selector). Answers nil -- meaning 'do not record an
+	 (dictionary, className, isMeta, selector). Answers nil -- meaning 'do not record an
 	 undo' -- when any applying change is not a method change (see the class comment).
 
 	 A #methodRename touches TWO slots on the same class: the old selector (removed) and
@@ -11634,16 +11639,22 @@ add: aSelector forChange: aChange to: slots seen: seen
 	 The dictionary is part of the key because a class name does not identify a class: a
 	 whole-system change set can touch the same selector on a same-named class in each of two
 	 dictionaries, and keyed by `Class>>selector` alone the second slot was dropped -- the undo
-	 then restored one class and reported success for both (#396)."
-	| meta key |
+	 then restored one class and reported success for both (#396).
+
+	 The slot carries the dictionary OBJECT the change pinned, and the key its oop, not its name.
+	 Two dictionaries can share a name, so a slot that kept only the name snapshotted the FIRST
+	 one's class, saw no change, and recorded an undo that undid nothing."
+	| meta dict key |
 	aSelector isNil ifTrue: [^self].
 	meta := aChange isMeta == true.
-	key := aChange dictName printString, ' ', aChange className asString,
+	dict := aChange dict.
+	key := ((dict isKindOf: SymbolDictionary) ifTrue: [dict asOop] ifFalse: [dict]) printString,
+		' ', aChange className asString,
 		(meta ifTrue: [' class>>'] ifFalse: ['>>']), aSelector asString.
 	(seen includes: key) ifTrue: [^self].
 	seen add: key.
 	slots add: (Array
-		with: aChange dictName
+		with: dict
 		with: aChange className asString
 		with: meta
 		with: aSelector asString)

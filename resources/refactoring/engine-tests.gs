@@ -7001,7 +7001,7 @@ testMoveUpMovesSimpleAccessorsToAncestor
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
 testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
-	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	"Dictionary scoping: a destination name resolves within the source's OWN lineage, not by
 	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
 	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
 	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
@@ -7029,7 +7029,7 @@ testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
 testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary
-	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	"Dictionary scoping, the down half: the down lineage resolves through the source's DESCENDANTS,
 	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
 	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
 	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
@@ -11868,6 +11868,39 @@ testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries
 	 "the revert is described against the reshaped class: what it is now carries gsuReshaped"
 	 self assert: json includesSubstring: '"total":1'.
 	 self assert: json includesSubstring: 'gsuOwn gsuReshaped']
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testUndoMethodRenameRestoresTheClassInTheSecondOfTwoSameNamedDictionaries
+	"A method-level undo snapshots each method the refactoring touched, before and after, and diffs
+	 the two. Each snapshot has to read the class the refactoring changed. With two dictionaries of
+	 one name and that class in the second, a lookup by dictionary name reads the FIRST dictionary's
+	 class, sees nothing change, and records an undo that leaves the renamed method in place.
+
+	 Both classes implement the selector, so a wrong-class undo cannot pass by accident: asserted
+	 from both ends, the acted-on class gets its method back and the other one is left alone."
+	| dicts first second |
+	dicts := self twinNamedDictionaries.
+	first := dicts first at: #GsUndoTwinClass.
+	second := dicts last at: #GsUndoTwinClass.
+	[self compile: 'gsuValue ^ 1' in: first category: 'computing'.
+	 self compile: 'gsuValue ^ 2' in: second category: 'computing'.
+	 self applyRecording: (GsRenameMethodRefactoring
+		class: second
+		renameSelector: 'gsuValue'
+		toParts: #('gsuRenamed')
+		permutation: #()
+		scope: #class).
+	 self assert: (self sourceOf: #gsuRenamed in: second) notNil.
+
+	 self undoAll.
+
+	 self assert: (self sourceOf: #gsuValue in: second) = 'gsuValue ^ 2'.
+	 self assert: (self sourceOf: #gsuRenamed in: second) isNil.
+	 self assert: (self sourceOf: #gsuValue in: first) = 'gsuValue ^ 1'.
+	 self assert: (self sourceOf: #gsuRenamed in: first) isNil]
 		ensure: [self removeDictionaries: dicts]
 %
 

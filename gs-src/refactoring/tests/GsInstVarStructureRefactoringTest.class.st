@@ -584,7 +584,7 @@ GsInstVarStructureRefactoringTest >> testMoveUpMovesSimpleAccessorsToAncestor [
 
 { #category : 'tests - V4 move' }
 GsInstVarStructureRefactoringTest >> testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary [
-	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	"Dictionary scoping: a destination name resolves within the source's OWN lineage, not by
 	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
 	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
 	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
@@ -611,7 +611,7 @@ GsInstVarStructureRefactoringTest >> testMoveUpBindsLineageClassNotASameNamedSha
 
 { #category : 'tests - V4 move' }
 GsInstVarStructureRefactoringTest >> testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary [
-	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	"Dictionary scoping, the down half: the down lineage resolves through the source's DESCENDANTS,
 	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
 	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
 	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
