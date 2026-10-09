@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { classOrganizerExpr } from '../../queries/classOrganizer';
+import { classOrganizerExpr, subclassesOfBlock } from '../../queries/classOrganizer';
 import { classLookupExpr } from '../../queries/util';
 
 // The immediate SIBLINGS of a class: the other immediate subclasses of its superclass (the anchor
@@ -21,14 +21,15 @@ export function getSiblingClassNames(
   className: string,
   dict?: number | string,
 ): string[] {
-  const code = `| cls sup tracked out |
+  const code = `| organizer cls sup tracked out |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
 sup := cls superclass.
 sup isNil ifTrue: [^ ''].
+organizer := ${classOrganizerExpr()}.
 tracked := sup subclasses ifNil: [#()].
 out := WriteStream on: String new.
-((${classOrganizerExpr()} subclassesOf: sup) asSortedCollection: [:a :b | a name <= b name]) do: [:c |
+((${subclassesOfBlock('organizer')} value: sup) asSortedCollection: [:a :b | a name <= b name]) do: [:c |
   (c == cls or: [(tracked detect: [:t | t == c] ifNone: [nil]) isNil])
     ifFalse: [out nextPutAll: c name asString; lf]].
 out contents`;

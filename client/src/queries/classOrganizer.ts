@@ -41,10 +41,11 @@
  * the trade to revisit.
  *
  * The hierarchy queries (`getClassHierarchy`, `getSiblingClassNames`,
- * `getClassDescendantNames`) share the cache too. They ask `subclassesOf:` and
- * `allSuperclassesOf:`, which read the snapshot, and every refactoring that
- * creates the class they would then ask about compiles it through
- * `compileClassDefinition` — which clears the cache in the doit that creates it.
+ * `getClassDescendantNames`) share the cache too, and read it through
+ * `subclassesOfBlock` / `superclassesOfBlock` rather than asking it directly (see
+ * there for why). Every refactoring that creates the class they would then ask
+ * about compiles it through `compileClassDefinition` — which clears the cache in
+ * the doit that creates it.
  *
  * Keyed by environment: an organizer collects its classes under one environment id,
  * so environments cannot share one. `newForEnvironment:` sets that at collection
@@ -81,4 +82,55 @@ export function clearClassOrganizerStatement(): string {
 export function clearClassOrganizerCode(): string {
   return `${clearClassOrganizerStatement()}
 true`;
+}
+
+/**
+ * The guard both blocks below share: whether `cls` may be read from `organizer`,
+ * teaching it `cls` first when that is safe.
+ *
+ * GemStone's `subclassesOf:` and `allSuperclassesOf:` answer from tables that hold
+ * only classes the organizer collected, and only classes WITH subclasses get a
+ * subclass entry. For anything else they call `addClass:` -- `subclassesOf:` does it
+ * even for a class the organizer already holds -- and `addClass:` drops every class
+ * of the same name, as if it were an older version of the one being added. Two
+ * different classes of one name (each in its own dictionary) are not versions, so
+ * asking about one silently deletes the other from the cached organizer, and every
+ * later query reads a hierarchy missing a class. 3.6.2 and 3.7.5 behave alike.
+ *
+ * So `addClass:` is sent only for a class the organizer does not hold yet, and only
+ * when no class of that name from a DIFFERENT class history exists -- the two cases
+ * it was written for: a class defined after the organizer was built, and a new
+ * version replacing its old one. A same-named stranger is left unlearned until the
+ * cache is rebuilt; forgetting a class the organizer already had is the worse error.
+ */
+function admitExpr(organizer: string): string {
+  return `((${organizer} classes includesIdentical: cls) or: [
+    ((${organizer} classes detect: [:c | c name = cls name and: [c classHistory ~~ cls classHistory]]
+        ifNone: [nil]) isNil)
+      and: [${organizer} addClass: cls. true]])`;
+}
+
+/**
+ * A block answering the direct subclasses of a class, for `organizer` (an expression
+ * naming a ClassOrganizer) -- what `subclassesOf:` answers, without ever dropping a
+ * same-named class (see `admitExpr`). A class the organizer cannot be taught is
+ * answered by scanning its class list instead.
+ */
+export function subclassesOfBlock(organizer: string): string {
+  return `[:cls | ${admitExpr(organizer)}
+  ifTrue: [(${organizer} hierarchy at: cls otherwise: nil) ifNil: [ClassSet new] ifNotNil: [:s | s copy]]
+  ifFalse: [${organizer} classes select: [:c | c superclass == cls]]]`;
+}
+
+/**
+ * A block answering a class's superclasses root-first -- what `allSuperclassesOf:`
+ * answers, without ever dropping a same-named class (see `admitExpr`). A class the
+ * organizer cannot be taught is answered by walking its superclass chain instead.
+ */
+export function superclassesOfBlock(organizer: string): string {
+  return `[:cls | ${admitExpr(organizer)}
+  ifTrue: [${organizer} allSuperclassesOf: cls]
+  ifFalse: [| chain c | chain := OrderedCollection new. c := cls superclass.
+    [c notNil] whileTrue: [chain addFirst: c. c := c superclass].
+    chain asArray]]`;
 }

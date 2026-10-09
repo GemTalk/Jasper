@@ -9,7 +9,6 @@ describe('getClassDescendantNames', () => {
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain("(System myUserProfile symbolList at: 2) at: #'Mid'");
-    expect(code).toContain('subclassesOf:');
   });
 
   it('resolves each descendant to its binding dictionary by object identity', () => {

@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { classOrganizerExpr } from './classOrganizer';
+import { classOrganizerExpr, subclassesOfBlock, superclassesOfBlock } from './classOrganizer';
 import { classLookupExpr } from './util';
 
 export interface ClassHierarchyEntry {
@@ -34,7 +34,7 @@ export function getClassHierarchy(
   dict?: number | string,
 ): ClassHierarchyEntry[] {
   /**
-   * In the Smalltalk code below, allSuperclassesOf: returns root-first ([Object, Collection, ...]),
+   * In the Smalltalk code below, the superclasses block (superclassesOfBlock) returns root-first ([Object, Collection, ...]),
    *  which is the order we want to render — Object at indent 0, the
    *  immediate parent right above the selected class. The earlier
    *  reverseDo: flipped it leaf-first and put Object at the deepest indent.
@@ -46,8 +46,8 @@ export function getClassHierarchy(
   const code = `| organizer class supers subs stream classDict sl row |
 organizer := ${classOrganizerExpr()}.
 class := ${classLookupExpr(className, dict)}.
-supers := organizer allSuperclassesOf: class.
-subs := organizer subclassesOf: class.
+supers := ${superclassesOfBlock('organizer')} value: class.
+subs := ${subclassesOfBlock('organizer')} value: class.
 sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
 1 to: sl size do: [:i |

@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { classOrganizerExpr } from '../../queries/classOrganizer';
+import { classOrganizerExpr, subclassesOfBlock } from '../../queries/classOrganizer';
 import { classLookupExpr } from '../../queries/util';
 
 /** A descendant class of some class, with its immediate parent (for display context)
@@ -31,7 +31,7 @@ export function getClassDescendantNames(
   className: string,
   dict?: number | string,
 ): DescendantClass[] {
-  const code = `| organizer cls frontier seen out sl classDict |
+  const code = `| organizer subsOf cls frontier seen out sl classDict |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
 sl := System myUserProfile symbolList.
@@ -44,9 +44,10 @@ classDict := IdentityDictionary new.
     (v isBehavior and: [(classDict includesKey: v) not])
       ifTrue: [classDict at: v put: i]]].
 organizer := ${classOrganizerExpr()}.
+subsOf := ${subclassesOfBlock('organizer')}.
 seen := IdentitySet new.
 frontier := OrderedCollection new.
-frontier addAll: ((organizer subclassesOf: cls) asSortedCollection: [:a :b | a name <= b name]).
+frontier addAll: ((subsOf value: cls) asSortedCollection: [:a :b | a name <= b name]).
 out := WriteStream on: String new.
 [frontier isEmpty] whileFalse: [ | c idx |
   c := frontier removeFirst.
@@ -57,7 +58,7 @@ out := WriteStream on: String new.
       nextPutAll: (c superclass ifNil: [''] ifNotNil: [:s | s name asString]); tab;
       nextPutAll: idx printString; tab;
       nextPutAll: (idx = 0 ifTrue: [''] ifFalse: [(sl at: idx) name asString]); lf.
-    frontier addAll: ((organizer subclassesOf: c) asSortedCollection: [:a :b | a name <= b name])]].
+    frontier addAll: ((subsOf value: c) asSortedCollection: [:a :b | a name <= b name])]].
 out contents`;
   const raw = execute(code);
   const results: DescendantClass[] = [];
