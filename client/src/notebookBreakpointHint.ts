@@ -12,17 +12,31 @@ export const NOTEBOOK_BREAKPOINT_HINT =
   "Breakpoints don't stop in notebook cells. Use Execute It in a workspace to debug. Click to open one.";
 
 export function registerNotebookBreakpointHint(): vscode.Disposable {
-  return vscode.notebooks.registerNotebookCellStatusBarItemProvider(GEMSTONE_NOTEBOOK_TYPE, {
-    provideCellStatusBarItems(cell) {
-      if (cell.kind !== vscode.NotebookCellKind.Code) return [];
-      if (cell.document.languageId !== SMALLTALK_LANGUAGE) return [];
-      const item = new vscode.NotebookCellStatusBarItem(
-        '$(debug-breakpoint-unsupported)',
-        vscode.NotebookCellStatusBarAlignment.Right,
-      );
-      item.tooltip = NOTEBOOK_BREAKPOINT_HINT;
-      item.command = 'gemstone.openWorkspace';
-      return [item];
-    },
+  // Changing a cell's language reopens its text document under the new language id. Asking
+  // VS Code to re-query then is what drops the hint from a cell switched away from Smalltalk
+  // (and adds it to one switched to it), rather than leaving whatever was drawn first.
+  const changed = new vscode.EventEmitter<void>();
+  const reopened = vscode.workspace.onDidOpenTextDocument((doc) => {
+    if (doc.uri.scheme === 'vscode-notebook-cell') changed.fire();
   });
+  const provider = vscode.notebooks.registerNotebookCellStatusBarItemProvider(
+    GEMSTONE_NOTEBOOK_TYPE,
+    {
+      onDidChangeCellStatusBarItems: changed.event,
+      provideCellStatusBarItems(cell) {
+        if (cell.kind !== vscode.NotebookCellKind.Code) return [];
+        if (cell.document.languageId !== SMALLTALK_LANGUAGE) return [];
+        const item = new vscode.NotebookCellStatusBarItem(
+          // The status bar draws a codicon at its own fixed size, so the words are what make
+          // the hint noticeable; the icon alone was a speck beside the language label.
+          '$(question) Breakpoints not honored',
+          vscode.NotebookCellStatusBarAlignment.Right,
+        );
+        item.tooltip = NOTEBOOK_BREAKPOINT_HINT;
+        item.command = 'gemstone.openWorkspace';
+        return [item];
+      },
+    },
+  );
+  return vscode.Disposable.from(provider, reopened, changed);
 }
