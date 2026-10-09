@@ -20,3 +20,9 @@ import * as path from 'path';
 export function readWebviewScript(fileName: string, subdir?: string): string {
   return fs.readFileSync(path.join(__dirname, '..', 'src', subdir ?? '', fileName), 'utf8');
 }
+
+// A preview panel's script, preceded by the held-Enter guard (webview/enterToApply.js) that it
+// calls as soon as it wires itself.
+export function readPreviewPanelScript(fileName: string, subdir: string): string {
+  return readWebviewScript('enterToApply.js', 'webview') + readWebviewScript(fileName, subdir);
+}

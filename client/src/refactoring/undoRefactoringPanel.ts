@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { UndoStartPreview, UndoPreviewPage, ApplyResult } from './undoRefactoringPreview';
 import { renderUndoPanelHtml, renderUndoCards } from './undoRefactoringPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('renameMethodPanelView.js', 'refactoring');
 
 export interface UndoRefactoringPanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */

@@ -16,9 +16,9 @@ import {
   describeApplyFailure,
 } from './instVarRefactorPreview';
 import { renderInstVarPanelHtml, renderInstVarCards } from './instVarRefactorPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('instVarRefactorPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('instVarRefactorPanelView.js', 'refactoring');
 
 export interface InstVarPanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */

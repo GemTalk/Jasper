@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderExtractPanelHtml, renderExtractCards } from '../extractMethodPanelHtml';
 import { ExtractChange } from '../extractMethodPreview';
+import '../../webview/enterToApply.js';
 
 // The extract-method panel reuses the shared rename-method view JS for its DOM
 // behaviour (checkboxes, pagination, apply), so wire that up in jsdom and verify

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderSignaturePanelHtml, renderSignatureCards } from '../changeSignaturePanelHtml';
 import { MethodSignatureChange, OutOfScopeCounts } from '../changeSignaturePreview';
+import '../../webview/enterToApply.js';
 
 // The change-signature panel reuses the R2 panel's DOM script (renameMethodPanelView.js,
 // the global RenameMethodPanel), so its checkbox / pagination / apply behaviour is

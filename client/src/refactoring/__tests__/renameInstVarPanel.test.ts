@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderRenamePanelHtml } from '../renameInstVarPanelHtml';
 import { RenameChange } from '../renameInstVarPreview';
+import '../../webview/enterToApply.js';
 
 // Evaluate renameInstVarPanel.js in jsdom so it registers the global
 // RenameInstVarPanel, exactly as the webview does when it injects the file.

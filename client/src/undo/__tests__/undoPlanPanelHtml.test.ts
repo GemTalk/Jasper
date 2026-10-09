@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderUndoPlanHtml } from '../undoPlanPanelHtml';
 import type { UndoPlan } from '../undoPlan';
+import '../../webview/enterToApply.js';
 
 beforeAll(() => {
   const source = fs.readFileSync(path.resolve(__dirname, '../undoPlanPanelView.js'), 'utf8');
@@ -158,8 +159,9 @@ describe('renderUndoPlanHtml', () => {
   // The same Enter-to-Enter flow as the refactoring panels: whatever opened this panel, Enter
   // runs it, so a keyboard user is not stranded at the last step.
   describe('Enter applies', () => {
-    // A real, deliberate Enter: the key goes down and comes back up. Only a release arms the
-    // panel -- a held Enter carried over from the step that opened it never releases.
+    // A real, deliberate Enter: the key goes down and comes back up. A release (or the panel
+    // being open a moment) arms it -- a held Enter carried over from the step that opened it
+    // never releases.
     const release = (): void => {
       document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
     };

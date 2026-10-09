@@ -38,7 +38,8 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
   // automatically. Each match yields a path relative to client/src.
   const directRead =
     /readFileSync\(\s*path\.join\(\s*__dirname\s*,\s*['"]\.\.['"]\s*,\s*['"]src['"]\s*,\s*['"]([^'"]+\.js)['"]/g;
-  const viaHelper = /readWebviewScript\(\s*['"]([^'"]+\.js)['"]\s*(?:,\s*['"]([^'"]+)['"])?/g;
+  const viaHelper =
+    /read(?:Webview|PreviewPanel)Script\(\s*['"]([^'"]+\.js)['"]\s*(?:,\s*['"]([^'"]+)['"])?/g;
 
   // Only production modules read assets at runtime; skipping the test and mock
   // directories also keeps this file's own explanatory comment out of the scan.

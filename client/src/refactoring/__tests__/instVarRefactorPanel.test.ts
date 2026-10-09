@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderInstVarPanelHtml } from '../instVarRefactorPanelHtml';
 import { InstVarChange, InstVarOutOfScope } from '../instVarRefactorPreview';
+import '../../webview/enterToApply.js';
 
 beforeAll(() => {
   const source = fs.readFileSync(path.resolve(__dirname, '../instVarRefactorPanelView.js'), 'utf8');

@@ -17,9 +17,9 @@ import {
   ExtractSuperApplyResult,
 } from './extractSuperclassPreview';
 import { renderExtractSuperPanelHtml, renderExtractSuperCards } from './extractSuperclassPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
+import { readPreviewPanelScript } from '../webviewAssets';
 
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+const panelJs = readPreviewPanelScript('renameMethodPanelView.js', 'refactoring');
 
 export interface ExtractSuperPanelHandlers {
   loadPage: (offset: number) => Promise<ExtractSuperPreviewPage>;
