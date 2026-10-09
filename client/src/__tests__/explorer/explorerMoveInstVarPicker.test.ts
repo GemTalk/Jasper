@@ -70,7 +70,7 @@ describe('ExplorerController move-ivar destination picker', () => {
       vi.mocked(queries.getClassHierarchy).mockReturnValue([
         { kind: 'superclass', className: 'Mid' },
       ] as never);
-      vi.mocked(vscode.window.showQuickPick).mockResolvedValue({ label: 'Mid' });
+      vi.mocked(vscode.window.showQuickPick).mockImplementation(async (items) => (await items)[0]);
 
       const result = await pick(makeController(), 'up');
 
@@ -78,7 +78,7 @@ describe('ExplorerController move-ivar destination picker', () => {
       expect(vi.mocked(vscode.window.showQuickPick).mock.calls[0][1]).not.toHaveProperty(
         'canPickMany',
       );
-      expect(result).toEqual(['Mid']);
+      expect(result).toEqual([expect.objectContaining({ className: 'Mid' })]);
     });
 
     it('returns undefined when the user cancels', async () => {
@@ -104,15 +104,14 @@ describe('ExplorerController move-ivar destination picker', () => {
   });
 
   describe('▼ down', () => {
-    it('offers every descendant as a multi-select and returns all chosen labels', async () => {
+    it('offers every descendant as a multi-select and returns every chosen class', async () => {
       vi.mocked(queries.getClassDescendantNames).mockReturnValue([
         { className: 'LeafA', parentName: 'Mid' },
         { className: 'LeafB', parentName: 'Mid' },
       ] as never);
-      vi.mocked(vscode.window.showQuickPick).mockResolvedValue([
-        { label: 'LeafA' },
-        { label: 'LeafB' },
-      ] as never);
+      vi.mocked(vscode.window.showQuickPick).mockImplementation(
+        async (items) => (await items) as never,
+      );
 
       const result = await pick(makeController(), 'down');
 
@@ -120,7 +119,10 @@ describe('ExplorerController move-ivar destination picker', () => {
       expect(vi.mocked(vscode.window.showQuickPick).mock.calls[0][1]).toMatchObject({
         canPickMany: true,
       });
-      expect(result).toEqual(['LeafA', 'LeafB']);
+      expect(result).toEqual([
+        expect.objectContaining({ className: 'LeafA' }),
+        expect.objectContaining({ className: 'LeafB' }),
+      ]);
     });
 
     it('returns undefined when the user picks nothing', async () => {

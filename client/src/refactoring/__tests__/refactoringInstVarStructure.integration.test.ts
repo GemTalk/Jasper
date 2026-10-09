@@ -225,7 +225,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
     defineFixture();
     // leaf lives on Leaf; move it up two levels to Base. Leaf keeps it by inheritance.
     await runToApply('move', LEAF, 'leaf', 'vs-move-up', undefined, false, {
-      targets: [BASE],
+      targets: [{ className: BASE }],
       direction: 'up',
     });
 
@@ -239,7 +239,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
 
     defineFixture();
     await runToApply('move', MID, 'pushable', 'vs-move-down', undefined, false, {
-      targets: [LEAF],
+      targets: [{ className: LEAF }],
       direction: 'down',
     });
 

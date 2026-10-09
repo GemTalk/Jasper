@@ -16,10 +16,9 @@ import type { SessionManager, ActiveSession } from '../../sessionManager';
  * a name.
  *
  * Two dictionaries may each bind a class called `Leaf`, and both can sit in the same lineage.
- * The picker lists them as two identical rows and answers with a bare name, so the user cannot
- * tell which is which and the engine is not told which was meant. The engine declines an
- * ambiguous name rather than guessing, so the move cannot be made at all in such a hierarchy —
- * the decline is right, and the caller has to stop producing the ambiguity.
+ * Listed by name alone they are two identical rows, and a bare name answered back is one the
+ * engine declines as ambiguous rather than guessing — so the move could not be made at all in
+ * such a hierarchy.
  *
  * Both halves are pinned: what the user is shown has to distinguish the rows, and what comes
  * back has to carry the dictionary of the row that was picked. The dictionary is already in
@@ -27,7 +26,7 @@ import type { SessionManager, ActiveSession } from '../../sessionManager';
  * has to be asked for.
  *
  * The rows for names only one dictionary claims are left to the implementation — these pin the
- * ambiguous case, which is the one that is currently unusable.
+ * ambiguous case.
  */
 
 type Picker = {

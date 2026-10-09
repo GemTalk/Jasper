@@ -17,18 +17,31 @@ export interface ConvertTempArgs {
   varName: string;
 }
 
-/** A V4 `move` request carries the destination class name(s) and the direction the ivar
+/** A move destination: the class name and the 1-based SymbolList index of the dictionary that
+ *  binds it. Two classes in one lineage can share a name, so the name alone cannot say which was
+ *  picked; 0 or undefined means no dictionary binds it, and the name goes out alone. */
+export interface MoveTarget {
+  className: string;
+  dictIndex?: number;
+}
+
+/** A V4 `move` request carries the destination class(es) and the direction the ivar
  *  travels: `up` (a single chosen ancestor) or `down` (one or more chosen descendants). */
 export interface MoveArgs {
-  targets: string[];
+  targets: MoveTarget[];
   direction: 'up' | 'down';
 }
 
 const ENGINE = 'GsInstVarStructureRefactoring';
 
-/** A Smalltalk Array literal of the (escaped, quoted) class names. */
-function targetArrayExpr(targets: string[]): string {
-  return `#(${targets.map((t) => `'${escapeString(t)}'`).join(' ')})`;
+/** A Smalltalk Array literal of the destinations: `#('Name' 5)` for one with a dictionary, a bare
+ *  `'Name'` for one without. */
+function targetArrayExpr(targets: MoveTarget[]): string {
+  const one = (t: MoveTarget): string => {
+    const name = `'${escapeString(t.className)}'`;
+    return t.dictIndex ? `#(${name} ${t.dictIndex})` : name;
+  };
+  return `#(${targets.map(one).join(' ')})`;
 }
 
 /** The class-message send that builds the refactoring for `op`, given a `cls` binding in

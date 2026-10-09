@@ -18,7 +18,12 @@ import { ActiveSession } from '../sessionManager';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
-import { IvarStructureOp, ConvertTempArgs, MoveArgs } from './queries/previewInstVarStructure';
+import {
+  IvarStructureOp,
+  ConvertTempArgs,
+  MoveArgs,
+  MoveTarget,
+} from './queries/previewInstVarStructure';
 import {
   parseAnalysis,
   parseStartPreview,
@@ -47,7 +52,8 @@ export interface IvarStructureRequest {
   dict?: number | string;
   /** V5 only: the method + side the temporary lives in. */
   extra?: ConvertTempArgs;
-  /** V4 only (op `move`): the destination class name(s) and direction the ivar travels. */
+  /** V4 only (op `move`): the destination class(es), each with its dictionary, and the direction
+   *  the ivar travels. */
   move?: MoveArgs;
   /** V2/V3/V4 opt-in: also move the ivar's simple getter/setter accessors with the declaration. */
   moveAccessors?: boolean;
@@ -229,17 +235,20 @@ export async function moveInstVar(
   direction: 'up' | 'down',
   className: string,
   ivarName: string,
-  targets: string[],
+  targets: MoveTarget[],
   dict?: number | string,
 ): Promise<boolean> {
   // Name the destinations so the preview title and the "applied N change(s)" toast say where the
-  // ivar went; once there are more names than read cleanly, fall back to a bare count.
+  // ivar went; once there are more names than read cleanly, fall back to a bare count. Each carries
+  // its dictionary, as the source does: the picker may have offered two classes of that name.
   const namedLimit = 3;
+  const named = (t: MoveTarget): string =>
+    qualifiedClassName(t.className, dictionaryNameFor(session, t.dictIndex || undefined));
   const where =
     direction === 'up'
-      ? `up to ${targets[0] ?? 'superclass'}`
+      ? `up to ${targets[0] ? named(targets[0]) : 'superclass'}`
       : targets.length >= 1 && targets.length <= namedLimit
-        ? `down to ${targets.join(', ')}`
+        ? `down to ${targets.map(named).join(', ')}`
         : `down to ${targets.length} subclasses`;
   const heading = `Move instance variable '${ivarName}' from ${qualifiedClassName(className, dictionaryNameFor(session, dict))} ${where}`;
 

@@ -7,15 +7,14 @@ import {
 /**
  * What a ▲/▼ move tells the engine about where the variable is going.
  *
- * The destinations go out as a plain list of class NAMES, resolved against the source class's
- * lineage in the stone. A lineage can hold two classes of the same name from two dictionaries,
- * and a name alone cannot say which — so the engine declines rather than guessing, and the move
- * is impossible in exactly the hierarchy the picker was asked about.
+ * A lineage can hold two classes of the same name from two dictionaries, and a name alone cannot
+ * say which — the engine declines a bare name that two lineage classes answer to rather than
+ * guessing. So each destination goes out with the dictionary that binds it, which the picker's
+ * rows already carry (resolved by class identity).
  *
- * The client already knows which it meant: the picker's rows come from queries that resolve each
- * class by identity and report its dictionary. What is pinned here is that the knowledge
- * survives the trip — two destinations that differ only by dictionary have to read differently
- * in the code that is sent, on both the pre-flight and the preview send.
+ * What is pinned here is that the dictionary survives the trip — two destinations that differ
+ * only by dictionary have to read differently in the code that is sent, on both the pre-flight
+ * and the preview send.
  *
  * Deliberately not pinned: the exact literal the pair is spelled as. That is the engine's
  * signature to choose, and these say only that both halves of each destination arrive.
@@ -34,7 +33,7 @@ async function analyzeCode(
   await analyzeInstVarStructure(run, 'move', 'Root', 'weight', 7, undefined, true, {
     targets,
     direction,
-  } as never);
+  });
   return run.mock.calls[0][1] as string;
 }
 
@@ -54,7 +53,7 @@ async function previewCode(
     7,
     undefined,
     true,
-    { targets, direction } as never,
+    { targets, direction },
   );
   return run.mock.calls[0][1] as string;
 }

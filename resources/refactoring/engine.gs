@@ -7556,7 +7556,11 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 
 	 A name that TWO classes in the lineage answer to -- same-named classes in different
 	 dictionaries -- is recorded and declined in analysis. Taking the first the walk reached moved
-	 the variable into whichever that was, which need not be the one the user picked (#396)."
+	 the variable into whichever that was, which need not be the one the user picked (#396).
+
+	 An entry may instead be a pair `#(name dictIndex)`, dictIndex being the 1-based SymbolList
+	 position of the dictionary that binds the class. The pair names one class -- the one that
+	 dictionary binds under that name -- so it never declines as ambiguous."
 	| ref env dir lineage targets ambiguous |
 	env := GsRefactoringEnvironment new.
 	dir := aSymbol asSymbol.
@@ -7570,13 +7574,34 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	lineage := dir == #up
 		ifTrue: [ref ancestorsOf: aClass]
 		ifFalse: [env descendantsOf: aClass].
-	targets := classNames collect: [:n | | matches |
-		matches := lineage select: [:c | c name asString = n asString].
-		(matches size > 1 and: [ambiguous isNil]) ifTrue: [ambiguous := matches].
-		matches isEmpty
-			ifTrue: [env classNamed: n asString]
-			ifFalse: [matches first]].
+	targets := classNames collect: [:each | | n bound matches |
+		(each isKindOf: Array)
+			ifTrue: [
+				n := each first.
+				bound := self classNamed: n inDictionaryAt: each last]
+			ifFalse: [n := each].
+		"A bound class stands even outside the lineage, so analysis gives its 'is not a
+		 superclass/subclass' decline rather than a not-found one."
+		bound ifNil: [
+			matches := lineage select: [:c | c name asString = n asString].
+			(matches size > 1 and: [ambiguous isNil]) ifTrue: [ambiguous := matches].
+			matches isEmpty
+				ifTrue: [env classNamed: n asString]
+				ifFalse: [matches first]]
+			ifNotNil: [:b | b]].
 	^(ref setMoveTargets: targets direction: dir) setAmbiguousTarget: ambiguous
+%
+
+category: 'private'
+classmethod: GsInstVarStructureRefactoring
+classNamed: aName inDictionaryAt: anIndex
+	"The class the anIndex-th SymbolList dictionary binds under aName, or nil when the index is out
+	 of range or that dictionary binds no class by that name."
+	| sl value |
+	sl := System myUserProfile symbolList.
+	((anIndex isKindOf: Integer) and: [anIndex between: 1 and: sl size]) ifFalse: [^nil].
+	value := (sl at: anIndex) at: aName asSymbol ifAbsent: [nil].
+	^(value notNil and: [value isBehavior]) ifTrue: [value] ifFalse: [nil]
 %
 
 category: 'instance creation'
