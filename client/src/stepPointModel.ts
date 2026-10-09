@@ -42,11 +42,10 @@ export type StepPointResult = { info: StepPointInfo } | { problem: string };
  * and they cannot disagree about which token is step point 7.
  *
  * Everything is expressed against the *stone's* source rather than an editor
- * buffer, so the debug adapter (which only ever has line numbers) and the editor
- * features resolve step points through the same code. It refuses a dirty
- * document because the stone's offsets would then point at the wrong tokens —
- * a wrong step point number is worse than none, and it would send a breakpoint
- * somewhere the developer didn't ask for.
+ * buffer, so the breakpoint applier and the editor features resolve step points
+ * through the same code. It refuses a dirty document because the stone's offsets
+ * would then point at the wrong tokens — a wrong step point number is worse than
+ * none, and it would send a breakpoint somewhere the developer didn't ask for.
  */
 export class StepPointModel {
   private cache = new Map<string, StepPointInfo>();
@@ -117,7 +116,7 @@ export class StepPointModel {
 
   /**
    * Step points for a method identified by coordinates rather than an open
-   * document — the path the debug adapter and the breakpoint applier take.
+   * document — the path the breakpoint applier takes.
    */
   fetch(session: ActiveSession, uri: vscode.Uri, method: MethodUriRef): StepPointInfo | null {
     const key = uri.toString();
