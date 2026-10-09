@@ -151,14 +151,14 @@ const PROGRESS_AFTER_MS = 1500;
 /**
  * How long the loop may hold the event loop before yielding a macrotask.
  *
- * Resuming does not necessarily yield one: where the GCI binding has no koffi
- * `.async` the resume is a blocking call whose promise is already resolved, and
- * awaiting that drains only the *microtask* queue. A loop of thousands of hits
- * then starves `setTimeout` outright — the progress notification never appears,
- * cancellation never runs, and the editor sits still for the whole run with no
- * way out of it. Yielding on elapsed time rather than every N hits keeps the
- * cost proportional however fast or slow a hit turns out to be: about one
- * timer's minimum delay per 25 ms of work.
+ * The resume settles from a worker thread's callback, which gives timers a turn
+ * already, but the loop does not rely on how the resume settles: a promise that
+ * arrives already resolved drains only the *microtask* queue, and a loop of
+ * thousands of hits would then starve `setTimeout` outright — the progress
+ * notification never appears, cancellation never runs, and the editor sits still
+ * for the whole run with no way out of it. Yielding on elapsed time rather than
+ * every N hits keeps the cost proportional however fast or slow a hit turns out
+ * to be: about one timer's minimum delay per 25 ms of work.
  */
 const YIELD_EVERY_MS = 25;
 

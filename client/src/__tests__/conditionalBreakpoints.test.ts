@@ -404,11 +404,10 @@ describe('applyBreakpointRules', () => {
   });
 
   it('lets timers run during a long skip, so it stays interruptible', async () => {
-    // The resume does not necessarily yield a macrotask — where the binding has
-    // no koffi `.async` its promise is already resolved, and awaiting that
+    // The stubbed resume answers an already-resolved promise, so awaiting it
     // drains only the microtask queue. Without a yield of its own the loop
-    // starves setTimeout, so the progress notification never appears and there
-    // is nothing to cancel with.
+    // would starve setTimeout, so the progress notification never appears and
+    // there is nothing to cancel with.
     const decisions: number[] = Array.from({ length: 400 }, () => DECISION.Go);
     decisions.push(DECISION.Stop);
     const { session } = stubSession(decisions, [hitsBreakpoint(8n)]);

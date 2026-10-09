@@ -1042,39 +1042,8 @@ export class GciLibrary {
     flags: number,
   ): Promise<{ result: bigint; err: GciError }> {
     const err: Record<string, unknown> = {};
-
-    // koffi's `.async` is not always there — an optional-symbol stub carries no
-    // `.async` by design (see `optionalFunc`), and a binding can arrive without
-    // it for other reasons besides. Falling back to the blocking call keeps the
-    // caller CORRECT: it resumes exactly the same execution and answers the same
-    // thing, at the cost of holding the extension host for the duration. That is
-    // the same cost the debugger's own Resume already pays, and it is strictly
-    // better than failing the operation outright — which is what this did, and
-    // which surfaced as a conditional breakpoint silently stopping every time.
-    const call = this._GciTsContinueWith as koffi.KoffiFunction & {
-      async?: (...args: unknown[]) => void;
-    };
-    if (typeof call.async !== 'function') {
-      // Nothing is logged from here: this module is deliberately free of
-      // `vscode` so plain Node scripts can load it (see `testActiveSession`).
-      //
-      // Resolved inline, which means a caller awaiting this in a loop yields
-      // only to the microtask queue — timers do not get a turn. A caller that
-      // resumes thousands of times must therefore yield a macrotask of its own
-      // periodically or it will starve them; see `skipUntilConditionMet`.
-      const raw = this._GciTsContinueWith(
-        session,
-        gsProcess,
-        replaceTopOfStack,
-        continueWithError,
-        flags,
-        err,
-      );
-      return Promise.resolve({ result: toBigInt(raw), err: err as unknown as GciError });
-    }
-
     return new Promise((resolve, reject) => {
-      call.async(
+      this._GciTsContinueWith.async(
         session,
         gsProcess,
         replaceTopOfStack,
