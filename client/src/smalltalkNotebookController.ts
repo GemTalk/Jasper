@@ -74,11 +74,11 @@ export async function evalSmalltalk(session: ActiveSession, source: string): Pro
           // do:`, so an ordinary error -- doesNotUnderstand, halt, ZeroDivide,
           // even a cancel -- comes back inline with err.number 0 and never gets
           // here (all four checked against a live 3.6.2 stone). What does get
-          // here is what bypasses Smalltalk handlers. Not a method breakpoint:
-          // the 0 flags above run the cell with debugging disabled, so a
-          // breakpoint never stops it (notebookBreakpointHint.ts says so in each
-          // cell). If such a stop lands inside a Transcript write the process
-          // holds the session's Transcript
+          // here is a stop that bypasses Smalltalk handlers -- not a method
+          // breakpoint, though: the 0 flags above run the cell with debugging
+          // disabled, so a breakpoint never stops it (notebookBreakpointHint.ts
+          // says so in each cell). If a stop that bypasses the handlers lands
+          // inside a Transcript write, the process holds the session's Transcript
           // semaphore, and there is no notebook debugger to hand it to, so
           // leaving it suspended leaks both (#646). Execute It makes the same
           // call after the user declines its Debug prompt.
