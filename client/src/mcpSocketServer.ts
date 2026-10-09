@@ -285,7 +285,7 @@ export class McpSocketServer {
  * A short hard timeout guards against hung kernel state.
  */
 async function isSocketLive(socketPath: string): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
+  return await new Promise<boolean>((resolve) => {
     const probe = net.createConnection(socketPath);
     let settled = false;
     const finish = (live: boolean) => {

@@ -40,7 +40,7 @@ export async function reverseDictionaryEdit(
 
   // A create is the one direction whose reversal REMOVES rather than restores, so it reads
   // the opposite question of the other two and gets its own path.
-  if (!entry.before.present) return unlistCreated(session, execute, entry);
+  if (!entry.before.present) return await unlistCreated(session, execute, entry);
 
   let asItWas;
   try {

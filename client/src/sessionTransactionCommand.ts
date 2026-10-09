@@ -93,5 +93,5 @@ export async function sessionTransactionCommand(
   // unsaved editors) can raise a modal from there. The palette shows nothing
   // about which session is current, and "whichever one is current" is how work
   // lands in the wrong stone.
-  return run(resolved.session, { ask: !resolved.fromRow });
+  return await run(resolved.session, { ask: !resolved.fromRow });
 }

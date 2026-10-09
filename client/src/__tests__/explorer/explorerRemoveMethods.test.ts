@@ -21,6 +21,7 @@ vi.mock('../../methodResultsPicker', () => ({
 
 import { ExplorerController, MethodItem } from '../../gemstoneExplorer';
 import * as queries from '../../browserQueries';
+import type { MessageOptions } from 'vscode';
 import { window, __resetConfig } from '../../__mocks__/vscode';
 import { captureMethodSlots } from '../../undo/queries/methodSlotQueries';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
@@ -75,14 +76,21 @@ const sender = (over: Partial<MethodSearchResult> = {}): MethodSearchResult => (
 const removeMethods = (ctl: ExplorerController, rows: MethodItem[]) =>
   (ctl as unknown as { removeMethods: (n: MethodItem[]) => Promise<void> }).removeMethods(rows);
 
-const deleteMethod = queries.deleteMethod as ReturnType<typeof vi.fn>;
-const canClassBeWritten = queries.canClassBeWritten as ReturnType<typeof vi.fn>;
-const sendersOf = queries.sendersOf as ReturnType<typeof vi.fn>;
-const hierarchyImplementorsOf = queries.hierarchyImplementorsOf as ReturnType<typeof vi.fn>;
-const getClassEnvironments = queries.getClassEnvironments as ReturnType<typeof vi.fn>;
-const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
-const showInformationMessage = window.showInformationMessage as ReturnType<typeof vi.fn>;
-const showErrorMessage = window.showErrorMessage as ReturnType<typeof vi.fn>;
+const deleteMethod = vi.mocked(queries.deleteMethod);
+const canClassBeWritten = vi.mocked(queries.canClassBeWritten);
+const sendersOf = vi.mocked(queries.sendersOf);
+const hierarchyImplementorsOf = vi.mocked(queries.hierarchyImplementorsOf);
+const getClassEnvironments = vi.mocked(queries.getClassEnvironments);
+// `showWarningMessage` is overloaded and `vi.mocked` types the mock via the last
+// (`MessageItem`) overload; removeMethods uses the string one, so narrow to it.
+const showStringWarning: (
+  message: string,
+  options: MessageOptions,
+  ...items: string[]
+) => Thenable<string | undefined> = window.showWarningMessage;
+const showWarningMessage = vi.mocked(showStringWarning);
+const showInformationMessage = vi.mocked(window.showInformationMessage);
+const showErrorMessage = vi.mocked(window.showErrorMessage);
 
 /** Every selector has a sender somewhere, so the removal has to ask. */
 const everythingIsSent = () => sendersOf.mockReturnValue([sender()]);
@@ -108,7 +116,7 @@ const dialogText = (call = 0) => {
 };
 
 /** Selectors deleteMethod was asked to remove, in order. */
-const deleted = () => deleteMethod.mock.calls.map((c) => c[3] as string);
+const deleted = () => deleteMethod.mock.calls.map((c) => c[3]);
 
 beforeEach(() => {
   vi.clearAllMocks();

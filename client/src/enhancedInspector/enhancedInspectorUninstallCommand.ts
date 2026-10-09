@@ -59,7 +59,7 @@ async function performUninstall(
         cancellable: false,
       },
       async (progress) =>
-        uninstallEnhancedInspectorSupport(sys, (message, increment) =>
+        await uninstallEnhancedInspectorSupport(sys, (message, increment) =>
           progress.report({ message, increment }),
         ),
     );

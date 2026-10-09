@@ -343,7 +343,7 @@ export class DatabaseManager {
     // Stamped rather than overwritten: a backup that silently replaces the last
     // one is one mistake away from being no backup at all.
     const stamp = timestampForFileName(new Date());
-    return vscode.window.withProgress(
+    return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `Backing up extents for ${db.config.stoneName}...`,
@@ -511,7 +511,7 @@ export class DatabaseManager {
     );
     if (confirmed !== 'Replace') return false;
 
-    return vscode.window.withProgress(
+    return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: `Replacing extent for ${db.config.stoneName}...`,

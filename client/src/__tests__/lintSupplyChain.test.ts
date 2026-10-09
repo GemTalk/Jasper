@@ -5,8 +5,8 @@ import * as path from 'node:path';
 import { withTemporaryFolderDo } from './support/file';
 
 // Tests for scripts/lint-supply-chain.mjs — the guard that asserts npm's install-script
-// supply-chain controls are actually in effect and that the lockfile / allowScripts policy
-// have not drifted. It is itself a security control, so a silent regression in it (a check
+// supply-chain controls (plus engine-strict) are actually in effect and that the lockfile /
+// allowScripts policy have not drifted. It is itself a security control, so a silent regression in it (a check
 // that stops detecting what it claims to detect) is invisible: the script keeps printing
 // green ✓ lines and CI keeps passing.
 //
@@ -31,6 +31,7 @@ const EXAMPLE_NPMRC = [
   'allow-git=none',
   'allow-remote=none',
   'min-release-age=7',
+  'engine-strict=true',
   '',
 ].join('\n');
 
@@ -42,6 +43,7 @@ const EXAMPLE_NPMRC = [
 // The version numbers are deliberately unlike this repo's real floors: what the check asserts is
 // that the four values agree with each other, not what any of them happens to be.
 const EXAMPLE_COMPLIANT_ENGINES = { vscode: '^3.7.0', node: '>=9.4.2' };
+const EXAMPLE_COMPLIANT_DEV_ENGINES = devNodeRange('^9.4.2 || ^11.0.0');
 const EXAMPLE_COMPLIANT_ROOT_TYPES = { '@types/node': '~9.4' };
 const EXAMPLE_COMPLIANT_CLIENT_TYPES = { '@types/vscode': '~3.7.0' };
 const EXAMPLE_COMPLIANT_TYPE_PACKAGES = {
@@ -49,12 +51,21 @@ const EXAMPLE_COMPLIANT_TYPE_PACKAGES = {
   'client/node_modules/@types/vscode': entry('@types/vscode', '3.7.0'),
 };
 
+// A `devEngines` whose runtime range is `version`. `npm config` is itself devEngines-gated, so
+// with npm's default `onFail: 'error'` a range excluding the Node running the tests would fail
+// every config assertion before the script reached its own check.
+function devNodeRange(version: string) {
+  return { runtime: { name: 'node', version, onFail: 'ignore' } };
+}
+
 interface Fixture {
   npmrc?: string;
   packageJson?: Record<string, unknown>;
   clientPackageJson?: Record<string, unknown>;
   lockfile?: Record<string, unknown>;
   typePackages?: Record<string, unknown>;
+  // `null` leaves .nvmrc out of the synthetic repo.
+  nvmrc?: string | null;
   // Extra environment for the child, e.g. an npm_config_* override.
   env?: Record<string, string>;
 }
@@ -83,6 +94,7 @@ function runLint({
   clientPackageJson = {},
   lockfile = {},
   typePackages = {},
+  nvmrc = '11.0.0\n',
   env = {},
 }: Fixture) {
   return withTemporaryFolderDo((dir) => {
@@ -92,6 +104,7 @@ function runLint({
         name: 'fixture',
         version: '0.0.0',
         engines: EXAMPLE_COMPLIANT_ENGINES,
+        devEngines: EXAMPLE_COMPLIANT_DEV_ENGINES,
         devDependencies: EXAMPLE_COMPLIANT_ROOT_TYPES,
         ...packageJson,
       }),
@@ -117,6 +130,9 @@ function runLint({
       }),
     );
     fs.writeFileSync(path.join(dir, '.npmrc'), npmrc);
+    if (nvmrc !== null) {
+      fs.writeFileSync(path.join(dir, '.nvmrc'), nvmrc);
+    }
     fs.writeFileSync(path.join(dir, 'user.npmrc'), '');
     fs.writeFileSync(path.join(dir, 'global.npmrc'), '');
 
@@ -208,7 +224,7 @@ function typeFloorFixture({
 }
 
 describe('lint-supply-chain: npm config assertions', () => {
-  it('passes when every install-script control is in effect', () => {
+  it('passes when every enforced npm setting is in effect', () => {
     const { status, stdout } = runLint({});
 
     expect(status).toBe(0);
@@ -217,6 +233,7 @@ describe('lint-supply-chain: npm config assertions', () => {
     expect(stdout).toContain("✓ npm config 'allow-remote' is 'none'");
     expect(stdout).toContain("✓ npm config 'allow-scripts' is unset");
     expect(stdout).toContain("✓ npm config 'min-release-age' is '7'");
+    expect(stdout).toContain("✓ npm config 'engine-strict' is 'true'");
   });
 
   it('fails when a control is turned off', () => {
@@ -226,6 +243,25 @@ describe('lint-supply-chain: npm config assertions', () => {
 
     expect(status).toBe(1);
     expect(stderr).toContain("✗ npm config 'strict-allow-scripts' is 'false', expected 'true'");
+  });
+
+  it('fails when engine-strict is turned off', () => {
+    const { status, stderr } = runLint({
+      npmrc: EXAMPLE_NPMRC.replace('engine-strict=true', 'engine-strict=false'),
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("✗ npm config 'engine-strict' is 'false', expected 'true'");
+  });
+
+  it('catches an env-var override turning engine-strict off', () => {
+    const { status, stderr } = runLint({
+      npmrc: EXAMPLE_NPMRC,
+      env: { npm_config_engine_strict: 'false' },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("✗ npm config 'engine-strict' is 'false', expected 'true'");
   });
 
   // The whole reason the script reads through `npm config get` instead of parsing .npmrc:
@@ -602,11 +638,150 @@ describe('lint-supply-chain: @types floor pinning', () => {
   });
 });
 
+describe('lint-supply-chain: dev Node range floor', () => {
+  it('passes when the dev Node range starts at the shipped Node floor', () => {
+    const { status, stdout } = runLint({});
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime starts at engines.node's floor");
+  });
+
+  // A floor raise can put the new major first; the range still starts at its lowest alternative.
+  it('reads where the dev Node range starts regardless of the order its majors are listed', () => {
+    const { status, stdout } = runLint({
+      packageJson: { devEngines: devNodeRange('^11.0.0 || ^9.4.2') },
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime starts at engines.node's floor");
+  });
+
+  it('reads where the dev Node range starts when its upper bound is written first', () => {
+    const { status, stdout } = runLint({
+      packageJson: { devEngines: devNodeRange('<10.0 >=9.4.2 || ^11.0.0') },
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime starts at engines.node's floor");
+  });
+
+  // A bare major carries no dotted version, yet it still opens the range below the floor.
+  it('fails when an alternative written as a bare major reaches below the shipped Node floor', () => {
+    const { status, stderr } = runLint({
+      packageJson: { devEngines: devNodeRange('^9.4.2 || >=8') },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ devEngines.runtime starts at 8.0.0 but engines.node's floor is 9.4.2, raise them together",
+    );
+  });
+
+  // The partial floor raise: engines.node and its @types move, the dev Node range is forgotten.
+  it('fails when the shipped Node floor rises without the dev Node range', () => {
+    const fixture = typeFloorFixture({
+      vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+      node: { enginesFloor: '>=11.2.0', manifestRange: '~11.2', lockfileVersion: '11.2.4' },
+    });
+
+    const { status, stderr } = runLint(fixture);
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ devEngines.runtime starts at 9.4.2 but engines.node's floor is 11.2.0, raise them together",
+    );
+  });
+
+  // The CI floor leg runs exactly the shipped floor, which a range one patch above it rejects.
+  it('fails when the dev Node range starts a patch above the shipped Node floor', () => {
+    const { status, stderr } = runLint({
+      packageJson: { devEngines: devNodeRange('^9.4.3 || ^11.0.0') },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ devEngines.runtime starts at 9.4.3 but engines.node's floor is 9.4.2, raise them together",
+    );
+  });
+
+  it('fails when package.json declares no dev Node range', () => {
+    const { status, stderr } = runLint({ packageJson: { devEngines: {} } });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      '✗ devEngines.runtime is missing or unparseable, so neither engines.node nor .nvmrc can be checked against it',
+    );
+  });
+
+  it('fails when package.json declares no shipped Node floor', () => {
+    const { status, stderr } = runLint({ packageJson: { engines: { vscode: '^3.7.0' } } });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      '✗ engines.node is missing or unparseable, so nothing anchors devEngines.runtime',
+    );
+  });
+});
+
+describe('lint-supply-chain: dev Node range tracks .nvmrc', () => {
+  it('passes when the newest supported major starts at the pinned dev Node', () => {
+    const { status, stdout } = runLint({});
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime's newest major starts at .nvmrc");
+  });
+
+  it('reads the newest supported major regardless of the order the majors are listed', () => {
+    const { status, stdout } = runLint({
+      packageJson: { devEngines: devNodeRange('^11.0.0 || ^9.4.2') },
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toContain("✓ devEngines.runtime's newest major starts at .nvmrc");
+  });
+
+  // Bumping .nvmrc alone still satisfies the range, so nothing else would notice.
+  it('fails when the pinned dev Node moves without the dev Node range', () => {
+    const { status, stderr } = runLint({ nvmrc: '11.2.0\n' });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ .nvmrc is 11.2.0 but devEngines.runtime's newest major starts at 11.0.0, bump them together",
+    );
+  });
+
+  it('accepts a pinned dev Node written with a leading v', () => {
+    const { status } = runLint({ nvmrc: 'v11.0.0\n' });
+
+    expect(status).toBe(0);
+  });
+
+  it('fails when the pinned dev Node is an alias rather than a version', () => {
+    const { status, stderr } = runLint({ nvmrc: 'lts/*\n' });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('✗ .nvmrc is not an exact Node version');
+  });
+
+  it('fails when the repository pins no dev Node', () => {
+    const { status, stderr } = runLint({ nvmrc: null });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ .nvmrc is missing, so nothing anchors devEngines.runtime's newest major",
+    );
+  });
+});
+
 describe('lint-supply-chain: exit status', () => {
   it('reports every failing check in one run, not just the first', () => {
     const { status, stderr } = runLint({
       npmrc: EXAMPLE_NPMRC.replace('allow-git=none', 'allow-git=all'),
-      packageJson: { allowScripts: { esbuild: true } },
+      packageJson: {
+        allowScripts: { esbuild: true },
+        devEngines: devNodeRange('^9.4.3 || ^11.0.0'),
+      },
+      nvmrc: '11.2.0\n',
       clientPackageJson: { devDependencies: { '@types/vscode': '^3.7.0' } },
       lockfile: {
         packages: {
@@ -620,5 +795,7 @@ describe('lint-supply-chain: exit status', () => {
     expect(stderr).toContain('✗ node_modules/mime: version');
     expect(stderr).toContain("✗ allowScripts['esbuild'] allows every version");
     expect(stderr).toContain("✗ client/package.json's @types/vscode is '^3.7.0'");
+    expect(stderr).toContain('✗ devEngines.runtime starts at 9.4.3');
+    expect(stderr).toContain('✗ .nvmrc is 11.2.0');
   });
 });

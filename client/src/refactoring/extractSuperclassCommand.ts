@@ -316,7 +316,7 @@ export async function insertSuperclassCommand(
   const newName = await promptNewClassName(ctx.session, ctx.className);
   if (!newName) return undefined;
 
-  return runExtractSuperclass(
+  return await runExtractSuperclass(
     ctx,
     `Insert superclass '${newName}' above ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}`,
     newName,
@@ -389,7 +389,7 @@ export async function extractSuperclassCommand(
   }
 
   const where = siblings.length > 0 ? ` (with ${siblings.join(', ')})` : '';
-  return runExtractSuperclass(
+  return await runExtractSuperclass(
     ctx,
     `Extract superclass '${newName}' from ${qualifiedClassName(ctx.className, dictionaryNameFor(ctx.session, ctx.dict))}${where}`,
     newName,
