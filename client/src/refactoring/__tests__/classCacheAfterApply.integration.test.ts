@@ -1,6 +1,6 @@
 // Every refactoring that reshapes a class, applied through the client's own apply query, leaves
 // the Hierarchy showing the CURRENT classes -- for the classes it reshaped and for the class above
-// them.
+// them. So does undoing one.
 //
 // The hierarchy queries read the session's cached ClassOrganizer, which holds class objects and
 // their superclass links. A reshape makes new class versions without committing, so unless the
@@ -41,6 +41,14 @@ import {
 } from '../queries/previewExtractSuperclass';
 import { startSplitClassPreview, applySplitClass } from '../queries/previewSplitClass';
 import { revertClassToVersion } from '../queries/classHistory';
+import {
+  captureClassHistory,
+  clearRefactoringUndo,
+  commitHistoryRevert,
+  startUndoRefactoringPreview,
+  applyUndoRefactoring,
+} from '../queries/previewUndoRefactoring';
+import { parseApplyResult } from '../undoRefactoringPreview';
 
 describe('the Hierarchy after a class-reshaping refactoring (integration)', () => {
   let gci: GciLibrary;
@@ -265,19 +273,37 @@ describe('the Hierarchy after a class-reshaping refactoring (integration)', () =
   it('after restoring an earlier class version from Class History', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
-    // A second version to go back from. compileClassDefinition drops the cache itself, so warm it
-    // again afterwards: the revert is what has to drop it.
-    q.compileClassDefinition(
-      session(),
-      "CcRoot subclass: 'CcMid' instVarNames: #('a' 'b' 'c') classVars: #() " +
-        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-    );
+    // The version to go back from comes from a refactoring, which recompiles the subclasses under
+    // it; a bare class definition would leave them on the old version, with nothing for the
+    // revert to carry. The refactoring drops the cache itself, so warm it again afterwards: the
+    // revert is what has to drop it. Counted from the end because earlier tests in this file add
+    // versions of their own.
+    await runInstVar('add', 'c');
+    const restoreIndex = Number(exec('(CcMid classHistory size - 1) printString'));
     getClassDescendantNames(exec, 'CcRoot', ug());
 
-    revertClassToVersion(exec, 'CcMid', 1, ug());
+    revertClassToVersion(exec, 'CcMid', restoreIndex, ug());
 
-    // A revert does not carry the subclasses across, so the version they still sit on is listed
-    // too, as an old version -- that one is real. What a stale list lacks is the restored CURRENT one.
-    expect(subclassesOf('CcRoot')).toContain('CcMid:bound');
+    expect(subclassesOf('CcRoot')).toEqual(current('CcMid'));
+    expect(subclassesOf('CcMid')).toEqual(current('CcLeafA', 'CcLeafB'));
+  }, 60_000);
+
+  it('after undoing a class reshape', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    // Recorded the way the Move Instance Variable command records it.
+    clearRefactoringUndo(exec);
+    captureClassHistory(exec, 'CcMid', ug());
+    await runStructure('pushDown', 'CcMid', 'b');
+    commitHistoryRevert(exec, 'Push down b', 'GsInstVarStructureRefactoring');
+    getClassDescendantNames(exec, 'CcRoot', ug());
+
+    await startUndoRefactoringPreview(asyncExec, 'cc-undo', PREVIEW_PAGE_BYTES);
+    expect(parseApplyResult(await applyUndoRefactoring(asyncExec, 'cc-undo', [])).failed).toEqual(
+      [],
+    );
+
+    expect(subclassesOf('CcRoot')).toEqual(current('CcMid'));
+    expect(subclassesOf('CcMid')).toEqual(current('CcLeafA', 'CcLeafB'));
   }, 60_000);
 });

@@ -6,7 +6,6 @@ vi.mock('../../browserQueries', () => ({
   applyUndoRefactoring: vi.fn(),
   clearUndoRefactoringPreview: vi.fn(),
 }));
-vi.mock('../../classOrganizerCache', () => ({ dropCachedClassOrganizer: vi.fn() }));
 vi.mock('../undoRefactoringPanel', () => ({ showUndoRefactoringPanel: vi.fn() }));
 vi.mock('../refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
@@ -15,7 +14,6 @@ vi.mock('../refactoringUndoAvailability', () => ({
 
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
-import { dropCachedClassOrganizer } from '../../classOrganizerCache';
 import { showUndoRefactoringPanel } from '../undoRefactoringPanel';
 import { checkRefactoringUndoAvailable } from '../refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../undoRefactoringCommand';
@@ -363,87 +361,6 @@ describe('undoLastRefactoringCommand', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('NOT committed'),
     );
-  });
-
-  /** An undo record with one row of `kind`, reversed by `mechanism` (and `reverseKind`). */
-  const undoOf = (mechanism: string, kind: string, reverseKind: string | null = null): string =>
-    JSON.stringify({
-      token: 't1',
-      label: 'Reshape Account',
-      mechanism,
-      reverseKind,
-      total: 1,
-      page: {
-        changes: [
-          {
-            id: '1',
-            kind,
-            className: 'Account',
-            isMeta: false,
-            selector: kind.startsWith('method') ? 'total' : null,
-            newName: null,
-            category: null,
-            oldSource: 'a',
-            newSource: 'b',
-            warning: null,
-          },
-        ],
-        nextOffset: 0,
-        done: true,
-      },
-    });
-
-  const droppedBeforeRedraw = (): boolean => {
-    const calls = vi.mocked(vscode.commands.executeCommand).mock;
-    const refresh = calls.calls.findIndex(([id]) => id === 'gemstone.explorer.refresh');
-    const dropped = vi.mocked(dropCachedClassOrganizer).mock.invocationCallOrder;
-    return dropped.length > 0 && dropped[0] < calls.invocationCallOrder[refresh];
-  };
-
-  it('rebuilds the cached class list before redrawing, when classes come back', async () => {
-    // Restoring earlier class versions makes new versions without committing; a class list cached
-    // from before would show the restored class with no subclasses.
-    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
-      undoOf('historyRevert', 'classDefinitionEdit'),
-    );
-
-    await undoLastRefactoringCommand(sessionsWith(true));
-
-    expect(droppedBeforeRedraw()).toBe(true);
-  });
-
-  it('rebuilds it too when a reverse rename reshapes a class', async () => {
-    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
-      undoOf('mirror', 'classDefinitionEdit', 'instVarRename'),
-    );
-
-    await undoLastRefactoringCommand(sessionsWith(true));
-
-    expect(droppedBeforeRedraw()).toBe(true);
-  });
-
-  it('keeps the cached class list when only methods come back', async () => {
-    // Nothing a method undo changes is in the class list, and rebuilding it is not free.
-    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
-      undoOf('changeSet', 'methodRecompile'),
-    );
-
-    await undoLastRefactoringCommand(sessionsWith(true));
-
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
-    expect(dropCachedClassOrganizer).not.toHaveBeenCalled();
-  });
-
-  it('keeps it when a reverse rename only renames a class variable back', async () => {
-    // A class variable is a binding in the class's pool; renaming it makes no class version.
-    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
-      undoOf('mirror', 'classDefinitionEdit', 'classVarRename'),
-    );
-
-    await undoLastRefactoringCommand(sessionsWith(true));
-
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
-    expect(dropCachedClassOrganizer).not.toHaveBeenCalled();
   });
 
   it('reports a whole-apply error instead of claiming success', async () => {

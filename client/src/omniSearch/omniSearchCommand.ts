@@ -471,7 +471,9 @@ export function registerOmniSearch(
       // abort drops it, and so does Jasper's own class compile — but a class
       // created by executing `subclass:` in a workspace does neither, and this ⟳
       // is the gesture that says "ask the stone again". The ⟳ inside the panel
-      // reaches the same drop through its deps' `dropClassIndex`.
+      // reaches the same drop through its deps' `dropClassIndex`, and an open,
+      // visible host repeats it below -- harmless, and this one is still needed:
+      // a collapsed panel defers its reload, dropping nothing until it reopens.
       const session = currentSession(sessionManager);
       if (session) {
         try {

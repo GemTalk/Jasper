@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { dictionaryArgExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 import type { AsyncQueryExecutor } from './previewRenameMethod';
 
 /**
@@ -72,18 +73,23 @@ c isNil
 }
 
 /** Apply a started undo preview, skipping the deselected change ids, WITHOUT
- *  committing. Answers `{"applied":N,"failed":[{"id":..,"label":..,"error":..}]}`. */
+ *  committing. Answers `{"applied":N,"failed":[{"id":..,"label":..,"error":..}]}`.
+ *
+ *  Drops the cached class list in the same doit, for every refactoring undo: restoring class versions makes
+ *  new ones without committing, and an undo that fails part-way has still made some. Only a
+ *  method undo could keep it, and telling the two apart client-side is a guess this does not
+ *  need to make for one rebuild per Undo. */
 export function applyUndoRefactoring(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
 ): Promise<string> {
   const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code = `| c |
+  const code = droppingClassOrganizer(`| c |
 c := ${UNDO_CLASS}.
 c isNil
   ifTrue: ['{"applied":0,"failed":[],"error":"preview session expired"}']
-  ifFalse: [c applyForToken: '${escapeString(token)}' deselected: #(${ids})]`;
+  ifFalse: [c applyForToken: '${escapeString(token)}' deselected: #(${ids})]`);
   return execute(`applyUndoRefactoring(${token}, -${deselectedIds.length})`, code);
 }
 

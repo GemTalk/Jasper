@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { readdirSync } from 'fs';
 import { join } from 'path';
+import { clearClassOrganizerStatement } from '../../queries/classOrganizer';
 
 /**
  * Which applies drop the session's cached ClassOrganizer, and which keep it.
@@ -12,8 +13,9 @@ import { join } from 'path';
  * classes. Everything else keeps it: rebuilding is cheap but not free, and a method-level
  * refactoring changes nothing the cache holds.
  *
- * Every apply builder is found here by name, so a new one fails the first test until it is put in
- * one list or the other -- the decision cannot be skipped by forgetting this file.
+ * Every exported query in the two folders is found here, so a new one fails the first test until
+ * it is put in one list or the other -- the decision cannot be skipped by forgetting this file.
+ * Only names that read, preview or decode are exempt, by prefix, since those change no classes.
  */
 
 /** Every query module the apply builders live in, loaded by path so a new file is included too. */
@@ -29,8 +31,9 @@ const loadQueryModules = async (): Promise<Record<string, Record<string, unknown
   return Object.fromEntries(entries);
 };
 
-const isApplyBuilder = (name: string): boolean =>
-  /^apply[A-Z]/.test(name) || name === 'revertClassToVersion' || name === 'removeClassVersion';
+const READER =
+  /^(get|parse|start|page|clear|capture|analyze|candidatesFor|methods|is[A-Z]|globalNameInUse|decode|resolve|accessorSpecsFor|classDefiningDictionaryName|dictionariesShadowedByRename|renameTemporaryDeclineReason|dictionaryEntryCount|refactoringUndoStatus|pushEngineClass|recordedApplyExpr|(new|forget|take|reset|release)\w*StashKeys?$)/;
+const isApplyBuilder = (name: string): boolean => !READER.test(name);
 
 const slot = { dict: 1, className: 'Foo' };
 
@@ -48,6 +51,12 @@ const DROPS: Record<string, unknown[]> = {
   revertClassToVersion: ['Foo', 1],
   // undo of a class edit: rebinds an earlier class version, or unbinds a class
   applyClassSlotOps: [[{ kind: 'unbind', slot, stashKey: null, discarded: [] }]],
+  // Undo of any refactoring, method-level ones included: the same query applies both, and the
+  // client's record of which kind it is cannot be trusted to stop a class undo that fails part-way
+  // from leaving a stale cache. One rebuild per explicit Undo is the cost.
+  applyUndoRefactoring: ['tok', []],
+  // undo of removing a dictionary: every class in it is bound again
+  reinsertDictionary: ['stash', 1],
 };
 
 const KEEPS: Record<string, unknown[]> = {
@@ -74,10 +83,23 @@ const KEEPS: Record<string, unknown[]> = {
   // no class version (addClassVarName: / removeClassVarName:), so no class object changes.
   applyRenameClassVar: ['tok'],
   applyClassVarOp: [{ ...slot, varName: 'V' }, 'declare'],
+  addClassVariable: ['Foo', 'V'],
+  deleteClassVariable: ['Foo', 'V'],
+  // Compiles methods onto an existing class.
+  addAccessors: ['Foo', false, [{ selector: 'a', source: 'a ^a' }]],
+  // Undo bookkeeping: these record or discard what an undo will do, and change no class.
+  recordReverseRename: [
+    'instVarRename',
+    'Foo',
+    'a',
+    'b',
+    'label',
+    'GsRenameInstanceVariableRefactoring',
+  ],
+  discardPendingCapture: [],
+  commitHistoryRevert: ['label', 'GsInstVarRefactoring'],
   // Takes an old version out of the history list; no current class or superclass link changes.
   removeClassVersion: ['Foo', 1],
-  // Shared by method and class undos, so the undo command decides (undoRefactoringCommand tests).
-  applyUndoRefactoring: ['tok', []],
 };
 
 type Builder = { file: string; name: string; fn: (...args: unknown[]) => unknown };
@@ -93,8 +115,8 @@ beforeAll(async () => {
   );
 });
 
-/** The code a builder sends, whether its executor is sync or async. */
-async function codeSentBy(name: string, args: unknown[]): Promise<string> {
+/** The code of each call a builder makes, whether its executor is sync or async. */
+async function callsMadeBy(name: string, args: unknown[]): Promise<string[]> {
   const builder = builders.find((b) => b.name === name);
   if (!builder) throw new Error(`no apply builder named ${name}`);
   const execute = vi.fn((...callArgs: unknown[]) => {
@@ -106,10 +128,11 @@ async function codeSentBy(name: string, args: unknown[]): Promise<string> {
   } catch {
     // Parsing the canned reply may fail; only the code that was sent matters here.
   }
-  return execute.mock.calls.map((c) => String(c[c.length - 1])).join('\n');
+  return execute.mock.calls.map((c) => String(c[c.length - 1]));
 }
 
-const dropsTheCache = (code: string): boolean => code.includes('JasperClassOrganizer_');
+// The drop itself, not the cache key: a builder that only READS the cache names the key too.
+const dropsTheCache = (code: string): boolean => code.includes(clearClassOrganizerStatement());
 
 describe('applies and the cached class list', () => {
   it('decides, for every apply builder, whether it drops the cached class list', () => {
@@ -125,15 +148,23 @@ describe('applies and the cached class list', () => {
   it.each(Object.entries(DROPS))(
     '%s drops it in the doit that changes the classes',
     async (name, args) => {
-      expect(dropsTheCache(await codeSentBy(name, args))).toBe(true);
+      // A doit that is nothing but the drop is a separate call, run before or after the apply.
+      const dropping = (await callsMadeBy(name, args)).filter(
+        (code) => dropsTheCache(code) && code.trim() !== clearClassOrganizerStatement(),
+      );
+
+      expect(dropping).toHaveLength(1);
+      // First, after any temporaries: an apply that fails part-way has still re-versioned classes.
+      const afterTemps = dropping[0].replace(/^\s*\|[^|]*\|/, '').trimStart();
+      expect(afterTemps.startsWith(clearClassOrganizerStatement())).toBe(true);
     },
   );
 
   it.each(Object.entries(KEEPS))('%s keeps it', async (name, args) => {
-    const code = await codeSentBy(name, args);
+    const calls = await callsMadeBy(name, args);
 
     // Sent something, or "keeps it" would pass for a builder this call never reached.
-    expect(code).not.toBe('');
-    expect(dropsTheCache(code)).toBe(false);
+    expect(calls).not.toEqual([]);
+    expect(calls.some(dropsTheCache)).toBe(false);
   });
 });

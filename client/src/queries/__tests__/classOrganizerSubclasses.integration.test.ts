@@ -216,8 +216,8 @@ describe('hierarchy queries over ordinary hierarchies (integration)', () => {
   });
 
   it('learns a class defined after the organizer was built once that class is shown', () => {
-    // GemStone's subclassesOf: adds a class it has not seen; showing the new class must still teach
-    // the cached organizer about it, so its superclass then lists it.
+    // The cached organizer doesn't hold the new class, which is bound in a dictionary, so showing it
+    // rebuilds the organizer -- and its superclass then lists it.
     fixture();
     descendantRows(exec(), 'OrgPlainBase', d);
     defineIn(exec(), at(d, 'OrgPlainBase'), 'OrgPlainLate', d);
@@ -231,8 +231,8 @@ describe('hierarchy queries over ordinary hierarchies (integration)', () => {
   });
 
   it('replaces the old version with the new one when a class is redefined', () => {
-    // A redefinition makes a new version with the same name and class history. Showing it must
-    // swap it in for the old version, as GemStone does -- not list both.
+    // A redefinition makes a new version with the same name and class history. Showing it rebuilds
+    // the organizer, which collects only the bound version -- so the old one is not listed too.
     fixture();
     descendantRows(exec(), 'OrgPlainBase', d);
     defineIn(exec(), at(d, 'OrgPlainBase'), 'OrgPlainB', d, "'extra'");

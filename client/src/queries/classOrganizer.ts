@@ -25,15 +25,16 @@
  * is a class *added or removed* after it was built, since that list is a snapshot —
  * so anything that changes the set of classes has to drop it.
  *
- * Five things do. Jasper's own class definition and deletion clear it in the same
+ * These do. Jasper's own class definition and deletion clear it in the same
  * doit that changes the class (`clearClassOrganizerStatement`); a commit or abort
  * clears it, which is how a class another session added arrives; a class-level
- * refactoring's apply or undo clears it (`droppingClassOrganizer`), since both make
- * new class versions without committing;
+ * refactoring's apply, a Class History restore, every refactoring undo, and the undo
+ * of a class or dictionary edit clear it (`droppingClassOrganizer`), since each can
+ * change classes without committing;
  * and GemStone Search's ⟳ (either one -- the panel's title bar or its own) clears
  * it, which is the one gesture that covers the case none of those can — a class
  * created by *executing* `subclass:` in a workspace, which announces nothing and
- * needs no commit to be visible to the session that ran it. Commit, abort, undo and
+ * needs no commit to be visible to the session that ran it. Commit, abort and
  * ⟳ go through `clearClassOrganizerCode` (`dropCachedClassOrganizer` in
  * classOrganizerCache.ts).
  *
@@ -48,8 +49,10 @@
  * `getClassDescendantNames`) share the cache too, and read it through
  * `subclassesOfBlock` / `superclassesOfBlock` rather than asking it directly (see
  * there for why). Those also rebuild it themselves when asked about a class bound
- * in a dictionary that the cache does not hold -- the workspace case above, for
- * the hierarchy at least.
+ * in a dictionary that the cache does not hold. That repairs the workspace case above
+ * only partly: selecting the new class rebuilds the cache, but asking about its
+ * superclass first answers from the stale list, without it, since the cache does
+ * hold the superclass.
  *
  * Keyed by environment: an organizer collects its classes under one environment id,
  * so environments cannot share one. `newForEnvironment:` sets that at collection
@@ -96,7 +99,8 @@ export function clearClassOrganizerStatement(): string {
  * after a leading temporaries declaration, which must stay first.
  *
  * Method-level applies do not use it: they change nothing the cache holds, and rebuilding it is
- * not free. Which applies do is pinned in refactoring/__tests__/classCacheAfterApply.test.ts.
+ * not free. Every refactoring undo does (see `applyUndoRefactoring`). Which applies do is pinned in
+ * refactoring/__tests__/classCacheAfterApply.test.ts.
  */
 export function droppingClassOrganizer(code: string): string {
   const temps = /^\s*\|[^|]*\|/.exec(code);
@@ -131,6 +135,9 @@ true`;
  * - bound nowhere -- an older version, or a removed class. It is answered from the class itself
  *   (its superclass chain, or a scan of the organizer's classes for its subclasses), leaving the
  *   organizer as it is.
+ *
+ * `organizer` must name a variable, since the rebuild assigns the fresh organizer to it, and the
+ * rebuild caches environment 0's -- the only environment the hierarchy queries ask about.
  */
 function readableExpr(organizer: string): string {
   return `((${organizer} classes includesIdentical: cls) or: [
