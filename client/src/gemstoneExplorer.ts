@@ -854,8 +854,8 @@ interface MethodHistoryPanelEntry {
 
 /** What a method removal judges its rows against: the class it started on, the dictionary
  *  that resolves it, and the method list the rows came from. Captured once, up front, so a
- *  run that is several whole-image scans long cannot judge its later rows against a pane
- *  the user has since moved. */
+ *  run that waits on a whole-image scan cannot judge its rows against a pane the user has
+ *  since moved. */
 interface RemovalTarget {
   className: string;
   dictIndex: number | undefined;
@@ -5373,6 +5373,7 @@ export class ExplorerController {
   private async scanReferences(
     title: string,
     scan: (environmentId: number) => queries.MethodSearchResult[],
+    environments: number[] = this.environmentsToScan(),
   ): Promise<{
     references: queries.MethodSearchResult[];
     scanFailed?: string;
@@ -5386,7 +5387,7 @@ export class ExplorerController {
       },
       () => {
         try {
-          const perEnv = this.environmentsToScan().map((env) => scan(env));
+          const perEnv = environments.map((env) => scan(env));
           const truncated = perEnv.some((rows) => rows.length >= METHOD_SEARCH_RESULT_LIMIT);
           return Promise.resolve({
             references: dedupeMethodResults(perEnv.flat()),
@@ -5425,11 +5426,13 @@ export class ExplorerController {
       return;
     }
 
-    const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(
-      session,
-      { className, dictIndex: this.state.dictIndex, envLines: this.envLines },
-      node,
-    );
+    const where: RemovalTarget = {
+      className,
+      dictIndex: this.state.dictIndex,
+      envLines: this.envLines,
+    };
+    const { inheritedFrom, alsoIn } = this.methodRemovalCheck(session, where, node);
+    const scan = await this.survivingSenders(session, where, inheritedFrom ? [] : [node], [node]);
     const target: SafeDeleteTarget = {
       kind: 'method',
       label: `#${selector} from ${side}`,
@@ -5501,71 +5504,74 @@ export class ExplorerController {
     this.reloadCurrentClassMethods();
   }
 
-  // What removing `node` from `className` would leave behind, gathered before anyone is
-  // asked: the inherited implementation that takes over, the senders that survive, and the
-  // other environments still implementing the selector. Shared by the single-row removal
-  // and the multi-row one so both judge a method the same way.
-  private async methodRemovalCheck(
+  // What removing `node` would leave behind, gathered before anyone is asked: the inherited
+  // implementation that takes over, and the other environments still implementing the
+  // selector. Shared by the single-row removal and the multi-row one so both judge a method
+  // the same way. The surviving senders are survivingSenders' job.
+  private methodRemovalCheck(
     session: ActiveSession,
     where: RemovalTarget,
     node: MethodItem,
-  ): Promise<{
-    inheritedFrom: string | undefined;
-    scan: { references: queries.MethodSearchResult[]; scanFailed?: string; truncated: boolean };
-    alsoIn: number[];
-  }> {
+  ): { inheritedFrom: string | undefined; alsoIn: number[] } {
     const selector = node.info.selector;
-    // An override is the common case, and for it the sender scan is both expensive and
-    // beside the point: if a superclass still implements the selector, every send that
-    // resolved here simply resolves there instead and nothing is left calling into a hole.
-    // Asking the hierarchy first is bounded by its depth, where the sender scan is a
-    // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
-    // of methods that were never going to break.
-    //
-    // The check is deliberately one-directional: finding an implementor above skips the
-    // scan, but failing to find one only means we fall through and ask, so a hierarchy
-    // probe that under-reports (it reads environment 0) costs a question, never a wrong
-    // silent delete.
-    const inheritedFrom = this.superclassImplementorOf(
-      session,
-      where.dictIndex,
-      where.className,
-      selector,
-      node.isMeta,
-    );
-
-    const scan = inheritedFrom
-      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
-      : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
-          queries.sendersOf(session, selector, env),
-        );
     return {
-      inheritedFrom,
-      scan: {
-        ...scan,
-        // The method's own send of its own selector goes away with it, so a recursive
-        // method is not a method with a surviving sender.
-        //
-        // The environment is part of what makes it "its own" send. A class can implement
-        // the same selector on the same side in two environments, and those are two
-        // different methods: only the one being removed disappears. Matching on
-        // class/side/selector alone crossed off the OTHER environment's method as if it
-        // were this one's recursion, hiding a sender that really does survive — the
-        // under-report this guard exists to prevent. The pane removes the environment-0
-        // method (see EXPLORER_METHOD_ENVIRONMENT), so that is the row, and only that row,
-        // which goes away with it.
-        references: scan.references.filter(
-          (r) =>
-            !(
-              r.className === where.className &&
-              r.isMeta === node.isMeta &&
-              r.selector === selector &&
-              r.environmentId === EXPLORER_METHOD_ENVIRONMENT
-            ),
-        ),
-      },
+      // An override is the common case, and for it the sender scan is both expensive and
+      // beside the point: if a superclass still implements the selector, every send that
+      // resolved here simply resolves there instead and nothing is left calling into a hole.
+      // Asking the hierarchy first is bounded by its depth, where the sender scan is a
+      // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
+      // of methods that were never going to break.
+      //
+      // The check is deliberately one-directional: finding an implementor above skips the
+      // scan, but failing to find one only means we fall through and ask, so a hierarchy
+      // probe that under-reports (it reads environment 0) costs a question, never a wrong
+      // silent delete.
+      inheritedFrom: this.superclassImplementorOf(
+        session,
+        where.dictIndex,
+        where.className,
+        selector,
+        node.isMeta,
+      ),
       alsoIn: this.otherEnvironmentsImplementing(where.envLines, node.isMeta, selector),
     };
+  }
+
+  // The senders of `scanned` that survive removing `removing`: one scan for all of them, under
+  // one progress notification, however many there are. Nothing to scan answers nothing.
+  //
+  // Environment 0 only. The pane removes the environment-0 method (EXPLORER_METHOD_ENVIRONMENT),
+  // and a send resolves in the environment it was compiled in -- a method compiled in
+  // environment 1 that sends the selector gets doesNotUnderstand rather than reaching the
+  // environment-0 method -- so no sender in another environment can be broken by the removal.
+  //
+  // A send from a method that is itself being removed goes away with it, so a recursive
+  // method, or two removed methods sending each other, leave no surviving sender.
+  private async survivingSenders(
+    session: ActiveSession,
+    where: RemovalTarget,
+    scanned: MethodItem[],
+    removing: MethodItem[],
+  ): Promise<{
+    references: queries.MethodSearchResult[];
+    scanFailed?: string;
+    truncated: boolean;
+  }> {
+    if (scanned.length === 0) return { references: [], truncated: false };
+    const selectors = scanned.map((n) => n.info.selector);
+    const title =
+      selectors.length === 1
+        ? `Finding senders of #${selectors[0]}…`
+        : `Finding senders of ${selectors.length} methods…`;
+    const scan = await this.scanReferences(
+      title,
+      (env) => queries.sendersOf(session, selectors, env),
+      [EXPLORER_METHOD_ENVIRONMENT],
+    );
+    const goingToo = (r: queries.MethodSearchResult) =>
+      r.className === where.className &&
+      removing.some((n) => n.isMeta === r.isMeta && n.info.selector === r.selector);
+    return { ...scan, references: scan.references.filter((r) => !goingToo(r)) };
   }
 
   // Remove every selected Methods-pane row as one action. Same rule as one row: when nothing
@@ -5592,9 +5598,9 @@ export class ExplorerController {
     if (!session || this.state.className === undefined) return;
     const className = this.state.className;
     const dictIndex = this.state.dictIndex;
-    // Captured once, before the first scan, and every row is judged against these. The checks
-    // reach into the pane's own state, which a click could in principle move underneath a run
-    // that is several whole-image scans long.
+    // Captured once, before the scan, and every row is judged against these. The checks reach
+    // into the pane's own state, which a click could in principle move underneath a run that
+    // waits on a whole-image scan.
     const where: RemovalTarget = { className, dictIndex, envLines: this.envLines };
     if (!queries.canClassBeWritten(session, className, dictIndex)) {
       void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
@@ -5602,32 +5608,19 @@ export class ExplorerController {
     }
 
     const sideOf = (n: MethodItem) => (n.isMeta ? `${className} class` : className);
-    const goingToo = (r: queries.MethodSearchResult) =>
-      r.className === className &&
-      r.environmentId === EXPLORER_METHOD_ENVIRONMENT &&
-      rows.some((n) => n.isMeta === r.isMeta && n.info.selector === r.selector);
-
-    const references = new Map<string, queries.MethodSearchResult>();
-    const scanFailures: string[] = [];
-    const notes: string[] = [];
-    const silentNotes: string[] = [];
-    let truncated = false;
+    const checks = rows.map((node) => ({ node, ...this.methodRemovalCheck(session, where, node) }));
     // An override skips the sender scan (see methodRemovalCheck), so it was never searched
     // for senders. "Nothing referenced ..." is a claim about a search, so it names only the
     // methods a scan actually ran for: "them" when that is all of them, the selectors when it
     // is some, and nothing at all when none were scanned -- otherwise the notice would deny
     // an override had senders in the same breath as saying where they now resolve.
-    const scanned: string[] = [];
-    for (const node of rows) {
+    const scanned = checks.filter((c) => c.inheritedFrom === undefined).map((c) => c.node);
+    const scan = await this.survivingSenders(session, where, scanned, rows);
+
+    const notes: string[] = [];
+    const silentNotes: string[] = [];
+    for (const { node, inheritedFrom, alsoIn } of checks) {
       const selector = node.info.selector;
-      const { inheritedFrom, scan, alsoIn } = await this.methodRemovalCheck(session, where, node);
-      for (const r of scan.references) {
-        if (goingToo(r)) continue;
-        references.set(`${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`, r);
-      }
-      if (scan.scanFailed) scanFailures.push(`#${selector}: ${scan.scanFailed}`);
-      truncated ||= scan.truncated;
-      if (inheritedFrom === undefined) scanned.push(`#${selector}`);
       if (inheritedFrom) {
         const resolve = `senders of #${selector} now resolve to ${inheritedFrom} >> #${selector}`;
         notes.push(`${resolve[0].toUpperCase()}${resolve.slice(1)}.`);
@@ -5646,14 +5639,14 @@ export class ExplorerController {
       scanned.length === 0
         ? []
         : [
-            `nothing referenced ${scanned.length === rows.length ? 'them' : [...new Set(scanned)].join(', ')}`,
+            `nothing referenced ${scanned.length === rows.length ? 'them' : scanned.map((n) => `#${n.info.selector}`).join(', ')}`,
           ];
     const target: SafeDeleteTarget = {
       kind: `${rows.length} methods`,
       label: `from ${methodsBySide(className, rows)}`,
-      references: [...references.values()],
-      scanFailed: scanFailures.length > 0 ? scanFailures.join('; ') : undefined,
-      truncated,
+      references: scan.references,
+      scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
       note: notes.length > 0 ? notes.join('\n\n') : undefined,
       silentNote: [...unreferenced, ...silentNotes].join('; ') || undefined,
     };

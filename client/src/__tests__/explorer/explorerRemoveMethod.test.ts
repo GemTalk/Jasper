@@ -417,82 +417,23 @@ describe('removeMethod records an undo (#434)', () => {
   });
 });
 
-// A method can live in more than one environment, so the sender scan sweeps 0..maxEnvironment
-// the way the Senders and Implementors commands do. A scan that looked only at environment 0
-// would report "nothing sends this" for a method whose only sender lives higher up, and delete
-// it without asking — the one outcome safe delete exists to prevent.
-describe('ExplorerController.removeMethod — scanning every environment', () => {
-  it('looks only in environment 0 by default', async () => {
+// The pane removes the environment-0 method, and a send resolves in the environment it was
+// compiled in: a method compiled in environment 1 cannot reach it. So the sender scan looks in
+// environment 0 only, whatever maxEnvironment is -- a sender in a higher environment is not
+// broken by the removal, and listing it would ask a question about nothing.
+describe('ExplorerController.removeMethod — the environment it scans', () => {
+  it('looks only in environment 0, however many environments the user sees', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 2);
     const ctl = makeController();
 
     await ctl.removeMethod(methodItem());
 
     expect(sendersOf).toHaveBeenCalledTimes(1);
-    expect(sendersOf).toHaveBeenCalledWith(SESSION, 'at:', 0);
+    expect(sendersOf).toHaveBeenCalledWith(SESSION, ['at:'], 0);
   });
 
-  it('sweeps every environment the user has asked to see', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 2);
-    const ctl = makeController();
-
-    await ctl.removeMethod(methodItem());
-
-    expect(sendersOf.mock.calls.map((c) => c[2])).toEqual([0, 1, 2]);
-  });
-
-  it('asks about a sender that exists only in a higher environment', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 1);
-    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
-      env === 1 ? [sender()] : [],
-    );
-    showWarningMessage.mockResolvedValue(undefined);
-    const ctl = makeController();
-
-    await ctl.removeMethod(methodItem());
-
-    expect(showWarningMessage).toHaveBeenCalled();
-    expect(deleteMethod).not.toHaveBeenCalled();
-  });
-
-  it('counts a method found in several environments once', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 2);
-    sendersOf.mockReturnValue([sender()]);
-    showWarningMessage.mockResolvedValue(undefined);
-    const ctl = makeController();
-
-    await ctl.removeMethod(methodItem());
-
-    expect(showWarningMessage.mock.calls[0][1].detail).toContain('1 method still references it');
-  });
-
-  // A class can implement the same selector on the same side in two environments, and those
-  // are two different methods. The Methods pane removes the environment-0 one, so only its
-  // own send goes away with it. Discounting on class/side/selector alone crossed off the
-  // OTHER environment's method too, hiding a sender that really does survive.
-  it('counts a same-selector method in another environment as a surviving sender', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 1);
-    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
-      // Array >> #at: sends #at: in BOTH environments. Only the environment-0 method is
-      // being removed; the environment-1 one stays, and its send with it.
-      [sender({ className: 'Array', selector: 'at:', environmentId: env })],
-    );
-    showWarningMessage.mockResolvedValue(undefined);
-    const ctl = makeController();
-
-    await ctl.removeMethod(methodItem());
-
-    expect(showWarningMessage).toHaveBeenCalled();
-    expect(showWarningMessage.mock.calls[0][1].detail).toContain('1 method still references it');
-    expect(deleteMethod).not.toHaveBeenCalled();
-  });
-
-  // The other half of the same rule: the environment-0 self-send IS still discounted, so the
-  // fix must not turn every recursive method back into a question.
-  it('still discounts the removed method’s own send in environment 0', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 1);
-    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
-      env === 0 ? [sender({ className: 'Array', selector: 'at:', environmentId: 0 })] : [],
-    );
+  it('discounts the removed method’s own send', async () => {
+    sendersOf.mockReturnValue([sender({ className: 'Array', selector: 'at:', environmentId: 0 })]);
     const ctl = makeController();
 
     await ctl.removeMethod(methodItem());
@@ -541,26 +482,6 @@ describe('ExplorerController.removeMethod — reporting a scan that came back fu
     const detail = showWarningMessage.mock.calls[0][1].detail as string;
     expect(detail).toContain(`At least ${CAP - 1} methods still reference it`);
     expect(detail).toContain('not complete');
-  });
-
-  // The mirror: two environments can sum past the cap without either query reaching it, and
-  // that combined list IS complete. Hedging there would invent a doubt that is not real.
-  it('does not hedge when several environments sum past the cap but none came back full', async () => {
-    __setConfig('gemstone', 'maxEnvironment', 1);
-    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
-      Array.from({ length: 300 }, (_, i) =>
-        sender({ className: `C${env}_${i}`, selector: 'usesIt', environmentId: env }),
-      ),
-    );
-    showWarningMessage.mockResolvedValue(undefined);
-    const ctl = makeController();
-
-    await ctl.removeMethod(methodItem());
-
-    const detail = showWarningMessage.mock.calls[0][1].detail as string;
-    expect(detail).toContain('600 methods still reference it:');
-    expect(detail).not.toContain('At least');
-    expect(detail).not.toContain('not complete');
   });
 });
 

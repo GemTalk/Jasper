@@ -57,7 +57,7 @@ describe('browserQueries', () => {
         'Globals\tArray\t0\tsize\taccessing\nUserGlobals\tMyClass\t1\tprintOn:\tprinting\n';
       const session = createMockSession(payload);
 
-      const results = queries.sendersOf(session, 'size');
+      const results = queries.sendersOf(session, 'size', 0);
 
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({
@@ -80,7 +80,7 @@ describe('browserQueries', () => {
 
     it('returns empty array for no results', () => {
       const session = createMockSession('');
-      expect(queries.sendersOf(session, 'nonExistent')).toEqual([]);
+      expect(queries.sendersOf(session, 'nonExistent', 0)).toEqual([]);
     });
 
     it('passes environmentId to Smalltalk code', () => {
