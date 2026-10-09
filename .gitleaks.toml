@@ -1,4 +1,5 @@
-# Gitleaks configuration for the release pipeline's scan of the packaged .vsix.
+# Gitleaks configuration for the secret scan of the packaged .vsix, which
+# runs on every PR and before every release.
 #
 # Open VSX runs its own gitleaks-based scan server-side, AFTER accepting an
 # upload, and offers no way to allow a false positive. A hit there leaves the
@@ -7,7 +8,8 @@
 # repo has been bitten twice (1.7.6 and 1.8.3, both GemStone's *public*
 # default password 'swordfish'), each time failing only the Open VSX half
 # after the Marketplace had already published. Scanning the package ourselves,
-# before anything is uploaded, turns that into a re-dispatch instead.
+# before anything is uploaded, turns that into a red PR check, or at worst a
+# re-dispatch.
 #
 # The scan target is the UNZIPPED .vsix, not the working tree: the tree both
 # misses what ships (the esbuild bundles are in the package but not in git)
@@ -87,6 +89,51 @@ id = "gemstone-pem-key-material"
 description = "A PEM private-key header followed by actual base64 key material"
 regex = '''-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-----[\s\S]{0,40}?[A-Za-z0-9+/]{40,}'''
 tags = ["private-key", "key-material"]
+
+# ---------------------------------------------------------------------------
+# Jasper's own telemetry endpoint
+# ---------------------------------------------------------------------------
+# `generic-api-key` fires on the Application Insights connection string in
+# `client/src/telemetry.ts`, which esbuild inlines into `client/out/extension.js`.
+# It is allowlisted rather than removed because it is not a credential in the
+# sense the rule means: an ingestion connection string says where events land,
+# it cannot read telemetry back, and it grants nothing but the ability to send
+# events to a firehose GemTalk owns. It is also already public — committed in
+# this repository, as it must be, since a client cannot report telemetry to an
+# endpoint it does not carry.
+#
+# Scoped as narrowly as gitleaks allows: this one rule, and the one literal
+# GUID, matched against the secret rather than the line. Deliberately no
+# `paths` entry — conditions inside an allowlist are OR'd, so naming
+# `client/out/extension.js` here would exempt the whole bundle, which is the
+# file most worth scanning.
+[[allowlists]]
+description = "Jasper's own Application Insights ingestion connection string, which has to ship for telemetry to work"
+targetRules = ["generic-api-key"]
+regexes = ['''^6065b12b-2a05-4908-8777-f09bb9158ac2$''']
+
+# The telemetry SDK's own minified code, which arrived in the same bundle.
+# `@vscode/extension-telemetry` pulls in Microsoft's 1DS SDK, and esbuild
+# inlines it into `client/out/extension.js` alongside everything else. One
+# line of its minified output builds a config object:
+#
+#     _a4[_DYN_FETCH_CREDENTIALS] = _fetchCredentials, _a4.disableXhr = false
+#
+# `generic-api-key` keys on the word "Credentials" and then captures the run
+# of word characters after it, so the "secret" it reports is the literal text
+# `_a4.disableXhr` — a minifier-generated temporary and a 1DS property name,
+# carrying nothing. This blocked the first 1.14.0 dispatch, which is the job
+# working: it fired on a package that had not been uploaded anywhere.
+#
+# `_a4` is assigned by the minifier and will differ between builds, so the
+# anchor is `disableXhr`, which comes from 1DS's own source. Nothing else is
+# allowed: a sibling property drifting into the capture would fire again and
+# should be read on its own merits rather than pre-emptively allowed here.
+[[allowlists]]
+description = "A minified temporary plus the 1DS SDK's `disableXhr` property, captured by generic-api-key because the preceding identifier contains \"Credentials\""
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^_[A-Za-z0-9$_]+\.disableXhr$''']
 
 # What this cannot do, stated plainly so the job is not mistaken for a
 # guarantee: gitleaks matches TEXT, not program semantics. Every rule and

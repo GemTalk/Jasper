@@ -8,11 +8,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   }
 }

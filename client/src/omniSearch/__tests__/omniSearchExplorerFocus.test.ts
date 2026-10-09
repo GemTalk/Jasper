@@ -34,7 +34,7 @@ import {
   showsTheExplorerContainer,
 } from '../../__tests__/helpers/explorerContainerFocus';
 
-const executeCommand = vscode.commands.executeCommand as ReturnType<typeof vi.fn>;
+const executeCommand = vi.mocked(vscode.commands.executeCommand);
 
 function focusedTheExplorerContainer(): boolean {
   return sawContainerFocus(executeCommand);

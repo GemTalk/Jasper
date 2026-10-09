@@ -79,7 +79,7 @@ describe('undoLastRefactoringCommand', () => {
     );
     vi.mocked(showUndoRefactoringPanel).mockImplementation(async (_start, handlers) => {
       await handlers.loadPage(4);
-      return handlers.apply(['c1']);
+      return await handlers.apply(['c1']);
     });
 
     await undoLastRefactoringCommand(sessionsWith(true));
