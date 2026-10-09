@@ -690,6 +690,14 @@ function dictionaryLabels(rows: { className: string; dictName: string; dictIndex
   });
 }
 
+function hierarchyRowKey(
+  className: string,
+  dictIndex: number | undefined,
+  dictName: string,
+): string {
+  return `${dictIndex ?? dictName}:${className}`;
+}
+
 function unboundHierarchyTooltip(
   className: string,
   binding: 'aliased' | 'superseded' | 'unbound',
@@ -1112,6 +1120,9 @@ export class ExplorerController {
     map: Map<string, queries.MethodInstVarAccess>;
   };
   private views?: ExplorerViews;
+  // Classes whose own Hierarchy row the user collapsed (see revealHierarchySelf), by dictionary and
+  // name: the row's id also carries its chain position, which changes with the class selected.
+  private readonly hierarchyCollapsedByUser = new Set<string>();
   // Active filter pattern per pane (view id → pattern); empty/absent = no filter.
   private readonly filters = new Map<string, string>();
   // The pane whose filter input is currently open (so its header shows the
@@ -2589,12 +2600,31 @@ export class ExplorerController {
     );
     // Expanded on purpose: VS Code remembers a row collapsed under its id, so a class that briefly
     // had no subclasses -- re-versioned by a refactoring, or by its undo -- otherwise came back as a
-    // closed row, and showing the subclasses is the point of the pane.
+    // closed row, and showing the subclasses is the point of the pane. Unless the user closed it:
+    // VS Code reports a collapse only when someone collapses a row, never for a row that came back
+    // closed, so honouring the user's collapse leaves the disappearing-subclasses case still fixed.
+    const expand =
+      this.hierSubs.length > 0 &&
+      !this.hierarchyCollapsedByUser.has(
+        hierarchyRowKey(self.className, self.dictIndex, self.dictName),
+      );
     await this.revealCascade(this.views?.hierarchy, self, {
       select: true,
       focus: false,
-      ...(this.hierSubs.length > 0 ? { expand: true } : {}),
+      ...(expand ? { expand: true } : {}),
     });
+  }
+
+  onHierarchyRowCollapsed(item: HierarchyItem): void {
+    this.hierarchyCollapsedByUser.add(
+      hierarchyRowKey(item.className, item.dictIndex, item.dictName),
+    );
+  }
+
+  onHierarchyRowExpanded(item: HierarchyItem): void {
+    this.hierarchyCollapsedByUser.delete(
+      hierarchyRowKey(item.className, item.dictIndex, item.dictName),
+    );
   }
 
   hierarchyParent(element: HierarchyItem): HierarchyItem | undefined {
@@ -9033,6 +9063,8 @@ export function registerGemStoneExplorer(
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
   });
+  hierarchyView.onDidCollapseElement((e) => ctl.onHierarchyRowCollapsed(e.element));
+  hierarchyView.onDidExpandElement((e) => ctl.onHierarchyRowExpanded(e.element));
   // Catch each pane up on the cascade highlight it skipped while it was closed
   // (see ExplorerController.revealCascade). Without these, guarding the reveals
   // would leave a pane opened later sitting on a stale row until the next

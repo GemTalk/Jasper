@@ -5,7 +5,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // only exercise revealHierarchySelf, which never reaches a query.
 vi.mock('../../browserQueries', () => ({}));
 
-import { ExplorerController } from '../../gemstoneExplorer';
+import { ExplorerController, HierarchyItem } from '../../gemstoneExplorer';
 import type { ClassHierarchyEntry } from '../../queries/getClassHierarchy';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
@@ -74,6 +74,53 @@ describe('ExplorerController.revealHierarchySelf', () => {
       expect.anything(),
       expect.objectContaining({ expand: true }),
     );
+  });
+
+  describe('a class whose row the user collapsed', () => {
+    const withSubclasses = (): ExplorerController => {
+      const ctl = makeController();
+      (ctl as unknown as HierAccess).hierSubs = [
+        { className: 'OrderedArray', dictName: 'UserGlobals', kind: 'subclass', binding: 'bound' },
+      ];
+      return ctl;
+    };
+    const selfRow = (className: string): HierarchyItem =>
+      new HierarchyItem(className, 'UserGlobals', 'self', 0, true, undefined, undefined, 'bound');
+    const expanded = (view: ReturnType<typeof fakeView>): boolean =>
+      view.reveal.mock.calls.some(
+        (c) => (c as unknown[] as [unknown, { expand?: boolean }?])[1]?.expand === true,
+      );
+
+    it('stays closed when the class is shown again', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Array'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(false);
+    });
+
+    it('opens again once the user expands it', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Array'));
+      ctl.onHierarchyRowExpanded(selfRow('Array'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(true);
+    });
+
+    it('does not keep a different class closed', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Bag'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(true);
+    });
   });
 
   it('asks nothing to open for a class with no subclasses', async () => {
