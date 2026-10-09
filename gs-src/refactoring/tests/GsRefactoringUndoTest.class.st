@@ -1792,10 +1792,9 @@ GsRefactoringUndoTest >> testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSa
 	 The capture pins the dictionary itself; the reversal's preview has to be of the class that
 	 was reshaped, which is the only one that carries gsuReshaped.
 
-	 This stops at the preview. Applying the revert hands each class to the forward rename engine,
-	 which records its changes' dictionaries by name and so still reaches the first dictionary --
-	 a limit of the forward engine, not of the undo's own lookup. The reshape is a new class
-	 version defined directly rather than through a refactoring for the same reason."
+	 This stops at the preview; #testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
+	 is the apply half. The reshape is a new class version defined directly rather than through a
+	 refactoring, so the test is about the undo's lookup alone."
 	| dicts second json |
 	dicts := self twinNamedDictionaries.
 	second := dicts last.
@@ -1818,6 +1817,38 @@ GsRefactoringUndoTest >> testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSa
 	 "the revert is described against the reshaped class: what it is now carries gsuReshaped"
 	 self assert: json includesSubstring: '"total":1'.
 	 self assert: json includesSubstring: 'gsuOwn gsuReshaped']
+		ensure: [self removeDictionaries: dicts]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testUndoMethodRenameRestoresTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"A method-level undo snapshots each method the refactoring touched, before and after, and diffs
+	 the two. Each snapshot has to read the class the refactoring changed. With two dictionaries of
+	 one name and that class in the second, a lookup by dictionary name reads the FIRST dictionary's
+	 class, sees nothing change, and records an undo that leaves the renamed method in place.
+
+	 Both classes implement the selector, so a wrong-class undo cannot pass by accident: asserted
+	 from both ends, the acted-on class gets its method back and the other one is left alone."
+	| dicts first second |
+	dicts := self twinNamedDictionaries.
+	first := dicts first at: #GsUndoTwinClass.
+	second := dicts last at: #GsUndoTwinClass.
+	[self compile: 'gsuValue ^ 1' in: first category: 'computing'.
+	 self compile: 'gsuValue ^ 2' in: second category: 'computing'.
+	 self applyRecording: (GsRenameMethodRefactoring
+		class: second
+		renameSelector: 'gsuValue'
+		toParts: #('gsuRenamed')
+		permutation: #()
+		scope: #class).
+	 self assert: (self sourceOf: #gsuRenamed in: second) notNil.
+
+	 self undoAll.
+
+	 self assert: (self sourceOf: #gsuValue in: second) = 'gsuValue ^ 2'.
+	 self assert: (self sourceOf: #gsuRenamed in: second) isNil.
+	 self assert: (self sourceOf: #gsuValue in: first) = 'gsuValue ^ 1'.
+	 self assert: (self sourceOf: #gsuRenamed in: first) isNil]
 		ensure: [self removeDictionaries: dicts]
 ]
 
@@ -2040,5 +2071,46 @@ GsRefactoringUndoTest >> testUndoHistoryRevertCountsTheMethodsItWouldDiscardOnTh
 
 	 self assert: json includesSubstring: '"dropCount":1'.
 	 self assert: json includesSubstring: 'gsuSince']
+		ensure: [self removeDictionaries: dicts]
+]
+
+{ #category : 'tests - shadowed dictionary name' }
+GsRefactoringUndoTest >> testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"The apply half of #testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries,
+	 which stops where this one starts.
+
+	 The undo finds the right class: its plan pins the dictionary object. Applying hands that class
+	 to the forward rename engine, which restores it as a new version -- and the restore has to land
+	 in the dictionary the class came from. Reaching the FIRST dictionary of that name instead would
+	 rewrite a class nobody touched and leave the reshaped one still carrying gsuReshaped, so the
+	 undo would report success with nothing it was asked to undo undone. The forward engine's
+	 changes pin the dictionary OBJECT (GsRefactoringChange >> dict), so this holds today; it is a
+	 guard, since nothing on screen would show it breaking.
+
+	 Asserted from both ends, because either alone can pass while the other fails: the acted-on
+	 class loses the instance variable, and the other dictionary's class is the object it always was."
+	| dicts first second decoy |
+	dicts := self twinNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[decoy := first at: #GsUndoTwinClass.
+	 GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+
+	 self undoAll.
+
+	 self deny: (((second at: #GsUndoTwinClass) instVarNames
+		collect: [:e | e asString]) includes: 'gsuReshaped').
+	 self assert: (first at: #GsUndoTwinClass) == decoy]
 		ensure: [self removeDictionaries: dicts]
 ]

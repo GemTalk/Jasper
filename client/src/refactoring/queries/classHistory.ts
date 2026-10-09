@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { dictionaryArgExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 /**
  * The `inDictionary:` argument for the three GsClassHistory entry points, from the caller's
@@ -41,8 +42,10 @@ export function revertClassToVersion(
   dict?: number | string,
 ): string {
   return execute(
-    `GsClassHistory revertClassNamed: '${escapeString(className)}' toIndex: ${index} ` +
-      `inDictionary: ${dictArg(dict)}`,
+    droppingClassOrganizer(
+      `GsClassHistory revertClassNamed: '${escapeString(className)}' toIndex: ${index} ` +
+        `inDictionary: ${dictArg(dict)}`,
+    ),
   );
 }
 

@@ -11,6 +11,8 @@ import {
   MoveArgs,
 } from '../queries/previewInstVarStructure';
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
+import { getClassDescendantNames } from '../queries/getClassDescendantNames';
+import { getClassHierarchy } from '../../queries/getClassHierarchy';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarStructurePreview';
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
@@ -225,7 +227,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
     defineFixture();
     // leaf lives on Leaf; move it up two levels to Base. Leaf keeps it by inheritance.
     await runToApply('move', LEAF, 'leaf', 'vs-move-up', undefined, false, {
-      targets: [BASE],
+      targets: [{ className: BASE }],
       direction: 'up',
     });
 
@@ -239,12 +241,130 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
 
     defineFixture();
     await runToApply('move', MID, 'pushable', 'vs-move-down', undefined, false, {
-      targets: [LEAF],
+      targets: [{ className: LEAF }],
       direction: 'down',
     });
 
     expect(ownIvars(MID)).not.toContain("'pushable'");
     expect(ownIvars(LEAF)).toContain("'pushable'");
     expect(definesSelector(MID, 'midM')).toBe(true);
+  });
+  // Two classes of one name, each in its own dictionary, in the lineage of the class a variable
+  // moves from. The picker sends each destination with the dictionary index the hierarchy queries
+  // answer; the move has to reach the twin that index names, and leave the other one alone.
+  const TWIN = 'VsItTwin';
+  const twinDicts = (): void => {
+    exec(`#(#VsTwinA #VsTwinB) do: [:n |
+  System myUserProfile symbolList add: (SymbolDictionary new name: n; yourself)]. 'ok'`);
+  };
+  const dictIndexOf = (dictName: string): number =>
+    Number(
+      exec(
+        `(System myUserProfile symbolList indexOf: (System myUserProfile symbolList objectNamed: #${dictName})) printString`,
+      ),
+    );
+  const defineIn = (dictName: string, sup: string, name: string, ivars: string): void => {
+    exec(
+      `${sup} subclass: '${name}' instVarNames: #(${ivars}) classVars: #() classInstVars: #() ` +
+        `poolDictionaries: #() inDictionary: (System myUserProfile symbolList objectNamed: #${dictName}). 'ok'`,
+    );
+  };
+  const ownIvarsIn = (dictName: string, cls: string): string =>
+    exec(
+      `(((System myUserProfile symbolList objectNamed: #${dictName}) at: #${cls}) instVarNames collect: [:e | e asString]) printString`,
+    );
+
+  it('moves an instance variable down to the same-named subclass whose dictionary was picked', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    twinDicts();
+    defineIn('VsTwinA', MID, TWIN, '');
+    defineIn('VsTwinB', MID, TWIN, '');
+    const picked = getClassDescendantNames(exec, MID).find(
+      (d) => d.className === TWIN && d.dictIndex === dictIndexOf('VsTwinB'),
+    );
+    expect(picked).toBeDefined();
+
+    await runToApply('move', MID, 'pushable', 'vs-move-twin-down', undefined, false, {
+      targets: [{ className: TWIN, dictIndex: picked?.dictIndex }],
+      direction: 'down',
+    });
+
+    expect(ownIvarsIn('VsTwinB', TWIN)).toContain("'pushable'");
+    expect(ownIvarsIn('VsTwinA', TWIN)).not.toContain("'pushable'");
+  });
+
+  it('moves an instance variable up to the same-named ancestor whose dictionary was picked', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    // Object -> VsItTwin (A) -> VsItTwinMid -> VsItTwin (B) -> VsItTwinLeaf
+    twinDicts();
+    defineIn('VsTwinA', 'Object', TWIN, '');
+    defineIn(
+      'VsTwinA',
+      `((System myUserProfile symbolList objectNamed: #VsTwinA) at: #${TWIN})`,
+      'VsItTwinMid',
+      '',
+    );
+    defineIn('VsTwinB', 'VsItTwinMid', TWIN, '');
+    defineIn(
+      'VsTwinB',
+      `((System myUserProfile symbolList objectNamed: #VsTwinB) at: #${TWIN})`,
+      'VsItTwinLeaf',
+      "'carried'",
+    );
+    const picked = getClassHierarchy(exec, 'VsItTwinLeaf').find(
+      (e) =>
+        e.kind === 'superclass' && e.className === TWIN && e.dictIndex === dictIndexOf('VsTwinA'),
+    );
+    expect(picked).toBeDefined();
+
+    await runToApply('move', 'VsItTwinLeaf', 'carried', 'vs-move-twin-up', undefined, false, {
+      targets: [{ className: TWIN, dictIndex: picked?.dictIndex }],
+      direction: 'up',
+    });
+
+    expect(ownIvarsIn('VsTwinA', TWIN)).toContain("'carried'");
+    expect(ownIvarsIn('VsTwinB', TWIN)).not.toContain("'carried'");
+  });
+  it('moves to the picked same-named subclass when an earlier dictionary also holds it under another name', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    twinDicts();
+    defineIn('VsTwinA', MID, TWIN, '');
+    defineIn('VsTwinB', MID, TWIN, '');
+    // The earlier dictionary also holds B's twin, under another key. An index taken from the first
+    // dictionary holding the class at all would name VsTwinA, where the name means A's twin.
+    exec(`| sl | sl := System myUserProfile symbolList.
+(sl objectNamed: #VsTwinA) at: #VsItTwinAlias put: ((sl objectNamed: #VsTwinB) at: #${TWIN}). 'ok'`);
+    const rows = getClassDescendantNames(exec, MID).filter((d) => d.className === TWIN);
+    expect(rows.map((d) => d.dictIndex).sort()).toEqual(
+      [dictIndexOf('VsTwinA'), dictIndexOf('VsTwinB')].sort(),
+    );
+
+    await runToApply('move', MID, 'pushable', 'vs-move-alias', undefined, false, {
+      targets: [{ className: TWIN, dictIndex: dictIndexOf('VsTwinB') }],
+      direction: 'down',
+    });
+
+    expect(ownIvarsIn('VsTwinB', TWIN)).toContain("'pushable'");
+    expect(ownIvarsIn('VsTwinA', TWIN)).not.toContain("'pushable'");
+  });
+  it('marks a subclass held only under another name, rather than addressing it', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    twinDicts();
+    defineIn('VsTwinA', MID, TWIN, '');
+    exec(`| d | d := System myUserProfile symbolList objectNamed: #VsTwinA.
+d at: #VsItTwinAlias put: (d at: #${TWIN}). d removeKey: #${TWIN}. 'ok'`);
+
+    const row = getClassHierarchy(exec, MID).find(
+      (e) => e.kind === 'subclass' && e.className === TWIN,
+    );
+
+    expect(row).toMatchObject({ binding: 'aliased', dictIndex: undefined, dictName: '' });
   });
 });

@@ -103,13 +103,16 @@ describe('instance-variable structure query builders', () => {
       const exec = vi.fn().mockResolvedValue('{}');
 
       await analyzeInstVarStructure(exec, 'move', 'Mid', 'x', 2, undefined, false, {
-        targets: ['LeafA', 'LeafB'],
+        targets: [
+          { className: 'LeafA', dictIndex: 3 },
+          { className: 'LeafB', dictIndex: 5 },
+        ],
         direction: 'down',
       });
 
       const [, code] = exec.mock.calls[0];
       expect(code).toContain(
-        "GsInstVarStructureRefactoring class: cls moveInstVar: 'x' toClasses: #('LeafA' 'LeafB') direction: #down",
+        "GsInstVarStructureRefactoring class: cls moveInstVar: 'x' toClasses: #(#('LeafA' 3) #('LeafB' 5)) direction: #down",
       );
     });
 
@@ -117,7 +120,7 @@ describe('instance-variable structure query builders', () => {
       const exec = vi.fn().mockResolvedValue('{}');
 
       await analyzeInstVarStructure(exec, 'move', 'Sub', 'x', 2, undefined, true, {
-        targets: ['Base'],
+        targets: [{ className: 'Base' }],
         direction: 'up',
       });
 
@@ -189,7 +192,7 @@ describe('instance-variable structure query builders', () => {
         2,
         undefined,
         true,
-        { targets: ['LeafA'], direction: 'down' },
+        { targets: [{ className: 'LeafA' }], direction: 'down' },
       );
 
       const [, code] = exec.mock.calls[0];

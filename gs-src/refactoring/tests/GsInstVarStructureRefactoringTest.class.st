@@ -584,7 +584,7 @@ GsInstVarStructureRefactoringTest >> testMoveUpMovesSimpleAccessorsToAncestor [
 
 { #category : 'tests - V4 move' }
 GsInstVarStructureRefactoringTest >> testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary [
-	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	"Dictionary scoping: a destination name resolves within the source's OWN lineage, not by
 	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
 	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
 	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
@@ -611,7 +611,7 @@ GsInstVarStructureRefactoringTest >> testMoveUpBindsLineageClassNotASameNamedSha
 
 { #category : 'tests - V4 move' }
 GsInstVarStructureRefactoringTest >> testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary [
-	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	"Dictionary scoping, the down half: the down lineage resolves through the source's DESCENDANTS,
 	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
 	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
 	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
@@ -1046,4 +1046,189 @@ GsInstVarStructureRefactoringTest >> testMoveUpDeclinesATargetNameTwoAncestorsSh
 	 self assert: ref decline notNil.
 	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> sameNamedDestinationDictionaries [
+	"Two dictionaries sharing a NAME, each binding its own GsVSPairLeaf under the fixture's
+	 GsVSMid. Both are genuinely in GsVSMid's lineage, so the destination picker offers both and
+	 a bare name cannot say which was meant. Removed with #removeSameNamedDictionaries:."
+	| first second |
+	first := SymbolDictionary new name: #GsVSPairDict; yourself.
+	second := SymbolDictionary new name: #GsVSPairDict; yourself.
+	System myUserProfile symbolList add: first; add: second.
+	(Array with: first with: second) do: [:d |
+		(self classNamed: 'GsVSMid')
+			subclass: 'GsVSPairLeaf'
+			instVarNames: #()
+			classVars: #() classInstVars: #() poolDictionaries: #()
+			inDictionary: d].
+	^Array with: first with: second
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> removeSameNamedDictionaries: dicts [
+	"By identity: two empty dictionaries of one name can compare equal."
+	| sl |
+	sl := System myUserProfile symbolList.
+	dicts do: [:d | | idx |
+		idx := 0.
+		1 to: sl size do: [:i | (sl at: i) == d ifTrue: [idx := i]].
+		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> indexOfDictionary: aDict [
+	| sl |
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == aDict ifTrue: [^i]].
+	^0
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownStillDeclinesADestinationGivenOnlyByName [
+	"The decline stays the right answer for a caller with nothing but a name to give: two classes
+	 in the lineage answer to it, and moving the variable into whichever the walk reached first
+	 puts it somewhere the user did not pick. Kept as the control for the pair form below -- the
+	 two have to differ in what is SENT, not in what the engine happens to do that day."
+	| dicts ref |
+	dicts := self sameNamedDestinationDictionaries.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: #('GsVSPairLeaf')
+		direction: #down.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSPairDict']
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownAcceptsADestinationNamedWithItsDictionary [
+	"A destination given as its name AND the dictionary that binds it is not ambiguous: it names
+	 one class. Only the bare-name form has to decline.
+
+	 The pair is `Array with: name with: dictionary`, where the dictionary is a 1-based SymbolList
+	 index -- the form the client already sends everywhere else, and the only one that separates
+	 two dictionaries of one name."
+	| dicts second ref |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+
+	 self assert: ref decline equals: nil]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheDictionaryThatWasNamed [
+	"Accepting the pair is only half of it: the change set has to be computed against the class in
+	 THAT dictionary, not against whichever of the two the lineage walk reached first."
+	| dicts second ref edited |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+	 edited := self editChangeFor: 'GsVSPairLeaf' in: ref changeSet.
+
+	 self assert: edited notNil.
+	 self assert: edited dict == second]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownSendsTheVariableToTheFirstDictionaryWhenThatWasNamed [
+	"The same send naming the OTHER dictionary. Neither test discriminates alone: a fix that unpacks
+	 the pair and then resolves the name by itself lands on whichever class the descendant walk
+	 reaches first, and passes the one of the two that happens to name it. Together they fail it
+	 whichever way the walk is ordered. This one also catches a fix that gets the second dictionary
+	 right by breaking the first."
+	| dicts first ref edited |
+	dicts := self sameNamedDestinationDictionaries.
+	first := dicts first.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: first)))
+		direction: #down.
+	 edited := self editChangeFor: 'GsVSPairLeaf' in: ref changeSet.
+
+	 self assert: edited notNil.
+	 self assert: edited dict == first]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet [
+	"Exactly one of the two was picked. A change set naming both moves the variable into a class
+	 nobody chose, which is the outcome the ambiguity decline exists to prevent."
+	| dicts second ref edits |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+	 edits := ref changeSet changes select: [:c |
+		c kind = #classDefinitionEdit and: [c className asString = 'GsVSPairLeaf']].
+
+	 self assert: edits size equals: 1]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveUpAcceptsAnAncestorNamedWithItsDictionary [
+	"The up half. Ancestors are walked by a different path than descendants, so the pair has to be
+	 understood on both.
+
+	 The twin GsVSBase subclasses the real one, so the source's ancestry holds BOTH and the name
+	 alone is ambiguous -- the shape #testMoveUpDeclinesATargetNameTwoAncestorsShare declines.
+	 The pair names the real, FARTHER one: the walk reaches the twin first, so a fix that unpacked
+	 the pair and resolved its name alone would land on the twin and fail here."
+	| twinDict twin leafUnderTwin ref |
+	twinDict := SymbolDictionary new name: #GsVSPairUpDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 leafUnderTwin := twin
+		subclass: 'GsVSPairUpLeaf'
+		instVarNames: #('twinOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: leafUnderTwin
+		moveInstVar: 'twinOwn'
+		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: UserGlobals)))
+		direction: #up.
+
+	 self assert: ref decline equals: nil.
+	 self assert: ref topClass == (self classNamed: 'GsVSBase')]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+]
+
+{ #category : 'tests - move, two dictionaries of one name' }
+GsInstVarStructureRefactoringTest >> testMoveStillResolvesAPlainNameWhenOnlyOneClassAnswersToIt [
+	"The pair form must not cost the ordinary case its spelling: every existing caller sends bare
+	 names, and a lineage with one class of that name has nothing to disambiguate."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: #('GsVSLeaf')
+		direction: #down.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: ref changeSet) notNil
 ]

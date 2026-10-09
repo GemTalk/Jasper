@@ -69,7 +69,7 @@ m add: (Array with: 'GsExtractTemporaryRefactoring' with: 50).
 m add: (Array with: 'GsInlineMethodRefactoring' with: 59).
 m add: (Array with: 'GsInlineTemporaryRefactoring' with: 46).
 m add: (Array with: 'GsInstVarRefactoring' with: 53).
-m add: (Array with: 'GsInstVarStructureRefactoring' with: 69).
+m add: (Array with: 'GsInstVarStructureRefactoring' with: 70).
 m add: (Array with: 'GsMoveMethodRefactoring' with: 42).
 m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).

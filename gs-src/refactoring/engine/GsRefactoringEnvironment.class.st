@@ -325,6 +325,7 @@ GsRefactoringEnvironment >> classNamed: aName inDictionaryNamed: aDictName [
 	"The class bound to aName in aDictName, or nil.
 
 	 aDictName is a 1-based SymbolList INDEX (unambiguous, and what the client sends), a
+	 SymbolDictionary itself (what a staged change pins, and the undo's method slots carry), a
 	 dictionary name, or nil.
 
 	 nil falls back to #classNamed:, which is first-match across the symbol list. That one case is
@@ -342,6 +343,10 @@ GsRefactoringEnvironment >> classNamed: aName inDictionaryNamed: aDictName [
 	sym := aName asSymbol.
 	"`isKindOf: Integer` rather than `isInteger`, which String does not implement on the
 	 supported releases."
+	(aDictName isKindOf: SymbolDictionary) ifTrue: [
+		^(aDictName at: sym ifAbsent: [nil])
+			ifNil: [nil]
+			ifNotNil: [:bound | (bound isKindOf: Class) ifTrue: [bound] ifFalse: [nil]]].
 	(aDictName isKindOf: Integer) ifTrue: [
 		(aDictName < 1 or: [aDictName > symbolList size]) ifTrue: [^nil].
 		^((symbolList at: aDictName) at: sym ifAbsent: [nil])

@@ -10,6 +10,7 @@ vi.mock('../../browserQueries', () => ({
   commitHistoryRevert: vi.fn(),
   discardPendingCapture: vi.fn(),
   refactoringUndoStatus: vi.fn(() => '{"available":false}'),
+  getDictionaryNames: vi.fn(() => []),
 }));
 vi.mock('../instVarStructurePanel', () => ({
   showInstVarStructurePanel: vi.fn(),
@@ -71,7 +72,7 @@ const applyResult = (over: Record<string, unknown> = {}) => ({
 // Drives the shared runInstVarStructure flow through the live entry point (the general #move);
 // the pre-flight/preview/apply contract below is the same whatever direction or op reaches it.
 const runFlow = (): Promise<boolean> =>
-  moveInstVar(session, 'up', 'V2Dog', 'tailLength', ['V2Animal'], 2);
+  moveInstVar(session, 'up', 'V2Dog', 'tailLength', [{ className: 'V2Animal' }], 2);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -79,6 +80,7 @@ beforeEach(() => {
   vi.mocked(ensureRbSupport).mockResolvedValue(true);
   vi.mocked(saveIfDirty).mockResolvedValue(true);
   vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
+  vi.mocked(queries.getDictionaryNames).mockReturnValue([]);
 });
 
 describe('instance-variable structure command — apply/decline flow', () => {
@@ -236,7 +238,14 @@ describe('move instance variable command', () => {
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
 
-    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA', 'V4LeafB'], 2);
+    await moveInstVar(
+      session,
+      'down',
+      'V4Mid',
+      'shared',
+      [{ className: 'V4LeafA' }, { className: 'V4LeafB' }],
+      2,
+    );
 
     expect(queries.analyzeInstVarStructure).toHaveBeenCalledWith(
       session,
@@ -246,7 +255,7 @@ describe('move instance variable command', () => {
       2,
       undefined,
       true,
-      { targets: ['V4LeafA', 'V4LeafB'], direction: 'down' },
+      { targets: [{ className: 'V4LeafA' }, { className: 'V4LeafB' }], direction: 'down' },
     );
   });
 
@@ -255,7 +264,9 @@ describe('move instance variable command', () => {
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
 
-    expect(await moveInstVar(session, 'up', 'V4Leaf', 'shared', ['V4Base'], 2)).toBe(true);
+    expect(await moveInstVar(session, 'up', 'V4Leaf', 'shared', [{ className: 'V4Base' }], 2)).toBe(
+      true,
+    );
 
     const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
     expect(heading).toContain("'shared' from V4Leaf up to V4Base");
@@ -266,10 +277,61 @@ describe('move instance variable command', () => {
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
 
-    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA', 'V4LeafB'], 2);
+    await moveInstVar(
+      session,
+      'down',
+      'V4Mid',
+      'shared',
+      [{ className: 'V4LeafA' }, { className: 'V4LeafB' }],
+      2,
+    );
 
     const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
     expect(heading).toContain('from V4Mid down to V4LeafA, V4LeafB');
+  });
+
+  it('names the dictionary of each destination in the heading', async () => {
+    // Two subclasses can share a name; the heading is where the user checks which one they picked.
+    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'DictA', 'DictB']);
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(
+      session,
+      'down',
+      'V4Mid',
+      'shared',
+      [{ className: 'V4Leaf', dictIndex: 3 }],
+      1,
+    );
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('from V4Mid (UserGlobals) down to V4Leaf (DictB)');
+  });
+
+  it('names the destinations from the dictionary names the picker already had', async () => {
+    // Each lookup by index is a synchronous round trip to the stone; only the source needs one.
+    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'DictA', 'DictB']);
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(
+      session,
+      'down',
+      'MoveMid',
+      'shared',
+      [
+        { className: 'MoveLeaf', dictIndex: 2, dictName: 'DictA' },
+        { className: 'MoveLeaf', dictIndex: 3, dictName: 'DictB' },
+      ],
+      1,
+    );
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('down to MoveLeaf (DictA), MoveLeaf (DictB)');
+    expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a subclass count once there are more destinations than fit', async () => {
@@ -277,7 +339,14 @@ describe('move instance variable command', () => {
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
 
-    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['A', 'B', 'C', 'D'], 2);
+    await moveInstVar(
+      session,
+      'down',
+      'V4Mid',
+      'shared',
+      [{ className: 'A' }, { className: 'B' }, { className: 'C' }, { className: 'D' }],
+      2,
+    );
 
     const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
     expect(heading).toContain('from V4Mid down to 4 subclasses');
@@ -288,7 +357,9 @@ describe('move instance variable command', () => {
       analysis({ decline: 'GsVSTwig still uses it in 1 of its own method(s): #usesPush.' }),
     );
 
-    expect(await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA'], 2)).toBe(false);
+    expect(
+      await moveInstVar(session, 'down', 'V4Mid', 'shared', [{ className: 'V4LeafA' }], 2),
+    ).toBe(false);
     expect(queries.startInstVarStructurePreview).not.toHaveBeenCalled();
     expect(refuse).toHaveBeenCalledWith(expect.stringContaining('still uses it'));
   });

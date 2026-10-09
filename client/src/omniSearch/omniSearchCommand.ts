@@ -17,6 +17,7 @@ import {
   getMethodSource,
   getClassDefinition,
 } from '../browserQueries';
+import { dropCachedClassOrganizer } from '../classOrganizerCache';
 import { clearClassOrganizerCode } from '../queries/classOrganizer';
 import { getAllClassNames, getClassNameEntriesFor } from '../queries/getAllClassNames';
 import { getAllGlobalNames } from '../queries/getAllGlobalNames';
@@ -264,6 +265,7 @@ export function buildViewContextResolver(
           ),
         previewSource: buildPreviewSource(session),
         onError: (message) => void vscode.window.showErrorMessage(`GemStone Search: ${message}`),
+        dropClassIndex: () => dropCachedClassOrganizer(session),
       },
     };
   };
@@ -296,6 +298,7 @@ export function buildSpotterDeps(session: ActiveSession): OmniPanelDeps {
       ),
     previewSource: buildPreviewSource(session),
     onError: (message) => void vscode.window.showErrorMessage(`GemStone Search: ${message}`),
+    dropClassIndex: () => dropCachedClassOrganizer(session),
   };
 }
 
@@ -467,7 +470,10 @@ export function registerOmniSearch(
       // class list is a snapshot (see queries/classOrganizer.ts). A commit or an
       // abort drops it, and so does Jasper's own class compile — but a class
       // created by executing `subclass:` in a workspace does neither, and this ⟳
-      // is the gesture that says "ask the stone again".
+      // is the gesture that says "ask the stone again". The ⟳ inside the panel
+      // reaches the same drop through its deps' `dropClassIndex`, and an open,
+      // visible host repeats it below -- harmless, and this one is still needed:
+      // a collapsed panel defers its reload, dropping nothing until it reopens.
       const session = currentSession(sessionManager);
       if (session) {
         try {

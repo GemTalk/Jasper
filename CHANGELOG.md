@@ -4,6 +4,17 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Smalltalk notebook cells say that breakpoints don't stop them.** A cell runs with GemStone's debugging off, so a method breakpoint it reaches is passed over with nothing to show for it. Each Smalltalk code cell now carries **Breakpoints not honored** beside its language label; hovering explains, and clicking opens a workspace, where Execute It does stop at breakpoints. ([#674](https://github.com/GemTalk/Jasper/issues/674))
+
+### Fixed
+
+- **Move Instance Variable ▲/▼ can choose between two classes of the same name.** Where two subclasses (or two ancestors) share a name in different dictionaries, the picker listed them as identical rows and the move then declined, so it could not be done at all. Each row now names its dictionary, and the move goes to the class you picked, even when an earlier dictionary also holds it under another name. A Class Hierarchy row for a class held only under another name now says **(alias only)**, and commands on it decline instead of reaching the same-named class its name finds. A destination that no dictionary binds — an older version, or a subclass not yet recompiled — still goes by name, and still declines if that name is ambiguous. ([#674](https://github.com/GemTalk/Jasper/issues/674))
+- **The Class Hierarchy pane shows a reshaped class's subclasses.** After a refactoring that gives a class a new version — Move, Push Up or Push Down an instance variable, add or remove one, Rename Class, Extract or Insert Superclass, Split Class, a Class History restore — and after undoing one, the pane showed the new version with no subclasses, or listed it under its parent as superseded, until GemStone Search's ⟳ and the Explorer's refresh were both clicked. It now shows the current subclasses, expanded, straight away — unless you collapsed that class's row yourself, which it leaves closed. Undoing the removal of a dictionary refreshes it too. ([#674](https://github.com/GemTalk/Jasper/issues/674))
+- **GemStone Search's in-panel ⟳ rebuilds the class list,** as its tooltip says, rather than only re-running the search. ([#674](https://github.com/GemTalk/Jasper/issues/674))
+- **Undoing a method refactoring acts on the class it changed when another dictionary shares that dictionary's name.** Undoing, say, a Rename Method on a class in the second of two same-named dictionaries looked in the first, saw nothing to put back, and left the renamed method in place. ([#674](https://github.com/GemTalk/Jasper/issues/674))
+
 ### Changed
 
 - **Usage events now say which editor app Jasper runs in** — VS Code, VS Code Insiders, or a fork such as Cursor. Forks report the VS Code version they are built on, so this is the only way to tell them apart when deciding which VS Code versions Jasper still needs to support. See [USAGE_DATA.md](USAGE_DATA.md).

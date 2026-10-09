@@ -360,6 +360,8 @@ export const window = {
   createTreeView: vi.fn(() => ({
     onDidChangeVisibility: new EventEmitter<{ visible: boolean }>().event,
     onDidChangeCheckboxState: new EventEmitter<{ items: [unknown, number][] }>().event,
+    onDidCollapseElement: new EventEmitter<{ element: unknown }>().event,
+    onDidExpandElement: new EventEmitter<{ element: unknown }>().event,
     reveal: vi.fn(),
     dispose: () => {},
   })),

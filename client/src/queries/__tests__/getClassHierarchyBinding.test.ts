@@ -40,6 +40,14 @@ describe('getClassHierarchy — what binds each row', () => {
     expect(rows[0].binding).toBe('unbound');
   });
 
+  it('reads a class held only under another name as aliased, with no dictionary', () => {
+    // A dictionary holds it, but not under its own name, so no (dictionary, name) lookup reaches it.
+    const rows = getClassHierarchy(() => line('', 'Parent', 'superclass', 0, 'aliased'), 'Child');
+
+    expect(rows[0]).toMatchObject({ className: 'Parent', binding: 'aliased' });
+    expect(rows[0].dictIndex).toBeUndefined();
+  });
+
   it('asks the stone to compare the bound class by identity', () => {
     let code = '';
     getClassHierarchy((c) => {

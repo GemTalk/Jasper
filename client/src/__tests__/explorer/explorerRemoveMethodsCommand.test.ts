@@ -56,6 +56,8 @@ function handler(command: string): (...a: unknown[]) => unknown {
         onDidChangeVisibility: vi.fn(),
         onDidChangeCheckboxState: vi.fn(),
         onDidChangeSelection: vi.fn(),
+        onDidCollapseElement: vi.fn(),
+        onDidExpandElement: vi.fn(),
         reveal: vi.fn(),
         dispose: vi.fn(),
       }) as never,

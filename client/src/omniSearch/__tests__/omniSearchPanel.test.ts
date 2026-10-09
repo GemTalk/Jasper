@@ -175,3 +175,32 @@ describe('OmniSearchPanel session binding', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 });
+
+describe('OmniSearchPanel refresh', () => {
+  let panel: ReturnType<typeof open> | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    panel = undefined;
+  });
+  afterEach(() => panel?.dispose());
+
+  it('drops the cached class list when the panel’s own ⟳ is pressed', async () => {
+    // The Source and Literals scopes search through the session's cached ClassOrganizer, so a
+    // refresh that rebuilt only the corpora would still miss a class created in a workspace.
+    const dropClassIndex = vi.fn();
+    OmniSearchPanel.show({ ...deps(1), dropClassIndex });
+    const created = vi.mocked(vscode.window.createWebviewPanel).mock.results;
+    const p = (panel = created[created.length - 1].value);
+    const engines = vi.mocked(createOmniEngine).mock.results;
+    const engine = engines[engines.length - 1].value;
+
+    messagesTo(p)({ command: 'refresh' });
+
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalled());
+    expect(dropClassIndex).toHaveBeenCalled();
+    expect(dropClassIndex.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.refresh.mock.invocationCallOrder[0],
+    );
+  });
+});

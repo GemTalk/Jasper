@@ -5,7 +5,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // only exercise revealHierarchySelf, which never reaches a query.
 vi.mock('../../browserQueries', () => ({}));
 
-import { ExplorerController } from '../../gemstoneExplorer';
+import { ExplorerController, HierarchyItem } from '../../gemstoneExplorer';
 import type { ClassHierarchyEntry } from '../../queries/getClassHierarchy';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
@@ -56,6 +56,83 @@ describe('ExplorerController.revealHierarchySelf', () => {
     await ctl.revealHierarchySelf();
 
     expect(hierarchy.reveal).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the selected class to show its subclasses', async () => {
+    // VS Code remembers a row collapsed under its id, so a class that briefly had no subclasses
+    // (a refactoring re-versioning it, an undo) came back as a closed `>` row; the pane's point is
+    // to show them.
+    const ctl = makeController();
+    (ctl as unknown as HierAccess).hierSubs = [
+      { className: 'OrderedArray', dictName: 'UserGlobals', kind: 'subclass', binding: 'bound' },
+    ];
+    const hierarchy = withHierarchyView(ctl, true);
+
+    await ctl.revealHierarchySelf();
+
+    expect(hierarchy.reveal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expand: true }),
+    );
+  });
+
+  describe('a class whose row the user collapsed', () => {
+    const withSubclasses = (): ExplorerController => {
+      const ctl = makeController();
+      (ctl as unknown as HierAccess).hierSubs = [
+        { className: 'OrderedArray', dictName: 'UserGlobals', kind: 'subclass', binding: 'bound' },
+      ];
+      return ctl;
+    };
+    const selfRow = (className: string): HierarchyItem =>
+      new HierarchyItem(className, 'UserGlobals', 'self', 0, true, undefined, undefined, 'bound');
+    const expanded = (view: ReturnType<typeof fakeView>): boolean =>
+      view.reveal.mock.calls.some(
+        (c) => (c as unknown[] as [unknown, { expand?: boolean }?])[1]?.expand === true,
+      );
+
+    it('stays closed when the class is shown again', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Array'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(false);
+    });
+
+    it('opens again once the user expands it', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Array'));
+      ctl.onHierarchyRowExpanded(selfRow('Array'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(true);
+    });
+
+    it('does not keep a different class closed', async () => {
+      const ctl = withSubclasses();
+      const hierarchy = withHierarchyView(ctl, true);
+
+      ctl.onHierarchyRowCollapsed(selfRow('Bag'));
+      await ctl.revealHierarchySelf();
+
+      expect(expanded(hierarchy)).toBe(true);
+    });
+  });
+
+  it('asks nothing to open for a class with no subclasses', async () => {
+    const ctl = makeController();
+    const hierarchy = withHierarchyView(ctl, true);
+
+    await ctl.revealHierarchySelf();
+
+    expect(hierarchy.reveal).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expand: true }),
+    );
   });
 
   it('does not force the Hierarchy pane open when it is collapsed', async () => {

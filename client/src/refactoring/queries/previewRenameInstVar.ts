@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // Start a rename-instance-variable preview across a class and all of its
 // subclasses, over every symbol-list dictionary. The engine builds the
@@ -55,7 +56,7 @@ export function applyRenameInstVar(
   const code =
     `GsRenameInstanceVariableRefactoring applyForToken: '${escapeString(token)}' ` +
     `deselected: #(${ids})`;
-  return execute(code);
+  return execute(droppingClassOrganizer(code));
 }
 
 // Drop a finished preview from SessionTemps.

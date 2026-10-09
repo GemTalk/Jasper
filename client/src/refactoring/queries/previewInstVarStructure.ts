@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // Instance-variable structure (V2 push up / V3 push down / V4 move / V5 convert temporary)
 // query builders. One engine (GsInstVarStructureRefactoring) parametrized by an OPERATION; the
@@ -17,18 +18,35 @@ export interface ConvertTempArgs {
   varName: string;
 }
 
-/** A V4 `move` request carries the destination class name(s) and the direction the ivar
+/** A move destination: the class name and the 1-based SymbolList index of the dictionary that
+ *  binds it. Two classes in one lineage can share a name, so the name alone cannot say which was
+ *  picked; 0 or undefined means no dictionary binds it, and the name goes out alone. */
+export interface MoveTarget {
+  className: string;
+  dictIndex?: number;
+  /** For labels only; the engine is sent `dictIndex`. */
+  dictName?: string;
+}
+
+/** A `move` request carries the destination class(es) and the direction the ivar
  *  travels: `up` (a single chosen ancestor) or `down` (one or more chosen descendants). */
 export interface MoveArgs {
-  targets: string[];
+  targets: MoveTarget[];
   direction: 'up' | 'down';
 }
 
 const ENGINE = 'GsInstVarStructureRefactoring';
 
-/** A Smalltalk Array literal of the (escaped, quoted) class names. */
-function targetArrayExpr(targets: string[]): string {
-  return `#(${targets.map((t) => `'${escapeString(t)}'`).join(' ')})`;
+/** A Smalltalk Array literal of the destinations: `#('Name' 5)` for one with a dictionary, a bare
+ *  `'Name'` for one without. */
+function targetArrayExpr(targets: MoveTarget[]): string {
+  const one = (t: MoveTarget): string => {
+    const name = `'${escapeString(t.className)}'`;
+    // Interpolated into Smalltalk source, so only a positive integer goes out as an index.
+    const idx = t.dictIndex;
+    return idx !== undefined && Number.isInteger(idx) && idx > 0 ? `#(${name} ${idx})` : name;
+  };
+  return `#(${targets.map(one).join(' ')})`;
 }
 
 /** The class-message send that builds the refactoring for `op`, given a `cls` binding in
@@ -153,7 +171,7 @@ export function applyInstVarStructure(
     `${ENGINE} applyForToken: '${escapeString(token)}' deselected: #() ` +
     `migrateInstances: ${migrateInstances ? 'true' : 'false'} ` +
     `removeOldFromHistory: ${removeOldFromHistory ? 'true' : 'false'}`;
-  return execute(`applyIvar(${token})`, code);
+  return execute(`applyIvar(${token})`, droppingClassOrganizer(code));
 }
 
 /** Drop a finished preview from SessionTemps. */

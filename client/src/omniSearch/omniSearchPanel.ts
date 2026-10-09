@@ -39,6 +39,10 @@ export interface OmniPanelDeps extends OmniEngineDeps {
   /** Source text to preview for a result (method source / class definition); '' for none. */
   previewSource: (result: OmniResult) => string;
   onError?: (message: string) => void;
+  /** Drop the session's cached ClassOrganizer. Run first by an explicit refresh: Source, Literals
+   *  and the senders/references pivot search through it, so rebuilding only the corpora would leave
+   *  them blind to a class created in a workspace. */
+  dropClassIndex?: () => void;
 }
 
 /** Messages the webview sends to the host. */
@@ -246,6 +250,7 @@ export class OmniSearchPanel {
   private async refresh(): Promise<void> {
     const engine = this.engine;
     if (!engine) return; // logged out: nothing to reload, and the notice is already up
+    this.deps.dropClassIndex?.();
     this.panel.webview.postMessage({ command: 'busy', on: true });
     let view: OmniViewData | null = null;
     try {

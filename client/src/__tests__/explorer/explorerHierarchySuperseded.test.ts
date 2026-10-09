@@ -96,6 +96,20 @@ describe('a hierarchy row whose class nothing binds', () => {
     expect(rows.find((r) => r.className === 'Parent')!.description).toBe('(unbound)');
   });
 
+  it('marks a class held only under another name, and says so on hover', () => {
+    const rows = rowsOf(
+      makeController([
+        entry({ className: 'Parent', dictName: '', dictIndex: undefined, binding: 'aliased' }),
+        entry({ className: 'Child', kind: 'self' }),
+      ]),
+    );
+
+    const parent = rows.find((r) => r.className === 'Parent')!;
+    expect(parent.description).toBe('(alias only)');
+    expect(String(parent.tooltip)).toContain('another name');
+    expect(parent.contextValue).toBe('explorerHierClassUnbound');
+  });
+
   it('explains on hover what the row is, and names the failed refactoring', () => {
     const rows = rowsOf(makeController(supersededChain));
 
@@ -116,7 +130,7 @@ describe('a hierarchy row whose class nothing binds', () => {
 });
 
 describe('a command invoked on a row nothing binds', () => {
-  const node = (binding: 'superseded' | 'unbound') =>
+  const node = (binding: 'superseded' | 'unbound' | 'aliased') =>
     new HierarchyItem('Parent', '', 'ancestor', 0, false, undefined, undefined, binding);
 
   it('declines Class History with the reason, and runs no query', async () => {
@@ -144,6 +158,15 @@ describe('a command invoked on a row nothing binds', () => {
     await ctl.classHistory(node('unbound'));
 
     expect(warning()).toContain('removed');
+    expect(warning()).not.toContain('older version');
+  });
+
+  it('says a class held only under another name is reachable only by that name', async () => {
+    const ctl = makeController(supersededChain);
+
+    await ctl.classHistory(node('aliased'));
+
+    expect(warning()).toContain('another name');
     expect(warning()).not.toContain('older version');
   });
 

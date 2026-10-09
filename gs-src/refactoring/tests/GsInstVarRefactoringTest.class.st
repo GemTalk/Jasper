@@ -1058,3 +1058,111 @@ GsInstVarRefactoringTest >> testRemoveKeepsAShadowedSubclassOwnInstVars [
 		self assert: (newChild instVarNames collect: [:e | e asString]) = #('childOwn').
 		self assert: newChild superclass == newParent]
 ]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> sameNamedDictionaries [
+	"Two dictionaries sharing a NAME, appended to the symbol list in order, each binding its own
+	 GsIVDup. A name can only ever reach the first of them; the second is addressable by the
+	 dictionary object, or by its SymbolList index, and by nothing else. Callers remove them with
+	 #removeSameNamedDictionaries: in an ensure:."
+	| first second |
+	first := SymbolDictionary new name: #GsIVDupDict; yourself.
+	second := SymbolDictionary new name: #GsIVDupDict; yourself.
+	System myUserProfile symbolList add: first; add: second.
+	(Array with: first with: second) do: [:d |
+		Object
+			subclass: 'GsIVDup'
+			instVarNames: #('dupOwn')
+			classVars: #() classInstVars: #() poolDictionaries: #()
+			inDictionary: d].
+	^Array with: first with: second
+]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> removeSameNamedDictionaries: dicts [
+	"By identity: two empty dictionaries of one name can compare equal."
+	| sl |
+	sl := System myUserProfile symbolList.
+	dicts do: [:d | | idx |
+		idx := 0.
+		1 to: sl size do: [:i | (sl at: i) == d ifTrue: [idx := i]].
+		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
+]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> testAddReshapesTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"Two dictionaries can share a name, and each can bind its own class of one name. A change
+	 staged against the SECOND one's class has to be applied there.
+
+	 A change records the dictionary it was computed in. Recorded as a NAME, the symbol list could
+	 only resolve it to the FIRST of the two, and the apply would reshape a class the user never
+	 chose while reporting success. GsRefactoringChange >> dict pins the dictionary OBJECT, so this
+	 holds today; it guards that pinning, since nothing on screen would show it breaking."
+	| dicts second acted json |
+	dicts := self sameNamedDictionaries.
+	second := dicts last.
+	[acted := second at: #GsIVDup.
+	 json := (GsInstVarRefactoring class: acted addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 self assert: ((second at: #GsIVDup) instVarNames collect: [:e | e asString])
+		includesItem: 'tally']
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> testAddLeavesTheFirstOfTwoSameNamedDictionariesAlone [
+	"The other half of the same apply, and the one that reads as damage rather than as a no-op:
+	 a class nobody asked about must not gain an instance variable."
+	| dicts first second untouched |
+	dicts := self sameNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[untouched := first at: #GsIVDup.
+	 (GsInstVarRefactoring class: (second at: #GsIVDup) addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: (first at: #GsIVDup) == untouched.
+	 self deny: ((first at: #GsIVDup) instVarNames collect: [:e | e asString])
+		includesItem: 'tally']
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> testRemoveReshapesTheClassInTheSecondOfTwoSameNamedDictionaries [
+	"The remove half. Both operations reshape through the same staging, so both record the
+	 dictionary the same way -- and a regression in it would reach the same wrong one."
+	| dicts first second untouched |
+	dicts := self sameNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[untouched := first at: #GsIVDup.
+	 (GsInstVarRefactoring class: (second at: #GsIVDup) removeInstVar: 'dupOwn')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: ((second at: #GsIVDup) instVarNames collect: [:e | e asString]) = #().
+	 self assert: ((first at: #GsIVDup) instVarNames collect: [:e | e asString]) = #('dupOwn').
+	 self assert: (first at: #GsIVDup) == untouched]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]
+
+{ #category : 'tests - two dictionaries of one name' }
+GsInstVarRefactoringTest >> testTheReshapedClassStaysBoundInItsOwnDictionary [
+	"Reshaping makes a NEW class version and binds it. Bound by name, it would land in the first
+	 dictionary of that name -- replacing that dictionary's own class and leaving the acted-on
+	 dictionary still binding the old version, so the refactoring would appear to have done
+	 nothing where it was asked and something unasked-for elsewhere."
+	| dicts second before |
+	dicts := self sameNamedDictionaries.
+	second := dicts last.
+	[before := second at: #GsIVDup.
+	 (GsInstVarRefactoring class: before addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 "a new version, bound where the class it came from was bound"
+	 self deny: (second at: #GsIVDup) == before.
+	 self assert: ((second at: #GsIVDup) classHistory includes: before)]
+		ensure: [self removeSameNamedDictionaries: dicts]
+]

@@ -430,6 +430,30 @@ describe('GemStone Search docked panel — the refresh button', () => {
     expect(engine.resync).not.toHaveBeenCalled(); // the refresh subsumes any deferred sync
   });
 
+  it('drops the cached class list when the webview’s own ⟳ is pressed', async () => {
+    // The Source and Literals scopes search through the session's cached ClassOrganizer, so a
+    // refresh that rebuilt only the corpora would still miss a class created in a workspace.
+    const context = fakeContext();
+    const dropClassIndex = vi.fn();
+    (context.deps as unknown as { dropClassIndex: () => void }).dropClassIndex = dropClassIndex;
+    const provider = new OmniSearchViewProvider(vi.fn(async () => context));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    void on.message({ command: 'ready' });
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
+    await settle();
+    const engines = vi.mocked(createOmniEngine).mock.results;
+    const engine = engines[engines.length - 1].value;
+
+    void on.message({ command: 'refresh' });
+
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalled());
+    expect(dropClassIndex).toHaveBeenCalled();
+    expect(dropClassIndex.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.refresh.mock.invocationCallOrder[0],
+    );
+  });
+
   it('still reloads on the webview button while the view reports itself hidden', async () => {
     // A message from the webview is proof enough that someone is looking, so the ⟳ inside the chrome
     // skips the visibility gate the palette command honours.

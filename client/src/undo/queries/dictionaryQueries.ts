@@ -21,6 +21,7 @@
  */
 import { QueryExecutor } from '../../queries/types';
 import { escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 import { DictionaryState } from '../undoTypes';
 
 /**
@@ -64,13 +65,16 @@ export function parseDictionaryCapture(raw: string, name: string): DictionarySta
  * Refuses rather than duplicating when the dictionary is already on the list, and clamps the
  * position into range: the list is shorter now than it was, and `insertDictionary:at:` raises
  * on an index past the end rather than appending.
+ *
+ * Drops the cached class list too: every class in the dictionary is bound again, and a list
+ * built while it was off the symbol list leaves them out of their superclasses' subclasses.
  */
 export function reinsertDictionary(
   execute: QueryExecutor,
   stashKey: string,
   index: number,
 ): string | null {
-  const code = `| sl d pos |
+  const code = droppingClassOrganizer(`| sl d pos |
 sl := System myUserProfile symbolList.
 d := SessionTemps current at: #'${escapeString(stashKey)}' ifAbsent: [nil].
 d isNil ifTrue: [^ 'this session no longer holds the removed dictionary'].
@@ -81,7 +85,7 @@ d isNil ifTrue: [^ 'this session no longer holds the removed dictionary'].
 pos := ${Math.max(1, Math.trunc(index) || 1)} min: sl size + 1.
 [System myUserProfile insertDictionary: d at: pos. 'ok']
   on: Error
-  do: [:ex | ex messageText ifNil: ['failed']]`;
+  do: [:ex | ex messageText ifNil: ['failed']]`);
   const answer = execute(code).trim();
   return answer === 'ok' ? null : answer;
 }

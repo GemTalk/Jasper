@@ -6293,6 +6293,120 @@ testRemoveKeepsAShadowedSubclassOwnInstVars
 		self assert: newChild superclass == newParent]
 %
 
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+sameNamedDictionaries
+	"Two dictionaries sharing a NAME, appended to the symbol list in order, each binding its own
+	 GsIVDup. A name can only ever reach the first of them; the second is addressable by the
+	 dictionary object, or by its SymbolList index, and by nothing else. Callers remove them with
+	 #removeSameNamedDictionaries: in an ensure:."
+	| first second |
+	first := SymbolDictionary new name: #GsIVDupDict; yourself.
+	second := SymbolDictionary new name: #GsIVDupDict; yourself.
+	System myUserProfile symbolList add: first; add: second.
+	(Array with: first with: second) do: [:d |
+		Object
+			subclass: 'GsIVDup'
+			instVarNames: #('dupOwn')
+			classVars: #() classInstVars: #() poolDictionaries: #()
+			inDictionary: d].
+	^Array with: first with: second
+%
+
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+removeSameNamedDictionaries: dicts
+	"By identity: two empty dictionaries of one name can compare equal."
+	| sl |
+	sl := System myUserProfile symbolList.
+	dicts do: [:d | | idx |
+		idx := 0.
+		1 to: sl size do: [:i | (sl at: i) == d ifTrue: [idx := i]].
+		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
+%
+
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+testAddReshapesTheClassInTheSecondOfTwoSameNamedDictionaries
+	"Two dictionaries can share a name, and each can bind its own class of one name. A change
+	 staged against the SECOND one's class has to be applied there.
+
+	 A change records the dictionary it was computed in. Recorded as a NAME, the symbol list could
+	 only resolve it to the FIRST of the two, and the apply would reshape a class the user never
+	 chose while reporting success. GsRefactoringChange >> dict pins the dictionary OBJECT, so this
+	 holds today; it guards that pinning, since nothing on screen would show it breaking."
+	| dicts second acted json |
+	dicts := self sameNamedDictionaries.
+	second := dicts last.
+	[acted := second at: #GsIVDup.
+	 json := (GsInstVarRefactoring class: acted addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: json includesSubstring: '"failed":[]'.
+	 self deny: json includesSubstring: '"partiallyApplied":true'.
+	 self assert: ((second at: #GsIVDup) instVarNames collect: [:e | e asString])
+		includesItem: 'tally']
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+testAddLeavesTheFirstOfTwoSameNamedDictionariesAlone
+	"The other half of the same apply, and the one that reads as damage rather than as a no-op:
+	 a class nobody asked about must not gain an instance variable."
+	| dicts first second untouched |
+	dicts := self sameNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[untouched := first at: #GsIVDup.
+	 (GsInstVarRefactoring class: (second at: #GsIVDup) addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: (first at: #GsIVDup) == untouched.
+	 self deny: ((first at: #GsIVDup) instVarNames collect: [:e | e asString])
+		includesItem: 'tally']
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+testRemoveReshapesTheClassInTheSecondOfTwoSameNamedDictionaries
+	"The remove half. Both operations reshape through the same staging, so both record the
+	 dictionary the same way -- and a regression in it would reach the same wrong one."
+	| dicts first second untouched |
+	dicts := self sameNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[untouched := first at: #GsIVDup.
+	 (GsInstVarRefactoring class: (second at: #GsIVDup) removeInstVar: 'dupOwn')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 self assert: ((second at: #GsIVDup) instVarNames collect: [:e | e asString]) = #().
+	 self assert: ((first at: #GsIVDup) instVarNames collect: [:e | e asString]) = #('dupOwn').
+	 self assert: (first at: #GsIVDup) == untouched]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - two dictionaries of one name'
+method: GsInstVarRefactoringTest
+testTheReshapedClassStaysBoundInItsOwnDictionary
+	"Reshaping makes a NEW class version and binds it. Bound by name, it would land in the first
+	 dictionary of that name -- replacing that dictionary's own class and leaving the acted-on
+	 dictionary still binding the old version, so the refactoring would appear to have done
+	 nothing where it was asked and something unasked-for elsewhere."
+	| dicts second before |
+	dicts := self sameNamedDictionaries.
+	second := dicts last.
+	[before := second at: #GsIVDup.
+	 (GsInstVarRefactoring class: before addInstVar: 'tally')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	 "a new version, bound where the class it came from was bound"
+	 self deny: (second at: #GsIVDup) == before.
+	 self assert: ((second at: #GsIVDup) classHistory includes: before)]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
 category: 'asserting'
 method: GsInstVarStructureRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -6887,7 +7001,7 @@ testMoveUpMovesSimpleAccessorsToAncestor
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
 testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
-	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	"Dictionary scoping: a destination name resolves within the source's OWN lineage, not by
 	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
 	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
 	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
@@ -6915,7 +7029,7 @@ testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
 testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary
-	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	"Dictionary scoping, the down half: the down lineage resolves through the source's DESCENDANTS,
 	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
 	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
 	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
@@ -7372,6 +7486,201 @@ testMoveUpDeclinesATargetNameTwoAncestorsShare
 	 self assert: ref decline notNil.
 	 self assert: ref decline includesSubstring: 'GsVSTwinDict']
 		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+sameNamedDestinationDictionaries
+	"Two dictionaries sharing a NAME, each binding its own GsVSPairLeaf under the fixture's
+	 GsVSMid. Both are genuinely in GsVSMid's lineage, so the destination picker offers both and
+	 a bare name cannot say which was meant. Removed with #removeSameNamedDictionaries:."
+	| first second |
+	first := SymbolDictionary new name: #GsVSPairDict; yourself.
+	second := SymbolDictionary new name: #GsVSPairDict; yourself.
+	System myUserProfile symbolList add: first; add: second.
+	(Array with: first with: second) do: [:d |
+		(self classNamed: 'GsVSMid')
+			subclass: 'GsVSPairLeaf'
+			instVarNames: #()
+			classVars: #() classInstVars: #() poolDictionaries: #()
+			inDictionary: d].
+	^Array with: first with: second
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+removeSameNamedDictionaries: dicts
+	"By identity: two empty dictionaries of one name can compare equal."
+	| sl |
+	sl := System myUserProfile symbolList.
+	dicts do: [:d | | idx |
+		idx := 0.
+		1 to: sl size do: [:i | (sl at: i) == d ifTrue: [idx := i]].
+		idx > 0 ifTrue: [System myUserProfile removeDictionaryAt: idx]]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+indexOfDictionary: aDict
+	| sl |
+	sl := System myUserProfile symbolList.
+	1 to: sl size do: [:i | (sl at: i) == aDict ifTrue: [^i]].
+	^0
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownStillDeclinesADestinationGivenOnlyByName
+	"The decline stays the right answer for a caller with nothing but a name to give: two classes
+	 in the lineage answer to it, and moving the variable into whichever the walk reached first
+	 puts it somewhere the user did not pick. Kept as the control for the pair form below -- the
+	 two have to differ in what is SENT, not in what the engine happens to do that day."
+	| dicts ref |
+	dicts := self sameNamedDestinationDictionaries.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: #('GsVSPairLeaf')
+		direction: #down.
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsVSPairDict']
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownAcceptsADestinationNamedWithItsDictionary
+	"A destination given as its name AND the dictionary that binds it is not ambiguous: it names
+	 one class. Only the bare-name form has to decline.
+
+	 The pair is `Array with: name with: dictionary`, where the dictionary is a 1-based SymbolList
+	 index -- the form the client already sends everywhere else, and the only one that separates
+	 two dictionaries of one name."
+	| dicts second ref |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+
+	 self assert: ref decline equals: nil]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownSendsTheVariableToTheDictionaryThatWasNamed
+	"Accepting the pair is only half of it: the change set has to be computed against the class in
+	 THAT dictionary, not against whichever of the two the lineage walk reached first."
+	| dicts second ref edited |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+	 edited := self editChangeFor: 'GsVSPairLeaf' in: ref changeSet.
+
+	 self assert: edited notNil.
+	 self assert: edited dict == second]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownSendsTheVariableToTheFirstDictionaryWhenThatWasNamed
+	"The same send naming the OTHER dictionary. Neither test discriminates alone: a fix that unpacks
+	 the pair and then resolves the name by itself lands on whichever class the descendant walk
+	 reaches first, and passes the one of the two that happens to name it. Together they fail it
+	 whichever way the walk is ordered. This one also catches a fix that gets the second dictionary
+	 right by breaking the first."
+	| dicts first ref edited |
+	dicts := self sameNamedDestinationDictionaries.
+	first := dicts first.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: first)))
+		direction: #down.
+	 edited := self editChangeFor: 'GsVSPairLeaf' in: ref changeSet.
+
+	 self assert: edited notNil.
+	 self assert: edited dict == first]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveDownLeavesTheOtherSameNamedDestinationOutOfTheChangeSet
+	"Exactly one of the two was picked. A change set naming both moves the variable into a class
+	 nobody chose, which is the outcome the ambiguity decline exists to prevent."
+	| dicts second ref edits |
+	dicts := self sameNamedDestinationDictionaries.
+	second := dicts last.
+	[ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: (Array with: (Array with: 'GsVSPairLeaf' with: (self indexOfDictionary: second)))
+		direction: #down.
+	 edits := ref changeSet changes select: [:c |
+		c kind = #classDefinitionEdit and: [c className asString = 'GsVSPairLeaf']].
+
+	 self assert: edits size equals: 1]
+		ensure: [self removeSameNamedDictionaries: dicts]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveUpAcceptsAnAncestorNamedWithItsDictionary
+	"The up half. Ancestors are walked by a different path than descendants, so the pair has to be
+	 understood on both.
+
+	 The twin GsVSBase subclasses the real one, so the source's ancestry holds BOTH and the name
+	 alone is ambiguous -- the shape #testMoveUpDeclinesATargetNameTwoAncestorsShare declines.
+	 The pair names the real, FARTHER one: the walk reaches the twin first, so a fix that unpacked
+	 the pair and resolved its name alone would land on the twin and fail here."
+	| twinDict twin leafUnderTwin ref |
+	twinDict := SymbolDictionary new name: #GsVSPairUpDict; yourself.
+	System myUserProfile symbolList add: twinDict.
+	[twin := (self classNamed: 'GsVSBase')
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 leafUnderTwin := twin
+		subclass: 'GsVSPairUpLeaf'
+		instVarNames: #('twinOwn')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: twinDict.
+	 ref := GsInstVarStructureRefactoring
+		class: leafUnderTwin
+		moveInstVar: 'twinOwn'
+		toClasses: (Array with: (Array with: 'GsVSBase' with: (self indexOfDictionary: UserGlobals)))
+		direction: #up.
+
+	 self assert: ref decline equals: nil.
+	 self assert: ref topClass == (self classNamed: 'GsVSBase')]
+		ensure: [System myUserProfile symbolList remove: twinDict ifAbsent: []]
+%
+
+category: 'tests - move, two dictionaries of one name'
+method: GsInstVarStructureRefactoringTest
+testMoveStillResolvesAPlainNameWhenOnlyOneClassAnswersToIt
+	"The pair form must not cost the ordinary case its spelling: every existing caller sends bare
+	 names, and a lineage with one class of that name has nothing to disambiguate."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid')
+		moveInstVar: 'pushable'
+		toClasses: #('GsVSLeaf')
+		direction: #down.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: ref changeSet) notNil
 %
 
 category: 'asserting'
@@ -11534,10 +11843,9 @@ testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries
 	 The capture pins the dictionary itself; the reversal's preview has to be of the class that
 	 was reshaped, which is the only one that carries gsuReshaped.
 
-	 This stops at the preview. Applying the revert hands each class to the forward rename engine,
-	 which records its changes' dictionaries by name and so still reaches the first dictionary --
-	 a limit of the forward engine, not of the undo's own lookup. The reshape is a new class
-	 version defined directly rather than through a refactoring for the same reason."
+	 This stops at the preview; #testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
+	 is the apply half. The reshape is a new class version defined directly rather than through a
+	 refactoring, so the test is about the undo's lookup alone."
 	| dicts second json |
 	dicts := self twinNamedDictionaries.
 	second := dicts last.
@@ -11560,6 +11868,39 @@ testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries
 	 "the revert is described against the reshaped class: what it is now carries gsuReshaped"
 	 self assert: json includesSubstring: '"total":1'.
 	 self assert: json includesSubstring: 'gsuOwn gsuReshaped']
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testUndoMethodRenameRestoresTheClassInTheSecondOfTwoSameNamedDictionaries
+	"A method-level undo snapshots each method the refactoring touched, before and after, and diffs
+	 the two. Each snapshot has to read the class the refactoring changed. With two dictionaries of
+	 one name and that class in the second, a lookup by dictionary name reads the FIRST dictionary's
+	 class, sees nothing change, and records an undo that leaves the renamed method in place.
+
+	 Both classes implement the selector, so a wrong-class undo cannot pass by accident: asserted
+	 from both ends, the acted-on class gets its method back and the other one is left alone."
+	| dicts first second |
+	dicts := self twinNamedDictionaries.
+	first := dicts first at: #GsUndoTwinClass.
+	second := dicts last at: #GsUndoTwinClass.
+	[self compile: 'gsuValue ^ 1' in: first category: 'computing'.
+	 self compile: 'gsuValue ^ 2' in: second category: 'computing'.
+	 self applyRecording: (GsRenameMethodRefactoring
+		class: second
+		renameSelector: 'gsuValue'
+		toParts: #('gsuRenamed')
+		permutation: #()
+		scope: #class).
+	 self assert: (self sourceOf: #gsuRenamed in: second) notNil.
+
+	 self undoAll.
+
+	 self assert: (self sourceOf: #gsuValue in: second) = 'gsuValue ^ 2'.
+	 self assert: (self sourceOf: #gsuRenamed in: second) isNil.
+	 self assert: (self sourceOf: #gsuValue in: first) = 'gsuValue ^ 1'.
+	 self assert: (self sourceOf: #gsuRenamed in: first) isNil]
 		ensure: [self removeDictionaries: dicts]
 %
 
@@ -11792,6 +12133,48 @@ testUndoHistoryRevertCountsTheMethodsItWouldDiscardOnTheRightClass
 
 	 self assert: json includesSubstring: '"dropCount":1'.
 	 self assert: json includesSubstring: 'gsuSince']
+		ensure: [self removeDictionaries: dicts]
+%
+
+category: 'tests - shadowed dictionary name'
+method: GsRefactoringUndoTest
+testUndoHistoryRevertRevertsTheClassInTheSecondOfTwoSameNamedDictionaries
+	"The apply half of #testUndoHistoryRevertPreviewsTheClassInTheSecondOfTwoSameNamedDictionaries,
+	 which stops where this one starts.
+
+	 The undo finds the right class: its plan pins the dictionary object. Applying hands that class
+	 to the forward rename engine, which restores it as a new version -- and the restore has to land
+	 in the dictionary the class came from. Reaching the FIRST dictionary of that name instead would
+	 rewrite a class nobody touched and leave the reshaped one still carrying gsuReshaped, so the
+	 undo would report success with nothing it was asked to undo undone. The forward engine's
+	 changes pin the dictionary OBJECT (GsRefactoringChange >> dict), so this holds today; it is a
+	 guard, since nothing on screen would show it breaking.
+
+	 Asserted from both ends, because either alone can pass while the other fails: the acted-on
+	 class loses the instance variable, and the other dictionary's class is the object it always was."
+	| dicts first second decoy |
+	dicts := self twinNamedDictionaries.
+	first := dicts first.
+	second := dicts last.
+	[decoy := first at: #GsUndoTwinClass.
+	 GsRefactoringUndo
+		captureClassHistoryOf: 'GsUndoTwinClass'
+		inDictionary: (self indexOfDictionary: second).
+	 Object
+		subclass: 'GsUndoTwinClass'
+		instVarNames: #('gsuOwn' 'gsuReshaped')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: second.
+	 GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoTwinClass'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+
+	 self undoAll.
+
+	 self deny: (((second at: #GsUndoTwinClass) instVarNames
+		collect: [:e | e asString]) includes: 'gsuReshaped').
+	 self assert: (first at: #GsUndoTwinClass) == decoy]
 		ensure: [self removeDictionaries: dicts]
 %
 

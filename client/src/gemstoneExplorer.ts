@@ -129,6 +129,7 @@ import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
 import { moveInstVar as moveInstVarFlow } from './refactoring/instVarStructureCommand';
+import type { MoveTarget } from './refactoring/queries/previewInstVarStructure';
 import { pushMethod } from './refactoring/pushMethodCommand';
 import {
   insertSuperclassCommand,
@@ -668,12 +669,46 @@ function declineIfUnbound(item: ClassItem | HierarchyItem, what: string): boolea
       ? `${item.className} here is an older version of the class — the name now binds a newer one, ` +
         'and no dictionary holds this one. A refactoring that failed part-way leaves exactly this: ' +
         'Undo reverses it and puts the subtree back together.'
-      : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
+      : item.binding === 'aliased'
+        ? `${item.className} here is held only under another name, so no dictionary reaches it ` +
+          `as ${item.className}. Browse it through the name it is bound under.`
+        : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
   void vscode.window.showWarningMessage(`${what} is not available here. ${why}`);
   return true;
 }
 
-function unboundHierarchyTooltip(className: string, binding: 'superseded' | 'unbound'): string {
+// The dictionary note for each move-destination row: its dictionary's name, plus its SymbolList
+// position when another row has the same class name in a dictionary of the same name — the one
+// case where the name alone still leaves two rows reading alike.
+function dictionaryLabels(rows: { className: string; dictName: string; dictIndex?: number }[]) {
+  return rows.map((r) => {
+    if (!r.dictName) return '';
+    const twin = rows.some(
+      (o) => o !== r && o.className === r.className && o.dictName === r.dictName,
+    );
+    return twin && r.dictIndex ? `${r.dictName} (${r.dictIndex})` : r.dictName;
+  });
+}
+
+function hierarchyRowKey(
+  className: string,
+  dictIndex: number | undefined,
+  dictName: string,
+): string {
+  return `${dictIndex ?? dictName}:${className}`;
+}
+
+function unboundHierarchyTooltip(
+  className: string,
+  binding: 'aliased' | 'superseded' | 'unbound',
+): string {
+  if (binding === 'aliased') {
+    return (
+      `${className} — held only under another name.\n\n` +
+      'A dictionary holds this class, but not under its own name, so commands that look a class ' +
+      'up by its name in a dictionary cannot reach it. Browse it through the name it is bound under.'
+    );
+  }
   if (binding === 'unbound') {
     return (
       `${className} — no class of this name is bound in any dictionary.\n\n` +
@@ -717,7 +752,7 @@ export class HierarchyItem extends vscode.TreeItem {
     // Whether the symbol list still binds this class object under its own name. A SUPERSEDED row
     // is a real class -- it is this subclass's actual superclass -- that the name no longer
     // points at, so every command scoped by dictionary has nowhere to send it.
-    public readonly binding: 'bound' | 'superseded' | 'unbound' = 'bound',
+    public readonly binding: 'bound' | 'aliased' | 'superseded' | 'unbound' = 'bound',
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -729,7 +764,12 @@ export class HierarchyItem extends vscode.TreeItem {
     // row is indistinguishable from any other ancestor, and every command on it failed with
     // "not a class" -- which reads as a broken tool rather than as what it is.
     if (binding !== 'bound') {
-      this.description = binding === 'superseded' ? '(old version)' : '(unbound)';
+      this.description =
+        binding === 'superseded'
+          ? '(old version)'
+          : binding === 'aliased'
+            ? '(alias only)'
+            : '(unbound)';
       this.tooltip = unboundHierarchyTooltip(className, binding);
     }
     // The dictionary position is part of the id: every subclass has chainIndex -1, so two
@@ -1080,6 +1120,9 @@ export class ExplorerController {
     map: Map<string, queries.MethodInstVarAccess>;
   };
   private views?: ExplorerViews;
+  // Classes whose own Hierarchy row the user collapsed (see revealHierarchySelf), by dictionary and
+  // name: the row's id also carries its chain position, which changes with the class selected.
+  private readonly hierarchyCollapsedByUser = new Set<string>();
   // Active filter pattern per pane (view id → pattern); empty/absent = no filter.
   private readonly filters = new Map<string, string>();
   // The pane whose filter input is currently open (so its header shows the
@@ -2555,7 +2598,33 @@ export class ExplorerController {
       e.dictIndex,
       e.binding,
     );
-    await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
+    // Expanded on purpose: VS Code remembers a row collapsed under its id, so a class that briefly
+    // had no subclasses -- re-versioned by a refactoring, or by its undo -- otherwise came back as a
+    // closed row, and showing the subclasses is the point of the pane. Unless the user closed it:
+    // VS Code reports a collapse only when someone collapses a row, never for a row that came back
+    // closed, so honouring the user's collapse leaves the disappearing-subclasses case still fixed.
+    const expand =
+      this.hierSubs.length > 0 &&
+      !this.hierarchyCollapsedByUser.has(
+        hierarchyRowKey(self.className, self.dictIndex, self.dictName),
+      );
+    await this.revealCascade(this.views?.hierarchy, self, {
+      select: true,
+      focus: false,
+      ...(expand ? { expand: true } : {}),
+    });
+  }
+
+  onHierarchyRowCollapsed(item: HierarchyItem): void {
+    this.hierarchyCollapsedByUser.add(
+      hierarchyRowKey(item.className, item.dictIndex, item.dictName),
+    );
+  }
+
+  onHierarchyRowExpanded(item: HierarchyItem): void {
+    this.hierarchyCollapsedByUser.delete(
+      hierarchyRowKey(item.className, item.dictIndex, item.dictName),
+    );
   }
 
   hierarchyParent(element: HierarchyItem): HierarchyItem | undefined {
@@ -3281,7 +3350,7 @@ export class ExplorerController {
     await this.refreshAfterClassReshape(item.className);
     // Select the moved variable on its first destination. Best-effort: reveal rejects if the
     // row isn't in the rebuilt tree, which we ignore.
-    const target = targets[0];
+    const target = targets[0]?.className;
     if (target) {
       this.views?.klass
         .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
@@ -3294,20 +3363,20 @@ export class ExplorerController {
 
   // Ask the user which hierarchy class(es) to move an ivar to. ▲ lists ancestors (immediate
   // superclass first) as a single-select; ▼ lists every descendant (top-down) as a multi-select.
-  // Answers the chosen destination class names, or undefined when there is nowhere to move or the
-  // user cancels.
+  // Answers the chosen destinations, each with the dictionary that binds it, or undefined when there
+  // is nowhere to move or the user cancels. Two classes in one lineage can share a name, so each row
+  // names its dictionary and the answer carries it.
   private async pickInstVarMoveTargets(
     session: ActiveSession,
     item: IvarItem,
     direction: 'up' | 'down',
-  ): Promise<string[] | undefined> {
+  ): Promise<MoveTarget[] | undefined> {
     if (direction === 'up') {
       // superclass entries are root-first; reverse so the immediate superclass leads the list.
       // Dict-scoped like the down path so a shadowed class name offers the right lineage.
       const ancestors = queries
         .getClassHierarchy(session, item.className, this.state.dictIndex)
         .filter((e) => e.kind === 'superclass')
-        .map((e) => e.className)
         .reverse();
       if (ancestors.length === 0) {
         void vscode.window.showInformationMessage(
@@ -3315,17 +3384,21 @@ export class ExplorerController {
         );
         return undefined;
       }
+      const labels = dictionaryLabels(ancestors);
       const chosen = await vscode.window.showQuickPick(
-        ancestors.map((name, i) => ({
-          label: name,
-          description: i === 0 ? 'immediate superclass' : 'ancestor',
+        ancestors.map((a, i) => ({
+          label: a.className,
+          description: [i === 0 ? 'immediate superclass' : 'ancestor', labels[i]]
+            .filter(Boolean)
+            .join(' · '),
+          target: { className: a.className, dictIndex: a.dictIndex, dictName: a.dictName },
         })),
         {
           title: `Move '${item.ivarName}' up — choose the destination superclass`,
           placeHolder: 'Pick one ancestor class',
         },
       );
-      return chosen ? [chosen.label] : undefined;
+      return chosen ? [chosen.target] : undefined;
     }
 
     const descendants = queries.getClassDescendantNames(
@@ -3339,10 +3412,14 @@ export class ExplorerController {
       );
       return undefined;
     }
+    const labels = dictionaryLabels(descendants);
     const chosen = await vscode.window.showQuickPick(
-      descendants.map((d) => ({
+      descendants.map((d, i) => ({
         label: d.className,
-        description: d.parentName ? `subclass of ${d.parentName}` : undefined,
+        description: [d.parentName ? `subclass of ${d.parentName}` : '', labels[i]]
+          .filter(Boolean)
+          .join(' · '),
+        target: { className: d.className, dictIndex: d.dictIndex, dictName: d.dictName },
       })),
       {
         title: `Move '${item.ivarName}' down — choose destination subclass(es)`,
@@ -3350,7 +3427,7 @@ export class ExplorerController {
         canPickMany: true,
       },
     );
-    return chosen && chosen.length > 0 ? chosen.map((c) => c.label) : undefined;
+    return chosen && chosen.length > 0 ? chosen.map((c) => c.target) : undefined;
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so
@@ -8986,6 +9063,8 @@ export function registerGemStoneExplorer(
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
   });
+  hierarchyView.onDidCollapseElement((e) => ctl.onHierarchyRowCollapsed(e.element));
+  hierarchyView.onDidExpandElement((e) => ctl.onHierarchyRowExpanded(e.element));
   // Catch each pane up on the cascade highlight it skipped while it was closed
   // (see ExplorerController.revealCascade). Without these, guarding the reveals
   // would leave a pane opened later sitting on a stale row until the next

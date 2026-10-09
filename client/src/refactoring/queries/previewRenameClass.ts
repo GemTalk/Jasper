@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // The scope a rename-class reference rewrite runs in. #class / #hierarchy /
 // #wholeSystem take no argument; #dictionary names a single SymbolDictionary.
@@ -117,7 +118,10 @@ export function applyRenameClass(
   const code =
     `GsRenameClassRefactoring applyForToken: '${escapeString(token)}' ` +
     `deselected: #(${idsLiteral})`;
-  return execute(`applyRenameClass(${token}, -${deselectedIds.length})`, code);
+  return execute(
+    `applyRenameClass(${token}, -${deselectedIds.length})`,
+    droppingClassOrganizer(code),
+  );
 }
 
 // Drop a finished preview from SessionTemps.
