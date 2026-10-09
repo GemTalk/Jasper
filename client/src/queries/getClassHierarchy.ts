@@ -1,6 +1,7 @@
 import { QueryExecutor } from './types';
 import { classOrganizerExpr, subclassesOfBlock, superclassesOfBlock } from './classOrganizer';
 import { classLookupExpr } from './util';
+import { classHomeIndexStatement } from './classHomeIndex';
 
 export interface ClassHierarchyEntry {
   className: string;
@@ -13,19 +14,21 @@ export interface ClassHierarchyEntry {
   /**
    * Whether the symbol list still binds this class OBJECT under its own name.
    *
-   * - `bound` — the ordinary case: a dictionary holds it.
+   * - `bound` — the ordinary case: a dictionary holds it under its own name.
    * - `superseded` — the name now binds a DIFFERENT class. This row is an older version of it,
    *   still real and still this subclass's actual superclass, but nothing names it any more.
    *   Redefining a class makes a new version and does not re-parent its subclasses, so any
    *   redefinition outside the refactoring engine leaves one — and so does a refactoring that
    *   failed part-way, since it stops at the first failure with the classes before it already
    *   re-versioned.
+   * - `aliased` — a dictionary holds it, but only under some other key. Nothing that looks a
+   *   class up by (dictionary, name) can reach it, so it gets no dictionary position.
    * - `unbound` — no class of that name is bound at all; it was removed.
    *
    * Decided by IDENTITY, not by whether a dictionary was found: "no dictionary" is a symptom
    * with several causes, and only comparing the bound class against this one says which.
    */
-  binding: 'bound' | 'superseded' | 'unbound';
+  binding: 'bound' | 'aliased' | 'superseded' | 'unbound';
 }
 
 export function getClassHierarchy(
@@ -49,20 +52,19 @@ class := ${classLookupExpr(className, dict)}.
 supers := ${superclassesOfBlock('organizer')} value: class.
 subs := ${subclassesOfBlock('organizer')} value: class.
 sl := System myUserProfile symbolList.
-classDict := IdentityDictionary new.
-1 to: sl size do: [:i |
-  (sl at: i) keysAndValuesDo: [:k :v |
-    (v isBehavior and: [(classDict includesKey: v) not])
-      ifTrue: [classDict at: v put: i]]].
+${classHomeIndexStatement('classDict', 'sl')}
 row := [:each :kind | | idx binding cur |
   idx := classDict at: each ifAbsent: [0].
   binding := idx > 0
     ifTrue: ['bound']
     ifFalse: [
-      cur := sl objectNamed: each name asSymbol.
-      (cur notNil and: [cur ~~ each and: [cur isBehavior]])
-        ifTrue: ['superseded']
-        ifFalse: ['unbound']].
+      (sl anySatisfy: [:d | (d keyAtValue: each ifAbsent: [nil]) notNil])
+        ifTrue: ['aliased']
+        ifFalse: [
+          cur := sl objectNamed: each name asSymbol.
+          (cur notNil and: [cur ~~ each and: [cur isBehavior]])
+            ifTrue: ['superseded']
+            ifFalse: ['unbound']]].
   stream nextPutAll: (idx = 0 ifTrue: [''] ifFalse: [(sl at: idx) name]); tab;
     nextPutAll: each name; tab; nextPutAll: kind; tab; nextPutAll: idx printString; tab;
     nextPutAll: binding; lf].
@@ -82,7 +84,7 @@ stream contents`;
     // An older payload (a stone whose plugin predates this column) sends four fields; treat a
     // placed class as bound and an unplaced one as unbound rather than inventing a diagnosis.
     const binding =
-      parts[4] === 'superseded' || parts[4] === 'unbound'
+      parts[4] === 'aliased' || parts[4] === 'superseded' || parts[4] === 'unbound'
         ? parts[4]
         : dictIndex > 0
           ? 'bound'

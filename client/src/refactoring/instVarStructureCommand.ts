@@ -52,7 +52,7 @@ export interface IvarStructureRequest {
   dict?: number | string;
   /** V5 only: the method + side the temporary lives in. */
   extra?: ConvertTempArgs;
-  /** V4 only (op `move`): the destination class(es), each with its dictionary, and the direction
+  /** `move` only: the destination class(es), each with its dictionary, and the direction
    *  the ivar travels. */
   move?: MoveArgs;
   /** V2/V3/V4 opt-in: also move the ivar's simple getter/setter accessors with the declaration. */
@@ -243,7 +243,10 @@ export async function moveInstVar(
   // its dictionary, as the source does: the picker may have offered two classes of that name.
   const namedLimit = 3;
   const named = (t: MoveTarget): string =>
-    qualifiedClassName(t.className, dictionaryNameFor(session, t.dictIndex || undefined));
+    qualifiedClassName(
+      t.className,
+      t.dictName || dictionaryNameFor(session, t.dictIndex || undefined),
+    );
   const where =
     direction === 'up'
       ? `up to ${targets[0] ? named(targets[0]) : 'superclass'}`

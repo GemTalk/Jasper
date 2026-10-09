@@ -310,6 +310,30 @@ describe('move instance variable command', () => {
     expect(heading).toContain('from V4Mid (UserGlobals) down to V4Leaf (DictB)');
   });
 
+  it('names the destinations from the dictionary names the picker already had', async () => {
+    // Each lookup by index is a synchronous round trip to the stone; only the source needs one.
+    vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'DictA', 'DictB']);
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(
+      session,
+      'down',
+      'MoveMid',
+      'shared',
+      [
+        { className: 'MoveLeaf', dictIndex: 2, dictName: 'DictA' },
+        { className: 'MoveLeaf', dictIndex: 3, dictName: 'DictB' },
+      ],
+      1,
+    );
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('down to MoveLeaf (DictA), MoveLeaf (DictB)');
+    expect(queries.getDictionaryNames).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to a subclass count once there are more destinations than fit', async () => {
     vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());

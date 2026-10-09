@@ -102,6 +102,19 @@ describe('choosing between two same-named subclasses', () => {
     expect(offeredRows()[1]).toContain('DictB');
   });
 
+  it('tells apart two dictionaries that share a name by their position', async () => {
+    vi.mocked(queries.getClassDescendantNames).mockReturnValue([
+      { className: 'Leaf', parentName: 'Mid', dictName: 'Dup', dictIndex: 3 },
+      { className: 'Leaf', parentName: 'Mid', dictName: 'Dup', dictIndex: 5 },
+    ] as never);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    await pick('down');
+
+    expect(offeredRows()[0]).toContain('Dup (3)');
+    expect(offeredRows()[1]).toContain('Dup (5)');
+  });
+
   it('answers with the dictionary of the row that was picked', async () => {
     sameNamedDescendants();
     vi.mocked(vscode.window.showQuickPick).mockImplementation(

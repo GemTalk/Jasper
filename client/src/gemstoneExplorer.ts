@@ -669,7 +669,10 @@ function declineIfUnbound(item: ClassItem | HierarchyItem, what: string): boolea
       ? `${item.className} here is an older version of the class — the name now binds a newer one, ` +
         'and no dictionary holds this one. A refactoring that failed part-way leaves exactly this: ' +
         'Undo reverses it and puts the subtree back together.'
-      : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
+      : item.binding === 'aliased'
+        ? `${item.className} here is held only under another name, so no dictionary reaches it ` +
+          `as ${item.className}. Browse it through the name it is bound under.`
+        : `No class named ${item.className} is bound in any dictionary; it has been removed.`;
   void vscode.window.showWarningMessage(`${what} is not available here. ${why}`);
   return true;
 }
@@ -687,7 +690,17 @@ function dictionaryLabels(rows: { className: string; dictName: string; dictIndex
   });
 }
 
-function unboundHierarchyTooltip(className: string, binding: 'superseded' | 'unbound'): string {
+function unboundHierarchyTooltip(
+  className: string,
+  binding: 'aliased' | 'superseded' | 'unbound',
+): string {
+  if (binding === 'aliased') {
+    return (
+      `${className} — held only under another name.\n\n` +
+      'A dictionary holds this class, but not under its own name, so commands that look a class ' +
+      'up by its name in a dictionary cannot reach it. Browse it through the name it is bound under.'
+    );
+  }
   if (binding === 'unbound') {
     return (
       `${className} — no class of this name is bound in any dictionary.\n\n` +
@@ -731,7 +744,7 @@ export class HierarchyItem extends vscode.TreeItem {
     // Whether the symbol list still binds this class object under its own name. A SUPERSEDED row
     // is a real class -- it is this subclass's actual superclass -- that the name no longer
     // points at, so every command scoped by dictionary has nowhere to send it.
-    public readonly binding: 'bound' | 'superseded' | 'unbound' = 'bound',
+    public readonly binding: 'bound' | 'aliased' | 'superseded' | 'unbound' = 'bound',
   ) {
     const versionTag = versionTagOf(version);
     super(
@@ -743,7 +756,12 @@ export class HierarchyItem extends vscode.TreeItem {
     // row is indistinguishable from any other ancestor, and every command on it failed with
     // "not a class" -- which reads as a broken tool rather than as what it is.
     if (binding !== 'bound') {
-      this.description = binding === 'superseded' ? '(old version)' : '(unbound)';
+      this.description =
+        binding === 'superseded'
+          ? '(old version)'
+          : binding === 'aliased'
+            ? '(alias only)'
+            : '(unbound)';
       this.tooltip = unboundHierarchyTooltip(className, binding);
     }
     // The dictionary position is part of the id: every subclass has chainIndex -1, so two
@@ -3343,7 +3361,7 @@ export class ExplorerController {
           description: [i === 0 ? 'immediate superclass' : 'ancestor', labels[i]]
             .filter(Boolean)
             .join(' · '),
-          target: { className: a.className, dictIndex: a.dictIndex },
+          target: { className: a.className, dictIndex: a.dictIndex, dictName: a.dictName },
         })),
         {
           title: `Move '${item.ivarName}' up — choose the destination superclass`,
@@ -3371,7 +3389,7 @@ export class ExplorerController {
         description: [d.parentName ? `subclass of ${d.parentName}` : '', labels[i]]
           .filter(Boolean)
           .join(' · '),
-        target: { className: d.className, dictIndex: d.dictIndex },
+        target: { className: d.className, dictIndex: d.dictIndex, dictName: d.dictName },
       })),
       {
         title: `Move '${item.ivarName}' down — choose destination subclass(es)`,

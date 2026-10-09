@@ -24,9 +24,11 @@ export interface ConvertTempArgs {
 export interface MoveTarget {
   className: string;
   dictIndex?: number;
+  /** For labels only; the engine is sent `dictIndex`. */
+  dictName?: string;
 }
 
-/** A V4 `move` request carries the destination class(es) and the direction the ivar
+/** A `move` request carries the destination class(es) and the direction the ivar
  *  travels: `up` (a single chosen ancestor) or `down` (one or more chosen descendants). */
 export interface MoveArgs {
   targets: MoveTarget[];
@@ -40,7 +42,9 @@ const ENGINE = 'GsInstVarStructureRefactoring';
 function targetArrayExpr(targets: MoveTarget[]): string {
   const one = (t: MoveTarget): string => {
     const name = `'${escapeString(t.className)}'`;
-    return t.dictIndex ? `#(${name} ${t.dictIndex})` : name;
+    // Interpolated into Smalltalk source, so only a positive integer goes out as an index.
+    const idx = t.dictIndex;
+    return idx !== undefined && Number.isInteger(idx) && idx > 0 ? `#(${name} ${idx})` : name;
   };
   return `#(${targets.map(one).join(' ')})`;
 }

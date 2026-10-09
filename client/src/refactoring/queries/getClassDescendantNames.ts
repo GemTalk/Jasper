@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { classOrganizerExpr, subclassesOfBlock } from '../../queries/classOrganizer';
 import { classLookupExpr } from '../../queries/util';
+import { classHomeIndexStatement } from '../../queries/classHomeIndex';
 
 /** A descendant class of some class, with its immediate parent (for display context)
  *  and the dictionary that binds it. */
@@ -35,14 +36,7 @@ export function getClassDescendantNames(
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
 sl := System myUserProfile symbolList.
-"Map each class OBJECT -> the 1-based index of the first dictionary that binds it, so
- descendants are resolved by identity rather than by (shadowable) name."
-classDict := IdentityDictionary new.
-1 to: sl size do: [:i | | d |
-  d := sl at: i.
-  d keysAndValuesDo: [:k :v |
-    (v isBehavior and: [(classDict includesKey: v) not])
-      ifTrue: [classDict at: v put: i]]].
+${classHomeIndexStatement('classDict', 'sl')}
 organizer := ${classOrganizerExpr()}.
 subsOf := ${subclassesOfBlock('organizer')}.
 seen := IdentitySet new.
