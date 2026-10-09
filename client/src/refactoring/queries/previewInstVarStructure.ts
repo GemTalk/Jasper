@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // Instance-variable structure (V2 push up / V3 push down / V4 move / V5 convert temporary)
 // query builders. One engine (GsInstVarStructureRefactoring) parametrized by an OPERATION; the
@@ -166,7 +167,7 @@ export function applyInstVarStructure(
     `${ENGINE} applyForToken: '${escapeString(token)}' deselected: #() ` +
     `migrateInstances: ${migrateInstances ? 'true' : 'false'} ` +
     `removeOldFromHistory: ${removeOldFromHistory ? 'true' : 'false'}`;
-  return execute(`applyIvar(${token})`, code);
+  return execute(`applyIvar(${token})`, droppingClassOrganizer(code));
 }
 
 /** Drop a finished preview from SessionTemps. */

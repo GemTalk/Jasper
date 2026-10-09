@@ -2569,7 +2569,14 @@ export class ExplorerController {
       e.dictIndex,
       e.binding,
     );
-    await this.revealCascade(this.views?.hierarchy, self, { select: true, focus: false });
+    // Expanded on purpose: VS Code remembers a row collapsed under its id, so a class that briefly
+    // had no subclasses -- re-versioned by a refactoring, or by its undo -- otherwise came back as a
+    // closed row, and showing the subclasses is the point of the pane.
+    await this.revealCascade(this.views?.hierarchy, self, {
+      select: true,
+      focus: false,
+      ...(this.hierSubs.length > 0 ? { expand: true } : {}),
+    });
   }
 
   hierarchyParent(element: HierarchyItem): HierarchyItem | undefined {

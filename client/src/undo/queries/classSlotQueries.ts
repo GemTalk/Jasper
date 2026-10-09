@@ -32,6 +32,7 @@ import { QueryExecutor } from '../../queries/types';
 import { dictLookupExpr, escapeString } from '../../queries/util';
 import { ClassSlot, ClassSlotOp, ClassSlotState } from '../undoTypes';
 import { decodeEscaped, SMALLTALK_ESCAPER, SMALLTALK_ESCAPER_TEMPS } from './methodSlotCodec';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 let nextStashSerial = 1;
 
@@ -217,7 +218,7 @@ ${SMALLTALK_ESCAPER}
 ${bodies}
 ws contents`;
 
-  return parseClassApply(execute(code), ops);
+  return parseClassApply(execute(droppingClassOrganizer(code)), ops);
 }
 
 /** Decode one class apply result. Exported for tests. */

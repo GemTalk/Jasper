@@ -58,6 +58,36 @@ describe('ExplorerController.revealHierarchySelf', () => {
     expect(hierarchy.reveal).toHaveBeenCalledTimes(1);
   });
 
+  it('opens the selected class to show its subclasses', async () => {
+    // VS Code remembers a row collapsed under its id, so a class that briefly had no subclasses
+    // (a refactoring re-versioning it, an undo) came back as a closed `>` row; the pane's point is
+    // to show them.
+    const ctl = makeController();
+    (ctl as unknown as HierAccess).hierSubs = [
+      { className: 'OrderedArray', dictName: 'UserGlobals', kind: 'subclass', binding: 'bound' },
+    ];
+    const hierarchy = withHierarchyView(ctl, true);
+
+    await ctl.revealHierarchySelf();
+
+    expect(hierarchy.reveal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expand: true }),
+    );
+  });
+
+  it('asks nothing to open for a class with no subclasses', async () => {
+    const ctl = makeController();
+    const hierarchy = withHierarchyView(ctl, true);
+
+    await ctl.revealHierarchySelf();
+
+    expect(hierarchy.reveal).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expand: true }),
+    );
+  });
+
   it('does not force the Hierarchy pane open when it is collapsed', async () => {
     const ctl = makeController();
     const hierarchy = withHierarchyView(ctl, false);

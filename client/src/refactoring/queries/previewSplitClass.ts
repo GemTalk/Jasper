@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // Split-class (V8 / extract class) query builders. GsSplitClassRefactoring extracts a chosen set of
 // the source's own instance variables -- and the methods that use them -- into a new class, leaving
@@ -91,7 +92,7 @@ export function pageSplitClassPreview(
  *  ignores any deselection; the empty list documents that. Never commits. */
 export function applySplitClass(execute: AsyncQueryExecutor, token: string): Promise<string> {
   const code = `${ENGINE} applyForToken: '${escapeString(token)}' deselected: #()`;
-  return execute(`applySplit(${token})`, code);
+  return execute(`applySplit(${token})`, droppingClassOrganizer(code));
 }
 
 /** Drop a finished preview from SessionTemps. */

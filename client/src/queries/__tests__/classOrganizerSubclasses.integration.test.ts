@@ -137,6 +137,19 @@ describe('hierarchy queries with two same-named classes under one superclass (in
       expect.arrayContaining([`OrgTwinLeaf@${a}`, `OrgTwinLeaf@${b}`]),
     );
   });
+
+  it('shows a new version’s subclasses though a different class shares its name', () => {
+    // A refactoring gives the class a new version and re-points its subclasses at it, after the
+    // organizer was built. Another class of the same name (in dictionary B, under the first) is a
+    // different class, not a version -- it must not stop the new version's subclasses showing.
+    fixture();
+    defineIn(exec(), at(a, 'OrgTwinBase'), 'OrgTwinBase', b);
+    descendantRows(exec(), 'OrgTwinBase', a);
+    defineIn(exec(), 'Object', 'OrgTwinBase', a, "'added'");
+    defineIn(exec(), at(a, 'OrgTwinBase'), 'OrgTwinOther', a);
+
+    expect(subclassRows(exec(), 'OrgTwinBase', a)).toEqual([`OrgTwinOther@${a}`]);
+  });
 });
 
 describe('hierarchy queries over ordinary hierarchies (integration)', () => {

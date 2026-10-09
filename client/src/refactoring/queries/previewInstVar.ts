@@ -2,6 +2,7 @@ import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
 import { Accessor } from './addAccessors';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 /** Smalltalk for an Array of #(selector source) pairs the engine compiles onto the new
  *  class version inside the apply transaction. Built via an OrderedCollection (not a `{}`
@@ -110,7 +111,10 @@ export function applyInstVar(
     `deselected: #(${ids}) options: ${optionsExpr(options)} ` +
     `migrate: ${migrate ? 'true' : 'false'} deleteHistory: ${deleteHistory ? 'true' : 'false'} ` +
     `accessors: ${accessorPairsExpr(accessors)}`;
-  return execute(`applyInstVar(${token} migrate=${migrate} delHist=${deleteHistory})`, code);
+  return execute(
+    `applyInstVar(${token} migrate=${migrate} delHist=${deleteHistory})`,
+    droppingClassOrganizer(code),
+  );
 }
 
 /** Drop a finished preview from SessionTemps. */

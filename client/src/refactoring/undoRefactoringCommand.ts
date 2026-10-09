@@ -23,6 +23,7 @@
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
+import { dropCachedClassOrganizer } from '../classOrganizerCache';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
 import {
   UndoStartPreview,
@@ -174,6 +175,17 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
     return;
   }
 
+  // Restoring earlier class versions, or reversing a rename that re-versioned a class, makes new
+  // class versions without committing; a class list cached from before would show the restored
+  // class with no subclasses. A method undo (`changeSet`) and a class-variable rename (a pool
+  // binding, no version) change nothing that list holds, so they keep it. Dropped here rather than
+  // in the apply query, which serves both kinds.
+  if (
+    start.mechanism === 'historyRevert' ||
+    (start.mechanism === 'mirror' && start.reverseKind !== 'classVarRename')
+  ) {
+    dropCachedClassOrganizer(session);
+  }
   await refreshExplorer();
   await refreshSearch(session.id);
   await revealWhatCameBack(start);

@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { droppingClassOrganizer } from '../../queries/classOrganizer';
 
 // Extract-superclass (V6 insert superclass / V7 extract superclass) query builders. One engine
 // (GsExtractSuperclassRefactoring) drives both: V6 is the no-sibling, no-member case. `dict`
@@ -111,7 +112,7 @@ export function applyExtractSuperclass(
   token: string,
 ): Promise<string> {
   const code = `${ENGINE} applyForToken: '${escapeString(token)}' deselected: #()`;
-  return execute(`applyExtractSuper(${token})`, code);
+  return execute(`applyExtractSuper(${token})`, droppingClassOrganizer(code));
 }
 
 /** Drop a finished preview from SessionTemps. */
