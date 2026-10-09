@@ -187,8 +187,8 @@ import { getGciLog, logError, logWarning } from './gciLog';
 import { commitFailureMessage, isCommitConflict } from './commitFailure';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
+import { dropCachedClassOrganizer } from './classOrganizerCache';
 import { dedupeMethodResults } from './queries/methodSearch';
-import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import {
@@ -1706,13 +1706,7 @@ export function activate(context: vscode.ExtensionContext) {
    * that no longer exists. Best effort: it costs one removeKey, and a session
    * that cannot run it has bigger problems than a stale search.
    */
-  const clearClassOrganizer = (session: ActiveSession): void => {
-    try {
-      queries.executeFetchString(session, clearClassOrganizerCode());
-    } catch {
-      // Nothing to report: the next query simply reuses the organizer it had.
-    }
-  };
+  const clearClassOrganizer = (session: ActiveSession): void => dropCachedClassOrganizer(session);
 
   /**
    * Which session a message is about: its number, and the login behind it. The

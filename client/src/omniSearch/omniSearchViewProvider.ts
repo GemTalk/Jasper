@@ -170,6 +170,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
    *  which is proof enough on its own that someone is looking. */
   private async reload(): Promise<void> {
     if (!(await this.ensureEngine())) return;
+    this.deps?.dropClassIndex?.();
     this.syncPending = false;
     this.refreshPending = false;
     this.post({ command: 'busy', on: true });
