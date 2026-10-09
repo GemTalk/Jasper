@@ -37,7 +37,13 @@ import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { refreshTonelAvailability } from './tonelAvailability';
+import {
+  registerCopyTelemetryIdCommand,
+  startActivationTelemetry,
+  reportingLoginAttempt,
+} from './telemetry';
 import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
+import { attemptLogin } from './loginAttempt';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
 import { confirmReconcileExternalServers } from './externalServerPrompt';
@@ -263,11 +269,7 @@ import {
 } from './wslFs';
 import type { OutputChannel } from 'vscode';
 import { initializeExtensionFolder } from './extensionPath';
-import {
-  initializeBundledGci,
-  bundledWindowsClientGciPath,
-  bundledGciArchSupported,
-} from './bundledGci';
+import { initializeBundledGci } from './bundledGci';
 
 let client: LanguageClient;
 let sessionManager: SessionManager;
@@ -794,6 +796,9 @@ export function activate(context: vscode.ExtensionContext) {
     getSysadminChannel(),
   );
 
+  const finishTelemetry = startActivationTelemetry(context);
+  registerCopyTelemetryIdCommand(context);
+
   initializeBundledGci(context.extensionPath);
 
   // Reap any companion debugger source tab a prior session left open when its
@@ -1029,7 +1034,7 @@ export function activate(context: vscode.ExtensionContext) {
       // than guess): a not-yet-started client or a request failure THROWS; only a
       // live "no selector here" answers null.
       if (!client) throw new Error('language server not started');
-      return client.sendRequest<string | null>('gemstone/selectorAtPosition', {
+      return await client.sendRequest<string | null>('gemstone/selectorAtPosition', {
         textDocument: { uri: document.uri.toString() },
         position,
       });
@@ -1705,7 +1710,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    return vscode.window.showInputBox({
+    return await vscode.window.showInputBox({
       prompt: 'Enter selector',
       placeHolder: 'e.g. at:put:',
     });
@@ -2035,6 +2040,140 @@ export function activate(context: vscode.ExtensionContext) {
     })?.session;
 
   // ── Commands ───────────────────────────────────────────
+  // The connect half of gemstone.login (see attemptLogin): undefined when the
+  // login failed, after the failure has been shown.
+  async function connectWithFeedback(
+    itemLogin: GemStoneLogin,
+    login: GemStoneLogin,
+    gciPath: string,
+  ): Promise<ActiveSession | undefined> {
+    // Spin the login's own row and a status bar item for the whole attempt.
+    // A connect is no longer just a login: it may start the stone and its
+    // NetLDI first, which takes seconds, so the progress notification alone
+    // is not enough to explain why nothing is happening.
+    treeProvider.setConnecting(itemLogin, true);
+    // Drive the left-hand connect-status item through this attempt. showConnecting
+    // also clears any leftover red "login failed" state from a prior attempt.
+    showConnecting(login.stone);
+
+    // Captured across the recovery flow so the failure feedback (toast + red
+    // status bar) can report the reason even when the retry path swallowed the
+    // original throw.
+    let failureMessage: string | undefined;
+    let session: ActiveSession | undefined;
+    try {
+      session = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Connecting to ${login.stone} on ${login.gem_host} as ${login.gs_user}…`,
+          cancellable: false,
+        },
+        // loginAsync uses the non-blocking GciTsNbLogin path (yielding between
+        // polls) so the notification animates and the window stays responsive
+        // during a slow connect; it falls back to the blocking login on
+        // Windows / older libraries.
+        async (progress) => {
+          try {
+            return await sessionManager.loginAsync(login, gciPath);
+          } catch (e: unknown) {
+            // The login may have failed only because its database is not
+            // running. maybeStartDatabaseAndRetry decides whether that is
+            // the case, offers to start it, and reports the outcome —
+            // including re-showing this error untouched when it cannot help.
+            const msg = e instanceof Error ? e.message : String(e);
+            failureMessage = `Login failed: ${msg}`;
+            let recovered: ActiveSession | undefined;
+            await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
+              getDatabases: () => sysadminStorage.getDatabases(),
+              refreshProcesses: () => processManager.refreshProcesses(),
+              getExternalServers: (db) => processManager.getExternalServers(db),
+              describeExternalServers: (db, finding) =>
+                describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+              reconcile: {
+                confirm: confirmReconcileExternalServers,
+                stopExternal: (db, server) => processManager.stopExternalServer(db, server),
+                killExternal: (server) => processManager.killHostServer(server),
+              },
+              // Quiet: the connect's own progress notification and the
+              // spinner on the login row are the feedback here. Revealing
+              // the Admin panel mid-login would yank focus off the editor.
+              startStone: (db) => processManager.startStone(db, { reveal: false }),
+              startNetldi: (db) => processManager.startNetldi(db, { reveal: false }),
+              getMode: getAutoStartMode,
+              setMode: async (mode) => {
+                await setAutoStartMode(mode);
+              },
+              confirm: confirmStartDatabase,
+              showError: (m) => {
+                failureMessage = m;
+                vscode.window.showErrorMessage(m);
+              },
+              report: (m) => progress.report({ message: m }),
+              retryLogin: async () => {
+                recovered = await sessionManager.loginAsync(login, gciPath);
+              },
+              refreshViews: () => refreshAdminViews(),
+            });
+            return recovered;
+          }
+        },
+      );
+    } catch (e: unknown) {
+      // The recovery flow reports its own outcome, so reaching here means
+      // something outside it failed. Keep the net anyway: a command handler
+      // that rejects shows only "command failed", with nothing about which
+      // login or why.
+      const msg = e instanceof Error ? e.message : String(e);
+      failureMessage = `Login failed: ${msg}`;
+      vscode.window.showErrorMessage(failureMessage);
+      showLoginError(failureMessage);
+      return undefined;
+    } finally {
+      treeProvider.setConnecting(itemLogin, false);
+      // The connect-status item is not cleared here: the outcome code (showLoginError
+      // below, onConnected in afterConnected) sets its final connected/failed state.
+    }
+
+    // Undefined when the login failed and the recovery flow could not (or
+    // was not allowed to) rescue it. It has already shown a toast; mirror that
+    // in the status bar so the reason survives after the toast dismisses.
+    if (!session) {
+      showLoginError(failureMessage ?? 'Login failed');
+      return undefined;
+    }
+    return session;
+  }
+
+  function afterConnected(login: GemStoneLogin, session: ActiveSession): void {
+    refreshEnhancedInspectorAvailable(session);
+    refreshRefactoringSupportAvailable(session);
+    updateRefactoringSupportContext();
+    refreshUndoUi(session);
+    treeProvider.refresh();
+    vscode.window.showInformationMessage(
+      `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
+    );
+    onConnected();
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
+    exportManager.exportSession(session, true);
+    // We no longer auto-open a workspace on every connect (it left a dirty,
+    // hot-exit-restored buffer behind), nor the Getting Started walkthrough —
+    // that now opens on the first activation after install (see
+    // maybeOpenGettingStarted), so its "how to connect" step arrives before the
+    // user connects rather than after. The workspace stays available via the
+    // gemstone.openWorkspace command and the Logins & Sessions welcome view.
+
+    // The "Start Here" status-bar button (shown from onConnected above) points
+    // a new user at the basics; see StartHereStatusBar (issue #468).
+
+    // Offer the optional server-side supports this stone lacks (Enhanced
+    // Inspector + refactoring engine) as one bundle, per
+    // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
+    // shows one Install/Always/Never modal, `never` does nothing.
+    // Fire-and-forget; no-ops when the stone already has everything applicable.
+    void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'gemstone.openDocument',
@@ -2259,288 +2398,27 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        const login = { ...item.login };
-
-        // If the login is configured to use the OS keychain, fetch the password
-        // from there. Fall through to the prompt if the keychain entry is missing.
-        if (login.password_in_keychain && !login.gs_password) {
-          const stored = await getLoginPassword(context.secrets, login);
-          if (stored) {
-            login.gs_password = stored;
-          }
-        }
-
-        if (!login.gs_password) {
-          const password = await vscode.window.showInputBox({
-            prompt: `GemStone password for ${login.gs_user || 'user'}@${login.gem_host || 'host'}`,
-            password: true,
-          });
-          if (password === undefined) return;
-          login.gs_password = password;
-        }
-
-        if (!login.host_password && login.host_user) {
-          const password = await vscode.window.showInputBox({
-            prompt: `Host password for ${login.host_user}@${login.gem_host || 'host'}`,
-            password: true,
-          });
-          if (password === undefined) return;
-          login.host_password = password;
-        }
-
-        // Ensure GCI library is configured for this version
-        let gciPath = storage.getGciLibraryPath(login.version);
-
-        // Prefer a GCI library bundled with the extension (for secure /
-        // air-gapped installs that cannot download from gemtalksystems.com).
-        // This must win over the download/file-picker prompts below.
-        if (!gciPath && process.platform === 'win32') {
-          const bundled = bundledWindowsClientGciPath(login.version);
-          if (bundled) {
-            if (bundledGciArchSupported()) {
-              gciPath = bundled;
-            } else {
-              // The bundled DLLs are x64; an ARM64 VS Code process cannot load
-              // them. Guide the user to the x64 build instead of letting the
-              // native loader fail with a cryptic architecture-mismatch error.
-              vscode.window.showErrorMessage(
-                `The GemStone ${login.version} client library bundled with Jasper is x64, but VS Code is ` +
-                  `running as ${process.arch}. Install and run the x64 build of VS Code (it runs under ` +
-                  `emulation on Windows on ARM) to use the bundled library.`,
-              );
-              return;
-            }
-          }
-        }
-
-        // Auto-detect from extracted version's lib/ directory.
-        // Skipped on Windows: the product dir is a Linux build (only .so), so
-        // the GCI for a Windows host has to come from the Windows client below.
-        if (!gciPath && process.platform !== 'win32') {
-          const gsPath = sysadminStorage.getGemstonePath(login.version);
-          if (gsPath) {
-            const ext = process.platform === 'darwin' ? 'dylib' : 'so';
-            const candidate = path.join(gsPath, 'lib', `libgcits-${login.version}-64.${ext}`);
-            if (fs.existsSync(candidate)) {
-              gciPath = candidate;
-            }
-          }
-        }
-
-        // Auto-detect from extracted Windows client distribution
-        if (!gciPath && process.platform === 'win32') {
-          const clientGci = sysadminStorage.getWindowsClientGciPath(login.version);
-          if (clientGci) {
-            gciPath = clientGci;
-          }
-        }
-
-        // On Windows, offer to download the client distribution before falling
-        // back to the manual file picker.
-        if (!gciPath && process.platform === 'win32') {
-          if (!login.version || !login.version.trim()) {
-            vscode.window.showErrorMessage(
-              'Cannot download a Windows client: the login has no GemStone version set. Edit the login to choose a version first.',
-            );
-            return;
-          }
-          const choice = await vscode.window.showInformationMessage(
-            `Windows client library not found for GemStone ${login.version}. Download it?`,
-            'Download',
-            'Browse...',
-          );
-          if (choice === 'Download') {
-            try {
-              await vscode.window.withProgress(
-                {
-                  location: vscode.ProgressLocation.Notification,
-                  title: `Installing Windows client ${login.version}...`,
-                  cancellable: true,
-                },
-                (progress, token) =>
-                  versionManager.downloadAndExtractWindowsClient(login.version, progress, token),
-              );
-              gciPath = sysadminStorage.getWindowsClientGciPath(login.version);
-              if (gciPath) {
-                await storage.setGciLibraryPath(login.version, gciPath);
-              }
-              refreshVersions();
-            } catch (e) {
-              showInstallOutcome(e, 'Windows client install failed');
-              return;
-            }
-          } else if (choice !== 'Browse...') {
-            return; // cancelled
-          }
-        }
-
-        if (!gciPath) {
-          const filters: Record<string, string[]> =
-            process.platform === 'win32'
-              ? { 'DLL files': ['dll'] }
-              : process.platform === 'darwin'
-                ? { 'Dynamic libraries': ['dylib'] }
-                : { 'Shared libraries': ['so'] };
-
-          const ext =
-            process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
-          const expectedName = `libgcits-${login.version}-64.${ext}`;
-
-          const result = await vscode.window.showOpenDialog({
-            title: `Select GCI library (${expectedName}) for GemStone ${login.version}`,
-            canSelectMany: false,
-            filters,
-          });
-          if (!result || result.length === 0) return;
-          gciPath = result[0].fsPath;
-
-          const selectedName = gciPath.split(/[\\/]/).pop();
-          const libPattern = /^libgcits-[\d.]+.*-64\.\w+$/;
-          if (!libPattern.test(selectedName || '')) {
-            const pick = await vscode.window.showWarningMessage(
-              `Selected file "${selectedName}" does not match expected pattern "${expectedName}". Use it anyway?`,
-              'Yes',
-              'No',
-            );
-            if (pick !== 'Yes') return;
-          }
-          await storage.setGciLibraryPath(login.version, gciPath);
-        }
-
-        // The in-process GCI library reads GEMSTONE_GLOBAL_DIR to find the
-        // NetLDI lock file (which encodes the port it is listening on).
-        // Set both variables from sysadminStorage so the login can succeed
-        // even though the VSCode/Electron process doesn't inherit them.
-        process.env.GEMSTONE_GLOBAL_DIR = sysadminStorage.getRootPath();
-        const gsInstallPath =
-          sysadminStorage.getGemstonePath(login.version) ?? path.dirname(path.dirname(gciPath));
-        process.env.GEMSTONE = gsInstallPath;
-
-        // Spin the login's own row and a status bar item for the whole attempt.
-        // A connect is no longer just a login: it may start the stone and its
-        // NetLDI first, which takes seconds, so the progress notification alone
-        // is not enough to explain why nothing is happening.
-        // Copied to a const because `gciPath` is a `let`, and TypeScript widens
-        // it back to `string | undefined` inside the async closure below.
-        const resolvedGciPath = gciPath;
-        treeProvider.setConnecting(item.login, true);
-        // Drive the left-hand connect-status item through this attempt. showConnecting
-        // also clears any leftover red "login failed" state from a prior attempt.
-        showConnecting(login.stone);
-
-        // Captured across the recovery flow so the failure feedback (toast + red
-        // status bar) can report the reason even when the retry path swallowed the
-        // original throw.
-        let failureMessage: string | undefined;
-        let session: ActiveSession | undefined;
-        try {
-          session = await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: `Connecting to ${login.stone} on ${login.gem_host} as ${login.gs_user}…`,
-              cancellable: false,
+        // Run after the event is sent, so a throw in the UI wiring can't count
+        // an attempt whose session is already open as failed.
+        let afterReported: (() => void) | undefined;
+        await reportingLoginAttempt(item.login, () =>
+          attemptLogin(item.login, {
+            keychainPassword: (login) => getLoginPassword(context.secrets, login),
+            getGciLibraryPath: (version) => storage.getGciLibraryPath(version),
+            setGciLibraryPath: (version, gciPath) => storage.setGciLibraryPath(version, gciPath),
+            getGemstonePath: (version) => sysadminStorage.getGemstonePath(version),
+            getWindowsClientGciPath: (version) => sysadminStorage.getWindowsClientGciPath(version),
+            getRootPath: () => sysadminStorage.getRootPath(),
+            downloadAndExtractWindowsClient: (version, progress, token) =>
+              versionManager.downloadAndExtractWindowsClient(version, progress, token),
+            refreshVersions: () => refreshVersions(),
+            connect: (login, gciPath) => connectWithFeedback(item.login, login, gciPath),
+            connected: (login, session) => {
+              afterReported = () => afterConnected(login, session);
             },
-            // loginAsync uses the non-blocking GciTsNbLogin path (yielding between
-            // polls) so the notification animates and the window stays responsive
-            // during a slow connect; it falls back to the blocking login on
-            // Windows / older libraries.
-            async (progress) => {
-              try {
-                return await sessionManager.loginAsync(login, resolvedGciPath);
-              } catch (e: unknown) {
-                // The login may have failed only because its database is not
-                // running. maybeStartDatabaseAndRetry decides whether that is
-                // the case, offers to start it, and reports the outcome —
-                // including re-showing this error untouched when it cannot help.
-                const msg = e instanceof Error ? e.message : String(e);
-                failureMessage = `Login failed: ${msg}`;
-                let recovered: ActiveSession | undefined;
-                await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
-                  getDatabases: () => sysadminStorage.getDatabases(),
-                  refreshProcesses: () => processManager.refreshProcesses(),
-                  getExternalServers: (db) => processManager.getExternalServers(db),
-                  describeExternalServers: (db, finding) =>
-                    describeExternalServers(db, finding, sysadminStorage.getRootPath()),
-                  reconcile: {
-                    confirm: confirmReconcileExternalServers,
-                    stopExternal: (db, server) => processManager.stopExternalServer(db, server),
-                    killExternal: (server) => processManager.killHostServer(server),
-                  },
-                  // Quiet: the connect's own progress notification and the
-                  // spinner on the login row are the feedback here. Revealing
-                  // the Admin panel mid-login would yank focus off the editor.
-                  startStone: (db) => processManager.startStone(db, { reveal: false }),
-                  startNetldi: (db) => processManager.startNetldi(db, { reveal: false }),
-                  getMode: getAutoStartMode,
-                  setMode: async (mode) => {
-                    await setAutoStartMode(mode);
-                  },
-                  confirm: confirmStartDatabase,
-                  showError: (m) => {
-                    failureMessage = m;
-                    vscode.window.showErrorMessage(m);
-                  },
-                  report: (m) => progress.report({ message: m }),
-                  retryLogin: async () => {
-                    recovered = await sessionManager.loginAsync(login, resolvedGciPath);
-                  },
-                  refreshViews: () => refreshAdminViews(),
-                });
-                return recovered;
-              }
-            },
-          );
-        } catch (e: unknown) {
-          // The recovery flow reports its own outcome, so reaching here means
-          // something outside it failed. Keep the net anyway: a command handler
-          // that rejects shows only "command failed", with nothing about which
-          // login or why.
-          const msg = e instanceof Error ? e.message : String(e);
-          failureMessage = `Login failed: ${msg}`;
-          vscode.window.showErrorMessage(failureMessage);
-          showLoginError(failureMessage);
-          return;
-        } finally {
-          treeProvider.setConnecting(item.login, false);
-          // The connect-status item is not cleared here: the outcome code below
-          // (onConnected / showLoginError) sets its final connected/failed state.
-        }
-
-        // Undefined when the login failed and the recovery flow could not (or
-        // was not allowed to) rescue it. It has already shown a toast; mirror that
-        // in the status bar so the reason survives after the toast dismisses.
-        if (!session) {
-          showLoginError(failureMessage ?? 'Login failed');
-          return;
-        }
-
-        refreshEnhancedInspectorAvailable(session);
-        refreshRefactoringSupportAvailable(session);
-        updateRefactoringSupportContext();
-        refreshUndoUi(session);
-        treeProvider.refresh();
-        vscode.window.showInformationMessage(
-          `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
+          }),
         );
-        onConnected();
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-        exportManager.exportSession(session, true);
-        // We no longer auto-open a workspace on every connect (it left a dirty,
-        // hot-exit-restored buffer behind), nor the Getting Started walkthrough —
-        // that now opens on the first activation after install (see
-        // maybeOpenGettingStarted), so its "how to connect" step arrives before the
-        // user connects rather than after. The workspace stays available via the
-        // gemstone.openWorkspace command and the Logins & Sessions welcome view.
-
-        // The "Start Here" status-bar button (shown from onConnected above) points
-        // a new user at the basics; see StartHereStatusBar (issue #468).
-
-        // Offer the optional server-side supports this stone lacks (Enhanced
-        // Inspector + refactoring engine) as one bundle, per
-        // gemstone.serverSupport.autoInstall: `always` installs silently, `ask`
-        // shows one Install/Always/Never modal, `never` does nothing.
-        // Fire-and-forget; no-ops when the stone already has everything applicable.
-        void maybeOfferServerSupport(session, sessionManager, context.extensionPath);
+        afterReported?.();
       }),
     ),
 
@@ -4534,7 +4412,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[]> {
-    return clearSessionsForStop(
+    return await clearSessionsForStop(
       {
         reapSessions: () => reapSessionsOf(db),
         // The stone's own processes are filtered out: a running stone and its
@@ -5077,7 +4955,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           },
           promptPassword: async () =>
-            vscode.window.showInputBox({
+            await vscode.window.showInputBox({
               prompt: `DataCurator password to stop "${stoneName}"`,
               password: true,
               ignoreFocusOut: true,
@@ -5183,7 +5061,7 @@ export function activate(context: vscode.ExtensionContext) {
             report: () => {
               /* no surrounding progress notification here; the Admin channel has the detail */
             },
-            showError: (m) => vscode.window.showErrorMessage(m),
+            showError: (m) => void vscode.window.showErrorMessage(m),
           },
         );
         if (outcome.kind === 'stopped') {
@@ -5574,6 +5452,8 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
   );
+
+  finishTelemetry();
 }
 
 export function deactivate(): Thenable<void> | undefined {

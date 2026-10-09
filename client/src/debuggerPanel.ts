@@ -1655,8 +1655,12 @@ export class DebuggerPanel {
     this.sessionId = session.id;
     this.disposables.push(
       new SessionPanelTitle(panel, session.id, 'GemStone Debugger'),
-      onDidChangeSessionMode(() =>
-        this.panel.webview.postMessage({ command: 'subtitle', text: this.sessionSubtitle() }),
+      onDidChangeSessionMode(
+        () =>
+          void this.panel.webview.postMessage({
+            command: 'subtitle',
+            text: this.sessionSubtitle(),
+          }),
       ),
     );
     this.panel.webview.html = this.getHtml();

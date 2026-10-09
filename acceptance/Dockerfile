@@ -25,6 +25,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Install .nvmrc's Node instead of using the base image's. That one comes from
+# NodeSource's floating node_24.x channel, so its patch level is whatever was
+# current when the image was published, which can sit below devEngines.runtime
+# and fail `npm ci` with EBADDEVENGINES. Reading .nvmrc keeps this runner on the
+# same Node as CI's dev legs, so an .nvmrc bump can't leave Docker behind. It
+# lands in /usr/local/bin, which precedes the base image's /usr/bin on PATH.
+COPY .nvmrc ./
+RUN set -eu; \
+    version="v$(cat .nvmrc)"; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) arch=x64 ;; \
+      arm64) arch=arm64 ;; \
+      *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    tarball="node-${version}-linux-${arch}.tar.gz"; \
+    cd /tmp; \
+    curl -fsSLO "https://nodejs.org/dist/${version}/${tarball}"; \
+    curl -fsSL "https://nodejs.org/dist/${version}/SHASUMS256.txt" | grep " ${tarball}\$" | sha256sum -c -; \
+    tar -xzf "${tarball}" -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE; \
+    rm "${tarball}"; \
+    test "$(node --version)" = "${version}"
+
 # Install dependencies first, keyed only on the manifests, so edits to source
 # don't bust the (slow) npm ci layer. All workspace manifests are needed for the
 # workspace-aware install.
@@ -32,12 +54,12 @@ COPY package.json package-lock.json .npmrc ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
 COPY mcp-server/package.json ./mcp-server/
-# Pin npm rather than trusting whatever the base image happens to bundle: that
-# moves with each Playwright release, and it has already sat on both sides of
-# the repo's devEngines floor (>=11.16.0). v1.61.1-noble shipped npm 11.13.0,
-# below the floor, so `npm ci` failed outright with EBADDEVENGINES; v1.62.1-noble
-# ships 11.16.0, which only just clears it. An exact pin keeps this layer's
-# toolchain identical across base-image bumps instead of riding that drift.
+# Pin npm rather than trusting whatever the Node above happens to bundle. The
+# base image's bundled npm moved with each Playwright release and sat on both
+# sides of the repo's devEngines floor (>=11.16.0): v1.61.1-noble shipped npm
+# 11.13.0, below the floor, so `npm ci` failed outright with EBADDEVENGINES.
+# .nvmrc's Node brings the same drift on each .nvmrc bump. An exact pin keeps
+# this layer's toolchain identical across those bumps instead of riding it.
 # Bump it deliberately, together with the same pin in health-check.yml.
 RUN npm install -g npm@11.17.0 && npm ci
 

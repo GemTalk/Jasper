@@ -134,7 +134,7 @@ export function isTonelFile(fsPath: string): boolean {
  */
 async function fileInOneUri(session: ActiveSession, uri: vscode.Uri): Promise<FileInOutcome> {
   return isTonelFile(uri.fsPath)
-    ? fileInTonelUri(session, uri.fsPath)
+    ? await fileInTonelUri(session, uri.fsPath)
     : fileInFile(session, uri.fsPath);
 }
 

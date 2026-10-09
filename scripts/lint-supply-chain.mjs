@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 //
-// Asserts npm's install-script supply-chain controls are actually in effect,
-// not just present in .npmrc. Every config assertion reads through `npm config
-// get` (one batched call, see getConfigs) rather than parsing the file, which is
-// both simpler and strictly
+// Asserts npm's install-script supply-chain controls (plus `engine-strict`, see
+// below) are actually in effect, not just present in .npmrc. Every config
+// assertion reads through `npm config get` (one batched call, see getConfigs)
+// rather than parsing the file, which is both simpler and strictly
 // stronger: it sees the merged, effective value, so it also catches an override
 // from a user .npmrc, an npm_config_* env var, or npm's `key[]=` array syntax
 // (which a naive `key=` grep of .npmrc misses entirely). And because `npm
 // config` is devEngines-gated, it fails outright on an npm too old to honor the
 // settings.
+//
+// `engine-strict` rides along although it is not an install-script control: it
+// turns a dependency whose `engines.node` excludes the Node floor into an `npm ci`
+// failure on the CI floor leg instead of a warning nobody reads.
 //
 // Most settings are asserted to equal the committed value exactly; `min-release-age` is
 // asserted as a floor, so raising the cooldown is allowed but lowering or disabling it is not
@@ -27,10 +31,15 @@
 // floor (see checkTypeFloorPinned below) — a range that resolves above
 // `engines.vscode`/`engines.node` lets tsc accept APIs the shipped floor lacks.
 //
+// And checks that `devEngines.runtime` starts exactly at the `engines.node`
+// floor, and that its newest major starts at `.nvmrc` (see
+// checkRuntimeFloorSynced and checkNvmrcSynced below).
+//
 //   node scripts/lint-supply-chain.mjs
 
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import semver from 'semver';
 
 // package.json's `allowScripts` is the single source of truth for the install-script
 // allowlist, so `allow-scripts` must be unset everywhere. It is dead weight, not a
@@ -59,16 +68,17 @@ const CONFIG_ASSERTIONS = [
   { key: 'allow-remote', expected: 'none' },
   { key: 'allow-scripts', expected: '', hint: ALLOW_SCRIPTS_HINT },
   { key: 'min-release-age', expected: '7', floor: true },
+  { key: 'engine-strict', expected: 'true' },
 ];
 
 const REGISTRY_PREFIX = 'https://registry.npmjs.org/';
 
 // One spawn for every key rather than one per key: npm's cold start dominates this script
-// (~0.38s for five sequential gets vs ~0.08s batched), and lintSupplyChain.test.ts runs the
-// whole script once per case. Asked for multiple keys npm prints `key=value` lines instead of
-// a bare value, but each value is byte-identical to the single-key form — including the
-// literal 'null' an unset min-release-age reads back as, and the comma-joined form of an
-// array setting. (`npm config list --json` would batch too, but it hands back JSON types —
+// (~0.38s for one get per key vs ~0.08s batched, measured at five keys), and
+// lintSupplyChain.test.ts runs the whole script once per case. Asked for multiple keys npm
+// prints `key=value` lines instead of a bare value, but each value is byte-identical to the
+// single-key form — including the literal 'null' an unset min-release-age reads back as, and
+// the comma-joined form of an array setting. (`npm config list --json` would batch too, but it hands back JSON types —
 // true/7/[] instead of 'true'/'7'/'' — which every comparison and message below would have to
 // re-stringify.) npm's own warnings go to stderr, so only key=value lines reach here.
 function getConfigs(keys) {
@@ -306,13 +316,100 @@ function checkTypeFloorPinned() {
   return failed;
 }
 
+// semver's own reading rather than a regex over the range: it is the semantics `npm ci`
+// enforces, so the lowest bound accounts for every alternative and comparator shape (`>=20`,
+// `20.x`, an upper bound written first) instead of silently skipping the ones a pattern misses.
+// semver reads an empty range as `*`, so a missing range is caught before it would start at 0.0.0.
+function parsedRange(range) {
+  if (!range || semver.validRange(range) === null) {
+    return null;
+  }
+  return new semver.Range(range);
+}
+
+// `devEngines.runtime` is the Node range contributors and CI install under; `engines.node` is
+// the floor the .vsix claims. Nothing derives one from the other, so a floor raise that moves
+// only `engines.node` leaves CI installing and testing on a Node below the shipped claim. The
+// patch counts too: the CI floor leg runs exactly `engines.node`'s version, so a
+// `devEngines.runtime` starting one patch above it fails `npm ci` there.
+function checkRuntimeFloorSynced(manifest, devRange) {
+  const shippedRange = parsedRange(manifest.engines?.node);
+
+  if (shippedRange === null) {
+    console.error(
+      '✗ engines.node is missing or unparseable, so nothing anchors devEngines.runtime',
+    );
+    return true;
+  }
+  const shipped = semver.minVersion(shippedRange).version;
+  const dev = semver.minVersion(devRange).version;
+  if (dev !== shipped) {
+    console.error(
+      `✗ devEngines.runtime starts at ${dev} but engines.node's floor is ${shipped}, raise them together`,
+    );
+    return true;
+  }
+
+  console.log("✓ devEngines.runtime starts at engines.node's floor");
+  return false;
+}
+
+// The newest major's lower bound is `.nvmrc`'s Node, which the dev legs of CI and every
+// contributor run. Unlike a stale floor, a stale bound here turns nothing red: bumping `.nvmrc`
+// alone still satisfies the range, so CI keeps passing while the range admits patches no job
+// runs any more.
+function checkNvmrcSynced(devRange) {
+  let pinned;
+  try {
+    pinned = semver.clean(readFileSync('.nvmrc', 'utf8'));
+  } catch {
+    console.error("✗ .nvmrc is missing, so nothing anchors devEngines.runtime's newest major");
+    return true;
+  }
+
+  if (pinned === null) {
+    console.error('✗ .nvmrc is not an exact Node version');
+    return true;
+  }
+  const newest = devRange.set
+    .map((comparators) => semver.minVersion(comparators.map(({ value }) => value).join(' ')))
+    .sort(semver.rcompare)[0].version;
+  if (newest !== pinned) {
+    console.error(
+      `✗ .nvmrc is ${pinned} but devEngines.runtime's newest major starts at ${newest}, bump them together`,
+    );
+    return true;
+  }
+
+  console.log("✓ devEngines.runtime's newest major starts at .nvmrc");
+  return false;
+}
+
+// Both checks anchor `devEngines.runtime` to something else, so it is parsed once here: a missing
+// or unparseable range is one cause and gets one error, not one per check.
+function checkDevRuntime() {
+  const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  const devRange = parsedRange(manifest.devEngines?.runtime?.version);
+  if (devRange === null) {
+    console.error(
+      '✗ devEngines.runtime is missing or unparseable, so neither engines.node nor .nvmrc can be checked against it',
+    );
+    return true;
+  }
+
+  const runtimeFloorFailed = checkRuntimeFloorSynced(manifest, devRange);
+  const nvmrcFailed = checkNvmrcSynced(devRange);
+  return runtimeFloorFailed || nvmrcFailed;
+}
+
 function main() {
   const configFailed = checkConfig();
   const driftFailed = checkLockfileDrift();
   const allowScriptsFailed = checkAllowScriptsPinned();
   const typeFloorFailed = checkTypeFloorPinned();
+  const devRuntimeFailed = checkDevRuntime();
 
-  if (configFailed || driftFailed || allowScriptsFailed || typeFloorFailed) {
+  if (configFailed || driftFailed || allowScriptsFailed || typeFloorFailed || devRuntimeFailed) {
     process.exit(1);
   }
 }

@@ -139,15 +139,15 @@ export class CodeExecutor {
   }
 
   async displayIt(): Promise<void> {
-    return this.execute('display');
+    return await this.execute('display');
   }
 
   async executeIt(): Promise<void> {
-    return this.execute('execute');
+    return await this.execute('execute');
   }
 
   async debugIt(): Promise<void> {
-    return this.execute('debug');
+    return await this.execute('debug');
   }
 
   private async execute(mode: 'display' | 'execute' | 'debug'): Promise<void> {

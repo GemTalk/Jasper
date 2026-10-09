@@ -379,7 +379,7 @@ export class VersionManager {
       return;
     }
 
-    return this.downloadFile(version.url, targetPath, progress, token);
+    return await this.downloadFile(version.url, targetPath, progress, token);
   }
 
   /** Download a file via native Node.js HTTPS with redirect following */

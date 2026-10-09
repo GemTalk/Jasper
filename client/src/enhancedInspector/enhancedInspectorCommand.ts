@@ -90,7 +90,7 @@ async function performInstall(
         cancellable: false,
       },
       async (progress) =>
-        installEnhancedInspectorSupport(sys, payloadDir, (message, increment) =>
+        await installEnhancedInspectorSupport(sys, payloadDir, (message, increment) =>
           progress.report({ message, increment }),
         ),
     );
@@ -137,5 +137,5 @@ export async function installEnhancedInspectorFeature(
   // See performInstall / the uninstall note: return whether the change LANDED ON THE STONE (its
   // verified server-side result), not whether this session's latch has caught up — otherwise a
   // deferred ("Later") refresh would suppress the success toast for a completed install.
-  return performInstall(base, sessionManager, extensionPath, interactive);
+  return await performInstall(base, sessionManager, extensionPath, interactive);
 }

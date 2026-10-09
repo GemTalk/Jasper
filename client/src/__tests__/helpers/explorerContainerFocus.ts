@@ -14,7 +14,10 @@
  * that rely on this: with the matcher and the stub reading one predicate, a
  * matched command is by construction a command the stub reacts to.
  */
-import { vi } from 'vitest';
+import { vi, type MockedFunction } from 'vitest';
+import type * as vscode from 'vscode';
+
+type ExecuteCommandMock = MockedFunction<typeof vscode.commands.executeCommand>;
 
 /** Does this command id bring the Explorer's container up? */
 export function showsTheExplorerContainer(command: string): boolean {
@@ -26,7 +29,7 @@ export function showsTheExplorerContainer(command: string): boolean {
 }
 
 /** Did anything in this run bring the Explorer's container up? */
-export function focusedTheExplorerContainer(executeCommand: ReturnType<typeof vi.fn>): boolean {
+export function focusedTheExplorerContainer(executeCommand: ExecuteCommandMock): boolean {
   return executeCommand.mock.calls.map((c) => String(c[0])).some(showsTheExplorerContainer);
 }
 
@@ -59,7 +62,7 @@ export function fakeViews(visible = true) {
  * way the editor really behaves.
  */
 export function flipVisibleOnContainerShow(
-  executeCommand: ReturnType<typeof vi.fn>,
+  executeCommand: ExecuteCommandMock,
   views: Record<string, { visible: boolean }>,
   delayMs = 40,
 ): void {

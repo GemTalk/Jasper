@@ -6,6 +6,7 @@ paths:
   - "esbuild.mjs"
   - ".github/workflows/health-check.yml"
   - ".nvmrc"
+  - ".github/dependabot.yml"
 ---
 
 # VS Code / Node version pins

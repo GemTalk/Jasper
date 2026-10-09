@@ -544,7 +544,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       // The Categories scope is DERIVED from classes — a class compile can introduce a new category,
       // and we can't cheaply know its name to match, so re-run to reload + re-rank against the term.
       if (scopeId === CATEGORY_BY_ID.categories.id) {
-        return change.kind === 'class' ? runSearch(lastRawValue) : null;
+        return change.kind === 'class' ? await runSearch(lastRawValue) : null;
       }
       // Scopes where the changed item's own name is what's shown (the classes scope, and the all-scope
       // which includes classes): skip the redraw when nothing changed or the new name can't match the
@@ -552,7 +552,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (scopeId === null || scopeId === changeCategoryId(change)) {
         if (!changed) return null;
         if (!match(term, change.className, { mode: config.matchMode, caseSensitive })) return null;
-        return runSearch(lastRawValue);
+        return await runSearch(lastRawValue);
       }
       // Any other scope (methods/source/…) is unaffected by this kind of change.
       return null;
@@ -561,11 +561,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       await reprimeAll(onError);
       // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
       if (pivot) return null;
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async refresh(onError) {
       await reprimeAll(onError);
-      if (!pivot || !pivotSource || !deps.resolveReferences) return runSearch(lastRawValue);
+      if (!pivot || !pivotSource || !deps.resolveReferences) return await runSearch(lastRawValue);
       // Re-ask the stone who references the row this pivot was taken from. Superseding in-flight work
       // the way `pivot` does, and for the same reason: resolving senders of a common selector is slow,
       // and anything the user does meanwhile must win.
@@ -578,7 +578,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         pivot = null;
         pivotSource = null;
         pivotFilter = '';
-        return runSearch(lastRawValue);
+        return await runSearch(lastRawValue);
       }
       pivot = view;
       current = filterPivot(view.results, pivotFilter);
@@ -597,25 +597,25 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       pivotSource = null;
       pivotFilter = '';
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async toggleCase() {
       caseSensitive = !caseSensitive;
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async setMatchMode(mode) {
       matchMode = mode;
       // Deliberately does NOT reset the page cap, matching `toggleCase`: changing how the same corpus
       // is matched is not a new question, so if you had loaded more you keep it.
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async loadMore() {
       scopeLimit += config.maxResultsPerCategory;
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async loadAll() {
       scopeLimit = LOAD_ALL_LIMIT;
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async pivot(rowId) {
       if (!deps.resolveReferences) return null;
@@ -641,7 +641,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       pivotSource = null;
       pivotFilter = '';
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async setExcludedFromAll(ids) {
       excludedFromAll = new Set(ids.filter((id) => CATEGORY_BY_ID[id]?.explicitOnly !== true));
@@ -649,7 +649,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       // `runSearch` only resets the cap when the term itself changes — so reset it here, as setScope
       // does. Narrowing "All" is a fresh question, not more of the last answer.
       scopeLimit = config.maxResultsPerCategory;
-      return runSearch(lastRawValue);
+      return await runSearch(lastRawValue);
     },
     async referencesFor(rowId) {
       if (!deps.resolveReferences) return null;
