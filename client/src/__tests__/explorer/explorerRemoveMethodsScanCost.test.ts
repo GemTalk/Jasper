@@ -27,6 +27,7 @@ import { resetUndoStacks } from '../../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 import type { MethodSearchResult } from '../../queries/methodSearch';
 import type { MethodSlot } from '../../undo/undoTypes';
+import type { MessageOptions } from 'vscode';
 
 /**
  * What removing a selection of methods costs before the user is asked anything.
@@ -76,7 +77,14 @@ const removeMethods = (ctl: ExplorerController, picked: MethodItem[]) =>
 
 const sendersOf = queries.sendersOf as ReturnType<typeof vi.fn>;
 const hierarchyImplementorsOf = queries.hierarchyImplementorsOf as ReturnType<typeof vi.fn>;
-const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
+// `showWarningMessage` is overloaded and `vi.mocked` types the mock via the last
+// (`MessageItem`) overload; removeMethods uses the string one, so narrow to it.
+const showStringWarning: (
+  message: string,
+  options: MessageOptions,
+  ...items: string[]
+) => Thenable<string | undefined> = window.showWarningMessage;
+const showWarningMessage = vi.mocked(showStringWarning);
 const withProgress = window.withProgress as ReturnType<typeof vi.fn>;
 
 /**
